@@ -66,6 +66,14 @@ namespace proteus
 		std::vector<GfType> gf_f_cache, gf_s_cache;
 		std::vector<int> gf_s_interior_gen, gf_f_interior_gen, gf_f_boundary_gen;
 		std::vector<int> gf_s_interior_icase, gf_f_interior_icase, gf_f_boundary_icase;
+		// Composite equivalent polynomials for elements cut by BOTH level sets. The product
+		// ImH_f*H_s is not moment-exact on such an element (see .notes/EQUIVALENT_POLYNOMIALS.md
+		// section 7.1); these replace it with one fit per intersected region. Only populated when
+		// icase_s == 0 && icase_f == 0, so every single-level-set element keeps the old path
+		// bit-for-bit.
+		static const int nCompMon = 15;   // monomials up to degree 4, matching GfType's nP
+		std::vector<double> comp_A_cache, comp_B_cache;
+		std::vector<char> comp_valid;
 		int ifemGeometryGeneration = 0;
 		cADR() : nDOF_test_X_trial_element(nDOF_test_element * nDOF_trial_element), ck()
 		{
@@ -82,6 +90,9 @@ namespace proteus
 			gf_s_interior_icase.assign(nElements_global, 0);
 			gf_f_interior_icase.assign(nElements_global, 0);
 			gf_f_boundary_icase.assign(nElements_global, 0);
+			comp_A_cache.assign((std::size_t)nElements_global * nCompMon, 0.0);
+			comp_B_cache.assign((std::size_t)nElements_global * nCompMon, 0.0);
+			comp_valid.assign(nElements_global, 0);
 			for (auto &gf : gf_f_cache)
 				gf.useExact = true;
 			for (auto &gf : gf_s_cache)
@@ -429,6 +440,8 @@ namespace proteus
 											 proteus::pyarray<int> &sd_rowptr,
 											 proteus::pyarray<int> &sd_colind,
 											 proteus::pyarray<double> &q_a,
+											 const double *comp_A,
+											 const double *comp_B,
 											 proteus::pyarray<double> &q_v,
 											 proteus::pyarray<double> &q_r,
 											 int lag_shockCapturingDiffusion,
@@ -714,6 +727,15 @@ namespace proteus
 				}
 				const double ImH_f = gf_f.ImH(0., 0.);
 				const double H_f = gf_f.H(0., 0.);
+				// Region weights for the bulk terms. On an element cut by both level sets these
+				// come from the composite fit; otherwise they are the usual products, unchanged.
+				double wA = ImH_f * H_s, wB = H_f * H_s;
+				if (comp_A != nullptr)
+				{
+					const double xr = x_ref.data()[k * 3 + 0], yr = x_ref.data()[k * 3 + 1];
+					wA = equivalent_polynomials::composite::evaluate<4>(comp_A, xr, yr);
+					wB = equivalent_polynomials::composite::evaluate<4>(comp_B, xr, yr);
+				}
 				const double D_f = gf_f.D(0., 0.);
 				// if ( H_s*ImH_f != 0.0 || D_s != 0.0 || D_f != 0.0) //for two embedded interfaces
 				if (H_s != 0.0 || D_s != 0.0 || D_f != 0.0) // for one embedded interface and one immersed interface
@@ -825,14 +847,14 @@ namespace proteus
 						if(!gf_f.exact.edge  && !gf_f.exact.corner)//full cut or cut on boundary of negative cell
 					    {
 							for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
-							elementResidual_u.data()[i] += ImH_f * H_s * (ck.Advection_weak(f, &ua_grad_test_dV[i_nSpace]) + 
+							elementResidual_u.data()[i] += wA * (ck.Advection_weak(f, &ua_grad_test_dV[i_nSpace]) + 
 							ck.Diffusion_weak(sd_rowptr.data(), sd_colind.data(), a_loc, grad_ua, &ua_grad_test_dV[i_nSpace]) + 
 							ck.Diffusion_weak(sd_rowptr.data(), sd_colind.data(), a_loc, grad_uja, &ua_grad_test_dV[i_nSpace]) + 
 							ck.Reaction_weak(r, ua_test_dV[i]) + 
 							ck.NumericalDiffusion(q_numDiff_u_last.data()[eN_k], grad_ua, &ua_grad_test_dV[i_nSpace]));
 						
 							for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mub;
-							elementResidual_u.data()[i] += H_f * H_s * (ck.Advection_weak(f, &ub_grad_test_dV[i_nSpace]) + 
+							elementResidual_u.data()[i] += wB * (ck.Advection_weak(f, &ub_grad_test_dV[i_nSpace]) + 
 							ck.Diffusion_weak(sd_rowptr.data(), sd_colind.data(), a_loc, grad_ub, &ub_grad_test_dV[i_nSpace]) + 
 							ck.Diffusion_weak(sd_rowptr.data(), sd_colind.data(), a_loc, grad_ujb, &ub_grad_test_dV[i_nSpace]) + 
 							ck.Reaction_weak(r, ub_test_dV[i]) + 
@@ -886,6 +908,11 @@ namespace proteus
 						}
 					}
 				}
+				// Error is only meaningful where the PDE is actually assembled. H_s is the
+				// active-fluid mask, so it is zero inside the embedded solid, where the DOFs
+				// are unconstrained and hold arbitrary values. Without this weight those
+				// values enter the norm and swamp the real discretisation error as soon as
+				// the mesh is fine enough to put nodes strictly inside the solid.
 				double L2_contrib = 0.0;
 				if (icase_f == 0)
 				{
@@ -895,10 +922,13 @@ namespace proteus
 					double sol_out = q_u_exact_outer.data()[eN_k];
 					double err_out = fabs(ub + ujb - sol_out);
 					L2_contrib += H_f * err_out * err_out * dV;
-					if (ImH_f >= H_f)
-						Linfty_error = std::max(Linfty_error, err_in);
-					else
-						Linfty_error = std::max(Linfty_error, err_out);
+					if (H_s > 0.0)
+					{
+						if (ImH_f >= H_f)
+							Linfty_error = std::max(Linfty_error, err_in);
+						else
+							Linfty_error = std::max(Linfty_error, err_out);
+					}
 				}
 				else
 				{
@@ -907,17 +937,19 @@ namespace proteus
 						double sol = q_u_exact_inner.data()[eN_k];
 						double err = fabs(u - sol);
 						L2_contrib += err * err * dV;
-						Linfty_error = std::max(Linfty_error, err);
+						if (H_s > 0.0)
+							Linfty_error = std::max(Linfty_error, err);
 					}
 					if (icase_f == 1)
 					{
 						double sol = q_u_exact_outer.data()[eN_k];
 						double err = fabs(u - sol);
 						L2_contrib += err * err * dV;
-						Linfty_error = std::max(Linfty_error, err);
+						if (H_s > 0.0)
+							Linfty_error = std::max(Linfty_error, err);
 					}
 				}
-				L2_error += L2_contrib;
+				L2_error += H_s * L2_contrib;
 			}
 		}
 
@@ -1091,6 +1123,19 @@ namespace proteus
 					gf_f_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_f = gf_f_interior_icase[eN];
+				// Both level sets genuinely cut this element: the product weight ImH_f*H_s is not
+				// moment-exact here, so fit one polynomial per intersected region instead. Any
+				// element cut by at most one level set is left entirely alone.
+				comp_valid[eN] = 0;
+				if (icase_s == 0 && icase_f == 0 && nSpace == 2)
+				{
+					const double phi_s3[3] = {element_phi_s[0], element_phi_s[1], element_phi_s[2]};
+					const double phi_f3[3] = {element_phi_f[0], element_phi_f[1], element_phi_f[2]};
+					comp_valid[eN] = equivalent_polynomials::composite::weights<4>(
+						phi_s3, phi_f3,
+						&comp_A_cache[(std::size_t)eN * nCompMon],
+						&comp_B_cache[(std::size_t)eN * nCompMon]) ? 1 : 0;
+				}
 				double JA[nDOF_trial_element];
 				double JB[nDOF_trial_element];
 				std::fill(JA, JA + nDOF_trial_element, 0.0);
@@ -1197,6 +1242,8 @@ namespace proteus
 										 sd_rowptr,
 										 sd_colind,
 										 q_a,
+										 comp_valid[eN] ? &comp_A_cache[(std::size_t)eN * nCompMon] : nullptr,
+										 comp_valid[eN] ? &comp_B_cache[(std::size_t)eN * nCompMon] : nullptr,
 										 q_v,
 										 q_r,
 										 lag_shockCapturing,
@@ -1852,6 +1899,8 @@ namespace proteus
 											 proteus::pyarray<int> &sd_rowptr,
 											 proteus::pyarray<int> &sd_colind,
 											 proteus::pyarray<double> &q_a,
+											 const double *comp_A,
+											 const double *comp_B,
 											 proteus::pyarray<double> &q_v,
 											 proteus::pyarray<double> &q_r,
 											 int lag_shockCapturing,
@@ -2080,6 +2129,15 @@ namespace proteus
 				}
 				const double ImH_f = gf_f.ImH(0., 0.);
 				const double H_f = gf_f.H(0., 0.);
+				// Region weights for the bulk terms. On an element cut by both level sets these
+				// come from the composite fit; otherwise they are the usual products, unchanged.
+				double wA = ImH_f * H_s, wB = H_f * H_s;
+				if (comp_A != nullptr)
+				{
+					const double xr = x_ref.data()[k * 3 + 0], yr = x_ref.data()[k * 3 + 1];
+					wA = equivalent_polynomials::composite::evaluate<4>(comp_A, xr, yr);
+					wB = equivalent_polynomials::composite::evaluate<4>(comp_B, xr, yr);
+				}
 				const double D_f = gf_f.D(0., 0.);
 				if (immersedBoundary)
 				{
@@ -2170,13 +2228,13 @@ namespace proteus
 							if(!gf_f.exact.edge && !gf_f.exact.corner)
 						    {
 								for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
-								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += ImH_f * H_s * (ck.AdvectionJacobian_weak(df, ua_trial[j], &ua_grad_test_dV[i_nSpace]) + 
+								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += wA * (ck.AdvectionJacobian_weak(df, ua_trial[j], &ua_grad_test_dV[i_nSpace]) + 
 								ck.SimpleDiffusionJacobian_weak(sd_rowptr.data(), sd_colind.data(), a_loc, &ua_grad_trial[j_nSpace], &ua_grad_test_dV[i_nSpace]) + 
 								ck.ReactionJacobian_weak(dr, ua_trial[j], ua_test_dV[i]) + 
 								ck.NumericalDiffusionJacobian(q_numDiff_u_last.data()[eN_k], &ua_grad_trial[j_nSpace], &ua_grad_test_dV[i_nSpace]));
 
 								for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mub;
-								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += H_f * H_s * (ck.AdvectionJacobian_weak(df, ub_trial[j], &ub_grad_test_dV[i_nSpace]) + 
+								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += wB * (ck.AdvectionJacobian_weak(df, ub_trial[j], &ub_grad_test_dV[i_nSpace]) + 
 									ck.SimpleDiffusionJacobian_weak(sd_rowptr.data(), sd_colind.data(), a_loc, &ub_grad_trial[j_nSpace], &ub_grad_test_dV[i_nSpace]) + 
 									ck.ReactionJacobian_weak(dr, ub_trial[j], ub_test_dV[i]) + 
 									ck.NumericalDiffusionJacobian(q_numDiff_u_last.data()[eN_k], &ub_grad_trial[j_nSpace], &ub_grad_test_dV[i_nSpace]));
@@ -2370,6 +2428,19 @@ namespace proteus
 					gf_f_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_f = gf_f_interior_icase[eN];
+				// Both level sets genuinely cut this element: the product weight ImH_f*H_s is not
+				// moment-exact here, so fit one polynomial per intersected region instead. Any
+				// element cut by at most one level set is left entirely alone.
+				comp_valid[eN] = 0;
+				if (icase_s == 0 && icase_f == 0 && nSpace == 2)
+				{
+					const double phi_s3[3] = {element_phi_s[0], element_phi_s[1], element_phi_s[2]};
+					const double phi_f3[3] = {element_phi_f[0], element_phi_f[1], element_phi_f[2]};
+					comp_valid[eN] = equivalent_polynomials::composite::weights<4>(
+						phi_s3, phi_f3,
+						&comp_A_cache[(std::size_t)eN * nCompMon],
+						&comp_B_cache[(std::size_t)eN * nCompMon]) ? 1 : 0;
+				}
 				calculateElementJacobian(icase_f,
 										 mesh_trial_ref,
 										 mesh_grad_trial_ref,
@@ -2405,6 +2476,8 @@ namespace proteus
 										 sd_rowptr,
 										 sd_colind,
 										 q_a,
+										 comp_valid[eN] ? &comp_A_cache[(std::size_t)eN * nCompMon] : nullptr,
+										 comp_valid[eN] ? &comp_B_cache[(std::size_t)eN * nCompMon] : nullptr,
 										 q_v,
 										 q_r,
 										 lag_shockCapturing,

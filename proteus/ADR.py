@@ -8,6 +8,7 @@ from proteus import  cfemIntegrals, Quadrature
 from proteus.NonlinearSolvers import NonlinearEquation
 from proteus.FemTools import (DOFBoundaryConditions,
                               FluxBoundaryConditions,
+                              FiniteElementFunction,
                               C0_AffineLinearOnSimplexWithNodalBasis)
 from proteus.Comm import globalMax, globalSum
 from proteus.Profiling import  memory
@@ -387,6 +388,21 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.dirichletNodeSetList=None #explicit Dirichlet  conditions for now, no Dirichlet BC constraints
         self.coefficients = coefficients
         self.coefficients.initializeSDF(self.u[0].femSpace)
+        # Level sets as ordinary finite element functions, purely so they land in the
+        # h5/xmf archive next to the solution and can be contoured in ParaView. The
+        # nodal sdf arrays built by initializeSDF are already indexed the same way as
+        # the DOFs of this space, so they can be used as dof arrays directly.
+        self.levelSetFunctions = []
+        for _name, _dof, _active in [
+                ('phi_s', self.coefficients.embeddedBoundary_sdf_nodes,
+                 self.coefficients.embeddedBoundary),
+                ('phi_f', self.coefficients.immersedBoundary_sdf_nodes,
+                 self.coefficients.immersedBoundary)]:
+            if _active:
+                self.levelSetFunctions.append(
+                    FiniteElementFunction(self.u[0].femSpace,
+                                                   dof=_dof,
+                                                   name=_name))
         self.nc = self.coefficients.nc
         self.stabilization = stabilization
         self.shockCapturing = shockCapturing
@@ -922,6 +938,36 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     self.nzval[i] = 1.0
                 else:
                     self.nzval[i] = 0.0
+
+        # An element is marked active if H_s, D_s or D_f is nonzero anywhere in it. That is an
+        # element-level test, so an element straddling the solid boundary claims *all* of its
+        # DOFs -- including ones lying strictly inside the solid, where H_s == 0 (no bulk
+        # contribution) and D_s == 0 (the Nitsche term lives on the solid boundary, not its
+        # interior). Such a DOF is marked active but receives no matrix entry at all, leaving a
+        # structurally zero row and a singular Jacobian. It only shows up once the mesh is fine
+        # enough to put a node strictly inside the solid on an element the fluid interface also
+        # cuts -- i.e. a triply-cut configuration.
+        #
+        # Catch them the same way genuinely inactive DOFs are handled: unit diagonal, and mark
+        # them inactive so the residual is masked out there too. Inert wherever no such row
+        # exists, which is every single-level-set case.
+        _unsupported = []
+        for _row in range(len(self.rowptr) - 1):
+            if self.isActiveDOF[_row] == 0.0:
+                continue
+            _diag = 0.0
+            for _i in range(self.rowptr[_row], self.rowptr[_row + 1]):
+                if self.colind[_i] == _row:
+                    _diag = self.nzval[_i]
+            if _diag == 0.0:
+                _unsupported.append(_row)
+        for _row in _unsupported:
+            self.isActiveDOF[_row] = 0.0
+            for _i in range(self.rowptr[_row], self.rowptr[_row + 1]):
+                self.nzval[_i] = 1.0 if self.colind[_i] == _row else 0.0
+        if _unsupported:
+            log("ADR: pinned %d unsupported DOF(s) with no Jacobian contribution "
+                "(active element, but inside the embedded solid)" % len(_unsupported), level=4)
         return jacobian
     def invalidateIFEMGeometry(self):
         """
@@ -952,6 +998,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if self.shockCapturing is not None:
             self.shockCapturing.initializeElementQuadrature(self.mesh,self.timeIntegration.t,self.q)
         self.invalidateIFEMGeometry()
+    def archiveFiniteElementSolutions(self,archive,t,tCount,initialPhase=False,writeVectors=True,
+                                      meshChanged=False,femSpaceWritten={},writeVelocityPostProcessor=True):
+        OneLevelTransport.archiveFiniteElementSolutions(self,archive,t,tCount,
+                                                        initialPhase=initialPhase,
+                                                        writeVectors=writeVectors,
+                                                        meshChanged=meshChanged,
+                                                        femSpaceWritten=femSpaceWritten,
+                                                        writeVelocityPostProcessor=writeVelocityPostProcessor)
+        # Append the level sets so ParaView sees them as node-centred scalars on the
+        # same grid; the zero contour of each is the corresponding interface.
+        for lsFunction in getattr(self,'levelSetFunctions',[]):
+            self.u[0].femSpace.writeFunctionXdmf(archive,lsFunction,tCount)
+
     def calculateElementBoundaryQuadrature(self):
         pass
     def calculateExteriorElementBoundaryQuadrature(self):
