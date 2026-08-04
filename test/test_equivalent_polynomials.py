@@ -441,3 +441,173 @@ def test_edge_H():
                         exact = theta**(d + 1) / (d + 1)
                     assert got == approx(exact, abs=1.0e-10), \
                         f"nP={nP} theta={theta} inc={increasing} d={d}: {got} vs {exact}"
+
+
+# ---------------------------------------------------------------------------
+# Triply-cut cells: is the product of two equivalent polynomials sound?
+#
+# In the 3-phase (cutFEM + IFEM) setting one element can be cut by two
+# independent level sets at once -- a fluid/fluid interface (phi_f) and a
+# fluid/solid boundary (phi_s) -- splitting it into three regions. ADR.h weights
+# the bulk terms of such an element by the *product* of two separately
+# moment-fitted polynomials, e.g. ImH_f * H_s for the mua-side fluid.
+#
+# Each factor is exact in the moment sense on its own:
+#     int_e Hhat * p = int_region p     for every p in P^nP.
+# These tests use the real eqp.Simplex machinery to ask whether that survives
+# multiplication, and whether one "composite" polynomial fitted against the true
+# three-region geometry restores it.
+#
+# Only H/ImH are used. eqp's D currently returns the cut measure with a flipped
+# sign (see test_2D), which is a separate pre-existing issue.
+# ---------------------------------------------------------------------------
+
+def _tc_clip(poly, n, c, keep_negative):
+    """Sutherland-Hodgman clip of a convex polygon by {x : n.x + c <= 0} (or >= 0)."""
+    sval = lambda p: n[0]*p[0] + n[1]*p[1] + c
+    inside = lambda p: (sval(p) <= 0.0) if keep_negative else (sval(p) >= 0.0)
+    out = []
+    for i in range(len(poly)):
+        a, b = poly[i], poly[(i+1) % len(poly)]
+        ain, bin_ = inside(a), inside(b)
+        if ain:
+            out.append(a)
+        if ain != bin_:
+            sa, sb = sval(a), sval(b)
+            out.append(a + (sa/(sa - sb))*(b - a))
+    return np.array(out) if len(out) >= 3 else np.zeros((0, 2))
+
+
+def _tc_monomials(x, y, nP):
+    return np.array([x**(d-k) * y**k for d in range(nP+1) for k in range(d+1)])
+
+
+def _tc_quad(e, order):
+    """Physical quadrature points/weights on triangle e, plus the reference points."""
+    from proteus.Quadrature import GaussTriangle
+    q = GaussTriangle(order=order)
+    J = np.array([e[1]-e[0], e[2]-e[0]]).transpose()
+    dV = abs(np.linalg.det(J))
+    pts = np.array([e[0] + J.dot(np.array([qp[0], qp[1]])) for qp in q.points])
+    return np.array(q.points), pts, np.array(q.weights)*dV
+
+
+def _tc_region_moments(poly, nP, order=10):
+    """Exact integral of every monomial up to degree nP over a convex polygon."""
+    acc = np.zeros((nP+1)*(nP+2)//2)
+    for i in range(1, max(len(poly)-1, 0)):
+        _, pts, w = _tc_quad(np.array([poly[0], poly[i], poly[i+1]]), order)
+        for xy, wk in zip(pts, w):
+            acc += wk*_tc_monomials(xy[0], xy[1], nP)
+    return acc
+
+
+def _tc_gf(nP, ref_pts, e, phi):
+    """An eqp.Simplex fitted to level set phi on element e."""
+    gf = eqp.Simplex(nSpace=2, nP=nP, nQ=len(ref_pts))
+    gf.calculate(np.array(phi),
+                 np.array([[e[0,0],e[0,1],0.],[e[1,0],e[1,1],0.],[e[2,0],e[2,1],0.]]),
+                 ref_pts)
+    return gf
+
+
+def _tc_regions(e, ns, cs, nf, cf):
+    """(fluid-minus, fluid-plus, solid); ADR.h convention: phi_s>0 fluid, phi_f<0 Omega^-."""
+    tri = np.array([e[0], e[1], e[2]])
+    fluid = _tc_clip(tri, ns, cs, keep_negative=False)
+    solid = _tc_clip(tri, ns, cs, keep_negative=True)
+    fminus = _tc_clip(fluid, nf, cf, True) if len(fluid) else fluid
+    fplus = _tc_clip(fluid, nf, cf, False) if len(fluid) else fluid
+    return fminus, fplus, solid
+
+
+# a triangle genuinely cut by both level sets, so it carries all three regions
+_TC_E = np.array([[0., 0.], [0., 1.], [1., 0.]])
+_TC_NS, _TC_CS = np.array([-1., -1.]), 0.35   # phi_s = 0.35 - x - y ; solid where < 0
+_TC_NF, _TC_CF = np.array([-1., 1.]), -0.05   # phi_f = y - x - 0.05 ; Omega^- where < 0
+_TC_PHI_S = [_TC_NS.dot(_TC_E[i]) + _TC_CS for i in range(3)]
+_TC_PHI_F = [_TC_NF.dot(_TC_E[i]) + _TC_CF for i in range(3)]
+
+
+def test_triply_cut_single_eqp_is_moment_exact():
+    """Baseline, using eqp.Simplex: one fit reproduces its own region's moments."""
+    for nP in [1, 2]:
+        ref, pts, w = _tc_quad(_TC_E, 3*nP+2)
+        tri = np.array([_TC_E[0], _TC_E[1], _TC_E[2]])
+        for phi, region, use_H in [
+                (_TC_PHI_S, _tc_clip(tri, _TC_NS, _TC_CS, False), True),
+                (_TC_PHI_F, _tc_clip(tri, _TC_NF, _TC_CF, True), False)]:
+            gf = _tc_gf(nP, ref, _TC_E, phi)
+            got = np.zeros((nP+1)*(nP+2)//2)
+            for k, (xy, wk) in enumerate(zip(pts, w)):
+                gf.set_quad(k)
+                got += wk*(gf.H if use_H else gf.ImH)*_tc_monomials(xy[0], xy[1], nP)
+            assert got == approx(_tc_region_moments(region, nP), abs=1e-12)
+
+
+def test_triply_cut_product_of_eqp_is_not_moment_exact():
+    """ImH_f * H_s does NOT inherit the exactness of its factors.
+
+    This is the weight ADR.h applies to the mua-side bulk terms of a doubly-cut
+    element. Both factors are exact alone (previous test) but their product is a
+    degree-2*nP polynomial that nothing constrains. Quadrature is exact to degree
+    3*nP, so any discrepancy is the mathematics, not integration error.
+    """
+    fminus, _, _ = _tc_regions(_TC_E, _TC_NS, _TC_CS, _TC_NF, _TC_CF)
+    rel = {}
+    for nP in [1, 2]:
+        ref, pts, w = _tc_quad(_TC_E, 3*nP+2)
+        gf_s = _tc_gf(nP, ref, _TC_E, _TC_PHI_S)
+        gf_f = _tc_gf(nP, ref, _TC_E, _TC_PHI_F)
+        product = np.zeros((nP+1)*(nP+2)//2)
+        for k, (xy, wk) in enumerate(zip(pts, w)):
+            gf_s.set_quad(k); gf_f.set_quad(k)
+            product += wk*gf_f.ImH*gf_s.H*_tc_monomials(xy[0], xy[1], nP)
+        exact = _tc_region_moments(fminus, nP)
+        rel[nP] = np.abs(product - exact).max()/abs(exact[0])
+    assert min(rel.values()) > 1e-3, "product form unexpectedly accurate: %s" % rel
+
+
+def test_triply_cut_composite_moment_fit_is_exact():
+    """The proposed fix: fit ONE polynomial per intersected region.
+
+    Right-hand side built from the true three-region geometry; the Gram matrix is
+    that of the whole element, exactly as in the single-level-set construction.
+    Exactness against every p in P^nP then holds by construction. Also checks the
+    three regions partition the element.
+    """
+    for nP in [1, 2]:
+        _, pts, w = _tc_quad(_TC_E, 2*nP+2)
+        nMon = (nP+1)*(nP+2)//2
+        M = np.zeros((nMon, nMon))
+        for xy, wk in zip(pts, w):
+            m = _tc_monomials(xy[0], xy[1], nP)
+            M += wk*np.outer(m, m)
+        total = np.zeros(nMon)
+        for region in _tc_regions(_TC_E, _TC_NS, _TC_CS, _TC_NF, _TC_CF):
+            b = _tc_region_moments(region, nP)
+            assert M.dot(np.linalg.solve(M, b)) == approx(b, abs=1e-12)
+            total += b
+        whole = _tc_region_moments(np.array([_TC_E[0], _TC_E[1], _TC_E[2]]), nP)
+        assert total == approx(whole, abs=1e-12), "regions must partition the element"
+
+
+def test_triply_cut_composite_fit_survives_slivers():
+    """Slivers are the risk case; the composite fit stays exact as a region vanishes.
+
+    The Gram matrix is that of the whole element and does not depend on the cut, so
+    only the right-hand side shrinks -- which is what keeps this well posed however
+    thin the region becomes.
+    """
+    nP = 2
+    _, pts, w = _tc_quad(_TC_E, 2*nP+2)
+    nMon = (nP+1)*(nP+2)//2
+    M = np.zeros((nMon, nMon))
+    for xy, wk in zip(pts, w):
+        m = _tc_monomials(xy[0], xy[1], nP)
+        M += wk*np.outer(m, m)
+    assert np.linalg.cond(M) < 1e6
+    for cs in [0.5, 0.2, 0.05, 1.0e-2, 1.0e-4, 1.0e-8]:
+        fminus, _, _ = _tc_regions(_TC_E, np.array([-1., -1.]), cs, _TC_NF, _TC_CF)
+        b = _tc_region_moments(fminus, nP)
+        assert M.dot(np.linalg.solve(M, b)) == approx(b, abs=1e-13), "sliver cs=%g" % cs
