@@ -2,6 +2,7 @@
 An optimized Advection-Diffusion-Reaction module
 """
 import numpy as np
+import os
 from math import fabs
 import proteus
 from proteus import  cfemIntegrals, Quadrature
@@ -123,6 +124,8 @@ class Coefficients(TC_base):
                  embeddedBoundary_ghost_penalty=0.1,
                  embeddedBoundary_sdf=None,
                  embeddedBoundary_u=None,
+                 embeddedBoundary_u_inner=None,
+                 embeddedBoundary_u_outer=None,
                  immersedBoundary=False,
                  immersedBoundary_penalty=100.0,
                  immersedSCIFEM_switch=0.0,
@@ -142,6 +145,15 @@ class Coefficients(TC_base):
         self.embeddedBoundary_ghost_penalty=embeddedBoundary_ghost_penalty
         self.embeddedBoundary_sdf=embeddedBoundary_sdf
         self.embeddedBoundary_u=embeddedBoundary_u
+        # Per-phase weak-Dirichlet targets on the solid surface. On a triply-cut element the
+        # solid boundary has a water piece and an air piece, and the equivalent-polynomial
+        # quadrature is only exact against polynomials over the WHOLE element. A single
+        # pointwise u_s switches branch across Gamma_f, so it is not a polynomial and the
+        # moment fit does not apply. Each side instead gets its own branch, analytically
+        # continued over the whole element, which makes (u_side - u_s_side) identically zero
+        # for the exact solution and the Nitsche terms exact.
+        self.embeddedBoundary_u_inner=embeddedBoundary_u_inner
+        self.embeddedBoundary_u_outer=embeddedBoundary_u_outer
         if self.embeddedBoundary:
             assert(self.embeddedBoundary_sdf is not None)
             assert(self.embeddedBoundary_u is not None)
@@ -209,6 +221,18 @@ class Coefficients(TC_base):
         if self.embeddedBoundary:
             for nN in range(nodeArray.shape[0]):
                 self.embeddedBoundary_sdf_nodes[nN], dummy_normal = self.embeddedBoundary_sdf(t=0.0,x=nodeArray[nN])
+        # Nudge nodal values off the exact-zero band. equivalent_polynomials classifies any
+        # |phi| <= 1e-8 as "node sits on the interface", which sends the element down a
+        # degenerate branch where the Dirac is hard-set to zero -- silently dropping the solid
+        # Nitsche condition on the one element that most needs it (edge == +1: the fluid element
+        # whose edge IS the solid boundary). Pushing such nodes just inside the solid turns the
+        # element into an ordinary, if thin, cut cell that the normal machinery handles. The
+        # geometric change is ~1e-7, far below discretization error, and it is done once per node
+        # so neighbouring elements always agree on where the interface is.
+        _EPS_LS = 1.0e-8
+        _degenerate = np.abs(self.embeddedBoundary_sdf_nodes) <= _EPS_LS
+        if _degenerate.any():
+            self.embeddedBoundary_sdf_nodes[_degenerate] = -10.0*_EPS_LS
         self.immersedBoundary_sdf_nodes = -100*np.ones((nodeArray.shape[0],),'d')
         if self.immersedBoundary:
             for nN in range(nodeArray.shape[0]):
@@ -219,6 +243,75 @@ class Coefficients(TC_base):
         if self.immersedBoundary and self.immersedBoundary_solutionJump is not None:
             for nN in range(nodeArray.shape[0]):
                 self.immersedBoundary_solutionJump_nodes[nN] = self.immersedBoundary_solutionJump(t=0.0,x=nodeArray[nN])
+        # Triply-cut (P1 only): a masked node's raw DOF is physically undefined (u_ex isn't
+        # defined inside the solid), but gf_f's two-sided basis reads it directly regardless.
+        # Fix: substitute the analytic embeddedBoundary_u_inner/_outer value at that node's
+        # coordinates. triplyCut_maskedLocalNode/overrideValue record one masked node per
+        # element for the historical residual-only patch in ADR.h; the real fix, for one or
+        # two masked nodes, is triplyCut_globalDofOverrides, pinned via forceStrongDirichlet.
+        nElements = femSpace.mesh.elementNodesArray.shape[0]
+        self.triplyCut_maskedLocalNode = -np.ones((nElements,),'i')
+        self.triplyCut_overrideValue = np.zeros((nElements,),'d')
+        self.triplyCut_globalDofOverrides = {}
+        if (self.embeddedBoundary and self.immersedBoundary and femSpace.max_nDOF_element == 3
+                and self.embeddedBoundary_u_inner is not None
+                and self.embeddedBoundary_u_outer is not None
+                and os.environ.get('ADR_DISABLE_TC') != '1'):
+            l2g = femSpace.dofMap.l2g
+            _watch = int(os.environ['ADR_DEBUG_NODE']) if os.environ.get('ADR_DEBUG_NODE') else None
+            for eN in range(nElements):
+                local_g = l2g[eN,:3]
+                local_phi_s = self.embeddedBoundary_sdf_nodes[local_g]
+                masked = np.where(local_phi_s < 0.0)[0]
+                if _watch is not None and _watch in local_g:
+                    print(f"[DEBUG_NODE] eN={eN} local_g={local_g} phi_s={local_phi_s} "
+                          f"nMasked={len(masked)} masked_locals={masked}")
+                _allowed = (1,) if os.environ.get('ADR_TC_G1_ONLY') == '1' else (1, 2)
+                if len(masked) not in _allowed:
+                    continue  # fully solid, fully fluid, or (never for P1) all 3 masked
+                self.triplyCut_maskedLocalNode[eN] = int(masked[0])
+                for m in masked:
+                    m = int(m)
+                    gN = int(local_g[m])
+                    xN = nodeArray[gN]
+                    if self.immersedBoundary_sdf_nodes[gN] < 0.0:
+                        override = self.embeddedBoundary_u_inner(t=0.0,x=xN)
+                    else:
+                        override = self.embeddedBoundary_u_outer(t=0.0,x=xN)
+                    if m == self.triplyCut_maskedLocalNode[eN]:
+                        self.triplyCut_overrideValue[eN] = override
+                    self.triplyCut_globalDofOverrides[gN] = override
+        if os.environ.get('ADR_DEBUG_TC'):
+            _n = int((self.triplyCut_maskedLocalNode >= 0).sum())
+            print(f"[triplyCut] elements flagged: {_n} / {nElements}  "
+                  f"embeddedBoundary={self.embeddedBoundary} immersedBoundary={self.immersedBoundary} "
+                  f"max_nDOF_element={femSpace.max_nDOF_element}")
+            l2g_dbg = femSpace.dofMap.l2g
+            _genuine = []
+            for eN in range(nElements):
+                lg = l2g_dbg[eN,:3]
+                ps = self.embeddedBoundary_sdf_nodes[lg]
+                pf = self.immersedBoundary_sdf_nodes[lg]
+                if (ps < 0).any() and (ps > 0).any() and (pf < 0).any() and (pf > 0).any():
+                    _genuine.append((eN, int((ps < 0).sum()), self.triplyCut_maskedLocalNode[eN]))
+            print(f"[triplyCut] genuinely triply-cut elements (mixed phi_s AND mixed phi_f): {len(_genuine)}")
+            _pinned_global_dofs = set()
+            for eN in range(nElements):
+                m = self.triplyCut_maskedLocalNode[eN]
+                if m >= 0:
+                    _pinned_global_dofs.add(int(l2g_dbg[eN, m]))
+            for eN, nmasked, flagged in _genuine:
+                gN_dbg = l2g_dbg[eN, flagged] if flagged >= 0 else -1
+                coords_dbg = nodeArray[gN_dbg] if flagged >= 0 else None
+                print(f"  eN={eN} nMaskedNodes={nmasked} maskedLocalNode(flagged)={flagged} "
+                      f"globalNode={gN_dbg} coords={coords_dbg}")
+                if nmasked == 2:
+                    lg = l2g_dbg[eN, :3]
+                    ps = self.embeddedBoundary_sdf_nodes[lg]
+                    for _li in np.where(ps < 0)[0]:
+                        _gN = int(lg[_li])
+                        print(f"    -> G3/G4 masked local node {_li} = global dof {_gN}, "
+                              f"coords={nodeArray[_gN]}, pinned via a neighbor={_gN in _pinned_global_dofs}")
     def initializeElementQuadrature(self,t,cq):
         nd = self.nd
         for ci in range(self.nc):
@@ -232,11 +325,21 @@ class Coefficients(TC_base):
         cq['embeddedBoundary_sdf'] = 100*np.ones_like(cq[('u',0)])
         cq['embeddedBoundary_normal'] = np.ones_like(cq['x'])
         cq['embeddedBoundary_u'] = np.ones_like(cq[('u',0)])
+        cq['embeddedBoundary_u_inner'] = np.ones_like(cq[('u',0)])
+        cq['embeddedBoundary_u_outer'] = np.ones_like(cq[('u',0)])
         if self.embeddedBoundary:
             for eN in range(cq['embeddedBoundary_sdf'].shape[0]):
                 for k in range(cq['embeddedBoundary_sdf'].shape[1]):
                     cq['embeddedBoundary_sdf'][eN,k],cq['embeddedBoundary_normal'][eN,k] = self.embeddedBoundary_sdf(t=0.0,x=cq['x'][eN,k])
                     cq['embeddedBoundary_u'][eN,k] = self.embeddedBoundary_u(t=0.0,x=cq['x'][eN,k])
+                    if self.embeddedBoundary_u_inner is not None:
+                        cq['embeddedBoundary_u_inner'][eN,k] = self.embeddedBoundary_u_inner(t=0.0,x=cq['x'][eN,k])
+                    else:
+                        cq['embeddedBoundary_u_inner'][eN,k] = cq['embeddedBoundary_u'][eN,k]
+                    if self.embeddedBoundary_u_outer is not None:
+                        cq['embeddedBoundary_u_outer'][eN,k] = self.embeddedBoundary_u_outer(t=0.0,x=cq['x'][eN,k])
+                    else:
+                        cq['embeddedBoundary_u_outer'][eN,k] = cq['embeddedBoundary_u'][eN,k]
         cq['immersedBoundary_sdf'] = -100*np.ones_like(cq[('u',0)])
         cq['immersedBoundary_normal'] = -np.ones_like(cq['x'])
         cq['immersedBoundary_u'] = np.ones_like(cq[('u',0)])
@@ -678,6 +781,20 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #cek/ido todo replace python loops in modules with optimized code if possible/necessary
         self.forceStrongConditions=coefficients.forceStrongDirichlet
         self.dirichletConditionsForceDOF = DOFBoundaryConditions(self.u[0].femSpace,dofBoundaryConditionsSetterDict[0],weakDirichletConditions=False)
+        # Triply-cut: pin masked global DOFs via strong-Dirichlet, not just the residual-side
+        # ADR.h patch (which alone left the Jacobian inconsistent and broke Newton). Covers
+        # every masked node (one or two per element), deduplicated by global DOF.
+        if getattr(coefficients, 'triplyCut_globalDofOverrides', None) and self.forceStrongConditions:
+            _nForced = 0
+            for dofN, v in coefficients.triplyCut_globalDofOverrides.items():
+                if dofN in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict:
+                    continue  # already forced by an exterior boundary condition (Section 7's coincidence)
+                self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict[dofN] = (lambda x, t, _v=v: _v)
+                self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN] = self.mesh.nodeArray[dofN]
+                _nForced += 1
+            if os.environ.get('ADR_DEBUG_TC'):
+                print(f"[triplyCut] strongly pinned {_nForced} masked DOF(s) via forceStrongDirichlet "
+                      f"(of {len(coefficients.triplyCut_globalDofOverrides)} identified)")
         compKernelFlag = 0
         self.adr = cADR_base(self.nSpace_global,
                                self.nQuadraturePoints_element,
@@ -739,6 +856,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["u_dof"] = self.u[0].dof
+        argsDict["triplyCut_maskedLocalNode"] = self.coefficients.triplyCut_maskedLocalNode
+        argsDict["triplyCut_overrideValue"] = self.coefficients.triplyCut_overrideValue
         argsDict["sd_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         argsDict["sd_colind"] = self.coefficients.sdInfo[(0,0)][1]
         argsDict["q_a"] = self.q[('a',0,0)]
@@ -774,6 +893,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']
         argsDict["embeddedBoundary_normal_q"] = self.q['embeddedBoundary_normal']
         argsDict["embeddedBoundary_u_q"] = self.q['embeddedBoundary_u']
+        argsDict["embeddedBoundary_u_inner_q"] = self.q['embeddedBoundary_u_inner']
+        argsDict["embeddedBoundary_u_outer_q"] = self.q['embeddedBoundary_u_outer']
         argsDict["immersedBoundary"] = self.coefficients.immersedBoundary
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
@@ -812,10 +933,52 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 r[self.offset[0] + self.stride[0] * dofN] = self.u[0].dof[dofN] - g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
-        self.u[0].dof[:] = np.where(self.isActiveDOF == 1.0, self.u[0].dof,0.0)
+        # Inactive DOFs (isActiveDOF==0) touch only elements where H_s=D_s=D_f=0
+        # everywhere -- every bulk/Nitsche/immersed term in every such element is
+        # multiplied by one of those, so an inactive DOF's own value is never read by
+        # anything the solve actually uses. Leave it alone instead of zeroing it: a
+        # DOF that also carries an exterior Dirichlet condition (or, once masked,
+        # a forced continuation value) should keep that value, not get stomped back
+        # to 0 after this call already used it correctly to build the residual above.
         r*=self.isActiveDOF
         log("2 error = {0}".format(self.L2_error**0.5),level=3)
         log("infty error = {0}".format(self.Linfty_error),level=3)
+        if os.environ.get('ADR_DEBUG_RESID'):
+            rows = []
+            for i in range(len(self.u[0].dof)):
+                ri = r[self.offset[0] + self.stride[0]*i]
+                x = self.mesh.nodeArray[i]
+                phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
+                phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
+                rows.append((abs(ri), i, tuple(x), ri, phi_s, phi_f, self.isActiveDOF[i]))
+            rows.sort(reverse=True)
+            print(f"[RESID] top 15 |r[dof]| (nonlinear_function_evaluations="
+                  f"{self.nonlinear_function_evaluations}):")
+            for a, i, x, ri, phi_s, phi_f, act in rows[:15]:
+                print(f"  node={i} x={x} r={ri:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
+        if os.environ.get('ADR_DEBUG_DOFERR') and self.coefficients.analyticalSolution is not None:
+            ans0 = self.coefficients.analyticalSolution.get(0)
+            if ans0 is not None:
+                errs = []
+                for i in range(len(self.u[0].dof)):
+                    x = self.mesh.nodeArray[i]
+                    exact = ans0.uOfX(x)
+                    err = self.u[0].dof[i] - exact
+                    phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
+                    phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
+                    errs.append((abs(err), i, tuple(x), err, phi_s, phi_f, self.isActiveDOF[i]))
+                errs_active = [e for e in errs if e[6] == 1.0]
+                errs_active.sort(reverse=True)
+                print(f"[DOFERR] top 12 |u_dof - u_exact| among ACTIVE dofs only "
+                      f"(nonlinear_function_evaluations={self.nonlinear_function_evaluations}):")
+                for a, i, x, err, phi_s, phi_f, act in errs_active[:12]:
+                    print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
+                _watchset = set(int(v) for v in os.environ.get('ADR_DEBUG_NODESET','').split(',') if v)
+                if _watchset:
+                    print("[DOFERR] watched nodes:")
+                    for a, i, x, err, phi_s, phi_f, act in errs:
+                        if i in _watchset:
+                            print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
         log("Global residual",level=9,data=r)
         #self.coefficients.massConservationError = fabs(globalSum(sum(r.flat[:self.mesh.nElements_owned])))
         #log("   Mass Conservation Error",level=3,data=self.coefficients.massConservationError)
@@ -895,6 +1058,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']
         argsDict["embeddedBoundary_normal_q"] = self.q['embeddedBoundary_normal']
         argsDict["embeddedBoundary_u_q"] = self.q['embeddedBoundary_u']
+        argsDict["embeddedBoundary_u_inner_q"] = self.q['embeddedBoundary_u_inner']
+        argsDict["embeddedBoundary_u_outer_q"] = self.q['embeddedBoundary_u_outer']
         argsDict["immersedBoundary"] = self.coefficients.immersedBoundary
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch

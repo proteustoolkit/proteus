@@ -611,3 +611,63 @@ def test_triply_cut_composite_fit_survives_slivers():
         fminus, _, _ = _tc_regions(_TC_E, np.array([-1., -1.]), cs, _TC_NF, _TC_CF)
         b = _tc_region_moments(fminus, nP)
         assert M.dot(np.linalg.solve(M, b)) == approx(b, abs=1e-13), "sliver cs=%g" % cs
+
+
+def _tc_segment(e, n, c):
+    """The segment where the line n.x + c = 0 crosses triangle e, as (P0, P1)."""
+    pts = []
+    for i in range(3):
+        a, b = e[i], e[(i+1) % 3]
+        sa, sb = n[0]*a[0]+n[1]*a[1]+c, n[0]*b[0]+n[1]*b[1]+c
+        if sa*sb < 0:
+            t = sa/(sa-sb)
+            pts.append(a + t*(b-a))
+    return pts
+
+
+def _tc_segment_moments(P0, P1, nf, cf, keep_negative, nP):
+    """Exact monomial moments (arc-length) over the part of segment P0->P1 on one side of phi_f."""
+    s0 = nf[0]*P0[0]+nf[1]*P0[1]+cf
+    s1 = nf[0]*P1[0]+nf[1]*P1[1]+cf
+    lo, hi = 0.0, 1.0
+    if s0*s1 < 0:                       # the fluid interface cuts this segment
+        t = s0/(s0-s1)
+        inside0 = (s0 <= 0) if keep_negative else (s0 >= 0)
+        lo, hi = (0.0, t) if inside0 else (t, 1.0)
+    else:
+        inside = (s0 <= 0) if keep_negative else (s0 >= 0)
+        if not inside:
+            return np.zeros((nP+1)*(nP+2)//2)
+    L = np.linalg.norm(P1-P0)
+    from proteus.Quadrature import GaussEdge
+    q = GaussEdge(order=8)
+    acc = np.zeros((nP+1)*(nP+2)//2)
+    for pt, w in zip(q.points, q.weights):
+        t = lo + (hi-lo)*pt[0]
+        xy = P0 + t*(P1-P0)
+        acc += w*(hi-lo)*L*_tc_monomials(xy[0], xy[1], nP)
+    return acc
+
+
+def test_triply_cut_product_with_dirac_is_not_moment_exact():
+    """ImH_f * D_s does NOT give the moments of the solid surface inside the water.
+
+    The Nitsche condition on an embedded solid has to be split between the fluid regions when
+    both level sets cut the element. Weighting the Dirac fit D_s by the region fit ImH_f is the
+    same product-of-two-fits error as in the volume case (section 7.1 of the notes): D_s is exact
+    for all of Gamma_s, but nothing constrains ImH_f * D_s on the part of it lying in the water.
+    """
+    ref, pts, w = _tc_quad(_TC_E, 3*2+2)
+    P = _tc_segment(_TC_E, _TC_NS, _TC_CS)
+    assert len(P) == 2, "phi_s must cut the element"
+    rel = {}
+    for nP in [1, 2]:
+        gf_s = _tc_gf(nP, ref, _TC_E, _TC_PHI_S)
+        gf_f = _tc_gf(nP, ref, _TC_E, _TC_PHI_F)
+        prod = np.zeros((nP+1)*(nP+2)//2)
+        for k, (xy, wk) in enumerate(zip(pts, w)):
+            gf_s.set_quad(k); gf_f.set_quad(k)
+            prod += wk*gf_f.ImH*abs(gf_s.D)*_tc_monomials(xy[0], xy[1], nP)
+        exact = _tc_segment_moments(P[0], P[1], _TC_NF, _TC_CF, True, nP)
+        rel[nP] = np.abs(prod-exact).max()/abs(exact[0])
+    assert min(rel.values()) > 1e-3, "product with the Dirac was unexpectedly accurate: %s" % rel

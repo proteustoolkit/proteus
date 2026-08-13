@@ -319,6 +319,134 @@ f.write("""
       }
     }
 
+    // Areas of the two fluid sub-regions, without doing the fit. Used to spot the case where the
+    // fluid interface crosses the element but lies entirely inside the solid: the fluid is then
+    // not actually divided, and the element should be treated as ordinary two-phase (one fluid
+    // plus solid) with the standard basis rather than the two-sided IFEM reconstruction.
+    inline void fluid_region_areas(const double phi_s[3], const double phi_f[3],
+                                   double &areaA, double &areaB)
+    {
+      Poly T;
+      T.push(0.0, 0.0); T.push(1.0, 0.0); T.push(0.0, 1.0);
+      const double s0 = phi_s[0], sx = phi_s[1] - phi_s[0], sy = phi_s[2] - phi_s[0];
+      const double f0 = phi_f[0], fx = phi_f[1] - phi_f[0], fy = phi_f[2] - phi_f[0];
+      const Poly fluid = clip(T, [&](double x, double y) { return s0 + sx * x + sy * y; }, true);
+      areaA = 0.0; areaB = 0.0;
+      if (fluid.n == 0) return;
+      const Poly A = clip(fluid, [&](double x, double y) { return f0 + fx * x + fy * y; }, false);
+      const Poly B = clip(fluid, [&](double x, double y) { return f0 + fx * x + fy * y; }, true);
+      double mA[1], mB[1];
+      polygon_moments<0>(A, mA);
+      polygon_moments<0>(B, mB);
+      areaA = mA[0];
+      areaB = mB[0];
+    }
+
+    // Composite Dirac: split the solid surface between the two fluid regions.
+    //
+    // The Nitsche condition on an embedded solid integrates over Gamma_s. When the fluid
+    // interface also crosses the element, that surface has a water part and an air part, and each
+    // needs its own material coefficient and its own side of the reconstructed basis. Weighting
+    // the single-cut Dirac by a region fit (ImH_f * D_s) is the product-of-two-fits error again --
+    // measured at ~31% on the segment length, worse than the volume case.
+    //
+    // So fit one Dirac per sub-segment instead, exactly as for the volume regions: right-hand side
+    // = the monomial moments along that piece of Gamma_s, then multiply by the inverse Gram matrix.
+    //
+    //   nodes : the element's three physical vertices, (x,y) pairs. Needed only for the scale
+    //           factor below.
+    //   cDA   : Dirac fit for Gamma_s inside {phi_f < 0}  (water)
+    //   cDB   : Dirac fit for Gamma_s inside {phi_f > 0}  (air)
+    //
+    // Scale: the moments are built in reference arc length, but the assembly integrates with the
+    // physical volume measure, so each fit carries kappa = L_phys / (L_ref * |J|). The map is
+    // affine and the segment straight, so kappa is a single constant.
+    template <int nP>
+    inline bool dirac_weights(const double phi_s[3], const double phi_f[3], const double nodes[6],
+                              double *cDA, double *cDB)
+    {
+      const int nDOF = ((nP + 1) * (nP + 2)) / 2;
+      // endpoints of {phi_s = 0} on the reference triangle
+      const double V[3][2] = {{0., 0.}, {1., 0.}, {0., 1.}};
+      double Q[2][2];
+      int nq = 0;
+      for (int e = 0; e < 3 && nq < 2; ++e)
+      {
+        const int a = e, b = (e + 1) % 3;
+        const double sa = phi_s[a], sb = phi_s[b];
+        if (sa * sb < 0.0)
+        {
+          const double t = sa / (sa - sb);
+          Q[nq][0] = V[a][0] + t * (V[b][0] - V[a][0]);
+          Q[nq][1] = V[a][1] + t * (V[b][1] - V[a][1]);
+          ++nq;
+        }
+      }
+      if (nq != 2) return false;
+
+      const double Lref = std::sqrt((Q[1][0] - Q[0][0]) * (Q[1][0] - Q[0][0]) +
+                                    (Q[1][1] - Q[0][1]) * (Q[1][1] - Q[0][1]));
+      if (Lref <= 0.0) return false;
+      // affine map reference -> physical
+      const double J00 = nodes[2] - nodes[0], J01 = nodes[4] - nodes[0];
+      const double J10 = nodes[3] - nodes[1], J11 = nodes[5] - nodes[1];
+      const double detJ = std::fabs(J00 * J11 - J01 * J10);
+      if (detJ <= 0.0) return false;
+      const double dx = J00 * (Q[1][0] - Q[0][0]) + J01 * (Q[1][1] - Q[0][1]);
+      const double dy = J10 * (Q[1][0] - Q[0][0]) + J11 * (Q[1][1] - Q[0][1]);
+      const double Lphys = std::sqrt(dx * dx + dy * dy);
+      const double kappa = Lphys / (Lref * detJ);
+
+      // where does the fluid interface cut this segment?
+      const double f0 = phi_f[0], fx = phi_f[1] - phi_f[0], fy = phi_f[2] - phi_f[0];
+      const double g0 = f0 + fx * Q[0][0] + fy * Q[0][1];
+      const double g1 = f0 + fx * Q[1][0] + fy * Q[1][1];
+      double loA = 0.0, hiA = 1.0, loB = 0.0, hiB = 1.0;
+      bool hasA = true, hasB = true;
+      if (g0 * g1 < 0.0)
+      {
+        const double t = g0 / (g0 - g1);
+        if (g0 <= 0.0) { loA = 0.0; hiA = t; loB = t; hiB = 1.0; }
+        else           { loB = 0.0; hiB = t; loA = t; hiA = 1.0; }
+      }
+      else
+      {
+        if (g0 <= 0.0) hasB = false; else hasA = false;
+      }
+
+      const double *gp = gl_nodes(), *gw = gl_weights();
+      double bA[((nP + 1) * (nP + 2)) / 2], bB[((nP + 1) * (nP + 2)) / 2], m[((nP + 1) * (nP + 2)) / 2];
+      for (int i = 0; i < nDOF; ++i) { bA[i] = 0.0; bB[i] = 0.0; }
+      for (int side = 0; side < 2; ++side)
+      {
+        if (side == 0 && !hasA) continue;
+        if (side == 1 && !hasB) continue;
+        const double lo = (side == 0) ? loA : loB;
+        const double hi = (side == 0) ? hiA : hiB;
+        double *b = (side == 0) ? bA : bB;
+        for (int q = 0; q < 6; ++q)
+        {
+          const double t = lo + (hi - lo) * gp[q];
+          const double w = gw[q] * (hi - lo) * Lref * kappa;
+          monomials<nP>(Q[0][0] + t * (Q[1][0] - Q[0][0]),
+                        Q[0][1] + t * (Q[1][1] - Q[0][1]), m);
+          for (int i = 0; i < nDOF; ++i) b[i] += w * m[i];
+        }
+      }
+      double Ainv[(((nP + 1) * (nP + 2)) / 2) * (((nP + 1) * (nP + 2)) / 2)];
+      _set_Ainv<2, nP>(Ainv);
+      for (int i = 0; i < nDOF; ++i)
+      {
+        cDA[i] = 0.0; cDB[i] = 0.0;
+        for (int j = 0; j < nDOF; ++j)
+        {
+          cDA[i] += Ainv[i * nDOF + j] * bA[j];
+          cDB[i] += Ainv[i * nDOF + j] * bB[j];
+        }
+      }
+      return true;
+    }
+
     // Composite weights for an element cut by both level sets.
     //
     //   phi_s, phi_f : level set values at the triangle's three vertices. Convention as in ADR.h:

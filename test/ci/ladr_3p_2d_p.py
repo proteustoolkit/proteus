@@ -55,8 +55,16 @@ opts = Context.Options([
         "The default is non-aligned because that is the weaker-covered path; run the aligned\n"
         "configuration too."),
     ("forceStrongDirichlet", True, "apply the exterior Dirichlet BC strongly (diagnostic knob)"),
+    ("debugExactInit", False,
+        "diagnostic only: seed the Newton initial guess with the nodal interpolant of the\n"
+        "exact solution. Since Newton converges in one step for this linear problem, the\n"
+        "residual reported as 'Newton it 0' is then exactly R(u_exact) -- the consistency\n"
+        "residual of the scheme, decoupled from whatever the linear solve converges to."),
     ("mua", 1.0, "diffusion in Omega- (water)"),
     ("mub", 5.0, "diffusion in Omega+ (air)"),
+    ("solidShape", "circle", "shape of the embedded solid: circle or square. A square has a\n        straight boundary, which a linear level set represents exactly; a circle is\n        approximated by a chord in every cut element."),
+    ("solidSlope", -1.0, "slope of the straight solid boundary when solidShape is 'line'"),
+    ("solidOffset", 0.1, "intercept of the straight solid boundary when solidShape is 'line'"),
     ("solidRadius", 0.3, "radius of the embedded (solid) circular object"),
     ("solidCenterY", 1.0/3.0, "y-coordinate of the solid object's center. The solid sits at "
                               "(0, solidCenterY), so setting this equal to interfaceOffset puts its "
@@ -200,7 +208,7 @@ else:
     assert False, "Unknown test %s" % opts.test
 
 analyticalSolution = {0:ans}
-initialConditions = None
+initialConditions = {0: ans} if opts.debugExactInit else None
 
 def a(x):
     # Piecewise-constant diffusion across the free surface. The value inside the solid is
@@ -230,7 +238,40 @@ def immersedBoundary_sdf(x,t):
     """
     return interface_d(x), interface_normal
 
-def solidBoundary_sdf(x,t):
+def solidBoundary_sdf_line(x,t):
+    """Half-plane solid bounded by one straight line: y = solidSlope*x + solidOffset.
+
+    The cleanest possible 3-phase geometry. Both level sets are straight, so the linear
+    interpolant the code builds from nodal values represents each of them *exactly* -- no
+    curvature error, and no corners either (unlike the square). The two lines cross at a single
+    point, so exactly one element in the mesh is triply cut. Any error that survives here is
+    scheme error, with geometry ruled out by construction.
+
+    Solid is below the line (sdf < 0), fluid above (sdf > 0), matching ADR.h's convention.
+    """
+    L = math.sqrt(1.0 + opts.solidSlope**2)
+    sdf = (x[1] - opts.solidSlope*x[0] - opts.solidOffset)/L
+    n = (-opts.solidSlope/L, 1.0/L, 0.0)
+    return sdf, n
+
+def solidBoundary_sdf_square(x,t):
+    """Axis-aligned square solid, half-width solidRadius, centred on solidCenter.
+
+    Its boundary is straight, so the linear level set the code builds from nodal values
+    represents it *exactly* -- unlike a circle, whose boundary is replaced by a chord in every
+    cut element. Useful for separating scheme error from geometry error.
+    """
+    dx = x[0] - solidCenter[0]
+    dy = x[1] - solidCenter[1]
+    if abs(dx) >= abs(dy):
+        sdf = abs(dx) - opts.solidRadius
+        n = (1.0 if dx > 0.0 else -1.0, 0.0, 0.0)
+    else:
+        sdf = abs(dy) - opts.solidRadius
+        n = (0.0, 1.0 if dy > 0.0 else -1.0, 0.0)
+    return sdf, n
+
+def solidBoundary_sdf_circle(x,t):
     """Fluid-solid boundary (gf_s): the circular floating object.
 
     Sign convention: in ADR.h the active-fluid mask H_s is the Heaviside of this level set,
@@ -250,12 +291,24 @@ def solidBoundary_sdf(x,t):
     sdf = r - opts.solidRadius
     return sdf,n
 
+solidBoundary_sdf = {"square": solidBoundary_sdf_square,
+                     "line":   solidBoundary_sdf_line}.get(opts.solidShape, solidBoundary_sdf_circle)
+
 def immersedBoundary_u(x,t):
     return ans.uOfX(x)
 
 def embeddedBoundary_u(x,t):
     # Manufactured weak-Dirichlet target on the solid surface.
     return ans.uOfX(x)
+
+def embeddedBoundary_u_inner(x,t):
+    # Water-branch target, evaluated by its own formula everywhere (analytic continuation),
+    # not just where the water actually is. See the note in ADR.Coefficients.
+    return ans.uOfX_inner(x)
+
+def embeddedBoundary_u_outer(x,t):
+    # Air-branch target, likewise continued over the whole element.
+    return ans.uOfX_outer(x)
 
 
 coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd,
@@ -268,6 +321,8 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 embeddedBoundary_ghost_penalty=opts.embeddedGhostPenalty,
                                 embeddedBoundary_sdf=solidBoundary_sdf,
                                 embeddedBoundary_u=embeddedBoundary_u,
+                                embeddedBoundary_u_inner=embeddedBoundary_u_inner,
+                                embeddedBoundary_u_outer=embeddedBoundary_u_outer,
                                 immersedBoundary=True,
                                 immersedBoundary_sdf=immersedBoundary_sdf,
                                 immersedBoundary_u=immersedBoundary_u,
