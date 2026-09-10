@@ -30,7 +30,14 @@ three-phase-status.md); it is numbered `test=1.0` here now that it lives in its 
 #\brief Three-phase (fluid/fluid/solid) linear ADR at equilibrium in 2D.
 
 opts = Context.Options([
-    ("test", 1.0, "which test to run (default is 1.0)"),
+    ("test", 1.0, "which test to run (default is 1.0):\n"
+        "  1.0 = piecewise-linear exactness check, Dirichlet condition on Gamma_s\n"
+        "  2.0 = trig MMS rate check, Dirichlet condition on Gamma_s\n"
+        "  3.0 = same geometry and exact solution as 1.0, but with a Robin (convective)\n"
+        "        condition on Gamma_s instead of Dirichlet -- phase-dependent convective\n"
+        "        coefficients (robin_h_water on the mua side, robin_h_air on the mub side)\n"
+        "        meeting exactly at the Gamma_f/Gamma_s triple point. Best run with\n"
+        "        solidShape='line' for a single, clean triply-cut element."),
     ("unstructured", False, "use unstructured mesh (default is structured)"),
     ("skew", 0.0001, "skew the domain when using unstructured mesh"),
     ("refinement", 0, "number of times to refine the mesh (default is 0)"),
@@ -70,7 +77,14 @@ opts = Context.Options([
                               "(0, solidCenterY), so setting this equal to interfaceOffset puts its "
                               "centre on the interface and makes it straddle."),
     ("embeddedPenalty", 100.0, "Nitsche Dirichlet penalty on the embedded (solid) boundary"),
-    ("embeddedGhostPenalty", 0.1, "ghost penalty coefficient on cutfem (solid) cut edges")
+    ("embeddedGhostPenalty", 0.1, "ghost penalty coefficient on cutfem (solid) cut edges"),
+    ("robin_h_water", 600.0, "test=3.0 only: convective heat-transfer coefficient on the water\n"
+        "        (mua) side of Gamma_s, W/(m^2 K) -- natural convection in water\n"
+        "        (Incropera & DeWitt, Fundamentals of Heat and Mass Transfer, Table 1.1)."),
+    ("robin_h_air", 15.0, "test=3.0 only: convective heat-transfer coefficient on the air\n"
+        "        (mub) side of Gamma_s, W/(m^2 K) -- natural convection in air, same source.\n"
+        "        Water convects roughly 40x more effectively than air, so this pair is a real\n"
+        "        physical contrast, not an arbitrary choice of test data.")
 ])
 
 name = opts.name
@@ -112,7 +126,7 @@ def interface_d(x):
 
 def interface_t(x):
     """Coordinate along the interface."""
-    return (x[0] + _m*x[1])/_L
+    return (x[0] + _m*(x[1] - _c))/_L
 
 # unit normal, = grad(interface_d), pointing from Omega^- into Omega^+
 interface_normal = (-_m/_L, 1.0/_L, 0.0)
@@ -156,25 +170,41 @@ class TrigMMS(AnalyticalSolutions.SteadyState):
     therefore lies in the P1 space, which makes it an exactness check but useless for
     reading a rate).
 
-    Let g(x,y) = sin(pi x) sin(pi y) and put
+    Let g(x,y) = sin(pi*interface_d(x)) * cos(pi*interface_t(x)) and put
 
         u = g / beta      on each side, i.e. u^- = g/mua, u^+ = g/mub
 
-    Interface conditions at y = 0 are both homogeneous, by construction:
+    (d, t), not (x, y), because the fluid-fluid interface is the general line
+    y = interfaceSlope*x + interfaceOffset (diagonal by default -- see the geometry
+    comment above), not the coordinate axis y = 0. g must vanish on Gamma_f *however it
+    is oriented*, and sin(pi*d) does that unconditionally, since d = 0 is the definition
+    of Gamma_f -- sin(pi x)*sin(pi y) would only have done so by coincidence, for the
+    special case of an axis-aligned interface. cos(pi*t) supplies genuine variation
+    *along* the interface, so the test isn't secretly constant in that direction. Interface
+    conditions on Gamma_f are both homogeneous, by construction:
 
-      * [u] = 0 because g(x,0) = sin(pi x) sin(0) = 0, so both branches vanish there;
-      * [beta du/dn] = 0 because beta * d(u)/dy = dg/dy on *either* side, the beta
-        cancelling exactly.
+      * [u] = 0 because g = 0 wherever d = 0, i.e. on Gamma_f itself, so both branches
+        agree there, for any slope/offset;
+      * [beta du/dn] = 0 because beta*grad(u) = grad(g) on *either* side, the beta
+        cancelling exactly -- and since (d, t) is an orthonormal rotation of (x, y)
+        (|grad d| = |grad t| = 1, grad d . grad t = 0), du/dn along Gamma_f's own normal
+        is exactly du/dd, with no extra scaling to account for.
 
-    The solution still has a genuine gradient kink at y = 0 (du^-/dy = g_y/mua vs
-    du^+/dy = g_y/mub), so the two-sided IFEM basis is genuinely exercised -- same
-    structure as test=8.0 in ladr_ss_2d_p.py, but with a flat interface.
+    The solution still has a genuine gradient kink at Gamma_f (du^-/dn = g_d/mua vs
+    du^+/dn = g_d/mub), so the two-sided IFEM basis is genuinely exercised -- same
+    structure as test=8.0 in ladr_ss_2d_p.py, but generalized to a possibly-diagonal
+    interface.
 
     The source is the same expression on both sides: with beta constant per phase,
-    beta grad u = grad g, so -div(beta grad u) = -laplacian(g) = 2 pi^2 g.
+    beta grad u = grad g, so -div(beta grad u) = -laplacian(g). Because (d, t) is an
+    orthonormal rotation of (x, y), the Laplacian keeps the same form in either
+    coordinate pair (d_dd + d_tt = d_xx + d_yy), so -laplacian(g) = 2 pi^2 g exactly as
+    it would if g were written directly in x, y.
 
-    On the outer boundary of [-1,1]^2 every side has sin(pi * (+-1)) = 0, so u vanishes
-    identically there and the exterior Dirichlet data is homogeneous.
+    Unlike the axis-aligned special case, g is generally *not* zero on the outer boundary
+    of [-1,1]^2 -- d and t at the domain edges are not simply +-1 once the interface is
+    diagonal, so the exterior Dirichlet data g is a genuine, nonzero function of position,
+    not homogeneous.
     """
     def __init__(self, betaMinus=1.0, betaPlus=5.0):
         self.betaMinus = betaMinus
@@ -204,6 +234,13 @@ if opts.test == 1.0:
     ans = FloatingObjectExample(betaMinus=mua, betaPlus=mub)
 elif opts.test == 2.0:
     ans = TrigMMS(betaMinus=mua, betaPlus=mub)
+elif opts.test == 3.0:
+    # Same exact solution as test=1.0 -- only Gamma_s's condition type changes, from
+    # Dirichlet to Robin. Reusing it isolates "did the Robin implementation break
+    # anything" from "is this a new, untested manufactured solution": the bulk PDE,
+    # Gamma_f conditions, and mesh are all identical to a case already known to reproduce
+    # to machine precision.
+    ans = FloatingObjectExample(betaMinus=mua, betaPlus=mub)
 else:
     assert False, "Unknown test %s" % opts.test
 
@@ -223,8 +260,44 @@ def f(x):
     # both cases (see the analytical-solution docstrings).
     if opts.test == 2.0:
         return 2.0*math.pi**2*ans._g(x)
-    # test 1.0: u is linear in each phase, so -div(beta grad u) = 0 off the interface.
+    # test 1.0 and 3.0: u is linear in each phase, so -div(beta grad u) = 0 off the
+    # interface. Gamma_s's condition type (Dirichlet vs Robin) never enters the bulk PDE.
     return 0.0
+
+# --- test=3.0: Robin (convective) condition on Gamma_s -----------------------------------
+# Physical law:  mu * du/dn = -h * (u - u_infinity)  on Gamma_s, n the fluid's own outward
+# normal (out of the fluid, into the solid). Since test=3.0 reuses test=1.0's exact solution
+# u unchanged, u_infinity is not free data -- it is BACK-SOLVED from the law so that this
+# particular u satisfies it exactly:
+#
+#     u_infinity = u + (mu * du/dn) / h
+#
+# This is the standard method-of-manufactured-solutions move for a mixed/Robin boundary: h
+# is the genuine physical parameter (see robin_h_water/robin_h_air above), u_infinity is
+# whatever ambient value makes the chosen u consistent with it. u is linear in each phase
+# here, so du/dn is a a constant vector per phase and u_infinity ends up an affine function
+# of position along Gamma_s -- not a single far-field number, but that is normal for a
+# manufactured Robin target and does not make it less physical: only the material
+# parameters (mua, mub, h_water, h_air) are the modeling choices; u_infinity is derived.
+_grad_ua = (-interface_normal[0], -interface_normal[1])           # grad(-interface_d)
+_grad_ub = (_grad_ua[0]*mua/mub, _grad_ua[1]*mua/mub)              # u_b = u_a * mua/mub
+
+def _fluid_outward_normal_on_Gs(x):
+    """The fluid's own outward normal on Gamma_s: points OUT of the fluid, INTO the solid.
+    solidBoundary_sdf's own normal points the other way (out of the solid, into the fluid --
+    see its docstring), so flip it. Works for any solidShape, not just 'line'."""
+    _, n = solidBoundary_sdf(x, 0.0)
+    return (-n[0], -n[1])
+
+def embeddedBoundary_robin_uInf_inner(x, t):
+    nx, ny = _fluid_outward_normal_on_Gs(x)
+    flux = mua*(_grad_ua[0]*nx + _grad_ua[1]*ny)   # mua * du_a/dn
+    return ans.uOfX_inner(x) + flux/opts.robin_h_water
+
+def embeddedBoundary_robin_uInf_outer(x, t):
+    nx, ny = _fluid_outward_normal_on_Gs(x)
+    flux = mub*(_grad_ub[0]*nx + _grad_ub[1]*ny)   # mub * du_b/dn
+    return ans.uOfX_outer(x) + flux/opts.robin_h_air
 
 aOfX = {0:a}; fOfX = {0:f}
 
@@ -298,7 +371,12 @@ def immersedBoundary_u(x,t):
     return ans.uOfX(x)
 
 def embeddedBoundary_u(x,t):
-    # Manufactured weak-Dirichlet target on the solid surface.
+    # Manufactured weak-Dirichlet target on the solid surface. Always the true exact
+    # solution, test=3.0 included: embeddedBoundary_u_inner/_outer below are also read
+    # directly (by name) to pin masked triply-cut DOFs to the true solution, a mechanism
+    # unrelated to Gamma_s's boundary condition type -- see the note in ADR.Coefficients.
+    # test=3.0's Robin target is carried on its own, separate embeddedBoundary_robin_uInfinity*
+    # fields instead of overloading this one.
     return ans.uOfX(x)
 
 def embeddedBoundary_u_inner(x,t):
@@ -323,6 +401,11 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 embeddedBoundary_u=embeddedBoundary_u,
                                 embeddedBoundary_u_inner=embeddedBoundary_u_inner,
                                 embeddedBoundary_u_outer=embeddedBoundary_u_outer,
+                                embeddedBoundary_robin=(opts.test == 3.0),
+                                embeddedBoundary_robin_h_inner=opts.robin_h_water,
+                                embeddedBoundary_robin_h_outer=opts.robin_h_air,
+                                embeddedBoundary_robin_uInfinity_inner=embeddedBoundary_robin_uInf_inner,
+                                embeddedBoundary_robin_uInfinity_outer=embeddedBoundary_robin_uInf_outer,
                                 immersedBoundary=True,
                                 immersedBoundary_sdf=immersedBoundary_sdf,
                                 immersedBoundary_u=immersedBoundary_u,

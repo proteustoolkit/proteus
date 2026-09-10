@@ -126,6 +126,12 @@ class Coefficients(TC_base):
                  embeddedBoundary_u=None,
                  embeddedBoundary_u_inner=None,
                  embeddedBoundary_u_outer=None,
+                 embeddedBoundary_robin=False,
+                 embeddedBoundary_robin_h=1.0,
+                 embeddedBoundary_robin_h_inner=None,
+                 embeddedBoundary_robin_h_outer=None,
+                 embeddedBoundary_robin_uInfinity_inner=None,
+                 embeddedBoundary_robin_uInfinity_outer=None,
                  immersedBoundary=False,
                  immersedBoundary_penalty=100.0,
                  immersedSCIFEM_switch=0.0,
@@ -154,6 +160,40 @@ class Coefficients(TC_base):
         # for the exact solution and the Nitsche terms exact.
         self.embeddedBoundary_u_inner=embeddedBoundary_u_inner
         self.embeddedBoundary_u_outer=embeddedBoundary_u_outer
+        # Robin (convective) alternative to the Nitsche-Dirichlet boundary above: instead of
+        # weakly enforcing u = embeddedBoundary_u, impose the natural law
+        #   mu * du/dn = -h * (u - u_infinity)      on Gamma_s,
+        # where n is the fluid's own outward normal (into the solid). This is already a
+        # natural boundary condition -- nothing is being constrained -- so unlike Dirichlet it
+        # needs no consistency/symmetry/penalty construction, only a single reaction-like term
+        # (see updateEmbeddedBoundaryRobinTerms in ADR.h).
+        #
+        # u_infinity gets its OWN fields (embeddedBoundary_robin_uInfinity*), deliberately not
+        # reusing embeddedBoundary_u/_u_inner/_u_outer: those are also read directly, by name,
+        # in initializeSDF below to pin a masked triply-cut node's raw DOF to the TRUE exact
+        # solution there -- a mechanism with nothing to do with Gamma_s's boundary condition
+        # type. Reusing them for u_infinity would silently repoint that unrelated pinning at
+        # the wrong value whenever Robin is on.
+        #
+        # h itself is taken as a phase constant (the physically standard treatment of a
+        # convective coefficient), not a spatially varying field: embeddedBoundary_robin_h_inner
+        # is used on the mua (water) side and _h_outer on the mub (air) side, selected the same
+        # way mua/mub themselves are (D_s_a/D_s_b on a triply-cut element, icase_f's sign
+        # elsewhere); both default to the single embeddedBoundary_robin_h if not given.
+        # embeddedBoundary_robin_uInfinity_inner/_outer are selected the same way, but (unlike
+        # h) have no single-field fallback -- see the note just above __init__'s assignment.
+        self.embeddedBoundary_robin=embeddedBoundary_robin
+        self.embeddedBoundary_robin_h=embeddedBoundary_robin_h
+        self.embeddedBoundary_robin_h_inner = (embeddedBoundary_robin_h_inner
+            if embeddedBoundary_robin_h_inner is not None else embeddedBoundary_robin_h)
+        self.embeddedBoundary_robin_h_outer = (embeddedBoundary_robin_h_outer
+            if embeddedBoundary_robin_h_outer is not None else embeddedBoundary_robin_h)
+        # No single "generic" uInfinity: unlike embeddedBoundary_u (whose masked-DOF role
+        # forces a value everywhere), a Robin target is only ever consumed per-phase -- via
+        # D_s_a/D_s_b on a triply-cut element, via icase_f's sign otherwise -- exactly like
+        # h_inner/h_outer above, so there is nothing for a combined field to do.
+        self.embeddedBoundary_robin_uInfinity_inner = embeddedBoundary_robin_uInfinity_inner
+        self.embeddedBoundary_robin_uInfinity_outer = embeddedBoundary_robin_uInfinity_outer
         if self.embeddedBoundary:
             assert(self.embeddedBoundary_sdf is not None)
             assert(self.embeddedBoundary_u is not None)
@@ -327,6 +367,8 @@ class Coefficients(TC_base):
         cq['embeddedBoundary_u'] = np.ones_like(cq[('u',0)])
         cq['embeddedBoundary_u_inner'] = np.ones_like(cq[('u',0)])
         cq['embeddedBoundary_u_outer'] = np.ones_like(cq[('u',0)])
+        cq['embeddedBoundary_robin_uInfinity_inner'] = np.ones_like(cq[('u',0)])
+        cq['embeddedBoundary_robin_uInfinity_outer'] = np.ones_like(cq[('u',0)])
         if self.embeddedBoundary:
             for eN in range(cq['embeddedBoundary_sdf'].shape[0]):
                 for k in range(cq['embeddedBoundary_sdf'].shape[1]):
@@ -340,6 +382,13 @@ class Coefficients(TC_base):
                         cq['embeddedBoundary_u_outer'][eN,k] = self.embeddedBoundary_u_outer(t=0.0,x=cq['x'][eN,k])
                     else:
                         cq['embeddedBoundary_u_outer'][eN,k] = cq['embeddedBoundary_u'][eN,k]
+                    if self.embeddedBoundary_robin:
+                        if self.embeddedBoundary_robin_uInfinity_inner is not None:
+                            cq['embeddedBoundary_robin_uInfinity_inner'][eN,k] = \
+                                self.embeddedBoundary_robin_uInfinity_inner(t=0.0,x=cq['x'][eN,k])
+                        if self.embeddedBoundary_robin_uInfinity_outer is not None:
+                            cq['embeddedBoundary_robin_uInfinity_outer'][eN,k] = \
+                                self.embeddedBoundary_robin_uInfinity_outer(t=0.0,x=cq['x'][eN,k])
         cq['immersedBoundary_sdf'] = -100*np.ones_like(cq[('u',0)])
         cq['immersedBoundary_normal'] = -np.ones_like(cq['x'])
         cq['immersedBoundary_u'] = np.ones_like(cq[('u',0)])
@@ -895,6 +944,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary_u_q"] = self.q['embeddedBoundary_u']
         argsDict["embeddedBoundary_u_inner_q"] = self.q['embeddedBoundary_u_inner']
         argsDict["embeddedBoundary_u_outer_q"] = self.q['embeddedBoundary_u_outer']
+        argsDict["embeddedBoundary_robin"] = self.coefficients.embeddedBoundary_robin
+        argsDict["embeddedBoundary_robin_h_inner"] = self.coefficients.embeddedBoundary_robin_h_inner
+        argsDict["embeddedBoundary_robin_h_outer"] = self.coefficients.embeddedBoundary_robin_h_outer
+        argsDict["embeddedBoundary_robin_uInfinity_inner_q"] = self.q['embeddedBoundary_robin_uInfinity_inner']
+        argsDict["embeddedBoundary_robin_uInfinity_outer_q"] = self.q['embeddedBoundary_robin_uInfinity_outer']
         argsDict["immersedBoundary"] = self.coefficients.immersedBoundary
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
@@ -1060,6 +1114,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary_u_q"] = self.q['embeddedBoundary_u']
         argsDict["embeddedBoundary_u_inner_q"] = self.q['embeddedBoundary_u_inner']
         argsDict["embeddedBoundary_u_outer_q"] = self.q['embeddedBoundary_u_outer']
+        argsDict["embeddedBoundary_robin"] = self.coefficients.embeddedBoundary_robin
+        argsDict["embeddedBoundary_robin_h_inner"] = self.coefficients.embeddedBoundary_robin_h_inner
+        argsDict["embeddedBoundary_robin_h_outer"] = self.coefficients.embeddedBoundary_robin_h_outer
+        argsDict["embeddedBoundary_robin_uInfinity_inner_q"] = self.q['embeddedBoundary_robin_uInfinity_inner']
+        argsDict["embeddedBoundary_robin_uInfinity_outer_q"] = self.q['embeddedBoundary_robin_uInfinity_outer']
         argsDict["immersedBoundary"] = self.coefficients.immersedBoundary
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch

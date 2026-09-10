@@ -348,6 +348,23 @@ namespace proteus
 			dr += D_s * a * embeddedBoundary_penalty;
 		}
 
+		inline void updateEmbeddedBoundaryRobinTerms(const double h_coeff,
+													const double u_infinity,
+													const double u,
+													double &r,
+													double &dr,
+													const double D_s)
+		{
+			// Robin/convective condition  a * du/dn = -h * (u - u_infinity)  on Gamma_s (n the
+			// fluid's own outward normal, into the solid): substitute this physical law directly
+			// for the natural boundary term -int a du/dn v ds that integration by parts leaves
+			// behind. Unlike updateEmbeddedBoundaryTerms above, a Robin law is already a natural
+			// condition -- nothing is being enforced weakly -- so it needs no consistency,
+			// symmetry, or penalty construction, only this one reaction-like term.
+			r += D_s * h_coeff * (u - u_infinity);
+			dr += D_s * h_coeff;
+		}
+
 		inline void updateImmersedBoundaryTerms(const double immersedBoundary_penalty,
 												const double dV,
 												double *immersedBoundary_normal,
@@ -479,6 +496,11 @@ namespace proteus
 											 proteus::pyarray<double> &embeddedBoundary_u_q,
 											 proteus::pyarray<double> &embeddedBoundary_u_inner_q,
 											 proteus::pyarray<double> &embeddedBoundary_u_outer_q,
+											 const bool embeddedBoundary_robin,
+											 const double embeddedBoundary_robin_h_inner,
+											 const double embeddedBoundary_robin_h_outer,
+											 proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_inner_q,
+											 proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_outer_q,
 											 const bool immersedBoundary,
 											 const double immersedBoundary_penalty,
 											 proteus::pyarray<double> &immersedBoundary_sdf_q,
@@ -772,24 +794,58 @@ namespace proteus
 						// neither. Handing `u` to the penalty makes (u - u_s) nonzero even when the discrete
 						// solution is exactly right, and the O(100/h) penalty amplifies that.
 
-						double ga[nSpace], gb[nSpace];
-						for (int I = 0; I < nSpace; I++)
+						if (embeddedBoundary_robin)
 						{
-							ga[I] = grad_ua[I] + grad_uja[I];
-							gb[I] = grad_ub[I] + grad_ujb[I];
+							// Robin needs no jump-corrected gradient (no flux term of its own),
+							// but the jump-corrected VALUE still matters: u_infinity was derived
+							// from the exact ua/ub, not from ua+uja's jump-free counterpart.
+							// Deliberately NOT embeddedBoundary_u_inner_q/_outer_q -- those are
+							// also read directly (in ADR.py's initializeSDF) to pin masked
+							// triply-cut DOFs to the true solution, unrelated to Gamma_s's BC
+							// type; reusing them here would silently repoint that pinning too.
+							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_inner,
+								embeddedBoundary_robin_uInfinity_inner_q.data()[eN_k], ua + uja, r_s_a, dr_s_a, D_s_a);
+							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_outer,
+								embeddedBoundary_robin_uInfinity_outer_q.data()[eN_k], ub + ujb, r_s_b, dr_s_b, D_s_b);
 						}
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							embeddedBoundary_u_inner_q.data()[eN_k], ua + uja, ga, mua,
-							r_s_a, dr_s_a, ham_s_a, dham_s_a, f_s_a, df_s_a, D_s_a);
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							embeddedBoundary_u_outer_q.data()[eN_k], ub + ujb, gb, mub,
-							r_s_b, dr_s_b, ham_s_b, dham_s_b, f_s_b, df_s_b, D_s_b);
+						else
+						{
+							double ga[nSpace], gb[nSpace];
+							for (int I = 0; I < nSpace; I++)
+							{
+								ga[I] = grad_ua[I] + grad_uja[I];
+								gb[I] = grad_ub[I] + grad_ujb[I];
+							}
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								embeddedBoundary_u_inner_q.data()[eN_k], ua + uja, ga, mua,
+								r_s_a, dr_s_a, ham_s_a, dham_s_a, f_s_a, df_s_a, D_s_a);
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								embeddedBoundary_u_outer_q.data()[eN_k], ub + ujb, gb, mub,
+								r_s_b, dr_s_b, ham_s_b, dham_s_b, f_s_b, df_s_b, D_s_b);
+						}
 					}
 					else
 					{
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							u_s_dem, u, grad_u, a[0],
-							r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+						// icase_f != 0: this element is wholly on one side of Gamma_f (icase_f < 0
+						// water/mua, icase_f > 0 air/mub -- the same sign convention as demoted_f
+						// and mu_dem above), so a single scalar h and a single per-phase target
+						// apply throughout -- NOT u_s_dem, which (like embeddedBoundary_u_inner_q
+						// above) carries the true Dirichlet solution, not the Robin target.
+						if (embeddedBoundary_robin)
+						{
+							const double h_here = (icase_f < 0) ? embeddedBoundary_robin_h_inner
+								                                 : embeddedBoundary_robin_h_outer;
+							const double u_inf_here = (icase_f < 0)
+								? embeddedBoundary_robin_uInfinity_inner_q.data()[eN_k]
+								: embeddedBoundary_robin_uInfinity_outer_q.data()[eN_k];
+							updateEmbeddedBoundaryRobinTerms(h_here, u_inf_here, u, r_s, dr_s, D_s);
+						}
+						else
+						{
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								u_s_dem, u, grad_u, a[0],
+								r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+						}
 					}
 				}
 				const double ImH_f = gf_f.ImH(0., 0.);
@@ -1116,6 +1172,11 @@ namespace proteus
 			proteus::pyarray<double> &embeddedBoundary_u_q = args.array<double>("embeddedBoundary_u_q");
 			proteus::pyarray<double> &embeddedBoundary_u_inner_q = args.array<double>("embeddedBoundary_u_inner_q");
 			proteus::pyarray<double> &embeddedBoundary_u_outer_q = args.array<double>("embeddedBoundary_u_outer_q");
+			const bool embeddedBoundary_robin = args.scalar<int>("embeddedBoundary_robin");
+			const double embeddedBoundary_robin_h_inner = args.scalar<double>("embeddedBoundary_robin_h_inner");
+			const double embeddedBoundary_robin_h_outer = args.scalar<double>("embeddedBoundary_robin_h_outer");
+			proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_inner_q = args.array<double>("embeddedBoundary_robin_uInfinity_inner_q");
+			proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_outer_q = args.array<double>("embeddedBoundary_robin_uInfinity_outer_q");
 			const bool immersedBoundary = args.scalar<int>("immersedBoundary");
 			const double immersedBoundary_penalty = args.scalar<double>("immersedBoundary_penalty");
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
@@ -1255,9 +1316,20 @@ namespace proteus
 					// imposing them along a buried stretch of Gamma_f is harmless) and keeps the space
 					// conforming. What we DO fix is the weights: the empty region must get exactly zero
 					// rather than whatever a fit over an empty region would produce.
-					if (areaB == 0.0 && areaA > 0.0)
+					//
+					// Tolerance, not exact equality: a genuine tangency between Gamma_f and Gamma_s
+					// (their zero-sets crossing exactly on a shared mesh edge) makes one region's true
+					// area a single point, but floating-point roundoff in the clip almost never lands
+					// on bit-exact 0.0 -- it lands a few ULPs away (observed: ~1e-33 against a
+					// reference-triangle scale of 0.5). An exact-equality check misses that case
+					// entirely and falls through to fitting a degree-4 polynomial to a numerically
+					// degenerate sliver, which is unstable (observed: off by 64x on its own area).
+					// areaTol is far above that roundoff floor and far below any physically meaningful
+					// sub-area, so it can't misclassify a genuinely small-but-real fluid region.
+					const double areaTol = 1.0e-9;
+					if (areaB <= areaTol && areaA > areaTol)
 						demoted_f = -1;   // fluid is all Omega^- (mua side)
-					else if (areaA == 0.0 && areaB > 0.0)
+					else if (areaA <= areaTol && areaB > areaTol)
 						demoted_f = 1;    // fluid is all Omega^+ (mub side)
 					else
 					{
@@ -1408,6 +1480,11 @@ namespace proteus
 										 embeddedBoundary_u_q,
 										 embeddedBoundary_u_inner_q,
 										 embeddedBoundary_u_outer_q,
+										 embeddedBoundary_robin,
+										 embeddedBoundary_robin_h_inner,
+										 embeddedBoundary_robin_h_outer,
+										 embeddedBoundary_robin_uInfinity_inner_q,
+										 embeddedBoundary_robin_uInfinity_outer_q,
 										 immersedBoundary,
 										 immersedBoundary_penalty,
 										 immersedBoundary_sdf_q,
@@ -1442,7 +1519,14 @@ namespace proteus
 				// Masked root-adjacent edges leak boundary flux H_s doesn't remove (ordinary
 				// hat functions vanish there; two-sided branches don't). Add it back for all 3
 				// local dofs. ADR_DISABLE_TC_EDGE=1 disables (residual+Jacobian).
+				// icase_s == -1 means this element has NO fluid anywhere (H_s == 0 identically) --
+				// Gamma_f may still cross it geometrically, but with zero real fluid area there is
+				// no bulk contribution to correct and no physically-meaningful va/vb reconstruction
+				// to add back. Without this check TC_EDGE still fires there (icase_f==0 alone
+				// doesn't rule it out), injecting a real, nonzero correction from a "dead" element
+				// into whichever physical dofs it shares with genuinely active neighbors.
 				if (embeddedBoundary && immersedBoundary && nDOF_trial_element == 3 && icase_f == 0
+					&& icase_s != -1
 					&& std::getenv("ADR_DISABLE_TC_EDGE") == nullptr)
 				{
 					bool neg[3] = {element_phi_f[0] < 0.0, element_phi_f[1] < 0.0, element_phi_f[2] < 0.0};
@@ -2238,6 +2322,11 @@ namespace proteus
 											 proteus::pyarray<double> &embeddedBoundary_u_q,
 											 proteus::pyarray<double> &embeddedBoundary_u_inner_q,
 											 proteus::pyarray<double> &embeddedBoundary_u_outer_q,
+											 const bool embeddedBoundary_robin,
+											 const double embeddedBoundary_robin_h_inner,
+											 const double embeddedBoundary_robin_h_outer,
+											 proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_inner_q,
+											 proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_outer_q,
 											 const bool immersedBoundary,
 											 const double immersedBoundary_penalty,
 											 proteus::pyarray<double> &immersedBoundary_sdf_q,
@@ -2479,18 +2568,40 @@ namespace proteus
 						// The prescribed jump is a constant offset with zero derivative, so it is
 						// residual-only and does not appear here.
 
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							embeddedBoundary_u_inner_q.data()[eN_k], ua, grad_ua, mua,
-							r_s_a, dr_s_a, ham_s_a, dham_s_a, f_s_a, df_s_a, D_s_a);
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							embeddedBoundary_u_outer_q.data()[eN_k], ub, grad_ub, mub,
-							r_s_b, dr_s_b, ham_s_b, dham_s_b, f_s_b, df_s_b, D_s_b);
+						if (embeddedBoundary_robin)
+						{
+							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_inner,
+								embeddedBoundary_robin_uInfinity_inner_q.data()[eN_k], ua, r_s_a, dr_s_a, D_s_a);
+							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_outer,
+								embeddedBoundary_robin_uInfinity_outer_q.data()[eN_k], ub, r_s_b, dr_s_b, D_s_b);
+						}
+						else
+						{
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								embeddedBoundary_u_inner_q.data()[eN_k], ua, grad_ua, mua,
+								r_s_a, dr_s_a, ham_s_a, dham_s_a, f_s_a, df_s_a, D_s_a);
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								embeddedBoundary_u_outer_q.data()[eN_k], ub, grad_ub, mub,
+								r_s_b, dr_s_b, ham_s_b, dham_s_b, f_s_b, df_s_b, D_s_b);
+						}
 					}
 					else
 					{
-						updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-							u_s_dem, u, grad_u, a[0],
-							r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+						if (embeddedBoundary_robin)
+						{
+							const double h_here = (icase_f < 0) ? embeddedBoundary_robin_h_inner
+								                                 : embeddedBoundary_robin_h_outer;
+							const double u_inf_here = (icase_f < 0)
+								? embeddedBoundary_robin_uInfinity_inner_q.data()[eN_k]
+								: embeddedBoundary_robin_uInfinity_outer_q.data()[eN_k];
+							updateEmbeddedBoundaryRobinTerms(h_here, u_inf_here, u, r_s, dr_s, D_s);
+						}
+						else
+						{
+							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+								u_s_dem, u, grad_u, a[0],
+								r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+						}
 					}
 				}
 				const double ImH_f = gf_f.ImH(0., 0.);
@@ -2740,6 +2851,11 @@ namespace proteus
 			proteus::pyarray<double> &embeddedBoundary_u_q = args.array<double>("embeddedBoundary_u_q");
 			proteus::pyarray<double> &embeddedBoundary_u_inner_q = args.array<double>("embeddedBoundary_u_inner_q");
 			proteus::pyarray<double> &embeddedBoundary_u_outer_q = args.array<double>("embeddedBoundary_u_outer_q");
+			const bool embeddedBoundary_robin = args.scalar<int>("embeddedBoundary_robin");
+			const double embeddedBoundary_robin_h_inner = args.scalar<double>("embeddedBoundary_robin_h_inner");
+			const double embeddedBoundary_robin_h_outer = args.scalar<double>("embeddedBoundary_robin_h_outer");
+			proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_inner_q = args.array<double>("embeddedBoundary_robin_uInfinity_inner_q");
+			proteus::pyarray<double> &embeddedBoundary_robin_uInfinity_outer_q = args.array<double>("embeddedBoundary_robin_uInfinity_outer_q");
 			const bool immersedBoundary = args.scalar<int>("immersedBoundary");
 			const double immersedBoundary_penalty = args.scalar<double>("immersedBoundary_penalty");
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
@@ -2845,9 +2961,20 @@ namespace proteus
 					// imposing them along a buried stretch of Gamma_f is harmless) and keeps the space
 					// conforming. What we DO fix is the weights: the empty region must get exactly zero
 					// rather than whatever a fit over an empty region would produce.
-					if (areaB == 0.0 && areaA > 0.0)
+					//
+					// Tolerance, not exact equality: a genuine tangency between Gamma_f and Gamma_s
+					// (their zero-sets crossing exactly on a shared mesh edge) makes one region's true
+					// area a single point, but floating-point roundoff in the clip almost never lands
+					// on bit-exact 0.0 -- it lands a few ULPs away (observed: ~1e-33 against a
+					// reference-triangle scale of 0.5). An exact-equality check misses that case
+					// entirely and falls through to fitting a degree-4 polynomial to a numerically
+					// degenerate sliver, which is unstable (observed: off by 64x on its own area).
+					// areaTol is far above that roundoff floor and far below any physically meaningful
+					// sub-area, so it can't misclassify a genuinely small-but-real fluid region.
+					const double areaTol = 1.0e-9;
+					if (areaB <= areaTol && areaA > areaTol)
 						demoted_f = -1;   // fluid is all Omega^- (mua side)
-					else if (areaA == 0.0 && areaB > 0.0)
+					else if (areaA <= areaTol && areaB > areaTol)
 						demoted_f = 1;    // fluid is all Omega^+ (mub side)
 					else
 					{
@@ -2919,6 +3046,11 @@ namespace proteus
 										 embeddedBoundary_u_q,
 										 embeddedBoundary_u_inner_q,
 										 embeddedBoundary_u_outer_q,
+										 embeddedBoundary_robin,
+										 embeddedBoundary_robin_h_inner,
+										 embeddedBoundary_robin_h_outer,
+										 embeddedBoundary_robin_uInfinity_inner_q,
+										 embeddedBoundary_robin_uInfinity_outer_q,
 										 immersedBoundary,
 										 immersedBoundary_penalty,
 										 immersedBoundary_sdf_q,
@@ -2945,8 +3077,10 @@ namespace proteus
 					} // j
 				} // i
 				// Jacobian of the correction above: exact 3x3 block, linear in u_dof through
-				// the flux only. Must match the residual side's ADR_DISABLE_TC_EDGE gate.
+				// the flux only. Must match the residual side's ADR_DISABLE_TC_EDGE gate,
+				// including the icase_s != -1 check (see the residual side for why).
 				if (embeddedBoundary && immersedBoundary && nDOF_trial_element == 3 && icase_f == 0
+					&& icase_s != -1
 					&& std::getenv("ADR_DISABLE_TC_EDGE") == nullptr)
 				{
 					bool neg[3] = {element_phi_f[0] < 0.0, element_phi_f[1] < 0.0, element_phi_f[2] < 0.0};
