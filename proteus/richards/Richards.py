@@ -508,6 +508,15 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         if self.density_model is None:
             return
         self.densityModel = modelList[self.density_model]
+        # preStep copies the transport model's q_rho/ebqe_rho straight into this
+        # model's quadrature arrays, and the kernels index them by
+        # eN*nQuadraturePoints_element+k, so both models must be on one
+        # quadrature rule.  The copy would raise a bare numpy broadcast error on
+        # a size mismatch and say nothing at all if the two rules merely order
+        # their points differently, so check the rules themselves here.
+        from proteus.mprans.TADR import checkCoupledQuadrature
+        checkCoupledQuadrature(self.model, 'Richards',
+                               self.densityModel, 'density (transport) model')
 
     def preStep(self, t, firstStep=False):
         # every step of the implicit FCT starts with the Galerkin predictor
@@ -1478,6 +1487,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.fctCorrectionApplied = True
 
     def FCTStep(self):
+        # at function top: a local `import os` further down would otherwise make `os`
+        # local to the whole scope and UnboundLocalError the conservation log below
+        import os
         if self.coefficients.FCT_TYPE == 'implicit':
             return self.ImplicitFCTStep()
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
@@ -1532,6 +1544,39 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.ghostScatter(self.Rpos, self.Rneg)
             argsDict["fct_pass"] = 2            # -> limited_solution, fluxCorrection
             self.richards.FCTStep(argsDict)
+        # CONSERVATION.  sum_i ML_i*(mLim_i - mLow_i) = sum_ij alpha_ij F_ij, which cancels
+        # pairwise iff F_ij = -F_ji.  The weak-Dirichlet block is unsymmetric (IIPG has no
+        # transpose term), so with it folded into TransportMatrix the boundary edges do NOT
+        # cancel and the limiter creates mass; RICHARDS_FCT_BND_DIFF keeps it out of F
+        # entirely, leaving only the symmetric d^G, and this should drop to round-off.
+        # Rank-local, so ghosts pollute it: read it off a serial run.
+        if os.environ.get("RICHARDS_FCT_DBG"):
+            _d = float(np.sum(self.ML * (limited_solution - self.mLow)))
+            _m = float(np.sum(self.ML * self.mLow))
+            logEvent("[FCT-CONS] sum ML*(mLim-mLow) = %+.6e  rel = %+.3e  (rank-local)"
+                     % (_d, _d / max(1.0e-30, abs(_m))), level=1)
+            # CLIPPING.  L_ij = min(Rpos_i, Rneg_j), so R_i = min(Rpos_i,Rneg_i) < 1 means
+            # row i had its antidiffusive flux cut back.  Zalesak's bounds come from the
+            # neighbours of mLow, so at a SMOOTH EXTREMUM every neighbour lies below the
+            # centre value, Q ~ 0, R ~ 0, and the flux is killed exactly where the solution
+            # is smooth -- the classical reason FCT drops to first order there.  Reported
+            # split by height so the boundary layer (where 95% of the Tracy error lives)
+            # can be separated from the bulk.
+            _R = np.minimum(self.Rpos, self.Rneg)
+            _za = self.mesh.nodeArray
+            if _za is not None and _za.shape[0] >= _R.shape[0]:
+                _z = _za[:_R.shape[0], 1]
+                _top = _z > float(os.environ.get("RICHARDS_FCT_ZCUT", "9.5"))
+                _bulk = ~_top
+                def _st(mask):
+                    if not np.any(mask):
+                        return "n=0"
+                    r = _R[mask]
+                    return ("n=%d clipped(R<0.99)=%.1f%% killed(R<0.01)=%.1f%% meanR=%.4f"
+                            % (r.size, 100.0 * np.mean(r < 0.99),
+                               100.0 * np.mean(r < 0.01), r.mean()))
+                logEvent("[FCT-CLIP] top   %s" % _st(_top), level=1)
+                logEvent("[FCT-CLIP] bulk  %s" % _st(_bulk), level=1)
         old_dof = self.u[0].dof.copy()
         self.invert(u=limited_solution, ulow=old_dof)
         #self.invert(u=limited_solution, ulow=self.u[0].dof) ##Original::
@@ -1551,7 +1596,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         use_newton_invert = (self.coefficients.FCT == 1 and self.coefficients.nd > 1)
         # RICHARDS_FCT_DU_MAX overrides the cap (use a huge value to disable it)
         # so the veto can be tested without editing the source.
-        import os
         DU_INF_MAX = float(os.environ.get("RICHARDS_FCT_DU_MAX",
                                           1.0 if use_newton_invert else np.inf))
         # The veto has to be ONE decision for the whole domain: taken rank-locally
@@ -1852,6 +1896,30 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.edgeFluxLow = np.zeros(Cx.shape, 'd')
             self.limitedFluxMatrix = np.zeros(Cx.shape, 'd')
             self.limitedSpatialFluxMatrix = np.zeros(Cx.shape, 'd')
+        # Boundary (weak-Dirichlet) block of the transport operator, kept OUT of
+        # TransportMatrix/TransportMatrixConsistent so the edge loop can give it its own
+        # symmetric graph viscosity d^G_ij = max(0, TB_ij, TB_ji) instead of pushing it
+        # through the interior fmax() clip.  d^G needs the transposed entry, so build the
+        # ij -> ji permutation of the CSR once here.  Structurally symmetric pattern, and
+        # colind is ascending within a row, so keys row*N+col are globally sorted and the
+        # transpose index is one searchsorted.
+        self.TransportBoundary = np.zeros(Cx.shape, 'd')
+        if getattr(self, 'csrTransposeIndices', None) is None or \
+           len(self.csrTransposeIndices) != len(colind):
+            N = np.int64(nFree)
+            rows = np.repeat(np.arange(nFree, dtype=np.int64), np.diff(rowptr))
+            cols = colind.astype(np.int64)
+            keys = rows * N + cols
+            self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype('i')
+            # a structurally symmetric pattern round-trips; if it does not, fall back to
+            # the diagonal-free form max(0, TB_ij) rather than indexing out of the array
+            t = self.csrTransposeIndices
+            ok = (t.min() >= 0 and t.max() < len(colind) and
+                  np.array_equal(rows[t], cols) and np.array_equal(cols[t], rows))
+            if not ok:
+                logEvent("Richards: CSR pattern is not structurally symmetric; "
+                         "boundary graph viscosity falls back to max(0,TB_ij)", level=1)
+                self.csrTransposeIndices = np.arange(len(colind), dtype='i')
         # PARALLEL (one-time): freeDOFMaterialTypes is built in __init__ from the
         # FIRST incident element in LOCAL element numbering, so on a node sitting
         # on a soil interface two ranks can pick different rocks.  mat_j selects
@@ -2062,6 +2130,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["dt_times_fH_minus_fL"] = self.dt_times_dC_minus_dL
         argsDict["min_m_bc"] = self.min_m_bc
         argsDict["max_m_bc"] = self.max_m_bc
+        argsDict["TransportBoundary"] = self.TransportBoundary
+        argsDict["csrTransposeIndices"] = self.csrTransposeIndices
+        # Step B alters the residual, so it is only sound when the FCT limiter is present to
+        # antidiffuse d^G back; with FCT off it is pure extra boundary diffusion.  Gating it
+        # here also keeps an FCT=False run byte-identical to the pre-Step-B code.
+        argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT))
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
         # throws on a missing key.  fct_pass=0 keeps that in-kernel call single

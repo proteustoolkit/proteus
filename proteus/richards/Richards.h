@@ -1,8 +1,11 @@
 #ifndef Richards_H
 #define Richards_H
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <valarray>
+#include <vector>
 #include "CompKernel.h"
 #include "ModelFactory.h"
 #include "../pskRelations.h"
@@ -25,6 +28,31 @@ enum class STABILIZATION : int {
 
 namespace richards
 {
+//A/B switch for the weak-Dirichlet boundary block that feeds the HIGH order FCT flux fH.
+//1 (default) -> fH's boundary block uses a_ext = rho*k_rw*Ks, matching the cell loop's `a`,
+//               so it cancels against fL's boundary block (as_ext scaled by the nodal
+//               upwind k_rw) in fA = fH - fL, exactly as the interior blocks do.
+//0           -> the old behaviour: fH's boundary block uses as_ext = rho*Ks, leaving a
+//               residue in fA of order 1/k_rw times the interior antidiffusion.
+//Read once; only TransportMatrixConsistent depends on it, so FCT=False is unaffected either way.
+inline bool richards_env_on(const char *name)
+{
+  const char *e = std::getenv(name);
+  return (e == nullptr) || (std::strcmp(e, "0") != 0);
+}
+static const bool RICHARDS_FCT_BND_KRW = richards_env_on("RICHARDS_FCT_BND_KRW");
+//Step B: keep the weak-Dirichlet block in its own matrix TB and give it a SYMMETRIC graph
+//viscosity d^G_ij = max(0, TB_ij, TB_ji) in fL only, instead of folding it into
+//TransportMatrix where the interior fmax(0,-T_ij) clip mangles it.  Then
+//  fH_ij = -TB_ij dPhi,  fL_ij = (-TB_ij + d^G_ij) dPhi,  fA_ij = -d^G_ij dPhi
+//so the boundary block cancels out of fA: the antidiffusive flux has the SAME algebraic
+//form on boundary and interior rows, it is antisymmetric (d^G symmetric, dPhi
+//antisymmetric) so the limited correction conserves mass, and TB+D has non-negative
+//off-diagonals with zero row sums, so the low order boundary operator is an M-matrix.
+//RICHARDS_FCT_BND_DIFF=0 restores the old routing (TB folded into TransportMatrix).
+static const bool RICHARDS_FCT_BND_DIFF  = richards_env_on("RICHARDS_FCT_BND_DIFF");
+static const bool RICHARDS_FCT_BND_RESET = richards_env_on("RICHARDS_FCT_BND_RESET");
+
 //cek todo: revisit entry for mass transport form
 // Power entropy //
 inline double ENTROPY(const double &phi, const double &phiL, const double &phiR)
@@ -73,6 +101,26 @@ public:
   // Reused by invert() so the m -> u inversion uses the same variable density
   // that built the forward mass.
   std::vector<double> rho_dof_member;
+  // Scratch arrays sized by the GLOBAL DOF count, held as members and resized
+  // in place rather than declared as stack VLAs inside the kernels.
+  //
+  // They used to be `double psi[numDOFs], ...` etc.  numDOFs is global, so on a
+  // refined mesh those are megabytes of automatic storage: at numDOFs = 361501
+  // (Elder 1201x301) the four in calculateResidual_entropy_viscosity are
+  // 4 x 361501 x 8 = 11.6 MB against a default `ulimit -s` of 8 MB, and the
+  // function segfaulted on its very first call with no other symptom.  The
+  // cliff sits at 8 MB/(4 x 8 B) = 262144 DOFs -- below it everything works and
+  // nothing is ever noticed, which is why it only bites after a refinement, and
+  // why a case can run under a scheduler (which usually raises or unlimits the
+  // stack) yet crash on a workstation with identical code.
+  //
+  // resize() only reallocates when the size grows, so after the first call this
+  // costs nothing; the explicit zeroing at each use site is kept because eta and
+  // global_entropy_residual are written only under EV_Stab, and a reused buffer
+  // would otherwise hand the next call the previous one's values.
+  std::vector<double> psi_member, eta_member, global_entropy_residual_member,
+                      boundary_integral_member, cflux_member,
+                      Rpos_member, Rneg_member;
   // Pore size distribution / relative permeability model selected from Python
   // (Coefficients.PSK_type). 0 = van Genuchten-Mualem (default), 1 = Brooks-
   // Corey-Burdine, 2 = Brooks-Corey-Mualem, 3 = Gardner, 4 = Hornung-Messing.
@@ -340,14 +388,23 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     }
   }
 
-  void exteriorNumericalFluxJacobian2(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian)
+  //cfluxJacobian is the SAME IIPG consistency term as fluxJacobian but built from the
+  //relative-permeability-weighted conductivity K = rho*k_rw*Ks instead of the saturated
+  //Ks.  It feeds TransportMatrixConsistent, i.e. the HIGH order flux fH, exactly the way
+  //the cell loop feeds it from `a` while TransportMatrix gets `as`.  Without the split the
+  //boundary block enters fH with weight 1 and enters fL multiplied by the nodal upwind
+  //k_rw, so it does not cancel in fA = fH - fL and leaves a spurious antidiffusive flux
+  //~1/k_rw times the interior one at every weakly imposed Dirichlet row.
+  void exteriorNumericalFluxJacobian2(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian, double &cfluxJacobian)
   {
     if (isDOFBoundary) {
       fluxJacobian = 0.0;
       bfluxJacobian = 0.0;
+      cfluxJacobian = 0.0;
       for (int I = 0; I < nSpace; I++) {
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { 
-          fluxJacobian -= Ks[m] * grad_v[colind[m]] * n[I]; 
+        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) {
+          fluxJacobian -= Ks[m] * grad_v[colind[m]] * n[I];
+          cfluxJacobian -= K[m] * grad_v[colind[m]] * n[I];
         }
       }
       //Dirichlet penalty
@@ -355,6 +412,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     } else {
       fluxJacobian = 0.0;
       bfluxJacobian = 0.0;
+      cfluxJacobian = 0.0;
     }
   }
 
@@ -1268,7 +1326,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &max_m_bc                  = args.array<double>("max_m_bc");
     int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
     int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
-    double               Rpos[numDOFs], Rneg[numDOFs];
+    //Heap-backed members, not stack VLAs -- see the declarations in the class body.
+    Rpos_member.assign(numDOFs, 0.0);
+    Rneg_member.assign(numDOFs, 0.0);
+    std::vector<double> &Rpos = Rpos_member;
+    std::vector<double> &Rneg = Rneg_member;
     int                  ij = 0;
 
     //////////////////////////////////////////////////////
@@ -1504,6 +1566,16 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &dt_times_fH_minus_fL = args.array<double>("dt_times_fH_minus_fL");
     proteus::pyarray<double> &min_m_bc             = args.array<double>("min_m_bc");
     proteus::pyarray<double> &max_m_bc             = args.array<double>("max_m_bc");
+    //weak-Dirichlet block of the transport operator + the ij -> ji permutation of the CSR,
+    //both used only when RICHARDS_FCT_BND_DIFF is on.  See the flag's comment above.
+    proteus::pyarray<double> &TransportBoundary    = args.array<double>("TransportBoundary");
+    proteus::pyarray<int>    &csrTransposeIndices  = args.array<int>("csrTransposeIndices");
+    //Step B changes the RESIDUAL, so it must only be active when the limiter is there to
+    //antidiffuse d^G back.  With FCT on it is a win (Tracy ref_3: L2 0.967 -> 0.718 and the
+    //limiter becomes exactly conservative); with FCT off it is pure added boundary diffusion
+    //(Stab_2 1.404 -> 1.839).  Python passes coefficients.FCT here; the env var can still
+    //force it off for an A/B but can never turn it on for an FCT=False run.
+    const bool useBndDiff = (args.scalar<int>("FCT_BND_DIFF") != 0) && RICHARDS_FCT_BND_DIFF;
     // AUX QUANTITIES OF INTEREST
     proteus::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     proteus::pyarray<double> &mn        = args.array<double>("mn");
@@ -1565,7 +1637,17 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       TransportMatrixConsistent[i]  = 0.;
       TransportMatrixn[i]           = 0.;
       TransportMatrixConsistentn[i] = 0.;
+      TransportBoundary.data()[i]   = 0.;
     }
+    //min/max_m_bc are only ever fmin/fmax'd into below, so without this they would be the
+    //widest window ever seen rather than this step's: a time dependent Dirichlet or a
+    //moving seepage active set would keep loosening the FCT bound and never tighten it.
+    //RICHARDS_FCT_BND_RESET=0 restores the old accumulate-forever behaviour.
+    if (RICHARDS_FCT_BND_RESET)
+      for (int i = 0; i < numDOFs; i++) {
+        min_m_bc.data()[i] =  1.0e10;
+        max_m_bc.data()[i] = -1.0e10;
+      }
 
     // Project quadrature density to nodal DOFs before constructing nodal
     // stabilization potentials so Phi uses a true nodal density field.
@@ -1598,7 +1680,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     rho_dof_member = rho_dof;
 
     // compute entropy and init global_entropy_residual and boundary_integral
-    double psi[numDOFs], eta[numDOFs], global_entropy_residual[numDOFs], boundary_integral[numDOFs];
+    //Heap-backed members, not stack VLAs -- see the declarations in the class body.
+    psi_member.assign(numDOFs, 0.0);
+    eta_member.assign(numDOFs, 0.0);
+    global_entropy_residual_member.assign(numDOFs, 0.0);
+    boundary_integral_member.assign(numDOFs, 0.0);
+    std::vector<double> &psi                     = psi_member;
+    std::vector<double> &eta                     = eta_member;
+    std::vector<double> &global_entropy_residual = global_entropy_residual_member;
+    std::vector<double> &boundary_integral       = boundary_integral_member;
     for (int i = 0; i < numDOFs; i++) {
       // NODAL ENTROPY //
       if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) //EV stab
@@ -1817,11 +1907,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double u_ext = 0.0, un_ext, grad_u_ext[nSpace], m_ext = 0.0, dm_ext = 0.0, f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz], as_ext[nnz], 
         mn_ext = 0.0, dmn_ext = 0.0, fn_ext[nSpace], dfn_ext[nSpace], an_ext[nnz], dan_ext[nnz], asn_ext[nnz], flux_ext = 0.0, bflux_ext = 0.0,
                //anb_seepage_flux=0.0, // for flux calculation
-          bc_u_ext = 0.0, bc_grad_u_ext[nSpace], bc_m_ext = 0.0, bc_dm_ext = 0.0, bc_f_ext[nSpace], bc_df_ext[nSpace], bc_a_ext[nnz], bc_da_ext[nnz], bc_as_ext[nnz], jac_ext[nSpace * nSpace], jacDet_ext, jacInv_ext[nSpace * nSpace], boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt, dS, u_test_dS[nDOF_test_element], u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_ext, y_ext, z_ext, xt_ext, yt_ext, zt_ext, integralScaling, G[nSpace * nSpace], G_dd_G, tr_G, fluxJacobian_u_u[nDOF_trial_element], bfluxJacobian_u_u[nDOF_trial_element], fluxJacobian_un_un[nDOF_trial_element];
+          bc_u_ext = 0.0, bc_grad_u_ext[nSpace], bc_m_ext = 0.0, bc_dm_ext = 0.0, bc_f_ext[nSpace], bc_df_ext[nSpace], bc_a_ext[nnz], bc_da_ext[nnz], bc_as_ext[nnz], jac_ext[nSpace * nSpace], jacDet_ext, jacInv_ext[nSpace * nSpace], boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt, dS, u_test_dS[nDOF_test_element], u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_ext, y_ext, z_ext, xt_ext, yt_ext, zt_ext, integralScaling, G[nSpace * nSpace], G_dd_G, tr_G, fluxJacobian_u_u[nDOF_trial_element], bfluxJacobian_u_u[nDOF_trial_element], fluxJacobian_un_un[nDOF_trial_element], cfluxJacobian_u_u[nDOF_trial_element];
         for (int j = 0; j < nDOF_trial_element; j++) {
-          fluxJacobian_u_u[j] = 0.0; bfluxJacobian_u_u[j] = 0.0; fluxJacobian_un_un[j] = 0.0;
+          fluxJacobian_u_u[j] = 0.0; bfluxJacobian_u_u[j] = 0.0; fluxJacobian_un_un[j] = 0.0; cfluxJacobian_u_u[j] = 0.0;
         }
-        //
+        //\
         //calculate the solution and gradients at quadrature points
         //
         //compute information about mapping from reference element to physical element
@@ -1954,7 +2044,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           } else {
             exteriorNumericalFluxJacobian2(a_rowptr.data(), a_colind.data(), isDOFBoundary_u.data()[ebNE_kb], normal, as_ext, a_ext, da_ext, grad_u_ext, &u_grad_trial_trace[j * nSpace], df_ext, u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + j],
                                         ebqe_penalty_ext.data()[ebNE_kb], //penalty,
-                                        fluxJacobian_u_u[j],bfluxJacobian_u_u[j]);
+                                        fluxJacobian_u_u[j],bfluxJacobian_u_u[j],cfluxJacobian_u_u[j]);
           }
           //probably need isDOFBoundary_un here
           //exteriorNumericalFluxJacobian(a_rowptr.data(), a_colind.data(), isDOFBoundary_u.data()[ebNE_kb], normal, asn_ext, dan_ext, grad_u_ext, &u_grad_trial_trace[j * nSpace], dfn_ext, u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + j],
@@ -1972,10 +2062,21 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
             } else {
               globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += bfluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrix[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrixConsistent[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrixn[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_un_un[j] * u_test_dS[i];
-              TransportMatrixConsistentn[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_un_un[j] * u_test_dS[i];
+              const int ij_eb = csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j];
+              if (useBndDiff) {
+                //Step B: park the boundary block in TB. TransportMatrix/Consistent stay pure
+                //interior, so they keep the symmetry and zero row sums the edge loop relies on.
+                TransportBoundary.data()[ij_eb] += cfluxJacobian_u_u[j] * u_test_dS[i];
+              } else {
+                TransportMatrix[ij_eb] += fluxJacobian_u_u[j] * u_test_dS[i];
+                //k_rw-weighted: this array is read ONLY by fH in the edge loop below, so this
+                //line cannot change the residual, the Jacobian or the FCT=False solution.
+                //RICHARDS_FCT_BND_KRW=0 restores the old Ks-based boundary block for an A/B.
+                TransportMatrixConsistent[ij_eb] +=
+                  (RICHARDS_FCT_BND_KRW ? cfluxJacobian_u_u[j] : fluxJacobian_u_u[j]) * u_test_dS[i];
+              }
+              TransportMatrixn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
+              TransportMatrixConsistentn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
             }
           } //j
         } //i
@@ -1991,7 +2092,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     /////////////////////////////////////////////////////////////////
     // NOTE: see NCLS.h for a different but equivalent implementation of this.
     int ij = 0;
-    double cflux[numDOFs];
+    //Heap-backed member, not a stack VLA -- see the declarations in the class body.
+    cflux_member.assign(numDOFs, 0.0);
+    std::vector<double> &cflux = cflux_member;
     for (int i = 0; i < numDOFs; i++) {
       double gi[nSpace], Cij[nSpace], xi[nSpace], etaMaxi, etaMini;
       double solni = u_free_dof_old[i];
@@ -2186,6 +2289,24 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           ith_flux_term += fL;
           fA -= fL;
           fA_CN -= fL_CN;
+        }
+        if (useBndDiff) {
+          //Weak-Dirichlet block, kept out of the fmax() clip above.  TB is unsymmetric
+          //(IIPG has no transpose term), so the viscosity has to be symmetrised explicitly
+          //-- max(0,TB_ij) alone would give d_ij != d_ji and break f^A_ij = -f^A_ji.
+          const double TB_ij = TransportBoundary.data()[ij];
+          const double TB_ji = TransportBoundary.data()[csrTransposeIndices.data()[ij]];
+          const double dG    = (i == j) ? 0.0 : fmax(0.0, fmax(TB_ij, TB_ji));
+          const double fH_b  = -Theta * TB_ij * delta_phi;   //high order: consistent term
+          const double fL_b  = fH_b + Theta * dG * delta_phi; //low order: + graph viscosity
+          ith_consistent_flux_term += fH_b;
+          ith_flux_term           += fL_b;
+          fA                      += fH_b - fL_b;            // = -Theta*dG*delta_phi
+          if (i != j) {
+            //the low order boundary operator is what the residual and hence Newton sees
+            globalJacobian.data()[ij] -= Theta * (-TB_ij + dG);
+            J_ii                      -= Theta * (TB_ij - dG);
+          }
         }
         dt_times_fH_minus_fL.data()[ij] = dt * fA;
         //dt_times_fH_minus_fL.data()[ij] = dt * fA_CN;

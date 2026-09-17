@@ -2,6 +2,7 @@
 """
 An optimized Advection-Diffusion-Reaction  transport module
 """
+import os
 import numpy as np
 from proteus import cfemIntegrals, Quadrature, Norms, Comm, TimeIntegration
 from proteus.NonlinearSolvers import NonlinearEquation
@@ -9,7 +10,7 @@ from proteus.FemTools import (DOFBoundaryConditions,
                               FluxBoundaryConditions,
                               C0_AffineLinearOnSimplexWithNodalBasis)
 
-from proteus.Comm import globalMax
+from proteus.Comm import globalMax, globalSum
 from proteus.Profiling import (memory, logEvent)
 from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
@@ -281,6 +282,52 @@ class CompatibleBackwardEuler(TimeIntegration.BackwardEuler):
         self.t = self.tLast + self.dt
 
 
+
+def checkCoupledQuadrature(modelA, nameA, modelB, nameB):
+    """Verify two coupled models share a mesh and one quadrature rule.
+
+    Coupled fields (velocity, water content, density) are passed between
+    models as bare quadrature arrays indexed by eN*nQuadraturePoints_element+k,
+    so both sides must agree on the quadrature or the receiving kernel reads
+    the wrong entries -- or past the end of the array.
+
+    nQuadraturePoints_element is NOT a shared setting: OneLevelTransport builds
+    it per model in Quadrature.buildUnion over that model's own integral keys,
+    plus any ('stab',..)/('numDiff',..) rules and the Lobatto points that
+    massLumping/reactionLumping inject.  Two models handed the identical
+    elementQuadrature object can therefore still end up with different point
+    counts, and unions of equal size can order their points differently, which
+    scrambles the coupled fields within each element without changing a shape.
+    So compare the reference points themselves, not just their count.
+
+    Called from attachModels on both sides of the Richards <-> TADR coupling,
+    where the aliases are formed and before any kernel indexes them.
+    """
+    if modelA.mesh.nElements_global != modelB.mesh.nElements_global:
+        raise ValueError(
+            "Coupled models {} and {} are on different meshes "
+            "({} vs {} elements); coupled quadrature fields cannot be "
+            "exchanged.".format(nameA, nameB,
+                                modelA.mesh.nElements_global,
+                                modelB.mesh.nElements_global))
+    for attr, label in (('elementQuadraturePoints', 'element'),
+                        ('elementBoundaryQuadraturePoints', 'element boundary')):
+        pA = getattr(modelA, attr, None)
+        pB = getattr(modelB, attr, None)
+        if pA is None or pB is None:
+            continue
+        if pA.shape != pB.shape or not np.allclose(pA, pB, rtol=0.0, atol=1e-14):
+            raise ValueError(
+                "Coupled models {} and {} do not share an {} quadrature rule "
+                "({} vs {} points per element). Coupled fields (velocity, "
+                "theta, rho) are exchanged as raw quadrature arrays, so both "
+                "models must be given the same elementQuadrature and "
+                "elementBoundaryQuadrature in their _n.py files, and the same "
+                "massLumping/reactionLumping/stabilization/shockCapturing "
+                "settings (each of these changes the quadrature union).".format(
+                    nameA, nameB, label, pA.shape[0], pB.shape[0]))
+
+
 class Coefficients(TC_base):
     from proteus.ctransportCoefficients import VOFCoefficientsEvaluate
     from proteus.ctransportCoefficients import VolumeAveragedVOFCoefficientsEvaluate
@@ -522,6 +569,13 @@ class Coefficients(TC_base):
         # flow model
         if self.V_model is not None:
             self.vModel = modelList[self.V_model]
+            # q_v/q_porosity below are bare aliases (or shape-inheriting copies)
+            # of the flow model's quadrature arrays, which this model's kernels
+            # then index with their OWN nQuadraturePoints_element.  Nothing
+            # downstream would catch a mismatch -- the copies keep the donor's
+            # shape, so even the [:] refresh in preStep stays silent -- so check
+            # the rules agree here, before the first alias is taken.
+            checkCoupledQuadrature(self.model, 'TADR', self.vModel, 'flow model')
             if self.specified_velocity:
                 if ('velocity', 0) in self.vModel.q:
                     self.q_v = self.vModel.q[('velocity', 0)]
@@ -548,7 +602,23 @@ class Coefficients(TC_base):
             else:
                 self.q_porosity = np.full(self.model.q[('u', 0)].shape, self.porosity, 'd')
                 self.ebqe_porosity = np.full(self.model.ebqe[('u', 0)].shape, self.porosity, 'd')
+            # q_porosity is an ALIAS of the flow model's theta, but the lagged
+            # q_porosity_old is a COPY refreshed only in postStep.  At
+            # attachModels the flow model has not evaluated a residual yet, so
+            # its q[('theta',0)] is still the zeros allocated in
+            # initializeElementQuadrature -- copying it hands the FIRST TADR
+            # residual a porosity of exactly 0.  That is not merely inaccurate:
+            # theta_dof_proj is built from q_porosity_old (TADR.h:637) and the
+            # group variable divides by it, so a zero floors to 1e-14 while the
+            # BOUNDARY loop reads the live ebqe_porosity alias (correctly 0.1).
+            # The interior mass is then 0 against a non-zero boundary integral
+            # and uLow = mLow/fmax(theta*rho_f,1e-14) blows up (measured
+            # 1.49e6 on Elder, first call only).  Fall back to the configured
+            # porosity while the donor is unpopulated; a porosity that is
+            # identically zero everywhere is not physical.
             self.q_porosity_old = self.q_porosity.copy()
+            if not self.q_porosity_old.any():
+                self.q_porosity_old[:] = self.porosity
             self.q_rho = np.full(self.model.q[('u', 0)].shape, self.rho_f, 'd')
             self.ebqe_rho = np.full(self.model.ebqe[('u', 0)].shape, self.rho_f, 'd')
             self.q_v_old = self.q_v.copy()
@@ -644,6 +714,12 @@ class Coefficients(TC_base):
         return copyInstructions
 
     def postStep(self, t, firstStep=False):
+        # OPTION C: ImplicitEV no longer adopts an advected fluid mass here --
+        # it re-reads M from Richards at the top of every residual, so there is
+        # nothing to adopt.  Report the conserved solute mass instead: that is
+        # the quantity this trade puts at risk, and it is the number to watch.
+        if self.STABILIZATION_TYPE == 5:
+            self.model._reportSoluteMass("postStep")
         # q_porosity aliases the coupled Richards theta field, so cache the
         # lagged copy here before Richards advances it on the next split step.
         self.q_porosity_old[:] = self.q_porosity
@@ -1377,6 +1453,142 @@ class LevelModel(OneLevelTransport):
         par.scatter_forward_insert()
         a[:] = buf
 
+    def _refreshFluidMassFromFlow(self):
+        """SCHEME B / OPTION C: take the fluid mass M = theta*rho STRAIGHT FROM
+        RICHARDS instead of advecting a second copy of it here.
+
+        Richards already carries exactly this quantity.  Its conserved variable
+        is  m = rhom*thetaW  with  rhom = q_rho*exp(beta*psi)  and q_rho the
+        density TADR itself pushes across in Richards.preStep -- so Richards' mn
+        is theta*rho(salinity), DOF-sized, ghost-scattered, and it already
+        respects every Dirichlet condition on u (rho is a function of u, so a
+        pinned u pins rho, and Richards sees the pinned value through q_rho).
+
+        What this buys over the sub-cycled fluid solve it replaces:
+
+        * COST.  The sub-cycler needed S = dt/dt_fluid explicit sub-steps, each
+          one matvec plus one ghost scatter (an MPI collective).  On the 20 yr
+          Elder run S reached 100+ on 12602 of 13116 steps.  Here S = 0.
+        * NO SEPARATE DIRICHLET SET.  The whole strong_bc_flag/strong_bc_u
+          apparatus existed only because M was a free interior row at the source
+          strip and the dispersion inside K drained it (to ~4% of theta*rho,
+          which is what made the 20 yr benchmark take up 3x too little salt).
+          A fluid mass read from Richards cannot drain: Richards imposes its own
+          flow BCs there.
+        * NO COLLECTIVE-COUNT HAZARD.  The per-rank sub-step count was an MPI
+          collective trip count and deadlocked a 64-rank run when it went
+          rank-local.  There is no loop left to get that wrong.
+
+        What it COSTS, and this is the honest part: exact discrete conservation.
+        The cancelled solute residual is algebraically equivalent to the
+        conservative pair only if M satisfies TADR's OWN discrete fluid equation
+        (same K, same d, same B^f).  Richards' m satisfies RICHARDS' discrete
+        continuity equation instead, and the two operators are not the same.  The
+        gap is exactly the flow/transport continuity defect that _adoptFluidMass
+        used to log: on the 20 yr Elder run it grew monotonically from 1.4e-16 to
+        3.6e-2.  So conservation here is NOT to round-off; it is to that defect.
+        _reportSoluteMass below measures the consequence directly.
+
+        BOUNDEDNESS is unaffected and remains unconditional: the cancelled
+        residual is an M-matrix for ANY strictly positive M (the off-diagonals
+        are -gamma_ij*rho_j with gamma_ij >= 0 and rho_j = M_j/theta_j > 0), and
+        it is Richards' job to keep theta*rho positive.
+
+        Returns 1 if the kernel must seed M from the EOS instead (no flow model
+        -- test_tadr and any single-model deck), 0 if M was taken from the flow.
+        """
+        mn_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mn', None)
+        if (mn_flow is not None
+                and np.shape(mn_flow) == np.shape(self.M_dof)
+                and np.all(np.asarray(mn_flow) > 0.0)):
+            # mn is theta*rho at Richards' OLD time level.  Under
+            # Sequential_MinModelStep the flow model steps FIRST, so by the time
+            # TADR evaluates a residual Richards has completed its step and mn
+            # holds the value at the start of THIS step -- i.e. M^n, which is
+            # what both the storage coefficient and the flux density want.
+            self.M_dof[:] = mn_flow
+            if not self._M_dof_initialized:
+                logEvent("TADR SCHEME B (option C): fluid mass M read from "
+                         "Richards mn every step (min=%.6e max=%.6e); no fluid "
+                         "sub-cycling, no separate fluid Dirichlet set"
+                         % (self.M_dof.min(), self.M_dof.max()))
+                self._M_dof_initialized = True
+            return 0
+        if not self._M_dof_initialized:
+            logEvent("TADR SCHEME B (option C): no usable flow-model mn; "
+                     "seeding fluid mass M from the EOS in the kernel")
+            self._M_dof_initialized = True
+            return 1
+        return 0
+
+    def _reportSoluteMass(self, tag):
+        """Global solute mass sum_i ML_i*M_i*u_i, the quantity the conservative
+        form conserves.  Under option C M no longer satisfies TADR's own fluid
+        equation, so this is the direct measure of what that costs -- and it
+        replaces the [TADR-CONT] defect log, which becomes vacuously zero once M
+        IS Richards' m.  globalSum, because rank 0 owns only its own slice.
+        """
+        if getattr(self, 'ML', None) is None:
+            return
+        # Owned DOFs only, then one allreduce: proteus numbers the subdomain
+        # with owned DOFs first and ghosts last, so summing the whole array
+        # would double-count every shared node (cf. MCorr.py:710).
+        no = self.mesh.nNodes_owned
+        local = float(np.sum(np.asarray(self.ML)[:no]
+                             * np.asarray(self.M_dof)[:no]
+                             * np.asarray(self.u[0].dof)[:no]))
+        total = globalSum(local)
+        if self._solute_mass_0 is None:
+            self._solute_mass_0 = total
+        ref = self._solute_mass_0 if abs(self._solute_mass_0) > 1.0e-30 else 1.0
+        # NOT a conservation error: Elder is an OPEN system (salt enters through
+        # the Dirichlet source strip), so this total is SUPPOSED to grow.  Turning
+        # it into a conservation measure needs the time-integrated boundary influx
+        # subtracted, including what enters through the strongly-pinned rows --
+        # which this does not do.  Labelled rel_change, not rel_drift, so the log
+        # does not claim more than it measures.
+        logEvent("[TADR-MASS] %s t=%.6e sum(ML*M*u)=%.10e rel_change=%.6e"
+                 % (tag, self.timeIntegration.t, total, (total - ref)/ref))
+        # Is the fluid mass actually tracking Richards?  M is the one coupled
+        # field with no live diagnostic -- it is a DOF array, so it is not
+        # covered by the quadrature coupling check, and it is seeded once and
+        # then refreshed silently.  If theta is constant (Elder: 0.1) this range
+        # must span [theta*rho_f, theta*rho_s] = [0.100, 0.120] once salt is in
+        # the domain; a range pinned at exactly 0.100 means M is FROZEN at its
+        # seed and the transport has lost its density feedback entirely.
+        # globalMin/globalMax, because rank 0 owns a near-empty partition.
+        Mo = np.asarray(self.M_dof)[:no]
+        logEvent("[TADR-M] %s t=%.6e M=theta*rho (min,max,mean)=(%.6e,%.6e,%.6e)"
+                 % (tag, self.timeIntegration.t,
+                    Comm.globalMin(float(Mo.min())),
+                    globalMax(float(Mo.max())),
+                    globalSum(float(Mo.sum()))/max(1.0, globalSum(float(Mo.size)))))
+
+    def _adoptFluidMass(self):
+        """SCHEME B: the fluid mass advances once per step, with the low-order
+        operator, and becomes the new carried state.  Call this exactly ONCE per
+        completed step -- calling it per Newton iteration would advance M every
+        iteration and destroy the m/M pairing that makes u bounded.
+
+        Also publishes the flow/transport INCOMPATIBILITY: Richards carries the
+        same quantity (its conserved variable m = theta*rho), so the difference
+        between TADR's advected fluid mass and Richards' is exactly the discrete
+        continuity defect between the two models.  If this is small, reading M
+        straight from Richards would be enough and the per-edge flux export
+        (Stage 6) is unnecessary; if it is O(1), that export is mandatory.
+        """
+        if not np.any(self.M_low):
+            return
+        mLow_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mLow', None)
+        if (mLow_flow is not None
+                and np.shape(mLow_flow) == np.shape(self.M_low)):
+            mf = np.asarray(mLow_flow)
+            scale = max(1.0e-30, float(np.max(np.abs(mf))))
+            defect = float(np.max(np.abs(self.M_low - mf)))/scale
+            logEvent("[TADR-CONT] max|M_tadr - m_richards|/scale = %.6e "
+                     "(flow/transport continuity defect; rank-local)" % defect)
+        self.M_dof[:] = self.M_low
+
     def FCTStep(self):
         if self.coefficients.STABILIZATION_TYPE == 6:
             return self.FCTStep_compatible()
@@ -1399,6 +1611,7 @@ class LevelModel(OneLevelTransport):
             )
             # Keep model DOFs in sync with the low-order update.
             self.u[0].dof[:] = self.uLow
+            self._adoptFluidMass()   # SCHEME B
             return
 
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
@@ -1480,6 +1693,7 @@ class LevelModel(OneLevelTransport):
                                                                self.timeIntegration.u,
                                                                limited_solution)
         self.u[0].dof[:] = limited_solution
+        self._adoptFluidMass()   # SCHEME B
 
     def updateVelocityFieldAsFunction(self):
         import pdb
@@ -1599,6 +1813,29 @@ class LevelModel(OneLevelTransport):
         self.dt_times_dC_minus_dL = np.zeros(MC.shape, 'd')
         self.uLow = np.zeros(self.u[0].dof.shape, 'd')
         self.dLow = np.zeros(MC.shape, 'd')
+        # SCHEME B: the FLUID mass M = theta*rho is a state variable paired with
+        # the solute mass, and the concentration is the ratio u = m/M -- a convex
+        # combination for ANY velocity, including the divergent one that
+        # variable-density flow necessarily produces.
+        #
+        # Where M comes from depends on the branch:
+        #  * EXPLICIT edge-based (STAB 2/3/4): M is CARRIED and advected by the
+        #    same edge operator as the solute (M_low in the kernel, adopted in
+        #    _adoptFluidMass).  That costs nothing extra there -- it is one more
+        #    accumulation inside a loop that already runs -- and it is exactly
+        #    conservative, so those branches keep it.  Seeded once, never
+        #    re-seeded: re-seeding each step would put the flow/transport
+        #    continuity defect back in as a per-step projection.
+        #  * ImplicitEV (STAB 5), OPTION C: M is READ FROM RICHARDS every step
+        #    (_refreshFluidMassFromFlow).  Carrying it here would need the fluid
+        #    equation solved implicitly too, and the sub-cycler that did that
+        #    cost 100+ MPI collectives per step on Elder.  See that method for
+        #    what the trade buys and what it costs.
+        self.M_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.M_low = np.zeros(self.u[0].dof.shape, 'd')
+        self._M_dof_initialized = False
+        # Baseline for the [TADR-MASS] conservation diagnostic, set on first use.
+        self._solute_mass_0 = None
         
     def getResidual(self, u, r):
         import copy
@@ -1611,6 +1848,29 @@ class LevelModel(OneLevelTransport):
         if self.MC_global is None:
             self.getMassMatrix()
             self.initVectors()
+
+        # ------------------------------------------------------------------
+        # SCHEME B: supply the fluid mass M = theta*rho.
+        #
+        # Richards ALREADY carries exactly this quantity -- its conserved
+        # variable is m = rhom*thetaW with rhom = q_rho*exp(beta*psi), and q_rho
+        # is the density THIS model pushes across in Richards.preStep -- so it
+        # is theta*rho(salinity), nodal, DOF-sized and ghost-scattered.
+        #
+        # ImplicitEV takes it from there EVERY step (option C).  The explicit
+        # branches seed once and then advect their own copy, which is exactly
+        # conservative and costs them nothing.
+        #
+        # Reading from Richards also sidesteps a trap: on the first residual
+        # call q_porosity_old is still zeros (the copy is taken in attachModels,
+        # before Richards has evaluated a residual), and an EOS seed built on
+        # theta = 0 would be wrong for the WHOLE RUN.  The EOS path is the
+        # fallback for decks with no flow model at all (test_tadr: porosity = 1,
+        # rho_f = rho_s = 1, so it is exact there).
+        # ------------------------------------------------------------------
+        init_M_in_kernel = 0
+        if self.coefficients.STABILIZATION_TYPE == 5 or not self._M_dof_initialized:
+            init_M_in_kernel = self._refreshFluidMassFromFlow()
 
         # Reset some vectors for FCT
         self.min_u_bc = np.zeros(self.u[0].dof.shape, 'd') + 1E10
@@ -1757,6 +2017,10 @@ class LevelModel(OneLevelTransport):
         argsDict["ENTROPY_TYPE"] = self.coefficients.ENTROPY_TYPE
         argsDict["uLow"] = self.uLow
         argsDict["dLow"] = self.dLow
+        # SCHEME B: carried fluid mass (in) and its low-order update (out)
+        argsDict["M_dof"] = self.M_dof
+        argsDict["M_low"] = self.M_low
+        argsDict["init_M_dof"] = init_M_in_kernel
         argsDict["dt_times_dH_minus_dL"] = self.dt_times_dC_minus_dL
         argsDict["min_u_bc"] = self.min_u_bc
         argsDict["max_u_bc"] = self.max_u_bc
@@ -1833,11 +2097,81 @@ class LevelModel(OneLevelTransport):
             argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
             argsDict["phase"] = 1
         self.adr.calculateResidual(argsDict)
+        # OPTION C: no second residual pass here.  Under the sub-cycled fluid
+        # solve this call was needed because the kernel assembled the fluid
+        # system, Python solved it, and the iterate then had to re-see the new
+        # rho.  M now comes from Richards before the kernel ever runs, so one
+        # pass is all there is -- which also halves the residual cost per Newton
+        # iteration.
 
-        
-
-
-        
+        # --- DMP probe (env TADR_DMP_DBG=1) -------------------------------
+        # Python-side on purpose: std::cout from the MPI ranks does not reach
+        # the redirected run.log, but logEvent does reach ls_CCS_so.log.
+        # For the explicit edge-based types with LUMPED_MASS_MATRIX=1 the
+        # kernel writes the HIGH-order solution into r and the low-order one
+        # into self.uLow, so this separates them definitively:
+        #   uLow > 1  -> the low-order operator is not a DMP
+        #   r    > 1  -> the high-order solution (expected; that is why FCT
+        #                exists), and the question becomes why the limited
+        #                result does not survive to the archive.
+        # globalMax is essential: rank 0 owns only its own slice.
+        logEvent("TADR_DMP_GATE env=%r aux=%r" % (os.environ.get("TADR_DMP_DBG"),
+                 getattr(self, "auxiliaryCallCalculateResidual", "MISSING")), level=1)
+        if True:
+            try:
+                _lo = globalMax(float(self.uLow.max()))
+                _hi = globalMax(float(r.max()))
+                _u0 = globalMax(float(self.u[0].dof.max()))
+                _od = globalMax(float(self.u_dof_old.max()))
+                # UNCONDITIONAL: log every main residual call.  A conditional
+                # probe that prints nothing is indistinguishable from a probe
+                # that never runs -- which is exactly how the C++ std::cout
+                # version misled me.
+                logEvent("TADR_DMP t=%g dt=%g max(u_dof_old)=%.8f max(uLow)=%.8f max(r=solH)=%.8f max(u[0].dof)=%.8f"
+                         % (self.timeIntegration.t, self.timeIntegration.dt,
+                            _od, _lo, _hi, _u0),
+                         level=1)
+                # theta_dof_proj is built from q_porosity_old (TADR.h:637) and
+                # the group variable divides by it (w = m/fmax(theta,1e-14),
+                # and inversevaluateCoefficients divides by theta*rho_f).  A
+                # theta that is still zero -- q_porosity_old is a .copy() taken
+                # in attachModels, when Richards' q[('theta',0)] has not been
+                # evaluated yet, and it is only refreshed in postStep -- floors
+                # to 1e-14 and blows the division up.  Log BOTH the alias and
+                # the lagged copy: if old is 0 while the alias is 0.1, that is
+                # the bug; if both are 0.1, the uLow spike is something else.
+                _co = self.coefficients
+                _po = np.asarray(getattr(_co, 'q_porosity_old', np.zeros(1)))
+                _pn = np.asarray(getattr(_co, 'q_porosity', np.zeros(1)))
+                _rh = np.asarray(getattr(_co, 'q_rho', np.zeros(1)))
+                _vv = np.asarray(getattr(_co, 'q_v', np.zeros(1)))
+                logEvent("TADR_DMP_COUP q_porosity_old[min,max]=[%.6e,%.6e] "
+                         "q_porosity[min,max]=[%.6e,%.6e] q_rho[min,max]=[%.6e,%.6e] "
+                         "max|q_v|=%.6e ML[min]=%.6e"
+                         % (_po.min(), _po.max(), _pn.min(), _pn.max(),
+                            _rh.min(), _rh.max(), float(np.abs(_vv).max()),
+                            float(np.asarray(self.ML).min()) if getattr(self, 'ML', None) is not None else -1.0),
+                         level=1)
+                # ROW-SUM PROBE (env TADR_ROWSUM_DBG=1).  The kernel parks the
+                # RELATIVE row sum  sum_j (T+D)_ij / sum_j |T+D|_ij  in quantDOFs.
+                # The full-speed Kuzmin form assumes that is 0; where it is not,
+                # the residue (sum_j (T+D)_ij)*w_i is an additive source that no
+                # graph viscosity bounds.  Split by boundary vs interior:
+                # min_u_bc is left at +1e10 on every node that no exterior face
+                # touched, so it is an exact boundary mask.  globalMax across
+                # ranks -- rank 0 owns only its own slice.
+                if os.environ.get("TADR_ROWSUM_DBG"):
+                    _rs = np.abs(np.asarray(self.quantDOFs))
+                    _isb = np.asarray(self.min_u_bc) < 1.0e9
+                    _all = globalMax(float(_rs.max()) if _rs.size else 0.0)
+                    _bnd = globalMax(float(_rs[_isb].max()) if _isb.any() else 0.0)
+                    _int = globalMax(float(_rs[~_isb].max()) if (~_isb).any() else 0.0)
+                    logEvent("TADR_ROWSUM max|rowsum/scale| all=%.3e boundary=%.3e interior=%.3e "
+                             "(nboundary=%d ninterior=%d)"
+                             % (_all, _bnd, _int, int(_isb.sum()), int((~_isb).sum())),
+                             level=1)
+            except Exception as _e:
+                logEvent("TADR_DMP probe failed: %r" % (_e,), level=1)
 
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
@@ -1982,6 +2316,9 @@ class LevelModel(OneLevelTransport):
         argsDict["numDOFs"] = len(self.rowptr) - 1
         argsDict["ML"] = self.ML
         argsDict["dLow"] = self.dLow
+        # SCHEME B: the ImplicitEV Jacobian differentiates the cancelled form,
+        # whose coefficients are gamma_ij*rho^n_j with rho^n = M_dof/theta.
+        argsDict["M_dof"] = self.M_dof
         argsDict["csrRowIndeces_DofLoops"] = self.rowptr
         argsDict["csrColumnOffsets_DofLoops"] = self.colind
         argsDict["forceStrongConditions"] = int(self.forceStrongConditions)
