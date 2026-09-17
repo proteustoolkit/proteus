@@ -1,9 +1,11 @@
 #ifndef TADR_H
 #define TADR_H
 #include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <valarray>
+#include <vector>
 #include "CompKernel.h"
 #include "ModelFactory.h"
 #include "ArgumentsDict.h"
@@ -68,6 +70,10 @@ namespace proteus
     std::valarray<double> TransportMatrix, DiffusionMatrix, TransposeTransportMatrix;
     std::valarray<double> psi, eta, global_entropy_residual, boundary_integral;
     std::valarray<double> m_dof, theta_dof_proj, rho_dof_proj, ML_mass_proj;
+    // SCHEME B: boundary flux of the FLUID mass, the counterpart of
+    // boundary_integral (which carries the solute).  Advective only -- physical
+    // dispersion moves solute relative to the fluid, it does not move fluid.
+    std::valarray<double> boundary_integral_fluid;
     std::valarray<double> maxVel,maxEntRes;
     virtual ~TADR_base(){}
     virtual void calculateResidual(arguments_dict& args)=0;
@@ -548,6 +554,90 @@ inline
       //STABILIZATION STABILIZATION_TYPE{args.scalar<int>("STABILIZATION_TYPE")};
       //ENTROPY ENTROPY_TYPE{args.scalar<int>("ENTROPY_TYPE")};
       xt::pyarray<double>& uLow = args.array<double>("uLow");
+      //////////////////////////////////////////////////////////////////////
+      // SCHEME B -- the concentration is the RATIO of two masses.         //
+      //                                                                   //
+      // M_dof[i] = (theta*rho)_i is the FLUID mass and m_dof[i]           //
+      // = M_dof[i]*u_i the SOLUTE mass, and u = m/M.  The identity        //
+      //   m^L_i - u^n_i M^L_i = dt/ML_i sum_{j!=i} gamma_ij (M_j/theta_j) //
+      //                                            * (u_j - u_i)          //
+      // (gamma_ij = d_ij - K_ij >= 0) makes u^L a convex combination of   //
+      // {u^n_i, u^n_j} for ANY velocity, divergent or not.                //
+      //                                                                   //
+      // Where M comes from differs by branch, and so does what is         //
+      // conserved:                                                        //
+      //  * EXPLICIT edge-based (STAB 2/3/4): M is CARRIED here and        //
+      //    advected with EXACTLY the same operator (same K, same graph    //
+      //    viscosity d) as the solute mass.  sum_i ML_i m_i is then       //
+      //    conserved to round-off, because the operator itself is         //
+      //    untouched (column sums of K vanish, d is symmetric).           //
+      //  * ImplicitEV (STAB 5), OPTION C: M is READ FROM RICHARDS every   //
+      //    step.  Boundedness is unchanged (any positive M gives an       //
+      //    M-matrix), but conservation now holds only up to the           //
+      //    flow/transport continuity defect -- see the option C note in   //
+      //    the ImplicitEV branch, and the [TADR-MASS] log.                //
+      //                                                                   //
+      // This replaces the row-sum premise entirely.  The previous form    //
+      //   sum_j (T+D)_ij w_j - sum_j d_ij (w_j - w_i)                     //
+      // is a convex combination only when sum_j (T+D)_ij = 0, i.e. only   //
+      // for a discretely divergence-free velocity -- which Elder's        //
+      // velocity_couple is NOT, and physically cannot be: with a          //
+      // solution-dependent density the fluid mass equation gives          //
+      //   div v = -(1/rho)[ d_t(theta rho) + v.grad rho ] != 0.           //
+      // Measured in the numpy replica (1D periodic, v = v0(1+A sin 2pi x),//
+      // so every defect is interior): at A=1 the old form reaches         //
+      // max u = 7.33 from a u <= 1 IC, this one stays in [0, 0.64] with a //
+      // solute-mass drift of 6.7e-16.                                     //
+      //                                                                   //
+      // KNOWN SECOND-ORDER MODELLING ERROR: the dispersion stiffness sits //
+      // inside TransportMatrix (see the element assembly), so the fluid   //
+      // mass picks up a spurious dispersion of size eps_rho*D.  Physically//
+      // dispersion moves solute relative to the fluid and should not move //
+      // the fluid at all.  Splitting the dispersion into its own matrix   //
+      // acting on u (rather than on w) is the clean fix; it is a separate //
+      // restructuring of the element loop and does NOT affect boundedness //
+      // or conservation, both of which hold for the combined operator     //
+      // because the SAME K is applied to m and to M.                      //
+      //////////////////////////////////////////////////////////////////////
+      xt::pyarray<double>& M_dof = args.array<double>("M_dof");
+      xt::pyarray<double>& M_low = args.array<double>("M_low");
+      const int init_M_dof = args.scalar<int>("init_M_dof");
+      // OPTION C: for ImplicitEV, M_dof is Richards' theta*rho, refreshed on the
+      // Python side before this kernel runs, so it is BOTH the old-time storage
+      // coefficient and the flux density -- there is no separate M^{n+1} array
+      // and no fluid linear system to assemble.  M_low is written only by the
+      // explicit edge-based branches, which still advect their own copy.
+      //////////////////////////////////////////////////////////////////////
+      // OPTION C -- why there is no fluid-mass Dirichlet set here.         //
+      //                                                                    //
+      // The fluid mass needs the SAME Dirichlet condition as the           //
+      // concentration: rho is a function of u, so where u is strongly      //
+      // imposed the density is imposed too and M = theta*rho(u_bc) is the  //
+      // only value consistent with the row Python replaces.                //
+      //                                                                    //
+      // Leaving M free there is NOT a small error.  The solute flux        //
+      // coefficient is gamma_ij*rho_j with rho_j = M_j/theta_j, so an M    //
+      // that drifts at a Dirichlet node re-scales every edge leaving that  //
+      // node.  When M was advected here as its own free unknown, the Elder //
+      // source strip (u pinned to 1, v.n = 0, and the dispersion inside K  //
+      // draining M toward the lighter interior with no boundary term to    //
+      // hold it) saw M fall to ~4% of theta*rho: the first edge below the  //
+      // strip ended up ~25x weaker than the interior edges, the profile    //
+      // went 1.000 -> 0.299 -> 0.272 in one cell instead of                //
+      // 1.000 -> 0.907 -> 0.836, and the whole benchmark took up 3x too    //
+      // little salt (mean u 0.071 vs 0.211 at 20 yr) so convection never   //
+      // developed.  Invisible in test_tadr (eps_rho = 0 => rho constant    //
+      // => M cannot drift) and invisible to the u-bounds, which stayed in  //
+      // [0,1] the whole time.                                              //
+      //                                                                    //
+      // Under option C that whole failure mode is gone by construction:    //
+      // ImplicitEV reads M from Richards, which imposes its own flow BCs   //
+      // at that strip and whose density is the q_rho this model pushes to  //
+      // it -- so M there IS theta*rho(u_bc) without anything pinning it.   //
+      // The explicit branches still advect their own M, but they also      //
+      // carry the matching fluid boundary flux (boundary_integral_fluid),  //
+      // which is what holds it.                                            //
+      //////////////////////////////////////////////////////////////////////
       xt::pyarray<double>& dLow = args.array<double>("dLow");
       xt::pyarray<double>& dt_times_dH_minus_dL = args.array<double>("dt_times_dH_minus_dL");
       xt::pyarray<double>& min_u_bc = args.array<double>("min_u_bc");
@@ -593,22 +683,34 @@ inline
           theta_dof_proj.resize(numDOFs,0.0);
           rho_dof_proj.resize(numDOFs,0.0);
           ML_mass_proj.resize(numDOFs,0.0);
-          // ONLY the porosity gets a quadrature->DOF projection: theta lives at
-          // quadrature points and has no nodal representation.  rho and the
-          // conservative variable m are evaluated DIRECTLY at the DOF from
-          // u_dof_old.  Projecting them would apply (M*u)_i/ML_i -- a smoothing
-          // filter, because ML_i is exactly the row sum of the consistent mass
-          // matrix -- so m_dof would NOT equal u_dof_old even at rho=theta=1 and
-          // the scheme would not reduce to the constant-density one.  Evaluating
-          // at the DOF also makes inversevaluateCoefficients(m_dof[i],...) return
-          // u_dof_old[i] exactly, and makes this m^n consistent with the nodal
-          // m^{n+1} = theta_i*rho(c_i)*c_i that the ImplicitEV branch builds
-          // (otherwise ML_i*(m^{n+1}-m^n)/dt is nonzero at steady state).
+          // ONLY theta is projected from quadrature -- it is a material property
+          // with no nodal value of its own.  rho and u are NOT projected: rho is
+          // an explicit function of the nodal u (see the rho_dof_proj assignment
+          // below), and projecting u would apply the (M*u)_i/ML_i smoothing
+          // filter.
+          //
+          // rho MUST be evaluated at the DOF, not projected.  The edge-based
+          // scheme recovers the concentration from the stored mass with
+          //   ui_mass = inversevaluateCoefficients(m_dof[i], theta_i)
+          // which returns u_dof_old[i] IF AND ONLY IF
+          //   rho_dof_proj[i] == rho_f*(1 + eps_rho*u_dof_old[i])
+          // exactly.  With a projected (smoothed) rho that identity fails by
+          // O(eps_rho * (rho~ - rho)), so ui_mass != u_dof_old[i] and the whole
+          // edge-based pipeline runs on a field that differs from the one FCT
+          // takes its bounds from (FCTStep reads the true nodal soln=u_dof_old).
+          // Zalesak's precondition m(mini) <= mLow_i <= m(maxi) is then not
+          // guaranteed, and when it fails Rpos clamps to 0 -- which returns
+          // mLow unchanged instead of enforcing the bound.
+          //
+          // It also destroys the steady state: with velocity identically zero
+          // the projected form is NOT a fixed point (numpy replica: 3.1% drift
+          // after one step, 23% after ten).  The nodal form is exact.
           for (int eN=0; eN<nElements_global; eN++)
             for (int k=0; k<nQuadraturePoints_element; k++)
               {
-                int eN_k = eN*nQuadraturePoints_element + k;
-                double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z;
+                int eN_k = eN*nQuadraturePoints_element + k,
+                  eN_nDOF_trial_element = eN*nDOF_trial_element;
+                double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z, un_k=0.0;
                 ck.calculateMapping_element(eN,
                                             k,
                                             mesh_dof.data(),
@@ -621,6 +723,7 @@ inline
                                             x,y,z);
                 const double dV = fabs(jacDet)*dV_ref.data()[k];
                 const double theta_k = q_porosity_old.data()[eN_k];
+                (void) un_k;
                 for (int i=0; i<nDOF_test_element; i++)
                   {
                     int eN_i = eN*nDOF_test_element+i;
@@ -636,16 +739,33 @@ inline
                 theta_dof_proj[i] /= ML_mass_proj[i];
               else
                 theta_dof_proj[i] = 1.0;
-              // nodal density and conservative variable at t^n
+              // conservative variable at t^n; u AND rho stay nodal, so that
+              // inversevaluateCoefficients(m_dof[i], theta_dof_proj[i]) returns
+              // u_dof_old[i] to round-off (see the note above).
               const double un_i = u_dof_old.data()[i];
-              rho_dof_proj[i] = rho_f*(1.0 + eps_rho*un_i);
-              m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*un_i;
+              // The fluid mass M = theta*rho is NOT re-derived from the EOS
+              // here.  init_M_dof=1 only on the first residual call of a deck
+              // with no flow model to read M from (test_tadr), where it is the
+              // one place rho(u) is used for it.  Re-seeding M := theta*rho(u)
+              // every step would put the continuity defect back in as a
+              // per-step projection -- measured at -0.98 relative solute mass
+              // over 400 steps in the replica, and -1.1e-2 even at div v == 0.
+              // With a flow model, Python has already put Richards' theta*rho
+              // (ImplicitEV) or the advected value (explicit branches) in
+              // M_dof before this loop runs.
+              if (init_M_dof)
+                M_dof.data()[i] = theta_dof_proj[i]*rho_f*(1.0 + eps_rho*un_i);
+              const double Mi = fmax(M_dof.data()[i], 1.0e-14);
+              rho_dof_proj[i] = Mi/theta_dof_proj[i];
+              m_dof[i] = Mi*un_i;
             }
           // compute entropy and init global_entropy_residual and boundary_integral
           psi.resize(numDOFs,0.0);
           eta.resize(numDOFs,0.0);
           global_entropy_residual.resize(numDOFs,0.0);
           boundary_integral.resize(numDOFs,0.0);
+          boundary_integral_fluid.resize(numDOFs,0.0);
+          boundary_integral_fluid = 0.0;
           for (int i=0; i<numDOFs; i++)
             {
               // NODAL ENTROPY //
@@ -1013,7 +1133,76 @@ inline
                           element_entropy_residual[i] += DENTROPY_un*aux_entropy_residual*u_test_dV[i];
                         }
                       elementResidual_u[i] += (u-un)*u_test_dV[i];
-                      double* adv_df = (STABILIZATION_TYPE==STABILIZATION::ImplicitEV) ? df : dfn;
+                      //////////////////////////////////////////////////////////
+                      // GROUP VARIABLE w = rho(u)*u.                          //
+                      //                                                       //
+                      // The edge-based low-order operator is monotone only if //
+                      // the transport matrix has ZERO ROW SUMS, because the   //
+                      // DMP argument (see the comment at the dissipative-term //
+                      // accumulation below) rewrites                          //
+                      //   sum_j T_ij c_j = sum_{j!=i} T_ij (c_j - c_i)        //
+                      // which needs sum_j T_ij = 0.  Since                    //
+                      //   T_ij = int (df/dvar) phi_j dw_i,                    //
+                      // the row sum is int (df/dvar) dw_i, and that vanishes  //
+                      // by the partition of unity ONLY when df/dvar is        //
+                      // constant over the element.                            //
+                      //                                                       //
+                      // With the variable-density flux f = rho(u)*v*u we have //
+                      //   df/du = (rho + u drho/du)*v,                        //
+                      // which DEPENDS ON u -- so assembling T against u leaves //
+                      // a residue (sum_j T_ij)*c_i in the low-order update.    //
+                      // That residue is an unbounded source, and it is largest //
+                      // exactly at the front the limiter has to protect        //
+                      // (numpy replica: +4.8% overshoot at eps_rho = 0.235,    //
+                      // growing monotonically with eps_rho, exactly 0 at       //
+                      // eps_rho = 0).                                          //
+                      //                                                       //
+                      // The cure is to transport the GROUP VARIABLE            //
+                      //   w = rho(u)*u,     so that   f = v*w                  //
+                      // is LINEAR in w with df/dw = v, the Darcy velocity,     //
+                      // which does not depend on the solution.  Row sums are   //
+                      // then exactly zero and Kuzmin's theory applies verbatim.//
+                      // Storage becomes m = theta*w, so the update base point  //
+                      // and the differencing variable are the SAME variable    //
+                      // and the low-order update is a true convex combination. //
+                      // w(u) = rho_f*(u + eps_rho*u^2) is strictly increasing  //
+                      // for u >= 0, so bounds map through unchanged:           //
+                      //   w in [w(min u), w(max u)]  <=>  u in [min u, max u]. //
+                      //                                                       //
+                      // Dispersion is rescaled to match: the physical flux is  //
+                      // -a grad(u) = -(a/(dw/du)) grad(w), so the tensor seen  //
+                      // by the w-operator is a_w = a/(dw/du).  a_w is still a  //
+                      // positive multiple of the dispersion tensor, and the    //
+                      // diffusion operator has zero row sums for free          //
+                      // (sum_j grad(phi_j) = 0), so it never broke the DMP.    //
+                      //                                                       //
+                      // NOTE this changes only the EDGE-BASED assembly.  The   //
+                      // cell-based branches (Galerkin, VMS, TaylorGalerkinEV)  //
+                      // keep df/du, which is what they need.                   //
+                      //                                                       //
+                      // BEHAVIOUR CHANGE beyond the group variable itself: the //
+                      // explicit branches now take the dispersion tensor from  //
+                      // `an` (old time) instead of `a` (current iterate), so   //
+                      // it matches the time level of both the advection        //
+                      // coefficient (velocity_old) and the dwdu used to        //
+                      // rescale it.  Mixing a current-time `a` with an         //
+                      // old-time dwdu would give a rescaling that corresponds  //
+                      // to no consistent dispersion at all.                    //
+                      //////////////////////////////////////////////////////////
+                      const bool implicit_ev =
+                        (STABILIZATION_TYPE==STABILIZATION::ImplicitEV);
+                      // dw/du = rho + u*drho/du, at the matching time level
+                      const double drho_du_k = rho_f*eps_rho;
+                      const double dwdu_k = implicit_ev
+                        ? fmax(rho_out     + u *drho_du_k, 1.0e-14)
+                        : fmax(rho_out_old + un*drho_du_k, 1.0e-14);
+                      // df/dw = v, the Darcy velocity at the matching level
+                      const double* adv_df = implicit_ev
+                        ? &velocity.data()[eN_k_nSpace]
+                        : &velocity_old.data()[eN_k_nSpace];
+                      double a_w[nnz];
+                      for (int ii=0; ii<a_rowptr.data()[nSpace]; ii++)
+                        a_w[ii] = (implicit_ev ? a[ii] : an[ii])/dwdu_k;
                       for(int j=0;j<nDOF_trial_element;j++)
                         {
                           int j_nSpace = j*nSpace;
@@ -1025,14 +1214,14 @@ inline
                                                       +
                             ck.SimpleDiffusionJacobian_weak(a_rowptr.data(),
 										                                        a_colind.data(),
-                                                            a,
+                                                            a_w,
                                                             &u_grad_trial[j_nSpace],
                                                             &u_grad_test_dV[i_nSpace]);
 
 
 
 
-                           elementDiffusion[i][j] += ck.NumericalDiffusionJacobian(physicalDiffusion,
+                           elementDiffusion[i][j] += ck.NumericalDiffusionJacobian(physicalDiffusion/dwdu_k,
                                                                                    &u_grad_trial[j_nSpace],
                                                                                    &u_grad_test_dV[i_nSpace]);
                           elementTransposeTransport[i][j] += ck.AdvectionJacobian_weak(adv_df,
@@ -1040,11 +1229,11 @@ inline
                                                                                        &u_grad_test_dV[j_nSpace])+
                                                              ck.SimpleDiffusionJacobian_weak(a_rowptr.data(),
                                                                                               a_colind.data(),
-                                                                                              a,
+                                                                                              a_w,
                                                                                               &u_grad_trial[j_nSpace],
                                                                                               &u_grad_test_dV[i_nSpace]);
-                                                                                       
-                                                            
+
+
                                                           }
                     }
                   else
@@ -1120,10 +1309,12 @@ inline
               continue;
             }
           double elementResidual_u[nDOF_test_element],
+            elementResidual_fluid[nDOF_test_element],   // SCHEME B: fluid mass
             fluxTransport[nDOF_test_element][nDOF_trial_element];
           for (int i=0;i<nDOF_test_element;i++)
             {
               elementResidual_u[i]=0.0;
+              elementResidual_fluid[i]=0.0;
               for (int j=0;j<nDOF_trial_element;j++)
                 fluxTransport[i][j] = 0.0;
             }
@@ -1338,7 +1529,94 @@ inline
               double boundary_flow = 0.0;
               for (int I=0; I<nSpace; I++)
                 boundary_flow += normal[I]*df_ext[I];
-              
+
+              //////////////////////////////////////////////////////////////
+              // GROUP-VARIABLE traces, for the edge-based and ImplicitEV  //
+              // branches.  The INTERIOR assembly builds T against         //
+              // w = rho(u)*u (df/dw = v), so every boundary quantity that //
+              // ends up multiplying w -- the flux Jacobian rows that go   //
+              // into TransportMatrix, the Nitsche adjoint, the upwind     //
+              // penalty -- has to be in w as well.  Leaving them in u was //
+              // what broke the STAB=2 DMP: the boundary rows of T were    //
+              // u-scaled while the interior was w-scaled, so sum_j T_ij   //
+              // stopped vanishing exactly at boundary-adjacent nodes, and //
+              // uLow overshot in the row below the Dirichlet source strip //
+              // (max u = 6.58 on Elder).                                  //
+              //                                                           //
+              // The RESIDUAL flux_ext needs no conversion: f = rho v u    //
+              // = v*w is already the physical flux, and the diffusive     //
+              // flux -a grad(u) = -a_w grad(w) is the same number either  //
+              // way.  Only the linearised/penalty pieces are rescaled.    //
+              //////////////////////////////////////////////////////////////
+              const double drho_du_b  = rho_f*eps_rho;
+              const double dwdu_ext   = fmax(rho_out_ext + u_ext*drho_du_b, 1.0e-14);
+              const double w_ext      = rho_out_ext*u_ext;
+              const double w_bc_ext   = rho_out_bc*bc_u_ext;
+              // dispersion w.r.t. w:  -a grad(u) = -(a/(dw/du)) grad(w)
+              double a_w_ext[nnz], zero_da_ext[nnz];
+              for (int ii=0; ii<a_rowptr.data()[nSpace]; ii++)
+                {
+                  a_w_ext[ii]    = a_ext[ii]/dwdu_ext;
+                  // a_w is treated as frozen when differentiating w.r.t. w
+                  // (the explicit branch stores a fixed matrix anyway), so the
+                  // da*v*grad_psi term of the diffusive Jacobian is dropped.
+                  zero_da_ext[ii] = 0.0;
+                }
+              // df/dw = v, the Darcy velocity trace (no density factor)
+              const double* v_w_ext = &ebqe_velocity_ext.data()[ebNE_kb_nSpace];
+              double boundary_flow_w = 0.0;
+              for (int I=0; I<nSpace; I++)
+                boundary_flow_w += normal[I]*v_w_ext[I];
+
+              //////////////////////////////////////////////////////////////
+              // SCHEME B: advective boundary flux of the FLUID mass,      //
+              //   F^f = (v.n) * rho_up,                                   //
+              // upwinded exactly as the solute flux is.  The interior     //
+              // trace of rho comes from the CARRIED fluid mass M/theta    //
+              // (NOT from the EOS) so the boundary sees the same fluid    //
+              // mass the interior transports; on inflow there is no       //
+              // carried M outside the domain, so the EOS value at the BC  //
+              // is the only choice.                                       //
+              //                                                           //
+              // Why this keeps u bounded at the boundary: the identity    //
+              // subtracts u_i times the fluid flux from the solute flux,  //
+              //   F^s - u_i F^f = (v.n) rho_up (u_up - u_i),              //
+              // which on INFLOW ((v.n) < 0) is +|v.n| rho_bc (u_bc - u_i),//
+              // a convex pull toward u_bc, and on OUTFLOW is ~0 because   //
+              // u_up is the node's own trace.  min_u_bc/max_u_bc already  //
+              // include u_bc in the FCT bounds, so the two agree.         //
+              //                                                           //
+              // NO diffusive counterpart: physical dispersion moves solute//
+              // relative to the fluid, it does not move fluid.  This      //
+              // leaves the weak-Dirichlet Nitsche term in the solute      //
+              // equation without a fluid partner -- pre-existing weak-BC  //
+              // behaviour, not a regression, and identically zero on a    //
+              // closed (v.n = 0) boundary.                                //
+              //////////////////////////////////////////////////////////////
+              // GATED: theta_dof_proj / m_dof are only RESIZED for the branches
+              // that carry a fluid mass (see the projection block above); the
+              // cell-based branches leave them at size 0, so touching them here
+              // unconditionally reads out of bounds.
+              double flux_fluid_ext = 0.0;
+              if (STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
+                  STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
+                  STABILIZATION_TYPE == STABILIZATION::Kuzmin or
+                  STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                {
+                  double rho_trace_ext = 0.0;
+                  for (int j=0;j<nDOF_trial_element;j++)
+                    {
+                      const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                      rho_trace_ext += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
+                                     * (fmax(M_dof.data()[gj], 1.0e-14)
+                                        / fmax(theta_dof_proj[gj], 1.0e-14));
+                    }
+                  const double rho_bc_fluid = rho_f*(1.0 + eps_rho*bc_u_ext);
+                  const double rho_up_fluid = (boundary_flow_w >= 0.0) ? rho_trace_ext
+                                                                       : rho_bc_fluid;
+                  flux_fluid_ext = boundary_flow_w*rho_up_fluid;
+                }
+
               ebqe_flux.data()[ebNE_kb] = flux_ext;
               if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                 ebqe_u.data()[ebNE_kb] = bc_u_ext;
@@ -1359,9 +1637,37 @@ inline
               //
               for (int i=0;i<nDOF_test_element;i++)
                 {
-                  if (STABILIZATION_TYPE == STABILIZATION::Galerkin or STABILIZATION_TYPE == STABILIZATION::VMS or
-                      STABILIZATION_TYPE == STABILIZATION::TaylorGalerkinEV or STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                  // SCHEME B: fluid-mass boundary flux, for every branch that
+                  // transports a fluid mass (the edge-based ones + ImplicitEV).
+                  // The cell-based branches (Galerkin/VMS/TaylorGalerkinEV) do
+                  // not carry M and are untouched.
+                  if (STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
+                      STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
+                      STABILIZATION_TYPE == STABILIZATION::Kuzmin or
+                      STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                    elementResidual_fluid[i] +=
+                      ck.ExteriorElementBoundaryFlux(flux_fluid_ext, u_test_dS[i]);
+                  if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                       {
+                    // ImplicitEV also transports the group variable, so its
+                    // boundary_integral must be the adjoint of the w-operator
+                    // (see the GROUP-VARIABLE trace block above).
+                    elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(flux_ext,u_test_dS[i])+
+                                            ck.ExteriorElementBoundaryDiffusionAdjoint(isDOFBoundary_u.data()[ebNE_kb],
+                                                                                            isDiffusiveFluxBoundary_u.data()[ebNE_kb],
+                                                                                            eb_adjoint_sigma,
+                                                                                            w_ext,
+                                                                                            w_bc_ext,
+                                                                                            normal,
+                                                                                            a_rowptr.data(),
+                                                                                            a_colind.data(),
+                                                                                            a_w_ext,
+                                                                                            &u_grad_test_dS[i*nSpace]);
+                      }
+                  else if (STABILIZATION_TYPE == STABILIZATION::Galerkin or STABILIZATION_TYPE == STABILIZATION::VMS or
+                      STABILIZATION_TYPE == STABILIZATION::TaylorGalerkinEV)
+                      {
+                    // cell-based branches keep the u-form throughout
                     elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(flux_ext,u_test_dS[i])+
                                             ck.ExteriorElementBoundaryDiffusionAdjoint(isDOFBoundary_u.data()[ebNE_kb],
                                                                                             isDiffusiveFluxBoundary_u.data()[ebNE_kb],
@@ -1380,29 +1686,36 @@ inline
                     {
                       const double boundaryAdvectiveContribution =
                         ck.ExteriorElementBoundaryFlux(flux_ext,u_test_dS[i]);
+                      // GROUP VARIABLE: Nitsche adjoint on (w, w_bc) with a_w,
+                      // so it is the adjoint of the SAME operator the interior
+                      // assembles.  a_w = a/(dw/du) makes the physical value
+                      // identical; only the variable it is expressed in changes.
                       const double boundaryDiffusiveContribution =
                         ck.ExteriorElementBoundaryDiffusionAdjoint(isDOFBoundary_u.data()[ebNE_kb],
                                                                    isDiffusiveFluxBoundary_u.data()[ebNE_kb],
                                                                    eb_adjoint_sigma,
-                                                                   u_ext,
-                                                                   bc_u_ext,
+                                                                   w_ext,
+                                                                   w_bc_ext,
                                                                    normal,
                                                                    a_rowptr.data(),
                                                                    a_colind.data(),
-                                                                   a_ext,
+                                                                   a_w_ext,
                                                                    &u_grad_test_dS[i*nSpace]);
                       const double boundaryResidualContribution =
                         boundaryAdvectiveContribution + boundaryDiffusiveContribution;
+                      // df/dw = v, NOT df/du -- these rows go into TransportMatrix,
+                      // which the edge loop multiplies by w_j.
                       exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],
                                                            isFluxBoundary_u.data()[ebNE_kb],
                                                            forceStrongConditions,
                                                            normal,
-                                                           df_ext,
-                                                           dflux_u_u_ext);  
-                      
+                                                           v_w_ext,
+                                                           dflux_u_u_ext);
+
                       if (dflux_u_u_ext> 0.0)
                       {
                         double boundaryTransportContribution = 0.0;
+                        double boundaryTransportContributionFluid = 0.0;  // SCHEME B
                         for (int j=0;j<nDOF_trial_element;j++)
                         {
                           int ebN_local_kb_j=ebN_local_kb*nDOF_trial_element+j;
@@ -1411,15 +1724,15 @@ inline
                                                                    isFluxBoundary_u.data()[ebNE_kb],
                                                                    forceStrongConditions,
                                                                    normal,
-                                                                   df_ext,
+                                                                   v_w_ext,
                                                                    advJacobian_ext);
                           exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],
                                                                    isDiffusiveFluxBoundary_u.data()[ebNE_kb],
                                                                    a_rowptr.data(),
                                                                    a_colind.data(),
                                                                    normal,
-                                                                   a_ext,
-                                                                   da_ext,
+                                                                   a_w_ext,
+                                                                   zero_da_ext,
                                                                    grad_u_ext,
                                                                    &u_grad_trial_trace[j*nSpace],
                                                                    u_trial_trace_ref.data()[ebN_local_kb_j],
@@ -1430,49 +1743,52 @@ inline
                           const double localFluxTransportContribution =
                             difffluxjacobian_ext*u_test_dS[i];
                           fluxTransport[i][j] += localFluxTransportContribution;
-                          boundaryTransportContribution +=
-                            localFluxTransportContribution*u_dof_old.data()[u_l2g.data()[eN_nDOF_trial_element+j]];
+                          // ... and the value it multiplies must be w^n_j, not u^n_j.
+                          // SCHEME B: w^n and rho^n come from the CARRIED masses
+                          // (m_dof = M_dof*u^n, M_dof), not from the EOS -- the
+                          // interior operator acts on exactly those, so an EOS
+                          // value here would make the subtraction below fail to
+                          // cancel what actually went into TransportMatrix.
+                          {
+                            const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                            const double theta_j = fmax(theta_dof_proj[gj], 1.0e-14);
+                            const double wn_j   = m_dof[gj]/theta_j;
+                            const double rhon_j = fmax(M_dof.data()[gj],1.0e-14)/theta_j;
+                            boundaryTransportContribution += localFluxTransportContribution*wn_j;
+                            boundaryTransportContributionFluid += localFluxTransportContribution*rhon_j;
+                          }
                         }
                         elementResidual_u[i] += boundaryResidualContribution - boundaryTransportContribution;
+                        // SCHEME B: the SAME correction on the fluid mass.  For
+                        // these branches fluxTransport is loaded into
+                        // TransportMatrix below, so the edge loop's
+                        // sum_j (T+D)_ij rho_j ALREADY contains the linearised
+                        // boundary flux; adding the true boundary flux on top
+                        // without subtracting it back out double-counts it.
+                        // That is exactly what drained the fluid mass to 0.4 in
+                        // test_tadr (it must stay at 1 for rho = theta = 1).
+                        // ImplicitEV does NOT load fluxTransport into T, so it
+                        // takes the unsubtracted flux -- see the i-loop head.
+                        elementResidual_fluid[i] -= boundaryTransportContributionFluid;
                       }
                       else
                       {
                         elementResidual_u[i] += boundaryResidualContribution;
-                        // Upwind Nitsche penalty for advection-dominated Dirichlet
-                        // inflow.  At inflow (boundary_flow = v.n < 0) the upwind
-                        // advective flux uses bc_u_ext and has zero derivative wrt
-                        // the interior u_ext -- so the existing IIPG penalty is the
-                        // only thing pulling u_ext toward bc_u_ext, and it scales as
-                        // max_a*penalty/h which becomes vanishingly small when D_m
-                        // is small.  Add a Nitsche term that scales with |v.n| so
-                        // BC enforcement is independent of the diffusion coefficient.
-                        // Sign: at inflow with u_ext > bc_u_ext (overshoot), this
-                        // contributes positively to elementResidual_u[i] (= positive
-                        // boundary flux out of node i), which reduces mLow at the BC
-                        // DOF and pulls c back to bc_u_ext.  Mass-conservative: the
-                        // term is integrated weakly with u_test_dS like the rest of
-                        // the boundary residual; sum over all faces telescopes the
-                        // weak Dirichlet to a consistent transport balance.
-                        if (isDOFBoundary_u.data()[ebNE_kb] == 1 && boundary_flow < 0.0)
+
+                        if (isDOFBoundary_u.data()[ebNE_kb] == 1 && boundary_flow_w < 0.0)
                         {
-                          const double upwind_penalty_rate = -boundary_flow; // |v.n|
+                          // inflow upwind penalty, in the conserved variable
+                          const double upwind_penalty_rate = -boundary_flow_w; // |v.n|
                           elementResidual_u[i] += upwind_penalty_rate
-                                                * (u_ext - bc_u_ext)
+                                                * (w_ext - w_bc_ext)
                                                 * u_test_dS[i];
                         }
                       }
                     }
                 }//i
-              // local min/max at boundary.
-              // At Dirichlet faces use the BC value (ebqe_bc_u_ext), not the
-              // current solution trace (ebqe_u): the trace can drift off c_sat
-              // under weak Nitsche enforcement, and feeding that drifted value
-              // into min/max_u_bc pollutes the FCT bound at every interior
-              // neighbor.  Using the BC value keeps the bound tight at c_sat
-              // (combined with bc_mask in the FCT step, this gives the bounded
-              // + mass-conservative recipe that mphase_co2 uses).
-              const double u_for_bound =
-                  isDOFBoundary_u.data()[ebNE_kb]
+
+
+              const double u_for_bound =    isDOFBoundary_u.data()[ebNE_kb]
                       ? ebqe_bc_u_ext.data()[ebNE_kb]
                       : ebqe_u.data()[ebNE_kb];
               min_u_bc_local = fmin(u_for_bound, min_u_bc_local);
@@ -1489,6 +1805,7 @@ inline
                 {
                   globalResidual.data()[gi] += dt*elementResidual_u[i];
                   boundary_integral[gi] += elementResidual_u[i];
+                  boundary_integral_fluid[gi] += elementResidual_fluid[i];  // SCHEME B
                   min_u_bc[gi] = fmin(min_u_bc_local,min_u_bc[gi]);
                   max_u_bc[gi] = fmax(max_u_bc_local,max_u_bc[gi]);
                   for (int j=0;j<nDOF_trial_element;j++)
@@ -1507,6 +1824,7 @@ inline
                   // and OVERWRITES globalResidual[i], so we must NOT add here).
                   // The boundary flux Jacobian is assembled in calculateJacobian.
                   boundary_integral[gi] += elementResidual_u[i];
+                  boundary_integral_fluid[gi] += elementResidual_fluid[i];  // SCHEME B
                   // FCT bounds at the boundary (used by the explicit FCT
                   // post-step when FCT=True; harmless otherwise).
                   min_u_bc[gi] = fmin(min_u_bc_local,min_u_bc[gi]);
@@ -1565,13 +1883,16 @@ inline
                       etaMaxi = fmax(etaMaxi,fabs(eta[j]));
                       etaMini = fmin(etaMini,fabs(eta[j]));
                     }
-                  // Sense smoothness on the projected nodal conservative variable
-                  // m = theta * rho(u) * u so the edge indicator is aligned with
-                  // the variable-density storage used by the PDE residual.
-                  const double mi = m_dof[i];
-                  const double mj = m_dof[j];
-                  alpha_numerator += mi - mj;
-                  alpha_denominator += fabs(mi - mj);
+                  // Sense smoothness on the GROUP VARIABLE w = rho(u)*u = m/theta,
+                  // the variable the edge operator actually transports.  Using m
+                  // instead folds the porosity jump at a material interface into
+                  // the smoothness sensor, which drives psi -> 1 (and so the full
+                  // low-order viscosity) across an interface even where the
+                  // transported field is perfectly smooth.
+                  const double wi = m_dof[i]/fmax(theta_dof_proj[i], 1.0e-14);
+                  const double wj = m_dof[j]/fmax(theta_dof_proj[j], 1.0e-14);
+                  alpha_numerator += wi - wj;
+                  alpha_denominator += fabs(wi - wj);
                   //update ij
                   ij+=1;
                 }
@@ -1594,18 +1915,52 @@ inline
           /////////////////////////////////////////////
           // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
           /////////////////////////////////////////////
+          // DMP diagnostic, enabled with TADR_DMP_DBG=1 (off by default, and
+          // the branch is a single bool test when off).
+          static const bool TADR_DMP_DBG = (std::getenv("TADR_DMP_DBG") != nullptr);
+          // total lines emitted over the whole run, so the first violation is
+          // captured and the log does not explode over ~12000 substeps x 64 ranks
+          static int dbg_budget = 40;
+          int    dbg_reported = 0, dbg_argmax_coef = -1;
+          double dbg_global_max_coef = -1.0e300, dbg_global_min_gamma = 1.0e300;
           ij=0;
           for (int i=0; i<numDOFs; i++)
             {
               const double mi_mass = m_dof[i];
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
-              const double ui_mass = inversevaluateCoefficients(mi_mass, theta_i, rho_f, rho_s);
-              const double rho_i = fmax(rho_dof_proj[i], rho_f);
-              const double drho_du = rho_s - rho_f;
-              const double dmdu_i = theta_i * (rho_i + ui_mass*drho_du);
+              // SCHEME B: u is the RATIO of the two transported masses, so the
+              // EOS inverse is not used here at all.  m_dof[i] = M_dof[i]*u^n_i
+              // was set from the carried fluid mass above, so this returns
+              // u^n_i exactly (no projection/EOS round-trip, which is what
+              // used to break the FCT seam).
+              const double Mi_fluid = fmax(M_dof.data()[i], 1.0e-14);
+              const double ui_mass = mi_mass/Mi_fluid;
+              const double rhoi_fluid = Mi_fluid/theta_i;
+              // GROUP VARIABLE w = rho(u)*u = m/theta.  This is what the
+              // transport matrix now acts on (see the assembly comment in the
+              // element loop), so every flux and dissipation difference below is
+              // taken in w, and the storage is simply m = theta*w.
+              const double wi_mass = mi_mass/theta_i;
               double ith_dissipative_term_mass = 0;
               double ith_low_order_dissipative_term_mass = 0;
               double ith_flux_term_mass = 0;
+              // SCHEME B: the SAME operator, applied to the fluid mass.  These
+              // must mirror their solute counterparts term for term -- any
+              // asymmetry between the two breaks the cancellation that makes
+              // u = m/M a convex combination.
+              double ith_flux_term_fluid = 0;
+              double ith_low_order_dissipative_term_fluid = 0;
+              // --- DMP diagnostic accumulators (TADR_DMP_DBG=1) ---
+              // gamma_ij = dLow_ij - T_ij - D_ij is the coefficient of
+              // (w_j - w_i) in the low-order update.  The update is a convex
+              // combination iff every gamma_ij >= 0 AND
+              //   coef_i = dt*sum_j gamma_ij/(theta_i*ML_i) <= 1.
+              // dLow_from_transpose counts edges where dLow is set by |T_ji|
+              // rather than |T_ij| -- i.e. by the OTHER row, which for an edge
+              // touching the boundary carries the boundary flux Jacobian.
+              double dbg_sum_gamma = 0.0, dbg_min_gamma = 1.0e300;
+              double dbg_max_dLow = 0.0, dbg_max_absT = 0.0, dbg_max_absTt = 0.0;
+              int    dbg_n_from_transpose = 0;
               // Row sum of the high-order graph viscosity, dLii = -sum_{j!=i} dLij.
               // Feeds edge_based_cfl below.
               double dLii = 0.;
@@ -1616,16 +1971,41 @@ inline
                   int j = csrColumnOffsets_DofLoops.data()[offset];
                   const double mj_mass = m_dof[j];
                   const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
-                  const double uj_mass = inversevaluateCoefficients(mj_mass, theta_j, rho_f, rho_s);
+                  const double Mj_fluid = fmax(M_dof.data()[j], 1.0e-14);
+                  const double uj_mass = mj_mass/Mj_fluid;
+                  const double wj_mass = mj_mass/theta_j;
+                  const double rhoj_fluid = Mj_fluid/theta_j;
                   double dLowij, dLij, dEVij, dHij;
 
-                  ith_flux_term_mass += (TransportMatrix[ij] + DiffusionMatrix[ij])*uj_mass;
+                  ith_flux_term_mass  += (TransportMatrix[ij] + DiffusionMatrix[ij])*wj_mass;
+                  ith_flux_term_fluid += (TransportMatrix[ij] + DiffusionMatrix[ij])*rhoj_fluid;
 
                   if (i != j)
                     {
                       double solij = 0.5*(ui_mass+uj_mass);
                       double Compij = cK*fmax(solij*(1.0-solij),0.0)/(fabs(ui_mass-uj_mass)+1E-14);
-                      dLowij = fmax(fabs(TransportMatrix[ij]),fabs(TransposeTransportMatrix[ij]));
+                      // MINIMAL Kuzmin graph viscosity, built from the COMBINED
+                      // operator K = T + D.  The old max(|K_ij|,|K_ji|) is an
+                      // over-estimate: T carries the dispersion stiffness (see
+                      // the element assembly, ck.SimpleDiffusionJacobian_weak
+                      // goes into elementTransport, not into elementDiffusion),
+                      // and for a symmetric negative off-diagonal entry
+                      // max(|K_ij|,|K_ji|) - K_ij = -2 K_ij applies the physical
+                      // dispersion TWICE.  Verified in the numpy replica at
+                      // v = 0: ratio to the exact D/h is 2.000 with the old
+                      // form, 1.000 with this one.  max(0,K_ij,K_ji) is still
+                      // symmetric (so the FCT antidiffusive flux stays
+                      // antisymmetric and the scheme stays conservative) and
+                      // still gives gamma_ij = dLow - K_ij >= 0 by definition,
+                      // including for positive off-diagonals on obtuse elements.
+                      // Where the mesh Peclet number allows it this collapses to
+                      // dLow = 0, i.e. central differencing with the physical
+                      // dispersion only -- no artificial diffusion at all.
+                      {
+                        const double Kij = TransportMatrix[ij] + DiffusionMatrix[ij];
+                        const double Kji = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
+                        dLowij = fmax(0.0, fmax(Kij, Kji));
+                      }
 
                       dLij = dLowij*fmax(psi[i],psi[j]); // Approach by JLG & BP
                       
@@ -1639,21 +2019,40 @@ inline
                         {
                           dHij = dLij * fmax(1.0-Compij,0.0); // artificial compression
                         }
-                      // Dissipative terms.  The DIFFERENCES are taken in c, not in
-                      // m: dLow comes from the transport matrix, which already
-                      // carries rho (df/du = (rho + u*drho/du)*v), so dLow*(c_j-c_i)
-                      // is a mass flux, dimensionally consistent with
-                      // ith_flux_term_mass.  Differencing m instead multiplies the
-                      // dissipation by a spurious extra theta*rho (~1e3 in SI).
-                      // Note this pair IS already the monotone upwind operator:
-                      //   sum_j (T+D)_ij c_j - sum_{j!=i} dLow_ij (c_j - c_i)
-                      //     = -sum_{j!=i} (dLow_ij - T_ij - D_ij)(c_j - c_i)
+                      // Dissipative terms.  The DIFFERENCES are taken in the GROUP
+                      // VARIABLE w = rho(u)*u -- the same variable the transport
+                      // matrix now acts on -- so the pair telescopes into the
+                      // monotone operator:
+                      //   sum_j (T+D)_ij w_j - sum_{j!=i} dLow_ij (w_j - w_i)
+                      //     = -sum_{j!=i} (dLow_ij - T_ij - D_ij)(w_j - w_i)
                       // with dLow_ij - T_ij - D_ij >= 0 because dLow_ij >= |T_ij|,
-                      // i.e. an M-matrix.  It must NOT be replaced by
-                      // -sum max(0,-T_ij)(c_j - c_i): for the skew-symmetric
-                      // advection matrix that is exactly HALF the upwind flux.
-                      ith_dissipative_term_mass += dHij*(uj_mass-ui_mass);
-                      ith_low_order_dissipative_term_mass += dLowij*(uj_mass-ui_mass);
+                      // i.e. an M-matrix.  The rewrite of the left side into the
+                      // right side is valid ONLY because T now has zero row sums
+                      // (df/dw = v, independent of the solution); differencing
+                      // against u with the u-assembled T left a residue
+                      // (sum_j T_ij)*c_i that broke boundedness at every
+                      // rho_s != rho_f.
+                      //
+                      // It must NOT be replaced by -sum max(0,-T_ij)(w_j - w_i):
+                      // for the skew-symmetric advection matrix that is exactly
+                      // HALF the upwind flux.
+                      ith_dissipative_term_mass += dHij*(wj_mass-wi_mass);
+                      ith_low_order_dissipative_term_mass += dLowij*(wj_mass-wi_mass);
+                      // SAME dLow on the fluid mass -- symmetric, so it is
+                      // conservative, and identical between the two equations,
+                      // which is what the convex-combination identity needs.
+                      ith_low_order_dissipative_term_fluid += dLowij*(rhoj_fluid-rhoi_fluid);
+                      {
+                        const double aT  = fabs(TransportMatrix[ij]);
+                        const double aTt = fabs(TransposeTransportMatrix[ij]);
+                        const double gam = dLowij - TransportMatrix[ij] - DiffusionMatrix[ij];
+                        dbg_sum_gamma += gam;
+                        dbg_min_gamma = fmin(dbg_min_gamma, gam);
+                        dbg_max_dLow  = fmax(dbg_max_dLow, dLowij);
+                        dbg_max_absT  = fmax(dbg_max_absT, aT);
+                        dbg_max_absTt = fmax(dbg_max_absTt, aTt);
+                        if (aTt > aT) dbg_n_from_transpose += 1;
+                      }
                       //dHij - dLij. This matrix is needed during FCT step
                       dt_times_dH_minus_dL[ij] = dt*(dHij - dLowij);
 
@@ -1676,14 +2075,18 @@ inline
               // a=theta*rho*Disp); no dmdu_i lifting is needed.
               const double boundary_integral_mass = boundary_integral[i];
               // compute edge_based_cfl
-              // 2|dLii|/mi is the constant-density edge CFL.  The low-order step
-              // advances m = theta*rho(c)*c, so recovering c divides the mass
-              // change by the storage Jacobian dm/dc = dmdu_i; without that
-              // factor the stable dt is over-predicted in low-water-content (high
-              // gas saturation) zones where dmdu_i -> 0, and uLow overshoots out
-              // of [0, c_sat].  dmdu_i = 1 at rho=theta=1, so this reduces to the
-              // original 2|dLii|/mi.
-              edge_based_cfl.data()[i] = 2.*fabs(dLii)/(mi * fmax(dmdu_i, 1.0e-14));
+              // In the group variable the low-order update is
+              //   w_i^L = w_i + dt/(theta_i*mi) sum_{j!=i} gamma_ij (w_j - w_i),
+              // a convex combination of {w_i, w_j} as long as
+              //   dt/(theta_i*mi) sum_j gamma_ij <= 1,  gamma_ij = dLow-T-D.
+              // So the storage Jacobian that has to divide 2|dLii|/mi is just
+              // theta_i (dm/dw = theta), NOT the old dm/du = theta*(rho+u drho/du).
+              // Using dm/du here was also one-sided: it is evaluated at node i,
+              // while the undershoot bound needs the stencil minimum, which made
+              // dt up to 19% too permissive at eps_rho = 0.235.  theta_i has no
+              // such solution dependence, so the bound is now exact.
+              // theta_i = 1 recovers the original 2|dLii|/mi.
+              edge_based_cfl.data()[i] = 2.*fabs(dLii)/(mi * theta_i);
               
               // Stage 3 kinetic dissolution source at node i (mass-rate form):
               //   R_diss_i = theta_w_i * rho_w(u_i) * k_d * S_n_i * (c_sat - u_i)
@@ -1705,7 +2108,52 @@ inline
                                                      + boundary_integral_mass
                                                      - ith_low_order_dissipative_term_mass)
                                             + dt * R_diss_i;
-              uLow[i] = inversevaluateCoefficients(mLow_i, theta_i, rho_f, rho_s);
+              // SCHEME B: advance the fluid mass with the SAME operator, then
+              // take the concentration as the ratio.  R_diss is added to BOTH:
+              // dissolved CO2 mass joins the aqueous phase, so it raises the
+              // solute mass and the fluid mass by the same amount, and
+              // (m+d)/(M+d) stays in [u, 1] for d >= 0.  (k_d = 0 by default,
+              // so this is inert unless kinetic dissolution is switched on;
+              // for EXSOLUTION, d < 0, the bound is not guaranteed.)
+              const double MLow_i = fmax(M_dof.data()[i]
+                                         - dt/mi*(ith_flux_term_fluid
+                                                  + boundary_integral_fluid[i]
+                                                  - ith_low_order_dissipative_term_fluid)
+                                         + dt * R_diss_i,
+                                         1.0e-14);
+              M_low.data()[i] = MLow_i;
+              uLow[i] = mLow_i/MLow_i;
+
+              // --- DMP diagnostic: report the first few violating nodes ---
+              // Distinguishes the three possible causes in one run:
+              //   min_gamma < 0        -> a coefficient is negative (not an M-matrix)
+              //   coef > 1             -> dt exceeds the LOCAL stability limit
+              //   both fine, still >1  -> the violation is not from this update
+              if (TADR_DMP_DBG && uLow[i] > 1.0 + 1.0e-10 && dbg_reported < 6 && dbg_budget > 0)
+                {
+                  const double coef = dt*dbg_sum_gamma/fmax(theta_i*mi, 1.0e-300);
+                  std::cout << "TADR_DMP i=" << i
+                            << " uLow=" << uLow[i]
+                            << " wi=" << wi_mass
+                            << " theta=" << theta_i
+                            << " ML=" << mi
+                            << " dt=" << dt
+                            << " min_gamma=" << dbg_min_gamma
+                            << " coef=" << coef
+                            << " max_dLow=" << dbg_max_dLow
+                            << " max|T_ij|=" << dbg_max_absT
+                            << " max|T_ji|=" << dbg_max_absTt
+                            << " n_dLow_from_transpose=" << dbg_n_from_transpose
+                            << " bndry_int=" << boundary_integral_mass
+                            << std::endl;
+                  dbg_reported += 1; dbg_budget -= 1;
+                }
+              if (TADR_DMP_DBG)
+                {
+                  const double coef = dt*dbg_sum_gamma/fmax(theta_i*mi, 1.0e-300);
+                  if (coef > dbg_global_max_coef) { dbg_global_max_coef = coef; dbg_argmax_coef = i; }
+                  if (dbg_min_gamma < dbg_global_min_gamma) dbg_global_min_gamma = dbg_min_gamma;
+                }
 
               // update residual
               if (LUMPED_MASS_MATRIX==1)
@@ -1714,11 +2162,37 @@ inline
                                                           + boundary_integral_mass
                                                           - ith_dissipative_term_mass)
                                                  + dt * R_diss_i;
-                  globalResidual.data()[i] = inversevaluateCoefficients(mHigh_i, theta_i, rho_f, rho_s);
+                  // SCHEME B: the fluid mass is a single state, advanced ONCE
+                  // with the low-order operator.  Only the SOLUTE mass carries
+                  // a high-order counterpart and gets the FCT treatment, so the
+                  // high-order concentration divides by the same MLow_i.  Using
+                  // two different denominators for solH and uLow would make the
+                  // antidiffusive flux inconsistent with the bounds.
+                  globalResidual.data()[i] = mHigh_i/MLow_i;
+                  // Probe the HIGH-order solution too.  uLow is known bounded;
+                  // if this one violates while uLow does not, the archived field
+                  // is the high-order solution and the FCT/low-order result is
+                  // being discarded downstream of FCTStep.
+                  if (TADR_DMP_DBG && globalResidual.data()[i] > 1.0 + 1.0e-10 && dbg_budget > 0)
+                    {
+                      std::cout << "TADR_DMP_HIGH i=" << i
+                                << " solH=" << globalResidual.data()[i]
+                                << " uLow=" << uLow[i]
+                                << " theta=" << theta_i
+                                << std::endl;
+                      dbg_budget -= 1;
+                    }
                 }
               else
                 globalResidual.data()[i] += dt*(ith_flux_term_mass - ith_dissipative_term_mass - R_diss_i);//cek todo: shouldn't this have boundaryIntegral?
             }//i
+          if (TADR_DMP_DBG && dbg_reported > 0)
+            std::cout << "TADR_DMP_SUMMARY dt=" << dt
+                      << " max_coef=" << dbg_global_max_coef
+                      << " at_dof=" << dbg_argmax_coef
+                      << " min_gamma_anywhere=" << dbg_global_min_gamma
+                      << " (coef<=1 and gamma>=0 => convex combination)"
+                      << std::endl;
         }//edge-based
       else if (STABILIZATION_TYPE==STABILIZATION::ImplicitEV)
         {
@@ -1742,43 +2216,114 @@ inline
           // (q_v, refreshed from mphase_co2 before TADR solves) and the    //
           // current iterate u -- fully implicit backward Euler.            //
           //                                                                //
-          // FLUX IS UPWINDED: instead of the central sum_j(T_ij+D_ij)c_j   //
-          // plus symmetric dissipation, the advective/diffusive flux is the//
-          // first-order upwind low-order operator (the same one TADR's     //
-          // explicit branch builds for uLow), evaluated at the current c:  //
+          // LOW-ORDER FLUX: the FULL-SPEED Kuzmin operator, identical in   //
+          // form to the one the explicit edge-based branch builds for uLow,//
+          // but in the GROUP VARIABLE w = rho(u)*u and at the current       //
+          // Newton iterate:                                                //
           //                                                                //
-          //   F_i = sum_{j!=i} -a_ij*(c_j - c_i),                          //
-          //   a_ij = max(0,-T_ij)*(rho_up/rho_f) + max(0,-D_ij) >= 0,       //
-          //   rho_up = rho(c_i) if j->i is inflow (-T_ij*(c_j-c_i)<=0)      //
-          //            else rho(c_j).                                      //
+          //   F_i = sum_j (T_ij + D_ij) w_j                                //
+          //         - sum_{j!=i} dLow_ij (w_j - w_i),                      //
+          //   dLow_ij = max(|T_ij|, |T_ji|)     (symmetric)                //
           //                                                                //
-          // a_ij>=0 makes the spatial operator an M-matrix (monotone, DMP);//
-          // diffusion (D symmetric, row-sum 0) is reproduced exactly since //
-          // -max(0,-D_ij)(c_j-c_i)=D_ij(c_j-c_i).  Conservative by global  //
-          // telescoping of the edge fluxes.  a_ij (frozen) is stashed in   //
-          // dLow[ij] for calculateJacobian.  m^{n+1}_i=theta_i*rho(c_i)*c_i //
-          // (nodal, porosity lagged); m^n_i=m_dof[i].  boundary_integral   //
-          // stays 0 (closed system); implicit boundary flux is a TODO.     //
+          // which telescopes to  -sum_{j!=i} (dLow - T - D)_ij (w_j - w_i) //
+          // with (dLow - T - D)_ij >= 0, i.e. an M-matrix (monotone, DMP), //
+          // and is conservative because dLow is SYMMETRIC.                 //
+          //                                                                //
+          // THIS REPLACES the old  F_i = -sum_{j!=i} a_ij (c_j - c_i)  with//
+          // a_ij = max(0,-T_ij)*(rho_up/rho_f) + max(0,-D_ij).  That form  //
+          // is also an M-matrix, but for the skew-symmetric P1 advection   //
+          // matrix it is EXACTLY HALF the Kuzmin coefficient: on an edge   //
+          // with T_ij < 0 it applies |T_ij| where the Kuzmin operator      //
+          // applies dLow_ij - T_ij = 2|T_ij|.  Verified node-for-node in a //
+          // numpy replica (ratio 0.500 at every node).  The consequence is //
+          // not extra diffusion but HALVED TRANSPORT SPEED -- the scheme   //
+          // advects the front at half the physical rate, which is why the  //
+          // Elder plume reached the bottom later than it should.  It also  //
+          // meant the FCT post-step antidiffused the symmetric dLow it     //
+          // never actually applied, a factor-2 mismatch.                   //
+          //                                                                //
+          // dLow[ij] (symmetric) is stashed for the FCT post-step and is   //
+          // now ALSO what calculateJacobian differentiates, so residual    //
+          // and Jacobian use one and the same operator.                    //
+          // m^{n+1}_i=theta_i*rho(c_i)*c_i (nodal, porosity lagged);       //
+          // m^n_i=m_dof[i].  boundary_integral stays 0 (closed system);    //
+          // implicit boundary flux is a TODO.                              //
           //////////////////////////////////////////////////////////////////
-          const double drho_du = rho_s - rho_f;
-          // nodal current conservative variable m^{n+1}_i = theta_i*rho(c_i)*c_i
-          std::valarray<double> m_new(numDOFs);
-          for (int i=0; i<numDOFs; i++)
-            {
-              const double ci = u_dof.data()[i];
-              const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
-              const double rho_ci = rho_f*(1.0 + (drho_du/rho_f)*ci);
-              m_new[i] = theta_i*rho_ci*ci;
-            }
+          //////////////////////////////////////////////////////////////////
+          // SCHEME B, implicit form.                                      //
+          //                                                               //
+          // The fluid mass is KNOWN before the solute solve -- under      //
+          // option C it is Richards' theta*rho, supplied in M_dof -- and  //
+          // the solute is solved implicitly for u against it.  Writing    //
+          // the two conservative equations                                //
+          //   ML(M^{n+1}u^{n+1} - M^n u^n)/dt + sum_j K_ij rho^n_j u^{n+1}_j
+          //        - sum_j d_ij rho^n_j (u^{n+1}_j - u^{n+1}_i) + B^s = 0 //
+          //   ML(M^{n+1} - M^n)/dt + sum_j K_ij rho^n_j                   //
+          //        - sum_j d_ij (rho^n_j - rho^n_i) + B^f = 0             //
+          // and subtracting u^{n+1}_i times the second from the first     //
+          // cancels every row-sum term and leaves                         //
+          //   ML M^n (u_i - u^n_i)/dt                                     //
+          //     - sum_{j!=i} gamma_ij rho^n_j (u_j - u_i)                 //
+          //     + (B^s_i - u_i B^f_i)  -  ML R_diss_i  = 0                //
+          // with gamma_ij = d_ij - K_ij >= 0.  That is an M-matrix with a //
+          // positive diagonal, so backward Euler is UNCONDITIONALLY       //
+          // bounded -- no CFL, and no divergence-free assumption on v.    //
+          //                                                               //
+          // The cancellation is REVERSIBLE, so solving this form for u is //
+          // algebraically identical to solving the two conservative       //
+          // equations -- PROVIDED the M it is handed satisfies the second //
+          // one.  Under option C it does not exactly (it satisfies        //
+          // Richards' continuity instead), and that gap, not the          //
+          // cancellation, is where conservation is lost.  See the option  //
+          // C note below.                                                 //
+          //                                                               //
+          // This replaces BOTH the half-upwind stopgap (a_ij =            //
+          // max(0,-T_ij), bounded but exactly HALF the physical transport //
+          // speed) and the full-speed consistent form that preceded it    //
+          // (correct speed, but max u = 4.25 on Elder from a u <= 1 IC).  //
+          // gamma_ij is the FULL-SPEED coefficient: for a skew T it is    //
+          // exactly 2*max(0,-T_ij), i.e. twice the stopgap.               //
+          //////////////////////////////////////////////////////////////////
+          // --- fluid mass: OPTION C, read from the flow model --------------
+          //
+          // There is no fluid system assembled or solved here any more.  M_dof
+          // arrives already holding Richards' theta*rho, refreshed on the Python
+          // side (TADR.LevelModel._refreshFluidMassFromFlow) before this kernel
+          // runs, and it serves as BOTH the old-time storage coefficient M^n_i
+          // and the flux density rho_j = M_j/theta_j.
+          //
+          // What this replaces: the fluid mass used to be advanced here as its
+          // own unknown.  Explicitly it inherited an explicit CFL (past it M
+          // went NEGATIVE, rho = M/theta flipped sign, the solute off-diagonals
+          // -gamma_ij*rho_j turned POSITIVE and boundedness died -- replica at
+          // 10x the limit: min M = -6.5e52, max u = 2.2e25).  Implicitly it
+          // needed a linear solve, and the sub-cycler that supplied one cost
+          // S = 100+ matvec + ghost-scatter collectives per step on the 20 yr
+          // Elder run.  Richards is already solving this equation; solving a
+          // second, slightly different copy of it was the expensive part.
+          //
+          // WHAT IT COSTS.  The cancelled solute form below is algebraically
+          // equivalent to the conservative pair only when M satisfies THIS
+          // model's discrete fluid equation (same K, same d, same B^f).
+          // Richards' m satisfies Richards' discrete continuity equation
+          // instead.  The gap is the flow/transport continuity defect, which on
+          // the 20 yr Elder run grew monotonically from 1.4e-16 to 3.6e-2.  So
+          // conservation here is to that defect, NOT to round-off; the
+          // [TADR-MASS] log reports the consequence every step.
+          //
+          // BOUNDEDNESS is untouched and still unconditional: the form below is
+          // an M-matrix for ANY strictly positive M, since gamma_ij >= 0 and
+          // rho_j = M_j/theta_j > 0 whenever Richards keeps theta*rho positive.
+          //
+          // --- solute: implicit, in the cancelled (bounded) form ---------
           int ij=0;
           for (int i=0; i<numDOFs; i++)
             {
-              const double ci = u_dof.data()[i];
+              const double ci      = u_dof.data()[i];
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
-              const double rho_ci = rho_f*(1.0 + (drho_du/rho_f)*ci);
-              const double mi_new = m_new[i];
-              const double mn_i = m_dof[i];
-              const double MLi = ML.data()[i];
+              const double Mn_i    = fmax(M_dof.data()[i], 1.0e-14);
+              const double un_i    = m_dof[i]/Mn_i;      // = u_dof_old[i] exactly
+              const double MLi     = ML.data()[i];
 
               double ith_upwind_flux_term_mass = 0.0;
               for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
@@ -1787,46 +2332,23 @@ inline
                   if (i != j)
                     {
                       const double cj      = u_dof.data()[j];
-                      const double rho_cj  = rho_f*(1.0 + (drho_du/rho_f)*cj);
-                      const double T_ij     = TransportMatrix[ij];
-                      const double D_ij     = DiffusionMatrix[ij];
-                      const double delta_c  = cj - ci;
-                      const double T_neg    = fmax(0.0, -T_ij);
-                      const double D_neg    = fmax(0.0, -D_ij);
-                      const double rho_up   = (-T_ij*delta_c <= 0.0) ? rho_ci : rho_cj;
-                      // frozen edge coefficient a_ij >= 0 (advection upwind + diffusion)
-                      const double a_ij     = T_neg*(rho_up/rho_f) + D_neg;
-                      ith_upwind_flux_term_mass += -a_ij*delta_c;
-                      // dLow stores the SYMMETRIC graph viscosity used by the
-                      // explicit FCT post-step (Kuzmin antidiffusive flux, which
-                      // must be antisymmetric per edge -> needs symmetric dLow,
-                      // NOT the directional a_ij).  calculateJacobian recomputes
-                      // a_ij directly from T,D, so it no longer reads dLow.
-                      dLow.data()[ij] = fmax(fabs(T_ij), fabs(TransposeTransportMatrix[ij]));
-                      // High-order (smoothness-compressed) graph dissipation for the
-                      // FCT post-step, mirroring the explicit EntropyViscosity branch
-                      // (dHij = dLowij*(1-Compij)).  Store dt*(dH - dLow) <= 0 so the
-                      // FCTStep removes ONLY the EXCESS low-order dissipation
-                      // (dLow - dH) and KEEPS dH.  Removing the full dLow (as the
-                      // explicit Kuzmin flux does) makes the antidiffusion target the
-                      // dissipation-free Galerkin solution, which over-sharpens the
-                      // Dirichlet source front back to the initial condition -> the
-                      // observed FCT=True freeze.  globalResidual is NOT touched here,
-                      // so calculateJacobian needs no change.
-                      {
-                        // Standard Kuzmin implicit FEM-FCT high-order target: ZERO
-                        // artificial dissipation (d^H = 0).  The full low-order graph
-                        // viscosity dLow is antidiffused; the Zalesak limiter
-                        // (min/max_u_bc bounds) provides boundedness.  The earlier
-                        // dH = dLow*(1-Comp) "smoothness compression" throttled the
-                        // antidiffusion so the consistent-mass term dominated and the
-                        // front stayed diffuse (verified in the 1D FCT numpy replica);
-                        // removing it recovers the textbook antidiffusive flux
-                        //   F_ij = M~_ij[(m_j^H-m_j^n)-(m_i^H-m_i^n)]
-                        //          + dt (d^H-d^L)_ij (m_j^n-m_i^n),  d^H=0.
-                        const double dHij = 0.0;
-                        dt_times_dH_minus_dL.data()[ij] = dt*(dHij - dLow.data()[ij]);
-                      }
+                      const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
+                      // OPTION C: rho from Richards' theta*rho.  The storage
+                      // coefficient above uses the SAME array, which is what the
+                      // cancellation needs -- the solute flux and the fluid
+                      // equation must see one density, not two.
+                      const double rhoj    = fmax(M_dof.data()[j],1.0e-14)/theta_j;
+                      const double Kij     = TransportMatrix[ij] + DiffusionMatrix[ij];
+                      const double Kji     = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
+                      const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
+                      const double gamma   = dLow_ij - Kij;     // >= 0 by construction
+                      ith_upwind_flux_term_mass += -gamma*rhoj*(cj - ci);
+                      // dLow (symmetric) is what the FCT post-step antidiffuses;
+                      // it must be the viscosity the residual ACTUALLY applied,
+                      // which is now the case (the half-upwind form applied a_ij
+                      // while FCT removed dLow -- a factor-2 mismatch).
+                      dLow.data()[ij] = dLow_ij;
+                      dt_times_dH_minus_dL.data()[ij] = dt*(0.0 - dLow_ij);
                     }
                   else
                     {
@@ -1838,12 +2360,13 @@ inline
               // Stage-3 kinetic dissolution source (mass-rate form); MUST match
               // mphase_co2.h and the explicit edge-based branch above.
               const double S_n_i   = Sn_dof.data()[i];
-              const double rho_w_i = rho_ci;   // rho_w(c_i) = rho_f*(1 + eps*c_i)
+              const double rho_w_i = rho_f*(1.0 + ((rho_s - rho_f)/rho_f)*ci);
               const double R_diss_i = theta_i * rho_w_i * k_d * S_n_i * (c_sat - ci);
 
-              globalResidual.data()[i] = MLi*(mi_new - mn_i)/dt
+              globalResidual.data()[i] = MLi*Mn_i*(ci - un_i)/dt
                                        + ith_upwind_flux_term_mass
                                        + boundary_integral[i]
+                                       - ci*boundary_integral_fluid[i]
                                        - MLi*R_diss_i;
             }//i
         }//implicit edge-based
@@ -1979,17 +2502,26 @@ inline
           const double c_sat = args.scalar<double>("c_sat");
           xt::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
           xt::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+          // OPTION C: the fluid mass theta*rho, read from Richards.  The
+          // immediately preceding calculateResidual filled theta_dof_proj and
+          // boundary_integral_fluid (both class members), and Proteus Newton
+          // evaluates F(u) then J(u) at the same iterate, so they are current.
+          xt::pyarray<double>& M_dof = args.array<double>("M_dof");
           const double drho_du = rho_s - rho_f;
-
-          // nodal storage Jacobian dmdu_i = theta_i*(rho(c_i) + c_i*drho_du)
-          std::valarray<double> dmdu(numDOFs);
-          for (int i=0; i<numDOFs; i++)
-            {
-              const double ci = u_dof.data()[i];
-              const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
-              const double rho_ci = rho_f*(1.0 + (drho_du/rho_f)*ci);
-              dmdu[i] = theta_i*(rho_ci + ci*drho_du);
-            }
+          // SCHEME B Jacobian, matching the cancelled residual term for term:
+          //   R_i = ML M^n_i (c_i - c^n_i)/dt
+          //         - sum_{j!=i} gamma_ij rho^n_j (c_j - c_i)
+          //         + B^s_i - c_i B^f_i - ML R_diss_i
+          // so
+          //   J_ij = -gamma_ij rho^n_j                        (j != i, <= 0)
+          //   J_ii = ML M^n_i/dt + sum_j gamma_ij rho^n_j
+          //          - B^f_i - ML dR_diss/dc_i
+          // gamma_ij = dLow_ij - K_ij >= 0 and rho^n_j > 0, so this is an
+          // M-matrix UNCONDITIONALLY -- it does not depend on the row sums,
+          // on dt, or on the velocity being divergence free.  gamma and rho^n
+          // are frozen under differentiation (rho^n is genuinely independent of
+          // the iterate: it is the carried fluid mass at the old time level, so
+          // freezing it is EXACT here, not an inexact-Newton approximation).
           int ij=0;
           for (int i=0; i<numDOFs; i++)
             {
@@ -1997,39 +2529,35 @@ inline
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
               const double rho_ci = rho_f*(1.0 + (drho_du/rho_f)*ci);
               const double MLi = ML.data()[i];
+              const double Mn_i = fmax(M_dof.data()[i], 1.0e-14);
               const double S_n_i = Sn_dof.data()[i];
               // dR_diss_i/dc_i = theta_i*k_d*S_n_i*[ drho_du*(c_sat-c_i) - rho(c_i) ]
               const double dRdiss_dci = theta_i*k_d*S_n_i*( drho_du*(c_sat - ci) - rho_ci );
 
               int diag_ij = -1;
-              double sum_a = 0.0;
+              double sum_gamma_rho = 0.0;
               for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
                   int j = csrColumnOffsets_DofLoops.data()[offset];
                   if (i != j)
                     {
-                      // off-diagonal upwind flux: J_ij = -a_ij.  Recompute a_ij
-                      // from the (frozen) transport/diffusion matrices and the
-                      // current iterate -- dLow now stores the symmetric FCT
-                      // viscosity, not a_ij.  Matches the residual exactly.
-                      const double T_ij  = TransportMatrix[ij];
-                      const double D_ij  = DiffusionMatrix[ij];
-                      const double cj    = u_dof.data()[j];
-                      const double rho_cj= rho_f*(1.0 + (drho_du/rho_f)*cj);
-                      const double T_neg = fmax(0.0, -T_ij);
-                      const double D_neg = fmax(0.0, -D_ij);
-                      const double rho_up= (-T_ij*(cj - ci) <= 0.0) ? rho_ci : rho_cj;
-                      const double a_ij  = T_neg*(rho_up/rho_f) + D_neg;
-                      globalJacobian.data()[ij] += -a_ij;
-                      sum_a += a_ij;
+                      const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
+                      // rho from Richards, matching the residual's flux coefficient
+                      const double rhoj    = fmax(M_dof.data()[j],1.0e-14)/theta_j;
+                      const double Kij     = TransportMatrix[ij] + DiffusionMatrix[ij];
+                      const double Kji     = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
+                      const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
+                      const double gamma   = dLow_ij - Kij;
+                      globalJacobian.data()[ij] += -gamma*rhoj;
+                      sum_gamma_rho += gamma*rhoj;
                     }
                   else
                     diag_ij = ij;
                   ij += 1;
                 }
-              // diagonal: storage + upwind self term (sum a_ij) - dissolution
-              globalJacobian.data()[diag_ij] += MLi*dmdu[i]/dt
-                                              + sum_a
+              globalJacobian.data()[diag_ij] += MLi*Mn_i/dt
+                                              + sum_gamma_rho
+                                              - boundary_integral_fluid[i]
                                               - MLi*dRdiss_dci;
             }//i
 
@@ -2099,14 +2627,25 @@ inline
                       bc_f_ext[I] -= MOVING_DOMAIN*bc_m_ext*mesh_velocity[I];
                       bc_df_ext[I] -= MOVING_DOMAIN*bc_dm_ext*mesh_velocity[I];
                     }
+                  // GROUP VARIABLE: the ImplicitEV boundary residual is now the
+                  // adjoint of the w-operator, so differentiate w.r.t. w (using
+                  // df/dw = v and a_w) and apply the chain rule dw/dc at the end.
+                  // dw/dc is frozen at the quadrature trace -- the same inexact-
+                  // Newton simplification used for the interior a_ij.
+                  const double drho_du_jb = rho_f*((rho_s - rho_f)/rho_f);
+                  const double dwdu_ext_j = fmax(rho_out_ext + u_ext*drho_du_jb, 1.0e-14);
+                  double a_w_ext_j[nnz], zero_da_ext_j[nnz];
+                  for (int ii=0; ii<a_rowptr.data()[nSpace]; ii++)
+                    { a_w_ext_j[ii] = a_ext[ii]/dwdu_ext_j; zero_da_ext_j[ii] = 0.0; }
+                  const double* v_w_ext_j = &ebqe_velocity_ext.data()[ebNE_kb_nSpace];
                   for (int i=0;i<nDOF_test_element;i++)
                     for (int j=0;j<nDOF_trial_element;j++)
                       {
                         int ebN_local_kb_j=ebN_local_kb*nDOF_trial_element+j;
                         double advJacobian_ext = 0.0, diffJacobian_ext = 0.0;
-                        exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,df_ext,advJacobian_ext);
-                        exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_ext,da_ext,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
-                        difffluxjacobian_ext = advJacobian_ext*u_trial_trace_ref.data()[ebN_local_kb_j] + diffJacobian_ext;
+                        exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,v_w_ext_j,advJacobian_ext);
+                        exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_w_ext_j,zero_da_ext_j,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
+                        difffluxjacobian_ext = (advJacobian_ext*u_trial_trace_ref.data()[ebN_local_kb_j] + diffJacobian_ext)*dwdu_ext_j;
                         fluxJacobian_u_u[i][j] += difffluxjacobian_ext*u_test_dS[i];
                       }//j
                 }//kb
@@ -2653,6 +3192,13 @@ inline
         double solHmi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solHi)*solHi;
         double solnmi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni;
         double uDotLowi = (mLowi - solnmi)/dt;
+        // GROUP VARIABLE w = rho(u)*u = m/theta.  dt_times_dH_minus_dL and dLow
+        // are coefficients of the w-operator (the transport matrix is assembled
+        // against w), so the DISSIPATION part of the antidiffusive flux must
+        // difference w, not m.  The consistent-MASS part stays in m -- it is
+        // M~_ij times d(m)/dt and carries its own theta.
+        const double solnwi = solnmi/theta_i;
+        const double wLowi  = mLowi/theta_i;
         double mini=min_u_bc.data()[i], maxi=max_u_bc.data()[i]; // init min/max with value at BCs (NOTE: if no boundary then min=1E10, max=-1E10)
         double Pposi=0, Pnegi=0;
         // Loop over neighbors (j)
@@ -2677,13 +3223,15 @@ inline
             double solHmj = theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solH.data()[j])*solH.data()[j];
             double solnmj = theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj;
             double uDotLowj = (mLowj - solnmj)/dt;
+            const double solnwj = solnmj/theta_j;   // group variable, old time
+            const double wLowj  = mLowj/theta_j;    // group variable, low order
             // i-th row of flux correction matrix
             if (STABILIZATION_TYPE == STABILIZATION::Kuzmin)
               {
                 // Explicit Kuzmin antidiffusive flux: consistent-mass correction +
-                // full removal of the symmetric graph viscosity dLow*(mLow_i-mLow_j).
+                // full removal of the symmetric graph viscosity dLow*(w_i-w_j).
                 FluxCorrectionMatrix[ij] = dt*(MassMatrix.data()[ij]*(uDotLowi-uDotLowj)
-                                               + dLow.data()[ij]*(mLowi-mLowj));
+                                               + dLow.data()[ij]*(wLowi-wLowj));
               }
             else if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
               {
@@ -2704,14 +3252,14 @@ inline
                 // density nonlinearity m^s(c)=theta*rho_f*(c + eps c^2); the inverse
                 // c = 2r/(1+sqrt(1+4 eps r)) is applied in invert().
                 FluxCorrectionMatrix[ij] = dt*MassMatrix.data()[ij]*(uDotLowi-uDotLowj)
-                                           + dt_times_dH_minus_dL.data()[ij]*(solnmj-solnmi);
+                                           + dt_times_dH_minus_dL.data()[ij]*(solnwj-solnwi);
               }
             else
               {
                 double ML_minus_MC =
                   (LUMPED_MASS_MATRIX == 1 ? 0. : (i==j ? 1. : 0.)*lumped_volume - MassMatrix.data()[ij]);
                 FluxCorrectionMatrix[ij] = ML_minus_MC * (solHmj-solnmj - (solHmi-solnmi))
-                  + dt_times_dH_minus_dL.data()[ij]*(solnmj-solnmi);
+                  + dt_times_dH_minus_dL.data()[ij]*(solnwj-solnwi);
               }
             Pposi += FluxCorrectionMatrix[ij]*((FluxCorrectionMatrix[ij] > 0) ? 1. : 0.);
             Pnegi += FluxCorrectionMatrix[ij]*((FluxCorrectionMatrix[ij] < 0) ? 1. : 0.);
