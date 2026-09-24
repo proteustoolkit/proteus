@@ -23,6 +23,12 @@ from proteus.mprans.cTADR import cTADR_base
 
 from . import cArgumentsDict
 
+#: TADR_BC_DBG=1 logs the exterior-boundary solute-flux split once per time
+#: step; see LevelModel._logBoundarySoluteFlux.  Off by default: the reduction
+#: costs a handful of MPI allreduces per step.
+_TADR_BC_DBG = os.environ.get("TADR_BC_DBG", "0") not in ("0", "false", "False")
+
+
 class SubgridError(SGE_base):
     def __init__(self, coefficients, nd):
         SGE_base.__init__(self, coefficients, nd, lag=False)
@@ -709,6 +715,10 @@ class Coefficients(TC_base):
         # the quantity this trade puts at risk, and it is the number to watch.
         if self.STABILIZATION_TYPE == 5:
             self.model._reportSoluteMass("postStep")
+            # The defect that says how much of the above is real.  Here, not in
+            # _reportSoluteMass: it needs Richards' M^{n+1}, and under
+            # Sequential_MinModelStep the flow model has finished its step by now.
+            self.model._reportContinuityDefect("postStep")
         # q_porosity aliases the coupled Richards theta field, so cache the
         # lagged copy here before Richards advances it on the next split step.
         self.q_porosity_old[:] = self.q_porosity
@@ -733,10 +743,21 @@ class Coefficients(TC_base):
 
         q_rho = getattr(self, 'q_rho', None)
         ebqe_rho = getattr(self, 'ebqe_rho', None)
-        u_field = self.model.q[('u', 0)]
+        # OWNED ELEMENTS ONLY for the element-quadrature fields.  _global_stats
+        # forms its mean as allreduce(sum)/allreduce(size) over the WHOLE local
+        # array, and the tail of that array is the overlap elements -- which the
+        # owning rank also counts.  The duplicated fraction grows with the
+        # partition surface, so the reported mean drifts with RANK COUNT for a
+        # reason that has nothing to do with the solution: measured here, the
+        # 1-vs-8-rank spread in mean(u) read 1.9e-2 against 1.2e-3 on the
+        # owned-DOF solute mass, i.e. the diagnostic was ~20x noisier than what
+        # it was reporting on.  min/max are unaffected (duplicates cannot change
+        # an extremum), so only the slice changes here.
+        _no = self.model.mesh.nElements_owned
+        u_field = self.model.q[('u', 0)][:_no]
         if q_rho is not None:
             u_lo, u_hi, u_mn = _global_stats(u_field)
-            r_lo, r_hi, r_mn = _global_stats(q_rho)
+            r_lo, r_hi, r_mn = _global_stats(q_rho[:_no])
             if comm.Get_rank() == 0:
                 logEvent(
                     "[Coupling rho q] TADR.postStep t={:.6e} "
@@ -1066,6 +1087,12 @@ class LevelModel(OneLevelTransport):
             (self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'i')
         self.ebqe[('advectiveFlux_bc', 0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
         self.ebqe[('advectiveFlux', 0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
+        # BOUNDARY-FLUX DIAGNOSTIC, see TADR_BC_DBG in getResidual.
+        # ('advectiveFlux',0) holds advection PLUS dispersion; these hold the
+        # advective half on its own and the quadrature weight, so the two can be
+        # separated and integrated.
+        self.ebqe[('advectiveFluxOnly', 0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
+        self.ebqe['dS'] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
         #######################################################
         self.ebqe[('a',0,0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary,self.coefficients.sdInfo[(0,0)][0][-1]),'d')
         self.ebqe[('df',0,0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary,self.nSpace_global),'d')
@@ -1467,15 +1494,32 @@ class LevelModel(OneLevelTransport):
         -- test_tadr and any single-model deck), 0 if M was taken from the flow.
         """
         mn_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mn', None)
-        if (mn_flow is not None
-                and np.shape(mn_flow) == np.shape(self.M_dof)
-                and np.all(np.asarray(mn_flow) > 0.0)):
+        # COLLECTIVE.  This test picks init_M_dof, which selects a different
+        # BRANCH IN THE KERNEL (seed M from the EOS vs take Richards' M), so
+        # every rank has to reach the same answer.  Evaluated rank-locally -- as
+        # it was -- a single non-positive entry on one rank, including one in a
+        # ghost slot that rank does not own, makes that rank alone reseed M from
+        # the EOS while the others keep Richards'.  That is an O(1) divergence
+        # between ranks, not a round-off one, and it is silent: both branches
+        # produce a plausible M.  globalMin over the per-rank verdict means the
+        # fallback is taken everywhere or nowhere.
+        _mn_ok_local = 1 if (mn_flow is not None
+                             and np.shape(mn_flow) == np.shape(self.M_dof)
+                             and np.all(np.asarray(mn_flow) > 0.0)) else 0
+        if int(Comm.globalMin(_mn_ok_local)) == 1:
             # mn is theta*rho at Richards' OLD time level.  Under
             # Sequential_MinModelStep the flow model steps FIRST, so by the time
             # TADR evaluates a residual Richards has completed its step and mn
             # holds the value at the start of THIS step -- i.e. M^n, which is
             # what both the storage coefficient and the flux density want.
             self.M_dof[:] = mn_flow
+            # ...and Richards' NODAL theta(psi^n), which replaces TADR's L2-projected
+            # quadrature theta at a material interface.  It no longer serves to
+            # recover rho = M/theta under ImplicitEV: mn is Richards' old-time mass
+            # with the OLD density, theta(psi^n)*rho(c^{n-1}), and the kernel takes the flux
+            # density from the EOS at the node instead.  Left at zero when there is
+            # no flow model, which is how the kernel knows to keep its projection.
+            self.theta_nodal[:] = self.coefficients.vModel.thetaW_dof
             if not self._M_dof_initialized:
                 logEvent("TADR SCHEME B (option C): fluid mass M read from "
                          "Richards mn every step (min=%.6e max=%.6e); no fluid "
@@ -1532,6 +1576,117 @@ class LevelModel(OneLevelTransport):
                     Comm.globalMin(float(Mo.min())),
                     globalMax(float(Mo.max())),
                     globalSum(float(Mo.sum()))/max(1.0, globalSum(float(Mo.size)))))
+
+    def _reportContinuityDefect(self, tag):
+        """OPTION C (STAB=5) flow/transport continuity defect, per node:
+
+            delta_i = ML_i (M^{n+1}_i - M^n_i)/dt + Phi_i + B^f_i - ML_i R_diss_i
+
+        The cancelled solute residual is algebraically equivalent to the conservative
+        pair ONLY where delta_i = 0 -- i.e. only if the M handed over satisfies TADR's
+        OWN discrete fluid equation.  Under option C it satisfies RICHARDS' instead,
+        and delta is exactly the gap.  Each c_i*delta_i is a solute source that no
+        limiter bounds and no boundary flux explains, so this is the honest
+        denominator for [TADR-MASS], which reports rel_change and not a defect.
+
+        The kernel supplies the flux part (self.fluidResidual = Phi + B^f - ML*R_diss)
+        assembled with TADR's own K, dLow and boundary loop.  The storage part needs
+        M^{n+1}, which only the flow model has: Richards' `mLow` is theta(psi^{n+1})*rho
+        (Richards.h, `mLow.data()[i] = m` in the DOF loop).  M_dof is still M^n here --
+        option C never advances it, since _adoptFluidMass early-returns on M_low.
+
+        RESULTS ARE STORED, not just logged, so a test can assert on them:
+          self.continuityDefect  -- per-node delta (owned rows meaningful)
+          self.continuityStats   -- dict: net, abs, rel, spurious, solute, t, dt
+        Returns that dict, or None if the defect is not measurable.
+
+        M^{n+1} comes from Richards' `mAccepted` (the limited mass when its FCT stood,
+        mLow when the veto threw the step away), falling back to `mLow` when the flow
+        model runs without FCT and mLow IS the accepted mass.  Accurate to Richards'
+        invert() error on the Newton path; for an exact value read the NEXT step's mn,
+        at the cost of reporting in arrears and folding in the density refresh.
+        """
+        if getattr(self, 'ML', None) is None:
+            return None
+        vModel = getattr(self.coefficients, 'vModel', None)
+        # mAccepted is set by Richards.FCTStep and tracks its per-step accept/reject
+        # veto; it is None when the flow model runs without FCT, and then mLow (the
+        # unlimited predictor) IS the accepted mass.  Preferring mAccepted makes this
+        # probe valid in both modes.
+        M_new = getattr(vModel, 'mAccepted', None)
+        if M_new is None:
+            M_new = getattr(vModel, 'mLow', None)
+        if M_new is None or np.shape(M_new) != np.shape(self.M_dof):
+            return None
+        dt = self.timeIntegration.dt
+        if dt <= 0.0:
+            return None
+        # Owned DOFs only, then one allreduce -- ghosts would double-count every
+        # shared node (same convention as _reportSoluteMass).
+        no = self.mesh.nNodes_owned
+        ML = np.asarray(self.ML)[:no]
+        u = np.asarray(self.u[0].dof)[:no]
+        M_old = np.asarray(self.M_dof)[:no]
+        self.continuityDefect = (ML*(np.asarray(M_new)[:no] - M_old)/dt
+                                 + np.asarray(self.fluidResidual)[:no])
+        d = self.continuityDefect
+        # ROW 2 (history): self._M_prev_new is Richards' M^{n+1} as the PREVIOUS
+        # step's probe saw it, and M_old is the mn this step read back at its
+        # start.  Under Sequential_MinModelStep those are the same instant, so a
+        # difference is stored history rewritten with no flux to explain it --
+        # theta*rho re-evaluated after TADR moved c.  delta cannot see this: it is
+        # built with rho^n on both sides by construction, which is what makes it a
+        # clean continuity measure and also what makes it incomplete.  Weighted
+        # with the c of that instant (stashed together with M), because the
+        # carried solute mass is sum ML*M*c and the jump moves M underneath it.
+        # It is a JUMP, not a rate: accumulated directly, never scaled by dt.
+        if (self._M_prev_new is not None
+                and np.shape(self._M_prev_new) == np.shape(M_old)):
+            jump = ML*(M_old - self._M_prev_new)
+            jump_solute, jump_mag = (jump*self._u_prev).sum(), np.abs(jump).sum()
+        else:
+            jump_solute, jump_mag = 0.0, 0.0
+        # ONE reduction for all six, as [TADR-BC] does: a reduction per quantity
+        # is six collectives per step, and desynchronises the ranks if any of the
+        # numpy above ever throws on only some of them.
+        # c_i*delta_i is the spurious solute source the defect injects; compared
+        # with the solute present, it is a per-step relative creation rate.
+        local = np.array([d.sum(), np.abs(d).sum(), (d*u).sum(), (ML*M_old*u).sum(),
+                          jump_solute, jump_mag], dtype='d')
+        comm = Comm.get()
+        if comm.size() > 1:
+            comm.comm.tompi4py().Allreduce(local.copy(), local)
+        net, mag, spurious, solute, jump_solute, jump_mag = (float(x) for x in local)
+        # Cumulative, because neither error is visible per step: both are tiny and
+        # one-signed, and it is the TIME-INTEGRAL that reaches percent level.
+        self._cont_spurious_int += dt*spurious
+        self._cont_jump_int += jump_solute
+        self.continuityStats = {
+            't': self.timeIntegration.t, 'dt': dt,
+            'net': net, 'abs': mag, 'rel': net/max(1.0e-30, mag),
+            'spurious': spurious, 'solute': solute,
+            'spurious_frac': dt*spurious/max(1.0e-30, abs(solute)),
+            'jump': jump_solute, 'jump_abs': jump_mag,
+            'spurious_int': self._cont_spurious_int,
+            'jump_int': self._cont_jump_int,
+            'total_frac': ((self._cont_spurious_int + self._cont_jump_int)
+                           / max(1.0e-30, abs(solute))),
+        }
+        logEvent("[TADR-CONT] %s t=%.6e defect net=%+.6e sum|.|=%.6e rel=%.3e "
+                 "spurious_solute=%+.6e (dt*that/mass=%+.3e)"
+                 % (tag, self.continuityStats['t'], net, mag,
+                    self.continuityStats['rel'], spurious,
+                    self.continuityStats['spurious_frac']))
+        logEvent("[TADR-CONT2] %s t=%.6e history_jump=%+.6e sum|.|=%.6e | "
+                 "INT: flux=%+.6e history=%+.6e total=%+.6e (%.4f%% of mass)"
+                 % (tag, self.continuityStats['t'], jump_solute, jump_mag,
+                    self._cont_spurious_int, self._cont_jump_int,
+                    self._cont_spurious_int + self._cont_jump_int,
+                    100.0*self.continuityStats['total_frac']))
+        # Stash AFTER reporting: next step compares its M^n against this M^{n+1}.
+        self._M_prev_new = np.array(M_new)[:no]
+        self._u_prev = u.copy()
+        return self.continuityStats
 
     def _adoptFluidMass(self):
         """SCHEME B: the fluid mass advances once per step, with the low-order
@@ -1590,7 +1745,16 @@ class LevelModel(OneLevelTransport):
         numDOFs = len(rowptr) - 1
         theta_dof_out_arr = np.zeros(numDOFs, 'd')
 
-        q_porosity_old_arr = np.ascontiguousarray(self.coefficients.q_porosity_old)
+        # theta AS THE RESIDUAL USED IT, not as it stands now.  See the capture
+        # in getResidual: for STAB=5 the FCT hook runs from modelStepTaken,
+        # after Coefficients.postStep has already advanced q_porosity_old to
+        # theta^{n+1}.  The explicit branches (STAB 2/3/4) call FCTStep during
+        # the step, before postStep, so their live copy is already theta^n and
+        # the fallback is correct for them.
+        _theta_fct = getattr(self, "_q_porosity_conv", None)
+        if _theta_fct is None or _theta_fct.shape != self.coefficients.q_porosity_old.shape:
+            _theta_fct = self.coefficients.q_porosity_old
+        q_porosity_old_arr = np.ascontiguousarray(_theta_fct)
         q_rho_arr = np.ascontiguousarray(self.coefficients.q_rho)
         q_dV_arr = np.ascontiguousarray(self.q['dV_last'])
         u_l2g_arr = np.ascontiguousarray(self.u[0].femSpace.dofMap.l2g)
@@ -1621,6 +1785,9 @@ class LevelModel(OneLevelTransport):
         argsDict["u_l2g_fct"] = u_l2g_arr
         argsDict["u_test_ref_fct"] = u_test_ref_arr
         argsDict["theta_dof_out"] = theta_dof_out_arr
+        argsDict["M_dof_fct"] = self.M_dof   # M^n
+        argsDict["M_low_fct"] = self.M_low   # M^{n+1}, explicit branches only
+        argsDict["theta_nodal"] = self.theta_nodal
         argsDict["nElements_global_fct"] = self.mesh.nElements_global
         argsDict["nQuadraturePoints_element_fct"] = self.nQuadraturePoints_element
         argsDict["nDOF_trial_element_fct"] = self.nDOF_trial_element[0]
@@ -1630,6 +1797,7 @@ class LevelModel(OneLevelTransport):
         argsDict["mIn"] = limited_mass
         argsDict["uOut"] = limited_solution
         argsDict["nodal_porosity"] = theta_dof_out_arr
+        argsDict["rho_nodal"] = self.rho_nodal
         self.adr.invert(argsDict)
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
@@ -1785,10 +1953,100 @@ class LevelModel(OneLevelTransport):
         #    what the trade buys and what it costs.
         self.M_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.M_low = np.zeros(self.u[0].dof.shape, 'd')
+        # Fluid-equation flux for the continuity-defect probe; see
+        # _reportContinuityDefect.  Written by the ImplicitEV branch only.
+        self.fluidResidual = np.zeros(self.u[0].dof.shape, 'd')
+        # NODAL density rho(c_i) at the end of the step, for the flow model's edge
+        # loop (Richards.Coefficients.preStep copies it).  Written by the
+        # ImplicitEV branch only: the residual at the converged iterate, then
+        # invert() for the limited c when FCT is on.
+        self.rho_nodal = np.zeros(self.u[0].dof.shape, 'd')
+        # Richards' NODAL theta(psi^n), the partner of M_dof.  Zero means "no flow
+        # model", and the kernel then keeps its own quadrature projection.
+        self.theta_nodal = np.zeros(self.u[0].dof.shape, 'd')
         self._M_dof_initialized = False
         # Baseline for the [TADR-MASS] conservation diagnostic, set on first use.
         self._solute_mass_0 = None
-        
+        # Filled by _reportContinuityDefect; None until it has run successfully.
+        self.continuityDefect = None
+        self.continuityStats = None
+        # Previous step's M^{n+1} and c^{n+1}, stashed by _reportContinuityDefect
+        # so it can compare them against the M^n and c^n this step reads back --
+        # same instant, so any difference is the row-2 history jump.
+        self._M_prev_new = None
+        self._u_prev = None
+        # Running time-integrals of the two conservation errors, so the log
+        # carries the cumulative number instead of needing post-processing.
+        self._cont_spurious_int = 0.0
+        self._cont_jump_int = 0.0
+
+    def _logBoundarySoluteFlux(self):
+        """TADR_BC_DBG=1: split the exterior solute boundary flux.
+
+        ebqe_flux is advection + dispersion summed, which cannot distinguish a
+        boundary that is delivering solute from one that is merely leaking it by
+        spreading.  On the Simmons source strip that is the whole question: a
+        Dirichlet u = 1 face with (v.n) ~ 0 supplies nothing however hard it is
+        pinned, and the advective/dispersive split says so directly.
+
+        Reported per time step (not per Newton iteration), area-weighted, with
+        the outward normal, so positive leaves the domain.  Dirichlet faces are
+        split again by the sign of the advective flux, because on a Dirichlet
+        strip the inflow and outflow parts are physically different boundaries
+        and their sum hides both.
+        """
+        if not _TADR_BC_DBG:
+            return
+        t = self.timeIntegration.t
+        if getattr(self, '_tadr_bc_dbg_t', None) == t:
+            return
+        self._tadr_bc_dbg_t = t
+        try:
+            dS = self.ebqe['dS']
+            tot = self.ebqe[('advectiveFlux', 0)]
+            adv = self.ebqe[('advectiveFluxOnly', 0)]
+            dif = tot - adv
+            isdb = (self.numericalFlux.isDOFBoundary[0] == 1)
+
+            # An exterior face of an overlap element lives in this rank's ebqe
+            # arrays AND in its owner's, so a bare allreduce double-counts it.
+            nE_owned = getattr(self.mesh, 'nElements_owned',
+                               self.mesh.nElements_global)
+            if nE_owned < self.mesh.nElements_global:
+                ebN = self.mesh.exteriorElementBoundariesArray
+                owned = (self.mesh.elementBoundaryElementsArray[ebN, 0] < nE_owned)
+                keep = np.zeros(dS.shape, dtype=bool)
+                keep[owned] = True
+            else:
+                keep = np.ones(dS.shape, dtype=bool)
+            isdb = isdb & keep
+
+            d_in = isdb & (adv < 0.0)          # solute carried INTO the domain
+            d_out = isdb & (adv >= 0.0)
+            nbc = keep & (~isdb)
+            # ONE collective for the whole probe; see the note on the matching
+            # reduction in Richards._logBoundaryFluxSplit.  A reduction per
+            # quantity inside a try/except can desynchronise the ranks and
+            # deadlock the job if it ever throws on one of them.
+            local = np.array([
+                d_in.sum(), (adv[d_in] * dS[d_in]).sum(), (dif[d_in] * dS[d_in]).sum(),
+                d_out.sum(), (adv[d_out] * dS[d_out]).sum(), (dif[d_out] * dS[d_out]).sum(),
+                nbc.sum(), (adv[nbc] * dS[nbc]).sum(), (dif[nbc] * dS[nbc]).sum(),
+                (tot[keep] * dS[keep]).sum(),
+            ], dtype='d')
+            comm = Comm.get()
+            if comm.size() > 1:
+                comm.comm.tompi4py().Allreduce(local.copy(), local)
+            logEvent(
+                "[TADR-BC] t=%.6e  DIRICHLET in(%d qp): adv=%+.6e disp=%+.6e | "
+                "DIRICHLET out(%d qp): adv=%+.6e disp=%+.6e | NON-DIRICHLET(%d qp): "
+                "adv=%+.6e disp=%+.6e | net out=%+.6e  [kg/s, outward normal positive]"
+                % (t, int(local[0]), local[1], local[2],
+                   int(local[3]), local[4], local[5],
+                   int(local[6]), local[7], local[8], local[9]), level=2)
+        except Exception as e:
+            logEvent("[TADR-BC] probe failed: %r" % (e,), level=2)
+
     def getResidual(self, u, r):
         import copy
         """
@@ -1949,6 +2207,8 @@ class LevelModel(OneLevelTransport):
         argsDict["epsFact"] = self.coefficients.epsFact
         argsDict["ebqe_u"] = self.ebqe[('u', 0)]
         argsDict["ebqe_flux"] = self.ebqe[('advectiveFlux', 0)]
+        argsDict["ebqe_flux_adv"] = self.ebqe[('advectiveFluxOnly', 0)]
+        argsDict["ebqe_dS_ext"] = self.ebqe['dS']
         argsDict["stage"] = self.stage
         argsDict["uTilde_dof"] = self.uTilde_dof
         argsDict["cE"] = self.coefficients.cE
@@ -1973,6 +2233,9 @@ class LevelModel(OneLevelTransport):
         argsDict["M_dof"] = self.M_dof
         argsDict["M_low"] = self.M_low
         argsDict["init_M_dof"] = init_M_in_kernel
+        argsDict["fluidResidual"] = self.fluidResidual
+        argsDict["rho_nodal"] = self.rho_nodal
+        argsDict["theta_nodal"] = self.theta_nodal
         argsDict["dt_times_dH_minus_dL"] = self.dt_times_dC_minus_dL
         argsDict["min_u_bc"] = self.min_u_bc
         argsDict["max_u_bc"] = self.max_u_bc
@@ -2022,6 +2285,7 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
         self.adr.calculateResidual(argsDict)
+        self._logBoundarySoluteFlux()
         # OPTION C: no second residual pass here.  Under the sub-cycled fluid
         # solve this call was needed because the kernel assembled the fluid
         # system, Python solved it, and the iterate then had to re-see the new
@@ -2113,6 +2377,22 @@ class LevelModel(OneLevelTransport):
                         or self._u_dof_conv.shape != self.u[0].dof.shape):
                     self._u_dof_conv = np.zeros_like(self.u[0].dof)
                 self._u_dof_conv[:] = self.u[0].dof
+                # Capture the porosity THIS residual projected theta_dof_proj
+                # from (TADR.h:729) for the same reason.  Coefficients.postStep
+                # advances q_porosity_old to theta^{n+1} BEFORE modelStepTaken
+                # runs the FCT hook, so FCTStep would rebuild its own theta_dof
+                # (TADR.h:3171) from a donor that has already moved on -- and
+                # then reference uLow to a DIFFERENT mass than the residual
+                # produced it with, which is exactly the consistency FCT's
+                # boundedness argument rests on.  Inert while theta is constant
+                # (the saturated SHD/SMD cases, theta = 0.36 everywhere); with a
+                # moving water table -- UHD, UMD -- theta spans 0.05 to 0.36 and
+                # the two disagree by the full step change in theta.
+                _po = self.coefficients.q_porosity_old
+                if (getattr(self, "_q_porosity_conv", None) is None
+                        or self._q_porosity_conv.shape != _po.shape):
+                    self._q_porosity_conv = np.zeros_like(_po)
+                self._q_porosity_conv[:] = _po
                 # ImplicitEV is solved implicitly by Newton (which already logs
                 # per-iteration norm(r)); the CFL is NOT the time-step limiter
                 # here, so report the residual norm like the implicit flow model
@@ -2617,6 +2897,51 @@ class LevelModel(OneLevelTransport):
             if _dbg:
                 _s_low = float(np.sum(self.uLow * self.uLow))
             self.FCTStep()
+            # --------------------------------------------------------------
+            # HAND THE LIMITED FIELD TO THE FLOW MODEL.
+            #
+            # q_rho/ebqe_rho are written by the RESIDUAL kernel (TADR.h, in the
+            # element and boundary quadrature loops) from whatever iterate it
+            # was called on, so when the step ends they hold rho(uLow) -- the
+            # UNLIMITED low-order solution.  FCTStep runs after the last
+            # residual call and rewrites only u[0].dof, and
+            # Richards.Coefficients.preStep copies q_rho/ebqe_rho straight into
+            # its own q['rho']/ebqe['rho'] at the top of the next step.
+            #
+            # Without this refresh the limiter sharpens the concentration while
+            # the BUOYANCY the flow model integrates stays the diffused field,
+            # so FCT cannot change fingering at all and would read as "the
+            # limiter does nothing" when in fact it was never coupled.
+            #
+            # rho is pointwise in u (rho = rho_f(1 + eps_rho*u)), so this is
+            # just interpolating the limited DOFs onto the two quadrature sets
+            # the kernel uses -- one einsum each, once per step.
+            #
+            # FIXED (2026-09-22): q_porosity_old is advanced to theta^{n+1} by
+            # Coefficients.postStep, which runs BEFORE this hook, so FCTStep's
+            # theta projection used to be one step ahead of the residual that
+            # produced uLow.  getResidual now snapshots the porosity it
+            # projected into self._q_porosity_conv and FCTStep reads that.
+            # Was inert for the saturated cases (theta constant) and wrong for
+            # UHD/UMD.
+            # --------------------------------------------------------------
+            _rho_f = self.coefficients.rho_f
+            _eps_rho = (self.coefficients.rho_s - _rho_f)/_rho_f
+            _l2g = self.u[0].femSpace.dofMap.l2g
+            _u_q = np.einsum('kj,ej->ek',
+                             self.u[0].femSpace.psi, self.u[0].dof[_l2g])
+            self.coefficients.q_rho[:] = _rho_f*(1.0 + _eps_rho*_u_q)
+            _ebN = self.mesh.exteriorElementBoundariesArray
+            _eN = self.mesh.elementBoundaryElementsArray[_ebN, 0]
+            _ebN_local = self.mesh.elementBoundaryLocalElementBoundariesArray[_ebN, 0]
+            _u_ext = np.einsum('ekj,ej->ek',
+                               self.u[0].femSpace.psi_trace[_ebN_local],
+                               self.u[0].dof[_l2g[_eN]])
+            self.coefficients.ebqe_rho[:] = _rho_f*(1.0 + _eps_rho*_u_ext)
+            logEvent("TADR FCT: refreshed q_rho/ebqe_rho from the LIMITED u "
+                     "(q_rho min=%.6e max=%.6e)"
+                     % (float(self.coefficients.q_rho.min()),
+                        float(self.coefficients.q_rho.max())), level=2)
             if _dbg:
                 _s_fct = float(np.sum(self.u[0].dof * self.u[0].dof))
                 try:
