@@ -533,6 +533,15 @@ inline
       double epsFact = args.scalar<double>("epsFact");
       proteus::pyarray<double>& ebqe_u = args.array<double>("ebqe_u");
       proteus::pyarray<double>& ebqe_flux = args.array<double>("ebqe_flux");
+      // BOUNDARY-FLUX DIAGNOSTIC.  ebqe_flux is the SUM of the advective and
+      // dispersive solute fluxes, which is the one number that cannot answer
+      // "does solute reach this part of the boundary by being carried there, or
+      // only by spreading?".  Splitting them is what distinguishes a stagnant
+      // Dirichlet strip (advection ~ 0, dispersion only) from a live one.
+      // ebqe_dS is the quadrature weight, so Python can integrate rather than
+      // sum bare quadrature values.  See TADR_BC_DBG in TADR.py.
+      proteus::pyarray<double>& ebqe_flux_adv = args.array<double>("ebqe_flux_adv");
+      proteus::pyarray<double>& ebqe_dS_ext = args.array<double>("ebqe_dS_ext");
       int stage = args.scalar<int>("stage");
       proteus::pyarray<double>&  uTilde_dof = args.array<double>("uTilde_dof");
       double cE = args.scalar<double>("cE");
@@ -601,11 +610,24 @@ inline
       //////////////////////////////////////////////////////////////////////
       proteus::pyarray<double>& M_dof = args.array<double>("M_dof");
       proteus::pyarray<double>& M_low = args.array<double>("M_low");
+      // CONTINUITY-DEFECT PROBE (option C only): the fluid flux out of node i under
+      // TADR's OWN operator, which the cancelled solute form assumes balances the
+      // fluid storage.  Python pairs it with Richards' M^{n+1} to form the defect.
+      proteus::pyarray<double>& fluidResidual = args.array<double>("fluidResidual");
+      // OUT (ImplicitEV only): rho(c_i) at the current iterate, for the flow
+      // model's nodal density.  invert() overwrites it with rho of the limited c.
+      proteus::pyarray<double>& rho_nodal = args.array<double>("rho_nodal");
+      // Richards' NODAL theta(psi^n).  Zero => no flow model.  Under ImplicitEV
+      // it no longer recovers rho from M_dof: M_dof is Richards' old-time mass
+      // theta(psi^n)*rho(c^{n-1}) (the mass its previous step produced), not
+      // theta*rho(c^n).
+      proteus::pyarray<double>& theta_nodal = args.array<double>("theta_nodal");
       const int init_M_dof = args.scalar<int>("init_M_dof");
-      // OPTION C: for ImplicitEV, M_dof is Richards' theta*rho, refreshed on the
-      // Python side before this kernel runs, so it is BOTH the old-time storage
-      // coefficient and the flux density -- there is no separate M^{n+1} array
-      // and no fluid linear system to assemble.  M_low is written only by the
+      // OPTION C: for ImplicitEV, M_dof is Richards' old-time mass, refreshed on
+      // the Python side before this kernel runs.  It is the old-time storage
+      // coefficient ONLY; the flux density is rho(c^n) from the EOS at the node
+      // (rho_dof_proj), the same nodal density Richards advects with.  There is
+      // no separate M^{n+1} array and no fluid linear system to assemble.  M_low is written only by the
       // explicit edge-based branches, which still advect their own copy.
       //////////////////////////////////////////////////////////////////////
       // OPTION C -- why there is no fluid-mass Dirichlet set here.         //
@@ -752,6 +774,15 @@ inline
                 theta_dof_proj[i] /= ML_mass_proj[i];
               else
                 theta_dof_proj[i] = 1.0;
+              // PREFER THE FLOW MODEL'S NODAL THETA.  M_dof_i = theta_i*rho_i was
+              // formed at a DOF, with THAT DOF's soil (freeDOFMaterialTypes); the
+              // quadrature theta above is evaluated per ELEMENT, with the element's
+              // soil, so at a material interface the projection averages two soils
+              // and M_dof/theta is a density Richards never used.  (With the vertex
+              // rule the two agree everywhere else, so this only bites interfaces.)
+              // Zero = no flow model: keep the projection.
+              if (theta_nodal.data()[i] > 0.0)
+                theta_dof_proj[i] = theta_nodal.data()[i];
               // conservative variable at t^n; u AND rho stay nodal, so that
               // inversevaluateCoefficients(m_dof[i], theta_dof_proj[i]) returns
               // u_dof_old[i] to round-off (see the note above).
@@ -769,7 +800,12 @@ inline
               if (init_M_dof)
                 M_dof.data()[i] = theta_dof_proj[i]*rho_f*(1.0 + eps_rho*un_i);
               const double Mi = fmax(M_dof.data()[i], 1.0e-14);
-              rho_dof_proj[i] = Mi/theta_dof_proj[i];
+              // ImplicitEV: rho(c^n) from the EOS at the DOF -- the value Richards'
+              // nodal density is built from (Richards.Coefficients.preStep), so both
+              // models advect with one density.  M_dof is storage only here.
+              rho_dof_proj[i] = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                ? rho_f*(1.0 + eps_rho*un_i)
+                : Mi/theta_dof_proj[i];
               m_dof[i] = Mi*un_i;
             }
           if (phase == -1)
@@ -1631,9 +1667,13 @@ inline
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
                       const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                      // ImplicitEV: the nodal EOS density, as in the interior
+                      // edge loop (M_dof is storage only there).
                       rho_trace_ext += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
-                                     * (fmax(M_dof.data()[gj], 1.0e-14)
-                                        / fmax(theta_dof_proj[gj], 1.0e-14));
+                                     * ((STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                                        ? rho_dof_proj[gj]
+                                        : (fmax(M_dof.data()[gj], 1.0e-14)
+                                           / fmax(theta_dof_proj[gj], 1.0e-14)));
                     }
                   const double rho_bc_fluid = rho_f*(1.0 + eps_rho*bc_u_ext);
                   const double rho_up_fluid = (boundary_flow_w >= 0.0) ? rho_trace_ext
@@ -1642,6 +1682,10 @@ inline
                 }
 
               ebqe_flux.data()[ebNE_kb] = flux_ext;
+              // advective/dispersive split + quadrature weight, see the note at
+              // the ebqe_flux_adv declaration
+              ebqe_flux_adv.data()[ebNE_kb] = flux_adv_ext;
+              ebqe_dS_ext.data()[ebNE_kb]   = dS;
               if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                 ebqe_u.data()[ebNE_kb] = bc_u_ext;
               else if (boundary_flow >= 0.0)
@@ -2326,10 +2370,14 @@ inline
           // --- fluid mass: OPTION C, read from the flow model --------------
           //
           // There is no fluid system assembled or solved here any more.  M_dof
-          // arrives already holding Richards' theta*rho, refreshed on the Python
-          // side (TADR.LevelModel._refreshFluidMassFromFlow) before this kernel
-          // runs, and it serves as BOTH the old-time storage coefficient M^n_i
-          // and the flux density rho_j = M_j/theta_j.
+          // arrives already holding Richards' old-time mass, refreshed on the
+          // Python side (TADR.LevelModel._refreshFluidMassFromFlow) before this
+          // kernel runs, and it serves as the old-time storage coefficient M^n_i
+          // ONLY.  Richards evaluates it with the OLD density (the mass its
+          // previous step produced), so it is theta(psi^n)*rho(c^{n-1}), not
+          // theta*rho(c^n), and M_j/theta_j is no longer this step's density.  The flux density is
+          // rho_j = rho(c^n_j) from the EOS at the node (rho_dof_proj), which is
+          // exactly the nodal density Richards advected with this step.
           //
           // What this replaces: the fluid mass used to be advanced here as its
           // own unknown.  Explicitly it inherited an explicit CFL (past it M
@@ -2351,8 +2399,10 @@ inline
           // [TADR-MASS] log reports the consequence every step.
           //
           // BOUNDEDNESS is untouched and still unconditional: the form below is
-          // an M-matrix for ANY strictly positive M, since gamma_ij >= 0 and
-          // rho_j = M_j/theta_j > 0 whenever Richards keeps theta*rho positive.
+          // an M-matrix for ANY strictly positive M and rho, since gamma_ij >= 0,
+          // rho_j = rho(c^n_j) > 0, and M^n > 0 whenever Richards keeps theta*rho
+          // positive.  The cancellation needs the SAME rho in the solute and the
+          // fluid flux, not rho = M/theta.
           //
           // --- solute: implicit, in the cancelled (bounded) form ---------
           int ij=0;
@@ -2363,25 +2413,30 @@ inline
               const double Mn_i    = fmax(M_dof.data()[i], 1.0e-14);
               const double un_i    = m_dof[i]/Mn_i;      // = u_dof_old[i] exactly
               const double MLi     = ML.data()[i];
+              const double rho_i   = rho_dof_proj[i];
 
               double ith_upwind_flux_term_mass = 0.0;
+              double ith_flux_term_fluid       = 0.0;   // continuity-defect probe
               for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
                   int j = csrColumnOffsets_DofLoops.data()[offset];
+                  // rho(c^n_j) from the EOS at the node -- the same nodal density
+                  // Richards advected with.  The solute flux and the fluid flux
+                  // below use this ONE density, which is what the cancellation
+                  // needs.
+                  const double rhoj    = rho_dof_proj[j];
+                  // Fluid flux, assembled EXACTLY as the explicit branch does it:
+                  // K over every j (diagonal included), dLow only off-diagonal.
+                  ith_flux_term_fluid += (TransportMatrix[ij] + DiffusionMatrix[ij])*rhoj;
                   if (i != j)
                     {
                       const double cj      = u_dof.data()[j];
-                      const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
-                      // OPTION C: rho from Richards' theta*rho.  The storage
-                      // coefficient above uses the SAME array, which is what the
-                      // cancellation needs -- the solute flux and the fluid
-                      // equation must see one density, not two.
-                      const double rhoj    = fmax(M_dof.data()[j],1.0e-14)/theta_j;
                       const double Kij     = TransportMatrix[ij] + DiffusionMatrix[ij];
                       const double Kji     = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
                       const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
                       const double gamma   = dLow_ij - Kij;     // >= 0 by construction
                       ith_upwind_flux_term_mass += -gamma*rhoj*(cj - ci);
+                      ith_flux_term_fluid       -= dLow_ij*(rhoj - rho_i);
                       // dLow (symmetric) is what the FCT post-step antidiffuses;
                       // it must be the viscosity the residual ACTUALLY applied,
                       // which is now the case (the half-upwind form applied a_ij
@@ -2401,12 +2456,20 @@ inline
               const double S_n_i   = Sn_dof.data()[i];
               const double rho_w_i = rho_f*(1.0 + ((rho_s - rho_f)/rho_f)*ci);
               const double R_diss_i = theta_i * rho_w_i * k_d * S_n_i * (c_sat - ci);
+              // Exported for the flow model: at the converged iterate this is
+              // rho(c^{n+1}_i), the nodal density Richards uses next step.
+              rho_nodal.data()[i] = rho_w_i;
 
               globalResidual.data()[i] = MLi*Mn_i*(ci - un_i)/dt
                                        + ith_upwind_flux_term_mass
                                        + boundary_integral[i]
                                        - ci*boundary_integral_fluid[i]
                                        - MLi*R_diss_i;
+              // Everything in TADR's fluid equation EXCEPT the storage term; the
+              // storage needs M^{n+1}, which only the flow model has.
+              fluidResidual.data()[i] = ith_flux_term_fluid
+                                      + boundary_integral_fluid[i]
+                                      - MLi*R_diss_i;
             }//i
         }//implicit edge-based
     }
@@ -2417,10 +2480,29 @@ inline
     proteus::pyarray<double>& mIn = args.array<double>("mIn");
     proteus::pyarray<double>& uOut = args.array<double>("uOut");
     proteus::pyarray<double>& nodal_porosity = args.array<double>("nodal_porosity");
+    proteus::pyarray<double>& M_dof_fct = args.array<double>("M_dof_fct");
+    proteus::pyarray<double>& M_low_fct = args.array<double>("M_low_fct");
+    // OUT (ImplicitEV only): the residual left rho of the UNLIMITED iterate here;
+    // the flow model must see rho of the limited c.
+    proteus::pyarray<double>& rho_nodal = args.array<double>("rho_nodal");
     const double rho_f = args.scalar<double>("rho_f");
     const double rho_s = args.scalar<double>("rho_s");
-    for (int i=0; i<numDOFs; i++)
-      uOut.data()[i] = inversevaluateCoefficients(mIn.data()[i], nodal_porosity.data()[i], rho_f, rho_s);
+    STABILIZATION STABILIZATION_TYPE = static_cast<STABILIZATION>(args.scalar<int>("STABILIZATION_TYPE"));
+    const bool implicitM = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
+    // The scheme-B branches limited S = M*c, so the inverse is a division by the
+    // SAME new-time mass -- no EOS round-trip.  Must match FCTStep's useM set.
+    if (implicitM or
+        STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
+        STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
+        STABILIZATION_TYPE == STABILIZATION::Kuzmin)
+      for (int i=0; i<numDOFs; i++)
+        uOut.data()[i] = mIn.data()[i]/fmax((implicitM ? M_dof_fct : M_low_fct).data()[i], 1.0e-14);
+    else
+      for (int i=0; i<numDOFs; i++)
+        uOut.data()[i] = inversevaluateCoefficients(mIn.data()[i], nodal_porosity.data()[i], rho_f, rho_s);
+    if (implicitM)
+      for (int i=0; i<numDOFs; i++)
+        rho_nodal.data()[i] = rho_f*(1.0 + ((rho_s - rho_f)/rho_f)*uOut.data()[i]);
   }
   
 
@@ -2541,10 +2623,11 @@ inline
           const double c_sat = args.scalar<double>("c_sat");
           proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
           proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
-          // OPTION C: the fluid mass theta*rho, read from Richards.  The
-          // immediately preceding calculateResidual filled theta_dof_proj and
-          // boundary_integral_fluid (both class members), and Proteus Newton
-          // evaluates F(u) then J(u) at the same iterate, so they are current.
+          // OPTION C: the old-time fluid mass, read from Richards.  The
+          // immediately preceding calculateResidual filled theta_dof_proj,
+          // rho_dof_proj and boundary_integral_fluid (all class members), and
+          // Proteus Newton evaluates F(u) then J(u) at the same iterate, so they
+          // are current.
           proteus::pyarray<double>& M_dof = args.array<double>("M_dof");
           const double drho_du = rho_s - rho_f;
           // SCHEME B Jacobian, matching the cancelled residual term for term:
@@ -2558,9 +2641,10 @@ inline
           // gamma_ij = dLow_ij - K_ij >= 0 and rho^n_j > 0, so this is an
           // M-matrix UNCONDITIONALLY -- it does not depend on the row sums,
           // on dt, or on the velocity being divergence free.  gamma and rho^n
-          // are frozen under differentiation (rho^n is genuinely independent of
-          // the iterate: it is the carried fluid mass at the old time level, so
-          // freezing it is EXACT here, not an inexact-Newton approximation).
+          // are frozen under differentiation (rho^n = rho(c^n) is genuinely
+          // independent of the iterate: it is evaluated from the old-time
+          // concentration, so freezing it is EXACT here, not an inexact-Newton
+          // approximation).
           int ij=0;
           for (int i=0; i<numDOFs; i++)
             {
@@ -2580,9 +2664,8 @@ inline
                   int j = csrColumnOffsets_DofLoops.data()[offset];
                   if (i != j)
                     {
-                      const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
-                      // rho from Richards, matching the residual's flux coefficient
-                      const double rhoj    = fmax(M_dof.data()[j],1.0e-14)/theta_j;
+                      // rho(c^n_j) at the node, matching the residual's flux coefficient
+                      const double rhoj    = rho_dof_proj[j];
                       const double Kij     = TransportMatrix[ij] + DiffusionMatrix[ij];
                       const double Kji     = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
                       const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
@@ -3183,6 +3266,9 @@ inline
     proteus::pyarray<int>&    u_l2g_fct        = args.array<int>("u_l2g_fct");
     proteus::pyarray<double>& u_test_ref_fct   = args.array<double>("u_test_ref_fct");
     proteus::pyarray<double>& theta_dof_out    = args.array<double>("theta_dof_out");
+    proteus::pyarray<double>& M_dof_fct        = args.array<double>("M_dof_fct");
+    proteus::pyarray<double>& M_low_fct        = args.array<double>("M_low_fct");
+    proteus::pyarray<double>& theta_nodal_fct  = args.array<double>("theta_nodal");
     int nElements_global_fct              = args.scalar<int>("nElements_global_fct");
     int nQuadraturePoints_element_fct     = args.scalar<int>("nQuadraturePoints_element_fct");
     int nDOF_trial_element_fct            = args.scalar<int>("nDOF_trial_element_fct");
@@ -3219,6 +3305,10 @@ inline
     for (int i = 0; i < numDOFs; i++) {
       if (ML_proj[i] > 1.0e-14) { theta_dof[i] /= ML_proj[i]; rho_dof[i] /= ML_proj[i]; }
       else { theta_dof[i] = 1.0; rho_dof[i] = rho_f; }
+      // Same substitution as the residual: the group variable w = m/theta below has
+      // to divide by the theta the residual's rho_j came from, or the antidiffusion
+      // does not undo the viscosity that was applied.  Zero = no flow model.
+      if (theta_nodal_fct.data()[i] > 0.0) theta_dof[i] = theta_nodal_fct.data()[i];
     }
     // The projection of a ghost dof sums only the elements this rank has, and the limiter of an owned dof reads
     // theta_j. Phase -1 writes the projection to theta_dof_out and returns; Python scatters it from the owners and
@@ -3238,6 +3328,15 @@ inline
         Rneg.resize(numDOFs,0.0);
         FluxCorrectionMatrix.resize(NNZ,0.0);
       }
+    // The scheme-B branches advance S = M*c (m_dof[i] = M_i*u^n_i), so the limiter
+    // must use that same mass; STAB 0/1 carry the EOS mass and keep it.  STAB 2/3/4
+    // carry M themselves and divide the new-time states by M_low = M^{n+1}; STAB=5
+    // reads Richards' M^n and uses it at both time levels (the cancelled form).
+    const bool useM = (STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
+                       STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
+                       STABILIZATION_TYPE == STABILIZATION::Kuzmin or
+                       STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
+    const bool implicitM = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
     int ij=0;
     //loop over nodes (i)
     if (phase == 0)
@@ -3249,16 +3348,22 @@ inline
         const double lumped_volume = lumped_mass_matrix.data()[i];
         double uLowi = uLow.data()[i];
         const double theta_i = theta_dof[i];
-        double mLowi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
-        double solHmi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solHi)*solHi;
-        double solnmi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni;
+        const double Mi_old = fmax(M_dof_fct.data()[i], 1.0e-14);
+        const double Mi_new = implicitM ? Mi_old : fmax(M_low_fct.data()[i], 1.0e-14);
+        double mLowi  = useM ? Mi_new*uLowi : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
+        double solHmi = useM ? Mi_new*solHi : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solHi)*solHi;
+        double solnmi = useM ? Mi_old*solni : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni;
         double uDotLowi = (mLowi - solnmi)/dt;
         // GROUP VARIABLE w = rho(u)*u = m/theta.  dt_times_dH_minus_dL and dLow
         // are coefficients of the w-operator (the transport matrix is assembled
         // against w), so the DISSIPATION part of the antidiffusive flux must
         // difference w, not m.  The consistent-MASS part stays in m -- it is
         // M~_ij times d(m)/dt and carries its own theta.
-        const double solnwi = solnmi/theta_i;
+        // ImplicitEV: M_dof is storage only (Richards' old-time mass), so
+        // M/theta is not the density the residual applied dLow with; that is
+        // rho(c^n) at the node, and soln IS c^n.
+        const double solnwi = implicitM ? rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni
+                                        : solnmi/theta_i;
         const double wLowi  = mLowi/theta_i;
         double mini=min_u_bc.data()[i], maxi=max_u_bc.data()[i]; // init min/max with value at BCs (NOTE: if no boundary then min=1E10, max=-1E10)
         double Pposi=0, Pnegi=0;
@@ -3280,11 +3385,14 @@ inline
             mini = fmin(mini,bound_j);
             maxi = fmax(maxi,bound_j);
             const double theta_j = theta_dof[j];
-            double mLowj = theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowj)*uLowj;
-            double solHmj = theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solH.data()[j])*solH.data()[j];
-            double solnmj = theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj;
+            const double Mj_old = fmax(M_dof_fct.data()[j], 1.0e-14);
+            const double Mj_new = implicitM ? Mj_old : fmax(M_low_fct.data()[j], 1.0e-14);
+            double mLowj  = useM ? Mj_new*uLowj : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowj)*uLowj;
+            double solHmj = useM ? Mj_new*solH.data()[j] : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solH.data()[j])*solH.data()[j];
+            double solnmj = useM ? Mj_old*solnj : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj;
             double uDotLowj = (mLowj - solnmj)/dt;
-            const double solnwj = solnmj/theta_j;   // group variable, old time
+            const double solnwj = implicitM ? rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj
+                                            : solnmj/theta_j;   // group variable, old time
             const double wLowj  = mLowj/theta_j;    // group variable, low order
             // i-th row of flux correction matrix
             if (STABILIZATION_TYPE == STABILIZATION::Kuzmin)
@@ -3326,8 +3434,9 @@ inline
             Pnegi += FluxCorrectionMatrix[ij]*((FluxCorrectionMatrix[ij] < 0) ? 1. : 0.);
             ij+=1;
           }//j
-        const double Qposi = lumped_volume*(theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*maxi)*maxi - mLowi);
-        const double Qnegi = lumped_volume*(theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*mini)*mini - mLowi);
+        // Bounds on the DERIVED variable c, mapped to the mass being limited.
+        const double Qposi = lumped_volume*((useM ? Mi_new*maxi : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*maxi)*maxi) - mLowi);
+        const double Qnegi = lumped_volume*((useM ? Mi_new*mini : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*mini)*mini) - mLowi);
         Rpos[i] = ((Pposi==0) ? 1. : fmax(0.0, fmin(1.0,Qposi/Pposi)));
         Rneg[i] = ((Pnegi==0) ? 1. : fmax(0.0, fmin(1.0,Qnegi/Pnegi)));
         Rpos_dof.data()[i] = Rpos[i];
@@ -3357,7 +3466,8 @@ inline
           }
         const double uLowi = uLow.data()[i];
         const double theta_i = theta_dof[i];
-        const double mLowi = theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
+        const double mLowi = useM ? fmax((implicitM ? M_dof_fct : M_low_fct).data()[i], 1.0e-14)*uLowi
+                                  : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
         // bc_mask.data()[i] is 0 at Dirichlet DOFs (freeze at mLow) and 1 elsewhere.
         limited_solution.data()[i] = mLowi + bc_mask.data()[i] * (1./lumped_volume * ith_Limiter_times_FluxCorrectionMatrix);
         theta_dof_out.data()[i] = theta_dof[i];
