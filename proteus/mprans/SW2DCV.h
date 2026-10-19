@@ -521,6 +521,26 @@ public:
         } // end j loop
       }   // end i loop
 
+      // The kinetic-energy checks above use row-i data only, so l_ij and
+      // l_ji can differ; the limited flux conserves mass only if they agree.
+      for (int i = 0; i < numDOFs; i++) {
+        for (int offset = csrRowIndeces_DofLoops[i];
+             offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
+          int j = csrColumnOffsets_DofLoops[offset];
+          if (j <= i)
+            continue;
+          for (int offset_ji = csrRowIndeces_DofLoops[j];
+               offset_ji < csrRowIndeces_DofLoops[j + 1]; offset_ji++) {
+            if (csrColumnOffsets_DofLoops[offset_ji] == i) {
+              double l = fmin(Lij_array[offset], Lij_array[offset_ji]);
+              Lij_array[offset] = l;
+              Lij_array[offset_ji] = l;
+              break;
+            }
+          }
+        }
+      }
+
       /* Final loop to apply limiting and then define limited solution */
       ij = 0;
       for (int i = 0; i < numDOFs; i++) {

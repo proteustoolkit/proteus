@@ -46,33 +46,73 @@ boundary edges and boundary nodes.
 `(c_ij, U_i, U_j)` and `(c_ji, U_j, U_i)` directions. Since
 λ_max(−n, U_R, U_L) = λ_max(n, U_L, U_R), using c' gives the same `d_ij`.
 
-**Boundary term:** at a boundary node `Σ_j c'_ij = −∫_∂Ω φ_i n =: −n_i`. So
+**Boundary term:** at a boundary node `Σ_j c'_ij = −∫_∂Ω φ_i n =: −n_i`, so
 
     R_i^adv = Σ_j (F_j − F_i) · c'_ij − F_i · n_i .
 
 The first part is the usual increment form with its bar states, using c' in
-place of c. The second is a boundary flux evaluated with the interior state.
-For the invariant-domain property it is written as a wall Riemann bar state
-with the mirror state `U_i^r = (h_i, u_i − 2(u_i·n̂_i) n̂_i)`, which has an
-exactly zero mass flux:
+place of c. For the advective flux `F_adv(U)·n = (u·n) U`, so the boundary term
+is `−(u_i·n_i) U_i`: it only rescales `U_i`. The low-order update stays a
+positive combination of `U_i` and the bar states provided
 
-    F_i · n_i  →  ½ (F(U_i) + F(U_i^r)) · n_i − d_i∂ (U_i^r − U_i),
+    dt (Σ_j 2 d_ij − u_i·n_i) ≤ m_i ,
 
-with `d_i∂ = λ_max(n̂_i, U_i, U_i^r) |n_i|`, so the low-order update stays a convex
-combination of `U_i`, the edge bar states, and the wall bar state.
+which is the extra margin added to `calculateEdgeBasedCFL` on wall rows. Velocity
+is unchanged by the term, and at rest it vanishes, so well-balancing is kept. (An
+earlier draft used a mirror-state wall Riemann problem; it is not needed.)
 
 **Pressure stays on c_ij.** The hydrostatic term remains in its non-conservative,
 well-balanced form `g h_i Σ_j (h_j + Z_j) c_ij` (extended source, eq. 6.13 of
-the friction paper). Because `Σ_j c_ij = 0` it has no wall term, and
-lake-at-rest balance is untouched.
+the friction paper). That form supplies the wall's pressure reaction itself.
+Bar states on boundary edges therefore use c' for the advective part and c for
+the pressure.
 
-**To check:** bar states on boundary edges then use c' for the advective part
-and c for the pressure. Test whether that preserves IDP and well-balancing:
-- lake at rest over the sloping bed, which must stay exactly at rest;
-- exact volume conservation in a closed tank;
-- a 1D dam break against the exact solution;
-- the Torino transverse metric, `hv` at round-off;
-- `test_SWFlow.py`. Baselines will change for cases that use walls.
+**Which rows:** `wall_dof = 1` on every exterior-boundary node when
+`reflecting_BCs=True`, otherwise on nodes with `nodeMaterialTypes == 99`. Other
+rows, open boundaries included, keep c_ij, so transmissive outflow is unchanged.
+`INTEGRATE_BY_PARTS_WALLS` (default 1) selects this; 0 restores the nodal
+projection and row zeroing.
+
+### Two conservation details found in testing
+
+1. **μ_ij must be symmetric.** On a wall–wall edge `c'_ij ≠ −c'_ji`, so the
+   well-balancing viscosity `μ_ij = max(−u_i·c'_ij, u_j·c'_ij)` computed per row
+   differs from μ_ji, and `Σ_j μ_ij (U_j − U_i)` leaks mass (1e-7 in 4 s).
+   On edges touching a wall row, μ is now the max over both orientations.
+2. **The limiter must be symmetric.** The kinetic-energy checks in
+   `convexLimiting` use row-i data only, so `l_ij ≠ l_ji` can occur and the
+   limited correction `Σ_j l_ij A_ij` stops being conservative (a one-off 7.8e-7
+   volume jump when the bore hit the end wall). After the limiter loop,
+   `l_ij = l_ji = min(l_ij, l_ji)`. This also changes the legacy path slightly
+   (dam3Bumps max |Δh| 2.8e-3, obstacle_flow 5e-4).
+
+### Results (ceds-model, refinement 5, S = 0.03)
+
+Closed tank `tank.py` (scratchpad), all walls:
+
+| case | legacy walls | IBP walls |
+|---|---|---|
+| lake at rest, 4 s: max |η−η0|, max |hu| | 2.6e-14, 2.4e-14 | 2.4e-14, 1.3e-14 |
+| wet dam break, 4 s: relative volume change | +3 to +7e-7, drifting | −6.7e-14 |
+| dry-bed dam break, 0.51 m wide (7 elements): max cross-channel Δh at t = 1.0 / 2.0 / 2.2 s | 6.4e-3 / 1.8e-2 / 1.95e-2 (growing) | 9.6e-4 / 3.9e-4 / 4.8e-4 (decaying) |
+
+- In the wide channel, the legacy walls grow a transverse depth mode while the
+  front runs down the slope. With IBP walls the mesh-induced asymmetry at the
+  dam decays. After the end-wall impact, IBP is 0.7–0.9e-2 vs legacy 1.3e-2 at 4 s.
+- With IBP the nodal `hv` at the side walls is O(1e-3) near the front: the weak
+  no-penetration condition. It is exactly antisymmetric across the channel, and
+  the discrete wall mass flux is zero.
+- In the original 2-element-wide Torino input, the large `hv` in **both**
+  treatments sits in the downstream end-wall corners (flow along the end wall).
+  It is not a transverse mode, so `max|hv|/max|hu|` is a poor metric there.
+- Dry-bed runs still lose about 3e-5 (IBP) or 7e-5 (legacy) volume at the
+  wet/dry front. That is separate from the walls.
+
+`test_SWFlow.py`: dam3Bumps and obstacle_flow baselines regenerated (IBP vs old:
+max |Δh| 6.7e-2 of 1.9 and 1.4e-3 of 1.0); the other 8 are unchanged.
+
+**Still to do:** GN_SW2DCV (same changes); rerun the Torino input with a
+realistic channel width.
 
 ## 3. Drag and porosity (after section 2)
 
