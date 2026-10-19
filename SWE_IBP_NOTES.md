@@ -155,18 +155,57 @@ DSWE checks: lake at rest exact; closed wet dam break conserves volume to
 structure of order 5e-4 to 1e-3 for both wall treatments. DSWE does not grow
 the legacy SWE wall noise.
 
-## 3. Drag and porosity (after section 2)
+## 3. Drag and porosity (implemented in both models)
 
-Per unit area: Darcy–Forchheimer drag `(α + β‖u‖) h u`, with `β = ½ C_D m D` and
-α = 0 for the paper (Buono et al.). It is treated semi-implicitly like the
-Manning term so positivity is kept.
+Physical parameters `porosity`, `drag_alpha`, `drag_beta`. Each is a scalar, a
+nodal array or a function of [x, y]; None gives phi = 1 and no drag, and the
+scheme is then unchanged. The unknowns stay the physical depth h and pore
+discharge hu.
 
-Porosity `φ = 1 − m π D²/4`, from depth-integrating the cylinder array.
-Storage and fluxes use the pore volume (φh, φhu): for the same volume of water
-the free surface stands higher in the canopy, and for the same discharge the
-pore velocity is faster. φ, α and β are per-node fields from the input file
-(canopy region). Air entrainment would alter φ and C_D; the RANS2P runs can
-supply that if it matters.
+Porous SWE, per unit plan area:
+
+    d_t(phi h) + div(phi h u) = 0
+    d_t(phi h u) + div(phi h u (x) u) + phi g h grad(h + Z) = -(alpha + beta|u|) h u
+
+with phi = 1 - m pi D^2/4 and beta = C_D m D / 2 for an array of cylinders.
+
+Discretization:
+- **Storage:** the consistent and lumped mass are int phi_h w_i w_j (phi
+  interpolated at the quadrature points), so the conserved volume is
+  sum_i m_i^phi h_i.
+- **Fluxes:** advective fluxes phi_j F_j in the bar states and the high-order
+  RHS; the wall boundary flux is phi_i (u_i.n_i) U_i.
+- **Pressure:** phi_i multiplies every row-i pressure term, i.e. the bar-state
+  pressure difference, the well-balanced extended source, and in GN also p̃
+  and the topography-dispersion force. This non-conservative form gives the
+  cylinders' reaction with no extra term, and lake at rest holds exactly for
+  any phi(x).
+- **Viscosity:** d_ij, mu_ij, the entropy viscosity and the CFL carry
+  phibar_ij = max(phi_i, phi_j). The bar states then use
+  (phi_j/phibar) F_j - (phi_i/phibar) F_i with ratios <= 1, which keeps
+  positivity; symmetry keeps conservation.
+- **Drag:** a sink K hu per unit storage with K = (alpha + beta|u|)/phi,
+  semi-implicit like Manning (2 K m/(1 + max(1, xi dt K))).
+- **GN only:** the relaxation mesh size comes from the plan-area lumped mass,
+  and q.grad Z / m_i carries phi_i.
+
+**GN friction bug (1.9.x):** the limited hu/hv update adds
+`extendedSourceTerm`, but Manning friction was only in `SourceTerm`, so it had
+no net effect. A uniform flow with n = 0.05 kept u = 0.5 exactly. Friction and
+drag are now in both. Only the seawall baseline (DSWE, n = 0.012) changes,
+by 2.7e-6. Not changed: the topography-dispersion source
+(R2/2 - R3/4) grad Z also reaches only the high-order RHS; to be raised with
+the paper authors.
+
+Checks (ceds-model, closed sloped tank, IBP walls; SWE and DSWE):
+
+| check | SWE | DSWE |
+|---|---|---|
+| lake at rest, canopy phi = 0.7 and beta = 10, 4 s | 2.3e-14 | 3.2e-14 |
+| wet dam break through the canopy (phi = 0.7, beta = 5), rel. volume change | 7.3e-14 | 8.8e-14 |
+| same with the Torino values phi = 0.9945, beta = 0.582 | 7.2e-14 | 8.8e-14 |
+| uniform-flow drag decay u0/(1 + beta u0 t/phi), beta = 2, phi = 0.7 | 3e-8 | 1e-8 |
+| uniform-flow Manning decay, n = 0.05 | exact to 5 digits | 7e-11 |
 
 ## 4. The 1.9.0 drag bug (fixed in ce5a7017)
 
