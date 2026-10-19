@@ -1496,6 +1496,26 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.ML[i] = self.MC_a[rowptr_cMatrix[i]
                 :rowptr_cMatrix[i + 1]].sum()
             self.inverse_mesh[i] = 1. / np.sqrt(self.ML[i])
+        # ML_i covers only the part of a full patch the node sees: half at a
+        # straight boundary, a quarter at a right-angle corner. The mesh size
+        # there is not smaller, so rescale ML_i by 2 pi / (interior angle at
+        # node i); interior nodes (angle 2 pi) are unchanged.
+        if self.nSpace_global == 2:
+            nodes = self.mesh.nodeArray[:, :2]
+            angle = np.zeros(self.mesh.nNodes_global, 'd')
+            for e in self.mesh.elementNodesArray:
+                P = nodes[e]
+                for k in range(3):
+                    a1 = P[(k + 1) % 3] - P[k]
+                    a2 = P[(k + 2) % 3] - P[k]
+                    angle[e[k]] += np.arccos(np.clip(
+                        np.dot(a1, a2) / (np.linalg.norm(a1) * np.linalg.norm(a2)), -1., 1.))
+            # only exterior-boundary nodes (not partition boundaries)
+            ebN = self.mesh.exteriorElementBoundariesArray
+            bnodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
+            bnodes = bnodes[(bnodes < self.nFreeDOF_global[0]) & (angle[bnodes] > 0.)]
+            self.inverse_mesh[bnodes] = 1. / np.sqrt(
+                self.ML[bnodes] * 2. * np.pi / angle[bnodes])
         # np.testing.assert_almost_equal(self.ML.sum(), self.mesh.volume, err_msg="Trace of lumped mass matrix should be the domain volume",verbose=True)
         # np.testing.assert_almost_equal(self.ML.sum(), diamD2, err_msg="Trace of lumped mass matrix should be the domain volume",verbose=True)
 

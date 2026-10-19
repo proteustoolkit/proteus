@@ -111,8 +111,49 @@ Closed tank `tank.py` (scratchpad), all walls:
 `test_SWFlow.py`: dam3Bumps and obstacle_flow baselines regenerated (IBP vs old:
 max |Δh| 6.7e-2 of 1.9 and 1.4e-3 of 1.0); the other 8 are unchanged.
 
-**Still to do:** GN_SW2DCV (same changes); rerun the Torino input with a
-realistic channel width.
+### Full-width Torino (0.51 m), SWE
+
+`torino_full.py` (dswe/torino.py with `full_width`, `ibp`). Median over the wet
+channel of the cross-channel surface range (structured mesh):
+
+| | t = 2 s | t = 5 s | t = 8 s |
+|---|---|---|---|
+| legacy, refinement 5 / 6 | 4.8e-4 / 7.5e-4 | 1.6e-3 / 6.1e-4 | 1.6e-3 / 6.8e-4 |
+| IBP, refinement 5 / 6 | 9.7e-5 / 4.8e-5 | 7.8e-5 / 3.9e-5 | 1.5e-4 / 8.9e-5 |
+
+IBP converges at first order; the legacy wall noise does not. On unstructured
+meshes the largest value (3–5 cm) is the ragged reflected bore front for both.
+
+## GN_SW2DCV (dispersive SWE)
+
+Same wall treatment, applied to all six components (h, hu, hv, hη, hw, hβ):
+- the advective fluxes in the bar states and the high-order RHS use c';
+- μ_ij = max(|u_i·c'_ij|, |u_j·c'_ji|), which is symmetric by construction, in
+  the residual, in the limiter's recomputed viscosity and in the CFL;
+- p, p̃ and the bathymetry terms stay on c_ij;
+- the boundary term −(u_i·n_i)U_i is in both the low-order update and the
+  high-order RHS, and the CFL has the boundary margin.
+
+The GN limiter already takes l_ij = min of both sides, so it is symmetric.
+
+**Bounds (both kernels).** The boundary term rescales U_i, so the low-order
+state is a positive, not convex, combination. On wall rows the local bounds
+(h, hη, kinetic energy) are widened to contain it.
+
+**Boundary mesh size (GN).** The relaxation uses `inverse_mesh = 1/sqrt(m_i)`.
+At a boundary node m_i covers half the patch (a quarter at a corner), so λ/h and
+p̃ were √2 (2) too large there. The legacy projection hid the resulting push into
+the wall; with IBP walls it produced a wall-row sawtooth (|η_wall − η_row1|
+1.5e-2 at the front). On exterior-boundary nodes m_i is now scaled by 2π/θ_i,
+with θ_i the interior angle at the node. This halves the transverse structure
+for both wall treatments and removes the wall-row step (to 5.1e-3, the same as
+between interior rows). It moves the six DSWE baselines by 5e-6 to 2e-4 in h;
+they are regenerated.
+
+DSWE checks: lake at rest exact; closed wet dam break conserves volume to
+9e-14. Full-width dry Torino at refinement 5, structured: cross-channel
+structure of order 5e-4 to 1e-3 for both wall treatments. DSWE does not grow
+the legacy SWE wall noise.
 
 ## 3. Drag and porosity (after section 2)
 
