@@ -34,6 +34,9 @@ if domain is None:
 g = physical_parameters['gravity']
 LINEAR_FRICTION = physical_parameters['LINEAR_FRICTION']
 mannings = physical_parameters['mannings']
+porosity = physical_parameters.get('porosity', None)
+drag_alpha = physical_parameters.get('drag_alpha', None)
+drag_beta = physical_parameters.get('drag_beta', None)
 gen_length = physical_parameters['gen_length']
 gen_start = physical_parameters['gen_start']
 abs_length = physical_parameters['abs_length']
@@ -57,7 +60,10 @@ coefficients = GN_SW2DCV.Coefficients(g=g,
                                       abs_length=abs_length,
                                       abs_start=abs_start,
                                       waveConditions=waveConditions,
-                                      INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS)
+                                      INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS,
+                                      porosity=porosity,
+                                      drag_alpha=drag_alpha,
+                                      drag_beta=drag_beta)
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #

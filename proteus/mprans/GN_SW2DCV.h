@@ -240,6 +240,7 @@ public:
         args.array<double>("extendedSourceTerm_hv");
     const proteus::pyarray<double> &thetaj_inv = args.array<double>("thetaj_inv");
     const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    const proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     const double g = args.scalar<double>("g");
     const proteus::pyarray<double> &inverse_mesh =
         args.array<double>("inverse_mesh");
@@ -331,9 +332,10 @@ public:
           double cxa, cya, cxaT, cyaT;
           wallCoefficients(i, j, ij, wall_dof, Cx, Cy, CTx, CTy, cxa, cya,
                            cxaT, cyaT);
-          const double muijL = fmax(std::abs(ui * cxa + vi * cya),
-                                    std::abs(uj * cxaT + vj * cyaT));
-          double dijL = fmax(
+          const double phibar_ij = phiBar(i, j, porosity_dof);
+          const double muijL = phibar_ij * fmax(std::abs(ui * cxa + vi * cya),
+                                                std::abs(uj * cxaT + vj * cyaT));
+          double dijL = phibar_ij * fmax(
               maxWaveSpeedSharpInitialGuess(g, nxij, nyij, hi, hui, hvi, hetai,
                                             inv_meshSizei, hj, huj, hvj, hetaj,
                                             inv_meshSizej, hEps) *
@@ -348,6 +350,7 @@ public:
 
           // Define high-order graph viscosity coefficients
           const double dEVij =
+              phibar_ij *
               std::max(global_entropy_residual[i], global_entropy_residual[j]);
 
           const double dijH = std::min(dijL, dEVij);
@@ -915,6 +918,12 @@ public:
     cy_ji = wall_dof[j] > 0.5 ? -Cy[ij] : CTy[ij];
   }
 
+  // Porous edges: graph viscosities carry max(phi_i, phi_j) (see SW2DCV.h).
+  static inline double phiBar(int i, int j,
+                              const proteus::pyarray<double> &porosity_dof) {
+    return fmax(porosity_dof[i], porosity_dof[j]);
+  }
+
   double calculateEdgeBasedCFL(arguments_dict &args) {
     const double g = args.scalar<double>("g");
     const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
@@ -938,6 +947,7 @@ public:
         args.array<double>("inverse_mesh");
     proteus::pyarray<double> &edge_based_cfl = args.array<double>("edge_based_cfl");
     const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    const proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
 
     double max_edge_based_cfl = 0.;
     double dLowij = 0.;
@@ -1004,7 +1014,7 @@ public:
                             cji_norm);
 
           // Take max of dij and muij
-          dLowij = fmax(dLowij, muijL);
+          dLowij = fmax(dLowij, muijL) * phiBar(i, j, porosity_dof);
 
           // Define diagonal entry
           dLowii -= dLowij;
@@ -1022,7 +1032,8 @@ public:
       // leaving the wall (u_i.n_i < 0) needs that much more room.
       double wall_margin = 0.;
       if (wall_dof[i] > 0.5)
-        wall_margin = 0.5 * fmax(0., -(ui * nix + vi * niy));
+        wall_margin =
+            0.5 * fmax(0., -porosity_dof[i] * (ui * nix + vi * niy));
       edge_based_cfl[i] = (fabs(dLowii) + wall_margin) / mi;
       max_edge_based_cfl = fmax(max_edge_based_cfl, edge_based_cfl[i]);
     }
@@ -1331,6 +1342,12 @@ public:
     proteus::pyarray<double> &h_beta_wave = args.array<double>("h_beta_wave");
     // 1 on rows whose advective terms are integrated by parts (no-flux walls)
     const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    // Canopy: porosity (storage phi U, fluxes phi F, pressures phi_i grad p)
+    // and Darcy-Forchheimer drag -(alpha + beta|u|) h u per unit plan area
+    const proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
+    const proteus::pyarray<double> &drag_alpha_dof =
+        args.array<double>("drag_alpha_dof");
+    const proteus::pyarray<double> &drag_beta_dof = args.array<double>("drag_beta_dof");
 
     /* Define constants for sources here. Note that these do not depend on the
      * DOFs so we should only compute once */
@@ -1444,6 +1461,24 @@ public:
       SourceTerm_hu[i] = -friction_aux * hui;
       SourceTerm_hv[i] = -friction_aux * hvi;
 
+      // Canopy drag, semi-implicit like the Manning term: K hu per unit
+      // storage with K = (alpha + beta |u|) / phi
+      const double phi_i = porosity_dof[i];
+      {
+        const double K =
+            (drag_alpha_dof[i] + drag_beta_dof[i] * veli_norm) / phi_i;
+        if (K > 0.) {
+          const double drag_aux = 2. * K * mi / (1. + fmax(1., xi * dt * K));
+          SourceTerm_hu[i] -= drag_aux * hui;
+          SourceTerm_hv[i] -= drag_aux * hvi;
+        }
+      }
+      // The limited update adds extendedSourceTerm (not SourceTerm) to hu and
+      // hv, so friction and drag must be in it too; before this they only
+      // reached the high-order RHS and had no net effect.
+      extendedSourceTerm_hu[i] += SourceTerm_hu[i];
+      extendedSourceTerm_hv[i] += SourceTerm_hv[i];
+
       // Set flux sum terms to 0.
       double sum_flux_h = 0.;
       double sum_flux_hu = 0.;
@@ -1506,11 +1541,12 @@ public:
         // Define full pressure at jth node
         const double pressure_j = 0.5 * g * hj * hj + pTildej;
 
-        // Define extended source term for hu and hv
+        // Define extended source term for hu and hv (porous: times phi_i)
         extendedSourceTerm_hu[i] +=
-            g * (-hi * Zj + 0.5 * (hj - hi) * (hj - hi)) * Cx[ij];
+            phi_i * g * (-hi * Zj + 0.5 * (hj - hi) * (hj - hi)) * Cx[ij];
         extendedSourceTerm_hv[i] +=
-            g * (-hi * Zj + 0.5 * (hj - hi) * (hj - hi)) * Cy[ij];
+            phi_i * g * (-hi * Zj + 0.5 * (hj - hi) * (hj - hi)) * Cy[ij];
+        const double phi_j = porosity_dof[j];
 
         // advective coefficients: c'_ij for row i and c'_ji for row j
         double cxa, cya, cxaT, cyaT;
@@ -1518,30 +1554,35 @@ public:
                          cyaT);
 
         /*  -------  Define hyperbolic fluxes (for bar states) ------------ */
-        const double flux_h =
-            (hj * uj - hi * ui) * cxa + (hj * vj - hi * vi) * cya;
+        // (porous: advective fluxes phi_j F_j, pressure phi_i (p_j - p_i))
+        const double flux_h = (phi_j * hj * uj - phi_i * hi * ui) * cxa +
+                              (phi_j * hj * vj - phi_i * hi * vi) * cya;
         //
-        const double aux_hu =
-            (uj * huj - ui * hui) * cxa + (vj * huj - vi * hui) * cya;
-        const double flux_hu = aux_hu + (pressure_j - pressure_i) * Cx[ij];
+        const double aux_hu = (phi_j * uj * huj - phi_i * ui * hui) * cxa +
+                              (phi_j * vj * huj - phi_i * vi * hui) * cya;
+        const double flux_hu =
+            aux_hu + phi_i * (pressure_j - pressure_i) * Cx[ij];
         //
-        const double aux_hv =
-            (uj * hvj - ui * hvi) * cxa + (vj * hvj - vi * hvi) * cya;
-        const double flux_hv = aux_hv + (pressure_j - pressure_i) * Cy[ij];
+        const double aux_hv = (phi_j * uj * hvj - phi_i * ui * hvi) * cxa +
+                              (phi_j * vj * hvj - phi_i * vi * hvi) * cya;
+        const double flux_hv =
+            aux_hv + phi_i * (pressure_j - pressure_i) * Cy[ij];
         //
-        const double flux_heta = (uj * hj * etaj - ui * hi * etai) * cxa +
-                                 (vj * hj * etaj - vi * hi * etai) * cya;
-        const double flux_hw =
-            (uj * hwj - ui * hwi) * cxa + (vj * hwj - vi * hwi) * cya;
+        const double flux_heta =
+            (phi_j * uj * hj * etaj - phi_i * ui * hi * etai) * cxa +
+            (phi_j * vj * hj * etaj - phi_i * vi * hi * etai) * cya;
+        const double flux_hw = (phi_j * uj * hwj - phi_i * ui * hwi) * cxa +
+                               (phi_j * vj * hwj - phi_i * vi * hwi) * cya;
         //
-        const double flux_hbeta = (uj * hbetaj - ui * hbetai) * cxa +
-                                  (vj * hbetaj - vi * hbetai) * cya;
+        const double flux_hbeta =
+            (phi_j * uj * hbetaj - phi_i * ui * hbetai) * cxa +
+            (phi_j * vj * hbetaj - phi_i * vi * hbetai) * cya;
         /* --------------------------------------------------------- */
 
         /* ------ Sum flux terms with well-balancing term on hu,hv ---------- */
         sum_flux_h += flux_h;
-        sum_flux_hu += aux_hu + (g * hi * (hj + Zj) + pTildej) * Cx[ij];
-        sum_flux_hv += aux_hv + (g * hi * (hj + Zj) + pTildej) * Cy[ij];
+        sum_flux_hu += aux_hu + phi_i * (g * hi * (hj + Zj) + pTildej) * Cx[ij];
+        sum_flux_hv += aux_hv + phi_i * (g * hi * (hj + Zj) + pTildej) * Cy[ij];
         sum_flux_heta += flux_heta;
         sum_flux_hw += flux_hw;
         sum_flux_hbeta += flux_hbeta;
@@ -1576,6 +1617,9 @@ public:
           // Low-order graph viscoscity coefficients (symmetric in i, j)
           muLij = fmax(std::abs(ui * cxa + vi * cya),
                        std::abs(uj * cxaT + vj * cyaT));
+          const double phibar_ij = phiBar(i, j, porosity_dof);
+          dLowij *= phibar_ij;
+          muLij *= phibar_ij;
           dLij = fmax(dLowij, muLij);
 
           // Safe for computation of bounds below (do not pass to others)
@@ -1583,6 +1627,7 @@ public:
 
           // High-order graph viscosity coefficients
           const double dEVij =
+              phibar_ij *
               fmax(global_entropy_residual[i], global_entropy_residual[j]);
           dHij = fmin(dLij, dEVij);
           muHij = fmin(muLij, dEVij);
@@ -1688,7 +1733,7 @@ public:
 
       // wall rows: advective boundary term -F_i . n_i = -(u_i . n_i) U_i
       if (wall_dof[i] > 0.5) {
-        const double un_i = ui * wall_nx[i] + vi * wall_ny[i];
+        const double un_i = phi_i * (ui * wall_nx[i] + vi * wall_ny[i]);
         sum_flux_h -= un_i * hi;
         sum_flux_hu -= un_i * hui;
         sum_flux_hv -= un_i * hvi;
@@ -1711,15 +1756,19 @@ public:
         }
       }
 
-      const double q_dot_gradZ = hui * grad_Z_x_i + hvi * grad_Z_y_i;
+      // grad_Z_i / m_i must be per unit plan area: m_i is phi-weighted, so
+      // scale by phi_i; the topography-dispersion force is a pressure term
+      // and carries phi_i as well
+      const double q_dot_gradZ =
+          phi_i * (hui * grad_Z_x_i + hvi * grad_Z_y_i);
       const double R1 = hwi - 1.5 * q_dot_gradZ / mi;
       const double R2 = LAMBDA_MGN * g * inv_meshSizei * hSqd_GammaPi;
       const double R3 = LAMBDA_MGN * std::sqrt(g * h0_max) * inv_meshSizei *
                         (q_dot_gradZ / mi - hbetai);
 
       SourceTerm_h[i] += 0.;
-      SourceTerm_hu[i] += (0.5 * R2 - 0.25 * R3) * grad_Z_x_i;
-      SourceTerm_hv[i] += (0.5 * R2 - 0.25 * R3) * grad_Z_y_i;
+      SourceTerm_hu[i] += phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_x_i;
+      SourceTerm_hv[i] += phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_y_i;
       SourceTerm_heta[i] += mi * R1;
       SourceTerm_hw[i] += -mi * R2;
       SourceTerm_hbeta[i] += mi * R3;
@@ -1865,7 +1914,8 @@ public:
       // This rescales U_i, so the low-order state is a positive (not convex)
       // combination; widen the local bounds to contain it.
       if (wall_dof[i] > 0.5) {
-        const double un_i = u_i * wall_nx[i] + v_i * wall_ny[i];
+        const double un_i =
+            porosity_dof[i] * (u_i * wall_nx[i] + v_i * wall_ny[i]);
         const double etai_w =
             hetai * one_over_hi; // F_heta = u h eta, as in flux_heta
         hLow[i] += dt / mi * un_i * hi;
@@ -2020,6 +2070,7 @@ public:
         args.array<double>("elementDiameter");
     int nElements_global = args.scalar<int>("nElements_global");
     double g = args.scalar<double>("g");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     proteus::pyarray<int> &h_l2g = args.array<int>("h_l2g");
     proteus::pyarray<int> &vel_l2g = args.array<int>("vel_l2g");
     proteus::pyarray<double> &h_dof_old = args.array<double>("h_dof_old");
@@ -2195,6 +2246,14 @@ public:
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
         // get the physical integration weight
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          // porosity weighting: storage is phi U
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN * nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // get the solution at current time
         ck.valFromDOF(h_dof.data(), &h_l2g.data()[eN_nDOF_trial_element],
                       &h_trial_ref.data()[k * nDOF_trial_element], h);
@@ -2630,6 +2689,7 @@ public:
     proteus::pyarray<int> &csrColumnOffsets_hbeta_hbeta =
         args.array<int>("csrColumnOffsets_hbeta_hbeta");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     int nExteriorElementBoundaries_global =
         args.scalar<int>("nExteriorElementBoundaries_global");
     proteus::pyarray<int> &exteriorElementBoundariesArray =
@@ -2724,6 +2784,14 @@ public:
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
         // get the physical integration weight
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          // porosity weighting: storage is phi U
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN * nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // precalculate test function products with integration weights
         for (int j = 0; j < nDOF_trial_element; j++) {
           h_test_dV[j] = h_test_ref[k * nDOF_trial_element + j] * dV;
@@ -2960,6 +3028,7 @@ public:
     proteus::pyarray<int> &csrColumnOffsets_hbeta_hbeta =
         args.array<int>("csrColumnOffsets_hbeta_hbeta");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     int nExteriorElementBoundaries_global =
         args.scalar<int>("nExteriorElementBoundaries_global");
     proteus::pyarray<int> &exteriorElementBoundariesArray =
@@ -3054,6 +3123,14 @@ public:
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
         // get the physical integration weight
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          // porosity weighting: storage is phi U
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN * nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // precalculate test function products with integration weights
         for (int j = 0; j < nDOF_trial_element; j++) {
           h_test_dV[j] = h_test_ref[k * nDOF_trial_element + j] * dV;

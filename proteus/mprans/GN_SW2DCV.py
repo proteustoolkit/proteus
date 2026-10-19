@@ -97,6 +97,7 @@ class RKEV(proteus.TimeIntegration.SSP):
         if self.transport.wall_dof is None:
             self.transport.setWallDOFs()
         argsDict["wall_dof"] = self.transport.wall_dof
+        argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         adjusted_maxCFL = self.transport.dsw_2d.calculateEdgeBasedCFL(argsDict)
 
         maxCFL = max(maxCFL, max(adjusted_maxCFL,
@@ -294,7 +295,18 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  abs_length=0.,
                  abs_start=0.,
                  waveConditions=None,
-                 INTEGRATE_BY_PARTS_WALLS=1):
+                 INTEGRATE_BY_PARTS_WALLS=1,
+                 porosity=None,
+                 drag_alpha=None,
+                 drag_beta=None):
+        # Canopy model, as in SW2DCV.Coefficients: porosity phi and
+        # Darcy-Forchheimer drag -(alpha + beta |u|) h u per unit plan area.
+        self.porosity = porosity
+        self.drag_alpha = drag_alpha
+        self.drag_beta = drag_beta
+        self.porosity_dof = None
+        self.drag_alpha_dof = None
+        self.drag_beta_dof = None
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
         # through the wall; the pressure reaction comes from the
@@ -434,6 +446,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             mesh.nodeArray[:,2] = self.b.dof                #if bathy is a function no need to pass subdomain info here
         
         assert mesh.nodeArray.shape[1]==3
+        def nodal(f, default):
+            if f is None:
+                return np.full(x.shape, default, 'd')
+            if callable(f):
+                return np.asarray(f([x, y]), 'd') * np.ones(x.shape)
+            return np.asarray(f, 'd') * np.ones(x.shape)
+        self.porosity_dof = nodal(self.porosity, 1.0)
+        self.drag_alpha_dof = nodal(self.drag_alpha, 0.0)
+        self.drag_beta_dof = nodal(self.drag_beta, 0.0)
+        assert self.porosity_dof.min() > 0. and self.porosity_dof.max() <= 1., \
+            "porosity must lie in (0, 1]"
 
     def initializeElementQuadrature(self, t, cq):
         self.q_velocity_porous = np.zeros(cq[('velocity', 0)].shape, 'd')
@@ -1209,6 +1232,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["extendedSourceTerm_hv"] = self.extendedSourceTerm_hv
         argsDict["thetaj_inv"] = self.thetaj_inv
         argsDict["wall_dof"] = self.wall_dof
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["g"] = self.coefficients.g
         argsDict["inverse_mesh"] = self.inverse_mesh
         self.dsw_2d.convexLimiting(argsDict)
@@ -1352,6 +1376,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["h_w_wave"] = self.h_w_wave
         argsDict["h_beta_wave"] = self.h_beta_wave
         argsDict["wall_dof"] = self.wall_dof
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
+        argsDict["drag_alpha_dof"] = self.coefficients.drag_alpha_dof
+        argsDict["drag_beta_dof"] = self.coefficients.drag_beta_dof
 
         # function
         self.dsw_2d.calculateBoundsAndHighOrderRHS(argsDict)
@@ -1460,8 +1487,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         # lumped mass matrix
         #
-        # assume a linear mass term
-        dm = np.ones(self.q[('u', 0)].shape, 'd')
+        # assume a linear mass term, weighted by the porosity (storage phi U)
+        l2g = self.u[0].femSpace.dofMap.l2g
+        dm = np.einsum('eqj,ej->eq', self.q[('w', 0)],
+                       self.coefficients.porosity_dof[l2g])
         elementMassMatrix = np.zeros((self.mesh.nElements_global,
                                       self.nDOF_test_element[0],
                                       self.nDOF_trial_element[0]), 'd')
@@ -1496,6 +1525,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.ML[i] = self.MC_a[rowptr_cMatrix[i]
                 :rowptr_cMatrix[i + 1]].sum()
             self.inverse_mesh[i] = 1. / np.sqrt(self.ML[i])
+        # the mesh size comes from the plan-area lumped mass, not the
+        # porosity-weighted one: area_e / 3 per vertex for P1
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        ML_area = np.zeros(self.mesh.nNodes_global, 'd')
+        np.add.at(ML_area, self.mesh.elementNodesArray.ravel(),
+                  np.repeat(area_e / 3., self.mesh.elementNodesArray.shape[1]))
+        nfree = self.nFreeDOF_global[0]
+        self.inverse_mesh[:nfree] = 1. / np.sqrt(ML_area[:nfree])
         # ML_i covers only the part of a full patch the node sees: half at a
         # straight boundary, a quarter at a right-angle corner. The mesh size
         # there is not smaller, so rescale ML_i by 2 pi / (interior angle at
@@ -1515,7 +1552,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             bnodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
             bnodes = bnodes[(bnodes < self.nFreeDOF_global[0]) & (angle[bnodes] > 0.)]
             self.inverse_mesh[bnodes] = 1. / np.sqrt(
-                self.ML[bnodes] * 2. * np.pi / angle[bnodes])
+                ML_area[bnodes] * 2. * np.pi / angle[bnodes])
         # np.testing.assert_almost_equal(self.ML.sum(), self.mesh.volume, err_msg="Trace of lumped mass matrix should be the domain volume",verbose=True)
         # np.testing.assert_almost_equal(self.ML.sum(), diamD2, err_msg="Trace of lumped mass matrix should be the domain volume",verbose=True)
 
@@ -2007,6 +2044,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["stride_hw"] = self.stride[4]
         argsDict["stride_hbeta"] = self.stride[5]
         argsDict["globalResidual"] = r
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
@@ -2241,6 +2279,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_hbeta_hbeta"] = self.csrColumnOffsets[(
             5, 5)]
         argsDict["globalJacobian"] = jacobian.getCSRrepresentation()[2]
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
