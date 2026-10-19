@@ -1767,8 +1767,15 @@ public:
                         (q_dot_gradZ / mi - hbetai);
 
       SourceTerm_h[i] += 0.;
-      SourceTerm_hu[i] += phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_x_i;
-      SourceTerm_hv[i] += phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_y_i;
+      // topography-dispersion force, the momentum part of the PDE source R.
+      // The limited update must put back all of tau (R_i + S_i) (Guermond et
+      // al. 2022, Water Waves, eq. 6.13); it was only in the high-order RHS.
+      const double topo_disp_x = phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_x_i;
+      const double topo_disp_y = phi_i * (0.5 * R2 - 0.25 * R3) * grad_Z_y_i;
+      SourceTerm_hu[i] += topo_disp_x;
+      SourceTerm_hv[i] += topo_disp_y;
+      extendedSourceTerm_hu[i] += topo_disp_x;
+      extendedSourceTerm_hv[i] += topo_disp_y;
       SourceTerm_heta[i] += mi * R1;
       SourceTerm_hw[i] += -mi * R2;
       SourceTerm_hbeta[i] += mi * R3;
