@@ -181,7 +181,8 @@ default_physical_parameters = {'gravity': 9.81,
 default_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                           'cfl': 0.33,
                           'SSPOrder': 3,
-                          'cE' : 1.}
+                          'cE' : 1.,
+                          'INTEGRATE_BY_PARTS_WALLS': 1}
 default_GN_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                              'cfl': 0.33,
                              'SSPOrder': 3}

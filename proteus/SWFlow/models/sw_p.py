@@ -36,6 +36,7 @@ mannings = physical_parameters['mannings']
 # NUMERICAL PARAMETERS #
 cE = numerical_parameters['cE']
 LUMPED_MASS_MATRIX = numerical_parameters['LUMPED_MASS_MATRIX']
+INTEGRATE_BY_PARTS_WALLS = numerical_parameters.get('INTEGRATE_BY_PARTS_WALLS', 1)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -46,7 +47,8 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    cE=cE,
                                    LUMPED_MASS_MATRIX=LUMPED_MASS_MATRIX,
                                    LINEAR_FRICTION=LINEAR_FRICTION,
-                                   mannings=mannings)
+                                   mannings=mannings,
+                                   INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS)
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #
