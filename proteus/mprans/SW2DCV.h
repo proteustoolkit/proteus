@@ -1379,11 +1379,6 @@ public:
           // For use in the convex limiting function
           new_SourceTerm_hu[i] = -friction_aux * hui;
           new_SourceTerm_hv[i] = -friction_aux * hvi;
-          double isVeg = (xi-5.173) > 0.0 ? 1.0 : 0.0;
-          extendedSourceTerm_hu[i] += mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*ui*veli_norm;
-          extendedSourceTerm_hv[i] += mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*vi*veli_norm;
-          new_SourceTerm_hu[i] -= mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*ui*veli_norm;
-          new_SourceTerm_hv[i] -= mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*vi*veli_norm;
         }
 
         /* HYPERBOLIC FLUXES */

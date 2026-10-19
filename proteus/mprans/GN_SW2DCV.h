@@ -1389,9 +1389,6 @@ public:
                   fmax(hi_to_the_gamma, xi * g * n2 * dt * veli_norm)));
       SourceTerm_hu[i] = -friction_aux * hui;
       SourceTerm_hv[i] = -friction_aux * hvi;
-      double isVeg = (xi-5.173) > 0.0 ? 1.0 : 0.0;
-      extendedSourceTerm_hu[i] += mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*ui*veli_norm;
-      extendedSourceTerm_hv[i] += mi * isVeg * 0.5 * 1.0 * 0.006 * 194 * fmin(0.15,hi)*vi*veli_norm;
 
       // Set flux sum terms to 0.
       double sum_flux_h = 0.;
