@@ -41,6 +41,7 @@ abs_start = physical_parameters['abs_start']
 
 # NUMERICAL PARAMETERS #
 LUMPED_MASS_MATRIX = numerical_parameters['LUMPED_MASS_MATRIX']
+INTEGRATE_BY_PARTS_WALLS = numerical_parameters.get('INTEGRATE_BY_PARTS_WALLS', 1)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -55,7 +56,8 @@ coefficients = GN_SW2DCV.Coefficients(g=g,
                                       gen_start=gen_start,
                                       abs_length=abs_length,
                                       abs_start=abs_start,
-                                      waveConditions=waveConditions)
+                                      waveConditions=waveConditions,
+                                      INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS)
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #

@@ -239,6 +239,7 @@ public:
     const proteus::pyarray<double> &extendedSourceTerm_hv =
         args.array<double>("extendedSourceTerm_hv");
     const proteus::pyarray<double> &thetaj_inv = args.array<double>("thetaj_inv");
+    const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
     const double g = args.scalar<double>("g");
     const proteus::pyarray<double> &inverse_mesh =
         args.array<double>("inverse_mesh");
@@ -327,8 +328,11 @@ public:
           const double nxji = CTx[ij] / cji_norm;
           const double nyji = CTy[ij] / cji_norm;
 
-          const double muijL = fmax(std::abs(ui * Cx[ij] + vi * Cy[ij]),
-                                    std::abs(uj * CTx[ij] + vj * CTy[ij]));
+          double cxa, cya, cxaT, cyaT;
+          wallCoefficients(i, j, ij, wall_dof, Cx, Cy, CTx, CTy, cxa, cya,
+                           cxaT, cyaT);
+          const double muijL = fmax(std::abs(ui * cxa + vi * cya),
+                                    std::abs(uj * cxaT + vj * cyaT));
           double dijL = fmax(
               maxWaveSpeedSharpInitialGuess(g, nxij, nyij, hi, hui, hvi, hetai,
                                             inv_meshSizei, hj, huj, hvj, hetaj,
@@ -893,6 +897,24 @@ public:
 
   } // end convex limiting function
 
+  // Walls: on rows with wall_dof = 1 the advective (inertial) terms are
+  // integrated by parts with zero advective flux through the wall, i.e. row i
+  // uses c'_ij = -c_ji in place of c_ij (they differ only on boundary edges).
+  // The pressure and bathymetry terms stay on c_ij. See SW2DCV.h.
+  static inline void wallCoefficients(int i, int j, int ij,
+                                      const proteus::pyarray<double> &wall_dof,
+                                      const proteus::pyarray<double> &Cx,
+                                      const proteus::pyarray<double> &Cy,
+                                      const proteus::pyarray<double> &CTx,
+                                      const proteus::pyarray<double> &CTy,
+                                      double &cx_ij, double &cy_ij,
+                                      double &cx_ji, double &cy_ji) {
+    cx_ij = wall_dof[i] > 0.5 ? -CTx[ij] : Cx[ij];
+    cy_ij = wall_dof[i] > 0.5 ? -CTy[ij] : Cy[ij];
+    cx_ji = wall_dof[j] > 0.5 ? -Cx[ij] : CTx[ij];
+    cy_ji = wall_dof[j] > 0.5 ? -Cy[ij] : CTy[ij];
+  }
+
   double calculateEdgeBasedCFL(arguments_dict &args) {
     const double g = args.scalar<double>("g");
     const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
@@ -915,6 +937,7 @@ public:
     const proteus::pyarray<double> &inverse_mesh =
         args.array<double>("inverse_mesh");
     proteus::pyarray<double> &edge_based_cfl = args.array<double>("edge_based_cfl");
+    const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
 
     double max_edge_based_cfl = 0.;
     double dLowij = 0.;
@@ -936,6 +959,8 @@ public:
 
       // Initialize diagonal entry
       double dLowii = 0.;
+      // boundary vector n_i = sum_j c_ji = int_{dOmega} phi_i n (zero inside)
+      double nix = 0., niy = 0.;
 
       for (int offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
@@ -964,8 +989,11 @@ public:
           const double nxij = Cx[ij] / cij_norm, nyij = Cy[ij] / cij_norm;
           const double nxji = CTx[ij] / cji_norm, nyji = CTy[ij] / cji_norm;
 
-          const double muijL = fmax(std::abs(ui * Cx[ij] + vi * Cy[ij]),
-                                    std::abs(uj * CTx[ij] + vj * CTy[ij]));
+          double cxa, cya, cxaT, cyaT;
+          wallCoefficients(i, j, ij, wall_dof, Cx, Cy, CTx, CTy, cxa, cya,
+                           cxaT, cyaT);
+          const double muijL = fmax(std::abs(ui * cxa + vi * cya),
+                                    std::abs(uj * cxaT + vj * cyaT));
           dLowij = fmax(maxWaveSpeedSharpInitialGuess(
                             g, nxij, nyij, hi, hui, hvi, hetai, inv_meshSizei,
                             hj, huj, hvj, hetaj, inv_meshSizej, hEps) *
@@ -981,6 +1009,8 @@ public:
           // Define diagonal entry
           dLowii -= dLowij;
         }
+        nix += CTx[ij];
+        niy += CTy[ij];
 
         // update ij
         ij += 1;
@@ -988,7 +1018,12 @@ public:
       //////////////////////////////
       // CALCULATE EDGE BASED CFL //
       //////////////////////////////
-      edge_based_cfl[i] = 1.0 * fabs(dLowii) / mi;
+      // A wall row's boundary term adds (u_i.n_i) U_i to the update; flow
+      // leaving the wall (u_i.n_i < 0) needs that much more room.
+      double wall_margin = 0.;
+      if (wall_dof[i] > 0.5)
+        wall_margin = 0.5 * fmax(0., -(ui * nix + vi * niy));
+      edge_based_cfl[i] = (fabs(dLowii) + wall_margin) / mi;
       max_edge_based_cfl = fmax(max_edge_based_cfl, edge_based_cfl[i]);
     }
 
@@ -1294,6 +1329,8 @@ public:
     proteus::pyarray<double> &h_eta_wave = args.array<double>("h_eta_wave");
     proteus::pyarray<double> &h_w_wave = args.array<double>("h_w_wave");
     proteus::pyarray<double> &h_beta_wave = args.array<double>("h_beta_wave");
+    // 1 on rows whose advective terms are integrated by parts (no-flux walls)
+    const proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
 
     /* Define constants for sources here. Note that these do not depend on the
      * DOFs so we should only compute once */
@@ -1324,6 +1361,23 @@ public:
 
     double high_viscosity_h, high_viscosity_hu, high_viscosity_hv,
         high_viscosity_heta, high_viscosity_hw, high_viscosity_hbeta;
+
+    // Boundary vectors n_i = sum_j c_ji = int_{dOmega} phi_i n on wall rows.
+    // There R_i = -sum_j F_j.c_ji = sum_j (F_j - F_i).c'_ij - F_i.n_i, and
+    // F_adv(U).n = (u.n) U, so the boundary term only rescales U_i.
+    std::valarray<double> wall_nx(0., numDOFsPerEqn), wall_ny(0., numDOFsPerEqn);
+    {
+      int ij_w = 0;
+      for (int i = 0; i < numDOFsPerEqn; i++)
+        for (int offset = csrRowIndeces_DofLoops[i];
+             offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
+          if (wall_dof[i] > 0.5) {
+            wall_nx[i] += CTx[ij_w];
+            wall_ny[i] += CTy[ij_w];
+          }
+          ij_w++;
+        }
+    }
 
     /* First loop to compute:
       1. bar states
@@ -1458,25 +1512,30 @@ public:
         extendedSourceTerm_hv[i] +=
             g * (-hi * Zj + 0.5 * (hj - hi) * (hj - hi)) * Cy[ij];
 
+        // advective coefficients: c'_ij for row i and c'_ji for row j
+        double cxa, cya, cxaT, cyaT;
+        wallCoefficients(i, j, ij, wall_dof, Cx, Cy, CTx, CTy, cxa, cya, cxaT,
+                         cyaT);
+
         /*  -------  Define hyperbolic fluxes (for bar states) ------------ */
         const double flux_h =
-            (hj * uj - hi * ui) * Cx[ij] + (hj * vj - hi * vi) * Cy[ij];
+            (hj * uj - hi * ui) * cxa + (hj * vj - hi * vi) * cya;
         //
         const double aux_hu =
-            (uj * huj - ui * hui) * Cx[ij] + (vj * huj - vi * hui) * Cy[ij];
+            (uj * huj - ui * hui) * cxa + (vj * huj - vi * hui) * cya;
         const double flux_hu = aux_hu + (pressure_j - pressure_i) * Cx[ij];
         //
         const double aux_hv =
-            (uj * hvj - ui * hvi) * Cx[ij] + (vj * hvj - vi * hvi) * Cy[ij];
+            (uj * hvj - ui * hvi) * cxa + (vj * hvj - vi * hvi) * cya;
         const double flux_hv = aux_hv + (pressure_j - pressure_i) * Cy[ij];
         //
-        const double flux_heta = (uj * hj * etaj - ui * hi * etai) * Cx[ij] +
-                                 (vj * hj * etaj - vi * hi * etai) * Cy[ij];
+        const double flux_heta = (uj * hj * etaj - ui * hi * etai) * cxa +
+                                 (vj * hj * etaj - vi * hi * etai) * cya;
         const double flux_hw =
-            (uj * hwj - ui * hwi) * Cx[ij] + (vj * hwj - vi * hwi) * Cy[ij];
+            (uj * hwj - ui * hwi) * cxa + (vj * hwj - vi * hwi) * cya;
         //
-        const double flux_hbeta = (uj * hbetaj - ui * hbetai) * Cx[ij] +
-                                  (vj * hbetaj - vi * hbetai) * Cy[ij];
+        const double flux_hbeta = (uj * hbetaj - ui * hbetai) * cxa +
+                                  (vj * hbetaj - vi * hbetai) * cya;
         /* --------------------------------------------------------- */
 
         /* ------ Sum flux terms with well-balancing term on hu,hv ---------- */
@@ -1514,9 +1573,9 @@ public:
                             hi, hui, hvi, hetai, inv_meshSizei, hEps) *
                             cji_norm);
 
-          // Low-order graph viscoscity coefficients
-          muLij = fmax(std::abs(ui * Cx[ij] + vi * Cy[ij]),
-                       std::abs(uj * CTx[ij] + vj * CTy[ij]));
+          // Low-order graph viscoscity coefficients (symmetric in i, j)
+          muLij = fmax(std::abs(ui * cxa + vi * cya),
+                       std::abs(uj * cxaT + vj * cyaT));
           dLij = fmax(dLowij, muLij);
 
           // Safe for computation of bounds below (do not pass to others)
@@ -1626,6 +1685,17 @@ public:
         // UPDATE ij //
         ij += 1;
       } // j loop ends here
+
+      // wall rows: advective boundary term -F_i . n_i = -(u_i . n_i) U_i
+      if (wall_dof[i] > 0.5) {
+        const double un_i = ui * wall_nx[i] + vi * wall_ny[i];
+        sum_flux_h -= un_i * hi;
+        sum_flux_hu -= un_i * hui;
+        sum_flux_hv -= un_i * hvi;
+        sum_flux_heta -= un_i * hi * etai;
+        sum_flux_hw -= un_i * hwi;
+        sum_flux_hbeta -= un_i * hbetai;
+      }
 
       // for bar_deltaSqd_h, bar_deltaSqd_heta
       bar_deltaSqd_h[i] *= card_inv * 0.5;
@@ -1790,6 +1860,31 @@ public:
       hetaLow[i] = hetai * cfl_condition + dt / mi * (2. * sum_dij_hetabar);
       hwLow[i] = hwi * cfl_condition + dt / mi * (2. * sum_dij_hwbar);
       hbetaLow[i] = hbetai * cfl_condition + dt / mi * (2. * sum_dij_hbetabar);
+
+      // wall rows: + dt/m_i (u_i . n_i) U_i from the advective boundary term.
+      // This rescales U_i, so the low-order state is a positive (not convex)
+      // combination; widen the local bounds to contain it.
+      if (wall_dof[i] > 0.5) {
+        const double un_i = u_i * wall_nx[i] + v_i * wall_ny[i];
+        const double etai_w =
+            hetai * one_over_hi; // F_heta = u h eta, as in flux_heta
+        hLow[i] += dt / mi * un_i * hi;
+        huLow[i] += dt / mi * un_i * hu_i;
+        hvLow[i] += dt / mi * un_i * hv_i;
+        hetaLow[i] += dt / mi * un_i * hi * etai_w;
+        hwLow[i] += dt / mi * un_i * hwi;
+        hbetaLow[i] += dt / mi * un_i * hbetai;
+        h_min[i] = std::min(h_min[i], hLow[i]);
+        h_max[i] = std::max(h_max[i], hLow[i]);
+        heta_min[i] = std::min(heta_min[i], hetaLow[i]);
+        heta_max[i] = std::max(heta_max[i], hetaLow[i]);
+        const double one_over_hLow =
+            2. * hLow[i] /
+            (hLow[i] * hLow[i] + std::pow(fmax(hLow[i], hEps), 2));
+        kin_max[i] = fmax(kin_max[i],
+                          0.5 * one_over_hLow *
+                              (huLow[i] * huLow[i] + hvLow[i] * hvLow[i]));
+      }
 
       // clean up hLow from round off error
       if (dt < 1e-2 && hLow[i] < -hEps) {

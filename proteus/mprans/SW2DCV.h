@@ -1406,6 +1406,16 @@ public:
           hLow[i] += dt / mi * un_i * h_dof_old[i];
           huLow[i] += dt / mi * un_i * hu_dof_old[i];
           hvLow[i] += dt / mi * un_i * hv_dof_old[i];
+          // the rescaled U_i makes the low-order state a positive, not
+          // convex, combination; widen the local bounds to contain it
+          h_min[i] = std::min(h_min[i], hLow[i]);
+          h_max[i] = std::max(h_max[i], hLow[i]);
+          const double one_over_hLow =
+              2.0 * hLow[i] /
+              (hLow[i] * hLow[i] + std::pow(fmax(hLow[i], hEps), 2));
+          kin_max[i] = fmax(kin_max[i],
+                            0.5 * one_over_hLow *
+                                (huLow[i] * huLow[i] + hvLow[i] * hvLow[i]));
         }
 
         // Then do relaxation of bounds here. If confused, see convex
