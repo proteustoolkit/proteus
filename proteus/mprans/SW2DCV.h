@@ -583,6 +583,24 @@ public:
     } // end loop for limiting iteration
   }   // end convex limiting function
 
+  // On an edge touching a wall row, c'_ij = -c_ji no longer equals -c'_ji,
+  // so mu_ij computed from row i alone differs from mu_ji. The dissipation
+  // sum_j mu_ij (U_j - U_i) is conservative only if mu is symmetric, so take
+  // the max over both orientations; this returns the row-j orientation.
+  inline double muWallTranspose(int i, int j, int ij, double ui, double vi,
+                                double uj, double vj,
+                                proteus::pyarray<double> &wall_dof,
+                                proteus::pyarray<double> &Cx,
+                                proteus::pyarray<double> &Cy,
+                                proteus::pyarray<double> &CTx,
+                                proteus::pyarray<double> &CTy) {
+    // c'_ji: c_ji = CTx[ij] on an ordinary row j, -c_ij on a wall row j
+    double cx_ji = wall_dof[j] > 0.5 ? -Cx[ij] : CTx[ij];
+    double cy_ji = wall_dof[j] > 0.5 ? -Cy[ij] : CTy[ij];
+    return fmax(fmax(0., -(uj * cx_ji + vj * cy_ji)),
+                fmax(0., (ui * cx_ji + vi * cy_ji)));
+  }
+
   double calculateEdgeBasedCFL(arguments_dict &args) {
     double g = args.scalar<double>("g");
     int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
@@ -1229,6 +1247,9 @@ public:
             // compute muij
             muLij = fmax(fmax(0., -(ui * cxa + vi * cya)),
                          fmax(0., (uj * cxa + vj * cya)));
+            if (wall_dof[i] > 0.5 || wall_dof[j] > 0.5)
+              muLij = fmax(muLij, muWallTranspose(i, j, ij, ui, vi, uj, vj,
+                                                  wall_dof, Cx, Cy, CTx, CTy));
 
             // Define dLij as max of dLij and muLij
             dLij = fmax(dLowij, muLij);
@@ -1618,6 +1639,10 @@ public:
             double cya = wall_dof[i] > 0.5 ? -CTy[ij] : Cy[ij];
             muLowij = fmax(fmax(0., -(ui * cxa + vi * cya)),
                            fmax(0., (uj * cxa + vj * cya)));
+            if (wall_dof[i] > 0.5 || wall_dof[j] > 0.5)
+              muLowij = fmax(muLowij,
+                             muWallTranspose(i, j, ij, ui, vi, uj, vj, wall_dof,
+                                             Cx, Cy, CTx, CTy));
             muLij = muLowij;
 
             // Define dLij as low order dijs
