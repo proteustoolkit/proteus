@@ -603,6 +603,13 @@ public:
     } // end loop for limiting iteration
   }   // end convex limiting function
 
+  // Porous edges: the graph viscosity on edge ij carries max(phi_i, phi_j).
+  // With fluxes phi_j F_j and storage m_i phi_i this keeps the bar states
+  // positive (phi_i/phibar <= 1) and the dissipation symmetric (conservative).
+  static inline double phiBar(int i, int j, proteus::pyarray<double> &porosity_dof) {
+    return fmax(porosity_dof[i], porosity_dof[j]);
+  }
+
   // On an edge touching a wall row, c'_ij = -c_ji no longer equals -c'_ji,
   // so mu_ij computed from row i alone differs from mu_ji. The dissipation
   // sum_j mu_ij (U_j - U_i) is conservative only if mu is symmetric, so take
@@ -644,6 +651,7 @@ public:
     proteus::pyarray<double> &edge_based_cfl = args.array<double>("edge_based_cfl");
     int debug = args.scalar<int>("debug");
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
 
     double max_edge_based_cfl = 0.;
 
@@ -683,6 +691,7 @@ public:
                    maxWaveSpeedSharpInitialGuess(g, nxji, nyji, hj, huj, hvj,
                                                  hi, hui, hvi, hEps, debug) *
                        cji_norm); // hEps
+          dLow[ij] *= phiBar(i, j, porosity_dof);
           dLowii -= dLow[ij];
         } else
           dLow[ij] = 0.;
@@ -702,8 +711,8 @@ public:
       if (wall_dof[i] > 0.5) {
         double one_over_hiReg =
             2.0 * hi / (hi * hi + std::pow(fmax(hi, hEps), 2));
-        wall_margin =
-            0.5 * fmax(0., -(hui * nix + hvi * niy) * one_over_hiReg);
+        wall_margin = 0.5 * fmax(0., -porosity_dof[i] * (hui * nix + hvi * niy) *
+                                         one_over_hiReg);
       }
       edge_based_cfl[i] = (fabs(dLowii) + wall_margin) / mi;
       max_edge_based_cfl = fmax(max_edge_based_cfl, edge_based_cfl[i]);
@@ -1017,6 +1026,12 @@ public:
     double mannings = args.scalar<double>("mannings");
     // 1 on rows whose advective terms are integrated by parts (no-flux walls)
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    // Canopy: porosity phi (storage phi h, flux phi h u, pressure
+    // phi g h grad(h+Z)) and Darcy-Forchheimer drag -(alpha + beta|u|) h u per
+    // unit plan area. All nodal; phi = 1, alpha = beta = 0 outside canopies.
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
+    proteus::pyarray<double> &drag_alpha_dof = args.array<double>("drag_alpha_dof");
+    proteus::pyarray<double> &drag_beta_dof = args.array<double>("drag_beta_dof");
     proteus::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     int SECOND_CALL_CALCULATE_RESIDUAL =
         args.scalar<int>("SECOND_CALL_CALCULATE_RESIDUAL");
@@ -1080,8 +1095,16 @@ public:
         ck.calculateMapping_element(
             eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(),
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
-        // get the physical integration weight
+        // get the physical integration weight, times the porosity (storage is
+        // phi h, phi hu, phi hv)
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN_nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // get the solution at current time
         ck.valFromDOF(h_dof.data(), &h_l2g.data()[eN_nDOF_trial_element],
                       &h_trial_ref.data()[k * nDOF_trial_element], h);
@@ -1218,6 +1241,7 @@ public:
 
         // define full pressure at ith node for definition of bar states
         double pressure_i = 0.5 * g * hi * hi;
+        double phi_i = porosity_dof[i];
 
         // loop over the sparsity pattern of the i-th DOF
         for (int offset = csrRowIndeces_DofLoops[i];
@@ -1260,6 +1284,7 @@ public:
                   maxWaveSpeedSharpInitialGuess(g, nxji, nyji, hj, huj, hvj, hi,
                                                 hui, hvi, hEps, false) *
                       cji_norm);
+              dLowij *= phiBar(i, j, porosity_dof);
             }
             // save dLij
             dLij = dLowij;
@@ -1270,6 +1295,7 @@ public:
             if (wall_dof[i] > 0.5 || wall_dof[j] > 0.5)
               muLij = fmax(muLij, muWallTranspose(i, j, ij, ui, vi, uj, vj,
                                                   wall_dof, Cx, Cy, CTx, CTy));
+            muLij *= phiBar(i, j, porosity_dof);
 
             // Define dLij as max of dLij and muLij
             dLij = fmax(dLowij, muLij);
@@ -1293,26 +1319,29 @@ public:
             double hBar_ij = 0., hTilde_ij = 0., huBar_ij = 0., huTilde_ij = 0.,
                    hvBar_ij = 0., hvTilde_ij = 0.;
 
-            // h component
+            // h component (advective fluxes carry phi_j F_j, pressure phi_i)
+            double phi_j = porosity_dof[j];
             hBar_ij = -1. / (2.0 * fmax(dLij, dij_small)) *
-                          ((uj * hj - ui * hi) * cxa +
-                           (vj * hj - vi * hi) * cya) +
+                          ((phi_j * uj * hj - phi_i * ui * hi) * cxa +
+                           (phi_j * vj * hj - phi_i * vi * hi) * cya) +
                       0.5 * (hj + hi);
             hTilde_ij = (dLij - muLij) / (2.0 * fmax(dLij, dij_small)) *
                         (hStarji - hj - (hStarij - hi));
             // hu component
             huBar_ij =
                 -1. / (2.0 * fmax(dLij, dij_small)) *
-                    ((uj * huj - ui * hui) * cxa + (vj * huj - vi * hui) * cya +
-                     (pressure_j - pressure_i) * Cx[ij]) +
+                    ((phi_j * uj * huj - phi_i * ui * hui) * cxa +
+                     (phi_j * vj * huj - phi_i * vi * hui) * cya +
+                     phi_i * (pressure_j - pressure_i) * Cx[ij]) +
                 0.5 * (huj + hui);
             huTilde_ij = (dLij - muLij) / (2.0 * fmax(dLij, dij_small)) *
                          (huStarji - huj - (huStarij - hui));
             // hv component
             hvBar_ij =
                 -1. / (2.0 * fmax(dLij, dij_small)) *
-                    ((uj * hvj - ui * hvi) * cxa + (vj * hvj - vi * hvi) * cya +
-                     (pressure_j - pressure_i) * Cy[ij]) +
+                    ((phi_j * uj * hvj - phi_i * ui * hvi) * cxa +
+                     (phi_j * vj * hvj - phi_i * vi * hvi) * cya +
+                     phi_i * (pressure_j - pressure_i) * Cy[ij]) +
                 0.5 * (hvj + hvi);
             hvTilde_ij = (dLij - muLij) / (2.0 * fmax(dLij, dij_small)) *
                          (hvStarji - hvj - (hvStarij - hvi));
@@ -1403,6 +1432,7 @@ public:
                std::pow(fmax(h_dof_old[i], hEps), 2));
           double un_i = (hu_dof_old[i] * wall_nx[i] + hv_dof_old[i] * wall_ny[i]) *
                         one_over_hiReg_w;
+          un_i *= porosity_dof[i]; // boundary flux phi_i (u_i.n_i) U_i
           hLow[i] += dt / mi * un_i * h_dof_old[i];
           huLow[i] += dt / mi * un_i * hu_dof_old[i];
           hvLow[i] += dt / mi * un_i * hv_dof_old[i];
@@ -1464,6 +1494,8 @@ public:
          * left side of equations. "new_SourceTerm" variables are on right
          */
 
+        double phi_i = porosity_dof[i];
+
         // FRICTION
         if (LINEAR_FRICTION == 1) {
           extendedSourceTerm_hu[i] = mannings * hui * mi;
@@ -1486,6 +1518,22 @@ public:
           // For use in the convex limiting function
           new_SourceTerm_hu[i] = -friction_aux * hui;
           new_SourceTerm_hv[i] = -friction_aux * hvi;
+        }
+
+        // CANOPY DRAG: -(alpha + beta |u|) h u per unit plan area, i.e. a
+        // sink K hu per unit storage with K = (alpha + beta |u|) / phi. Same
+        // semi-implicit form as the Manning term (2 K m / (1 + max(1, xi dt
+        // K))), so dt * drag_aux / m_i <= 2 / xi and hu never changes sign.
+        {
+          double veli_norm = std::sqrt(ui * ui + vi * vi);
+          double K = (drag_alpha_dof[i] + drag_beta_dof[i] * veli_norm) / phi_i;
+          if (K > 0.) {
+            double drag_aux = 2. * K * mi / (1. + fmax(1., xi * dt * K));
+            extendedSourceTerm_hu[i] += drag_aux * hui;
+            extendedSourceTerm_hv[i] += drag_aux * hvi;
+            new_SourceTerm_hu[i] -= drag_aux * hui;
+            new_SourceTerm_hv[i] -= drag_aux * hvi;
+          }
         }
 
         /* HYPERBOLIC FLUXES */
@@ -1520,12 +1568,13 @@ public:
           // auxiliary functions to compute fluxes (advective part on c')
           double cxa = wall_dof[i] > 0.5 ? -CTx[ij] : Cx[ij];
           double cya = wall_dof[i] > 0.5 ? -CTy[ij] : Cy[ij];
-          double aux_h =
-              (uj * hj - ui * hi) * cxa + (vj * hj - vi * hi) * cya;
-          double aux_hu =
-              (uj * huj - ui * hui) * cxa + (vj * huj - vi * hui) * cya;
-          double aux_hv =
-              (uj * hvj - ui * hvi) * cxa + (vj * hvj - vi * hvi) * cya;
+          double phi_j = porosity_dof[j];
+          double aux_h = (phi_j * uj * hj - phi_i * ui * hi) * cxa +
+                         (phi_j * vj * hj - phi_i * vi * hi) * cya;
+          double aux_hu = (phi_j * uj * huj - phi_i * ui * hui) * cxa +
+                          (phi_j * vj * huj - phi_i * vi * hui) * cya;
+          double aux_hv = (phi_j * uj * hvj - phi_i * ui * hvi) * cxa +
+                          (phi_j * vj * hvj - phi_i * vi * hvi) * cya;
 
           /* HYPERBOLIC FLUX */
           hyp_flux_h[i] += aux_h;
@@ -1533,13 +1582,16 @@ public:
           hyp_flux_hv[i] += aux_hv;
 
           // EXTENDED SOURCE, USING 6.13 //
-          extendedSourceTerm_hu[i] += g * hi * (hj + Zj) * Cx[ij];
-          extendedSourceTerm_hv[i] += g * hi * (hj + Zj) * Cy[ij];
+          // (porous: phi_i g h_i grad(h + Z), non-conservative at node i)
+          extendedSourceTerm_hu[i] += phi_i * g * hi * (hj + Zj) * Cx[ij];
+          extendedSourceTerm_hv[i] += phi_i * g * hi * (hj + Zj) * Cy[ij];
 
-          new_SourceTerm_hu[i] +=
-              g * (-hi * (Zj - Zi) + 0.5 * std::pow(hj - hi, 2)) * Cx[ij];
-          new_SourceTerm_hv[i] +=
-              g * (-hi * (Zj - Zi) + 0.5 * std::pow(hj - hi, 2)) * Cy[ij];
+          new_SourceTerm_hu[i] += phi_i * g *
+                                  (-hi * (Zj - Zi) + 0.5 * std::pow(hj - hi, 2)) *
+                                  Cx[ij];
+          new_SourceTerm_hv[i] += phi_i * g *
+                                  (-hi * (Zj - Zi) + 0.5 * std::pow(hj - hi, 2)) *
+                                  Cy[ij];
 
           // FOR SMOOTHNESS INDICATOR //
           alpha_numerator += hj - hi;
@@ -1551,7 +1603,7 @@ public:
 
         // wall rows: advective boundary term -F_i . n_i = -(u_i . n_i) U_i
         if (wall_dof[i] > 0.5) {
-          double un_i = ui * wall_nx[i] + vi * wall_ny[i];
+          double un_i = phi_i * (ui * wall_nx[i] + vi * wall_ny[i]);
           hyp_flux_h[i] -= un_i * hi;
           hyp_flux_hu[i] -= un_i * hui;
           hyp_flux_hv[i] -= un_i * hvi;
@@ -1656,6 +1708,7 @@ public:
                   maxWaveSpeedSharpInitialGuess(g, nxji, nyji, hj, huj, hvj, hi,
                                                 hui, hvi, hEps, false) *
                       cji_norm);
+              dLowij *= phiBar(i, j, porosity_dof);
             }
             // this is standard low-order dij, can you use dLij =
             // dLowij*fmax(psi[i],psi[j]) if want smoothness based as low order
@@ -1673,6 +1726,7 @@ public:
               muLowij = fmax(muLowij,
                              muWallTranspose(i, j, ij, ui, vi, uj, vj, wall_dof,
                                              Cx, Cy, CTx, CTy));
+            muLowij *= phiBar(i, j, porosity_dof);
             muLij = muLowij;
 
             // Define dLij as low order dijs
@@ -1686,7 +1740,8 @@ public:
             // ENTROPY VISCOSITY //
             ///////////////////////
             double dEVij = cE * fmax(global_entropy_residual[i],
-                                     global_entropy_residual[j]);
+                                     global_entropy_residual[j]) *
+                           phiBar(i, j, porosity_dof);
             dHij = fmin(dLowij, dEVij);
             muHij = fmin(muLowij, dEVij);
 
@@ -1916,6 +1971,7 @@ public:
     proteus::pyarray<int> &csrColumnOffsets_hv_hv =
         args.array<int>("csrColumnOffsets_hv_hv");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     int nExteriorElementBoundaries_global =
         args.scalar<int>("nExteriorElementBoundaries_global");
     proteus::pyarray<int> &exteriorElementBoundariesArray =
@@ -2002,8 +2058,16 @@ public:
         ck.calculateMapping_element(
             eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(),
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
-        // get the physical integration weight
+        // get the physical integration weight, times the porosity: storage
+        // is phi h and phi hu, so the mass matrix is int phi_h w_i w_j
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN * nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // precalculate test function products with integration weights
         for (int j = 0; j < nDOF_trial_element; j++) {
           h_test_dV[j] = h_test_ref[k * nDOF_trial_element + j] * dV;
@@ -2152,6 +2216,7 @@ public:
     proteus::pyarray<int> &csrColumnOffsets_hv_hv =
         args.array<int>("csrColumnOffsets_hv_hv");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
+    proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
     int nExteriorElementBoundaries_global =
         args.scalar<int>("nExteriorElementBoundaries_global");
     proteus::pyarray<int> &exteriorElementBoundariesArray =
@@ -2238,8 +2303,16 @@ public:
         ck.calculateMapping_element(
             eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(),
             mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y);
-        // get the physical integration weight
+        // get the physical integration weight, times the porosity: storage
+        // is phi h and phi hu, so the mass matrix is int phi_h w_i w_j
         dV = fabs(jacDet) * dV_ref[k];
+        {
+          double phi_q = 0.;
+          ck.valFromDOF(porosity_dof.data(),
+                        &h_l2g.data()[eN * nDOF_trial_element],
+                        &h_trial_ref.data()[k * nDOF_trial_element], phi_q);
+          dV *= phi_q;
+        }
         // precalculate test function products with integration weights
         for (int j = 0; j < nDOF_trial_element; j++) {
           h_test_dV[j] = h_test_ref[k * nDOF_trial_element + j] * dV;

@@ -173,7 +173,13 @@ default_physical_parameters = {'gravity': 9.81,
                                'gen_start': 0.0,
                                'gen_length': 0.0,
                                'abs_start': 0.0,
-                               'abs_length': 0.0,}
+                               'abs_length': 0.0,
+                               # canopy: porosity phi and Darcy-Forchheimer
+                               # drag -(alpha + beta|u|) h u; scalar, nodal
+                               # array or function of [x, y]; None = none
+                               'porosity': None,
+                               'drag_alpha': None,
+                               'drag_beta': None}
 
 # ****************************************** #
 # ********** NUMERICAL PARAMETERS ********** #

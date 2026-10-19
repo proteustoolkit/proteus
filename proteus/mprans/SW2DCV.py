@@ -97,6 +97,7 @@ class RKEV(proteus.TimeIntegration.SSP):
         if self.transport.wall_dof is None:
             self.transport.setWallDOFs()
         argsDict["wall_dof"] = self.transport.wall_dof
+        argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         argsDict["debug"] = 0
         adjusted_maxCFL = self.transport.sw2d.calculateEdgeBasedCFL(argsDict)
 
@@ -270,7 +271,23 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  mannings=0.,
                  forceStrongConditions=True,
                  constrainedDOFs=None,
-                 INTEGRATE_BY_PARTS_WALLS=1):
+                 INTEGRATE_BY_PARTS_WALLS=1,
+                 porosity=None,
+                 drag_alpha=None,
+                 drag_beta=None):
+        # Canopy model (each a scalar, a nodal array, or a function of [x, y]
+        # returning nodal values; None means phi = 1, alpha = beta = 0):
+        #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
+        #     phi g h grad(h + Z). For an array of cylinders of diameter D and
+        #     m per unit area, phi = 1 - m pi D^2 / 4.
+        #   Darcy-Forchheimer drag -(alpha + beta |u|) h u per unit plan
+        #     area; for cylinders beta = C_D m D / 2.
+        self.porosity = porosity
+        self.drag_alpha = drag_alpha
+        self.drag_beta = drag_beta
+        self.porosity_dof = None
+        self.drag_alpha_dof = None
+        self.drag_beta_dof = None
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
         # through the wall; the pressure reaction comes from the
@@ -376,6 +393,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.b.dof = self.bathymetry([x, y])
             mesh.nodeArray[:,2] = self.b.dof     #if bathy is a function no need to pass subdomain info here
         assert mesh.nodeArray.shape[1]==3
+        def nodal(f, default):
+            if f is None:
+                return np.full(x.shape, default, 'd')
+            if callable(f):
+                return np.asarray(f([x, y]), 'd') * np.ones(x.shape)
+            return np.asarray(f, 'd') * np.ones(x.shape)
+        self.porosity_dof = nodal(self.porosity, 1.0)
+        self.drag_alpha_dof = nodal(self.drag_alpha, 0.0)
+        self.drag_beta_dof = nodal(self.drag_beta, 0.0)
+        assert self.porosity_dof.min() > 0. and self.porosity_dof.max() <= 1., \
+            "porosity must lie in (0, 1]"
 
     def initializeElementQuadrature(self, t, cq):
         pass
@@ -1113,8 +1141,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         # lumped mass matrix
         #
-        # assume a linear mass term
-        dm = np.ones(self.q[('u', 0)].shape, 'd')
+        # assume a linear mass term, weighted by the porosity (storage is
+        # phi h): dm = phi_h at the quadrature points
+        l2g = self.u[0].femSpace.dofMap.l2g
+        dm = np.einsum('eqj,ej->eq', self.q[('w', 0)],
+                       self.coefficients.porosity_dof[l2g])
         elementMassMatrix = np.zeros((self.mesh.nElements_global,
                                       self.nDOF_test_element[0],
                                       self.nDOF_trial_element[0]), 'd')
@@ -1557,6 +1588,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["SECOND_CALL_CALCULATE_RESIDUAL"] = self.secondCallCalculateResidual
         argsDict["COMPUTE_NORMALS"] = self.COMPUTE_NORMALS
         argsDict["wall_dof"] = self.wall_dof
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
+        argsDict["drag_alpha_dof"] = self.coefficients.drag_alpha_dof
+        argsDict["drag_beta_dof"] = self.coefficients.drag_beta_dof
         argsDict["normalx"] = self.normalx
         argsDict["normaly"] = self.normaly
         argsDict["dLow"] = self.dLow
@@ -1701,6 +1735,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_hv_hv"] = self.csrRowIndeces[(2, 2)]
         argsDict["csrColumnOffsets_hv_hv"] = self.csrColumnOffsets[(2, 2)]
         argsDict["globalJacobian"] = jacobian.getCSRrepresentation()[2]
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
