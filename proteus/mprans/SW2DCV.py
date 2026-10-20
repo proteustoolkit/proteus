@@ -1306,9 +1306,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # hEps
         self.eps = 1E-5
         self.hEps = self.eps * comm.globalMax(self.u[0].dof.max())
-        self.mesh.globalMesh.volume = comm.globalSum(self.mesh.volume)
-        # size_of_domain used in relaxation of bounds
-        self.size_of_domain = self.mesh.globalMesh.volume 
+        # size_of_domain used in relaxation of bounds: the plan area of the
+        # whole domain. In parallel each subdomain also holds overlap
+        # elements, so sum only the owned elements and reduce across ranks
+        # (summing mesh.volume double-counts the overlap).
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
+        self.mesh.globalMesh.volume = self.size_of_domain
         # normal vectors
         self.normalx = np.zeros(self.u[0].dof.shape, 'd')
         self.normaly = np.zeros(self.u[0].dof.shape, 'd')
@@ -1414,6 +1418,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 n=n,N=N,nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
         self.par_ML.scatter_forward_insert()
+        # Wall flags come from the subdomain's exterior boundary, which also
+        # contains the partition boundary: owned flags are right, ghost flags
+        # are not. Take the ghosts' flags from their owners.
+        self.par_wall_dof = LAT.ParVec_petsc4py(self.wall_dof,
+                                                bs=1,
+                                                n=n,N=N,nghosts=nghosts,
+                                                subdomain2global=subdomain2global)
+        self.par_wall_dof.scatter_forward_insert()
         
         self.urelax = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
         self.drelax = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)

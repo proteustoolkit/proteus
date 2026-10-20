@@ -1140,6 +1140,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.par_normalx = None
         self.par_normaly = None
         self.par_ML = None
+        self.FCT_all = None  # FCT matrices kept between limiting passes
         # low order solution #
         self.par_hLow = None
         self.par_huLow = None
@@ -1235,7 +1236,22 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["g"] = self.coefficients.g
         argsDict["inverse_mesh"] = self.inverse_mesh
-        self.dsw_2d.convexLimiting(argsDict)
+        # Two limiting passes, one per kernel call; the second pass reads the
+        # neighbours' low-order states, so exchange them with the ghost DOFs
+        # in between (a ghost row's own update uses an incomplete stencil).
+        n_limit_iter = 2
+        if self.FCT_all is None or self.FCT_all.size != 6 * self.Cx.size:
+            self.FCT_all = np.zeros(6 * self.Cx.size, 'd')
+        argsDict["FCT_all"] = self.FCT_all
+        argsDict["n_limit_iter"] = n_limit_iter
+        for limit_iter in range(n_limit_iter):
+            argsDict["limit_iter"] = limit_iter
+            self.dsw_2d.convexLimiting(argsDict)
+            if limit_iter < n_limit_iter - 1:
+                self.par_hLow.scatter_forward_insert()
+                self.par_huLow.scatter_forward_insert()
+                self.par_hvLow.scatter_forward_insert()
+                self.par_hetaLow.scatter_forward_insert()
 
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
@@ -1699,7 +1715,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         comm = Comm.get()
         self.setWallDOFs()
 
-        self.size_of_domain = self.mesh.volume
+        # Plan area of the whole domain (bounds relaxation uses m_i / area).
+        # In parallel each subdomain also holds overlap elements, so sum only
+        # the owned elements and reduce across ranks.
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
 
         # old vectors
         self.h_dof_old = np.copy(self.u[0].dof)
@@ -1852,6 +1872,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                           n=n, N=N, nghosts=nghosts,
                                           subdomain2global=subdomain2global)
         self.par_ML.scatter_forward_insert()
+        # Wall flags come from the subdomain's exterior boundary, which also
+        # contains the partition boundary: owned flags are right, ghost flags
+        # are not. Take the ghosts' flags from their owners.
+        self.par_wall_dof = LAT.ParVec_petsc4py(self.wall_dof,
+                                                bs=1,
+                                                n=n, N=N, nghosts=nghosts,
+                                                subdomain2global=subdomain2global)
+        self.par_wall_dof.scatter_forward_insert()
         self.par_inverse_mesh = LAT.ParVec_petsc4py(self.inverse_mesh,
                                                     bs=1,
                                                     n=n, N=N, nghosts=nghosts,
