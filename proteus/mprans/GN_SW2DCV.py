@@ -100,8 +100,11 @@ class RKEV(proteus.TimeIntegration.SSP):
         argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         adjusted_maxCFL = self.transport.dsw_2d.calculateEdgeBasedCFL(argsDict)
 
-        maxCFL = max(maxCFL, max(adjusted_maxCFL,
-                                 globalMax(self.edge_based_cfl.max())))
+        # owned DOFs only: a ghost row sees a truncated stencil (and wall
+        # vector), so its CFL number is not the owner's
+        par_dof = getattr(self.transport.u[0], "par_dof", None)
+        n_owned = par_dof.dim_proc if par_dof is not None else self.edge_based_cfl.size
+        maxCFL = max(maxCFL, globalMax(self.edge_based_cfl[:n_owned].max()))
         self.dt = self.runCFL/maxCFL
 
         if self.dtLast is None:
