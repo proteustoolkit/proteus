@@ -276,18 +276,29 @@ public:
     proteus::pyarray<double> &kin_max = args.array<double>("kin_max");
     double KE_tiny = args.scalar<double>("KE_tiny");
 
-    // Declare stuff for limiting on h and h*heta
-    std::valarray<double> Rneg(0.0, numDOFs), Rpos(0.0, numDOFs);
+    // The limiter runs as a sequence of calls so the caller can exchange
+    // ghost-DOF values in between (each ghost row only sees part of its
+    // stencil): per pass, stage 0 computes R+-, the caller exchanges them,
+    // stage 1 computes l_ij, applies the limited fluxes and updates the FCT
+    // matrices, and the caller exchanges hLow/huLow/hvLow before the next
+    // pass. FCT_h, FCT_hu, FCT_hv and l_ij persist in FCT_all (4 x nnz).
+    const int limit_iter_arg = args.scalar<int>("limit_iter");
+    const int limit_stage = args.scalar<int>("limit_stage");
+    proteus::pyarray<double> &FCT_all = args.array<double>("FCT_all");
+    proteus::pyarray<double> &Rneg = args.array<double>("Rneg_dof");
+    proteus::pyarray<double> &Rpos = args.array<double>("Rpos_dof");
+    const bool first_call = (limit_iter_arg == 0 && limit_stage == 0);
 
     // Create FCT component matrices in vector form
     std::valarray<double> FCT_h(0.0, dH_minus_dL.size()),
         FCT_hu(0.0, dH_minus_dL.size()), FCT_hv(0.0, dH_minus_dL.size());
+    const std::size_t nnz_fct = dH_minus_dL.size();
 
     ////////////////////////////////////////////////////
     // Loop to define FCT matrices for each component //
     ////////////////////////////////////////////////////
     int ij = 0;
-    for (int i = 0; i < numDOFs; i++) {
+    for (int i = 0; i < numDOFs && first_call; i++) {
       // Read some vectors
       double high_order_hnp1i = high_order_hnp1[i];
       double high_order_hunp1i = high_order_hunp1[i];
@@ -364,11 +375,21 @@ public:
 
     // Create Lij_array and initialize with 1
     std::valarray<double> Lij_array(1.0, dH_minus_dL.size());
+    if (!first_call) {
+      for (std::size_t k = 0; k < nnz_fct; k++) {
+        FCT_h[k] = FCT_all[0 * nnz_fct + k];
+        FCT_hu[k] = FCT_all[1 * nnz_fct + k];
+        FCT_hv[k] = FCT_all[2 * nnz_fct + k];
+        Lij_array[k] = FCT_all[3 * nnz_fct + k];
+      }
+    }
 
-    /* Loop over limiting iterations */
-    for (int limit_iter = 0; limit_iter < LIMITING_ITERATION; limit_iter++) {
+    /* One stage of one limiting pass per call */
+    for (int limit_iter = limit_iter_arg; limit_iter < limit_iter_arg + 1;
+         limit_iter++) {
 
       /* Loop to define FCT Rpos and Rneg values */
+      if (limit_stage == 0) {
       ij = 0;
       for (int i = 0; i < numDOFs; i++) {
 
@@ -419,6 +440,8 @@ public:
           }
         }
       } // i loop ends here
+      break; // stage 0 done: the caller exchanges Rneg/Rpos
+      }
 
       /* Here we compute the limiters */
       ij = 0;
@@ -601,6 +624,13 @@ public:
       FCT_hu = (1.0 - Lij_array) * FCT_hu;
       FCT_hv = (1.0 - Lij_array) * FCT_hv;
     } // end loop for limiting iteration
+
+    for (std::size_t k = 0; k < nnz_fct; k++) {
+      FCT_all[0 * nnz_fct + k] = FCT_h[k];
+      FCT_all[1 * nnz_fct + k] = FCT_hu[k];
+      FCT_all[2 * nnz_fct + k] = FCT_hv[k];
+      FCT_all[3 * nnz_fct + k] = Lij_array[k];
+    }
   }   // end convex limiting function
 
   // Porous edges: the graph viscosity on edge ij carries max(phi_i, phi_j).
@@ -1189,9 +1219,14 @@ public:
           }
       }
 
-      // Here we declare some arrays for local bounds
-      std::valarray<double> delta_Sqd_h(0.0, numDOFsPerEqn),
-          bar_deltaSqd_h(0.0, numDOFsPerEqn), delta_Sqd_kin(0.0, numDOFsPerEqn),
+      // Here we declare some arrays for local bounds. delta_Sqd_h and
+      // delta_Sqd_kin (sum over neighbours of the difference) are computed
+      // by the caller and exchanged with the ghost DOFs: bar_deltaSqd at row
+      // i reads them at the neighbours, and a ghost row's own sum would miss
+      // part of its stencil.
+      proteus::pyarray<double> &delta_Sqd_h = args.array<double>("delta_Sqd_h");
+      proteus::pyarray<double> &delta_Sqd_kin = args.array<double>("delta_Sqd_kin");
+      std::valarray<double> bar_deltaSqd_h(0.0, numDOFsPerEqn),
           bar_deltaSqd_kin(0.0, numDOFsPerEqn);
       std::valarray<double> kin(0.0, numDOFsPerEqn),
           max_of_h_and_hEps(0.0, numDOFsPerEqn);
@@ -1204,21 +1239,6 @@ public:
                            (h_dof_old[i] * h_dof_old[i] +
                             max_of_h_and_hEps[i] * max_of_h_and_hEps[i]));
       }
-
-      /* First loop to define: delta_Sqd_h, delta_Sqd_kin */
-      for (int i = 0; i < numDOFsPerEqn; i++) {
-
-        for (int offset = csrRowIndeces_DofLoops[i];
-             offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-
-          int j = csrColumnOffsets_DofLoops[offset];
-
-          if (i != j) {
-            delta_Sqd_h[i] += h_dof_old[i] - h_dof_old[j];
-            delta_Sqd_kin[i] += kin[i] - kin[j];
-          }
-        } // j loop ends here
-      }   // i loops ends here
 
       // Stuff for bar states here (BT = BarTilde)
       std::valarray<double> hBT(0.0, dH_minus_dL.size()),

@@ -1004,7 +1004,28 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["h_max"] = self.h_max
         argsDict["kin_max"] = self.kin_max
         argsDict["KE_tiny"] = self.KE_tiny
-        self.sw2d.convexLimiting(argsDict)
+        # Two limiting passes, each in two kernel calls with ghost exchanges:
+        # stage 0 computes R+- (exchanged), stage 1 computes l_ij and applies
+        # the limited fluxes; hLow/huLow/hvLow are exchanged between passes.
+        n_limit_iter = 2
+        nnz = self.dH_minus_dL.size
+        if self.FCT_all is None or self.FCT_all.size != 4 * nnz:
+            self.FCT_all = np.zeros(4 * nnz, 'd')
+        argsDict["FCT_all"] = self.FCT_all
+        argsDict["Rneg_dof"] = self.Rneg_dof
+        argsDict["Rpos_dof"] = self.Rpos_dof
+        for limit_iter in range(n_limit_iter):
+            argsDict["limit_iter"] = limit_iter
+            argsDict["limit_stage"] = 0
+            self.sw2d.convexLimiting(argsDict)
+            self.par_Rneg.scatter_forward_insert()
+            self.par_Rpos.scatter_forward_insert()
+            argsDict["limit_stage"] = 1
+            self.sw2d.convexLimiting(argsDict)
+            if limit_iter < n_limit_iter - 1:
+                self.par_hLow.scatter_forward_insert()
+                self.par_huLow.scatter_forward_insert()
+                self.par_hvLow.scatter_forward_insert()
 
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
@@ -1383,6 +1404,21 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 bs=1,
                                                 n=n,N=N,nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
+        # nodal quantities the kernels read at neighbours: computed on every
+        # local row, then the owners' values are copied to the ghosts
+        self.delta_Sqd_h = np.zeros(self.u[0].dof.shape, 'd')
+        self.delta_Sqd_kin = np.zeros(self.u[0].dof.shape, 'd')
+        self.Rneg_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.Rpos_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.par_delta_Sqd_h = LAT.ParVec_petsc4py(self.delta_Sqd_h, bs=1, n=n, N=N, nghosts=nghosts,
+                                                   subdomain2global=subdomain2global)
+        self.par_delta_Sqd_kin = LAT.ParVec_petsc4py(self.delta_Sqd_kin, bs=1, n=n, N=N, nghosts=nghosts,
+                                                     subdomain2global=subdomain2global)
+        self.par_Rneg = LAT.ParVec_petsc4py(self.Rneg_dof, bs=1, n=n, N=N, nghosts=nghosts,
+                                            subdomain2global=subdomain2global)
+        self.par_Rpos = LAT.ParVec_petsc4py(self.Rpos_dof, bs=1, n=n, N=N, nghosts=nghosts,
+                                            subdomain2global=subdomain2global)
+        self.FCT_all = None  # FCT matrices and l_ij kept between limiter calls
         #
         self.par_extendedSourceTerm_hu = LAT.ParVec_petsc4py(self.extendedSourceTerm_hu,
                                                 bs=1,
@@ -1622,6 +1658,20 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["drelax"] = self.drelax
 
         ## call calculate residual
+        # delta_Sqd = sum over neighbours j of (q_i - q_j), for the bounds
+        # relaxation; computed here so the ghost values can be exchanged
+        rowptr = self.rowptr_cMatrix; colind = self.colind_cMatrix
+        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
+        h = self.h_dof_old
+        hmax = np.where(h > self.hEps, h, self.hEps)
+        kin = 0.5 * (self.hu_dof_old * self.hu_dof_old + self.hv_dof_old * self.hv_dof_old)
+        kin = kin * (2.0 * h / (h * h + hmax * hmax))
+        self.delta_Sqd_h[:] = np.add.reduceat(h[rows] - h[colind], rowptr[:-1])
+        self.delta_Sqd_kin[:] = np.add.reduceat(kin[rows] - kin[colind], rowptr[:-1])
+        self.par_delta_Sqd_h.scatter_forward_insert()
+        self.par_delta_Sqd_kin.scatter_forward_insert()
+        argsDict["delta_Sqd_h"] = self.delta_Sqd_h
+        argsDict["delta_Sqd_kin"] = self.delta_Sqd_kin
         self.calculateResidual(argsDict)
 
         ## distribute local bounds and low order solutions (with bar states)
