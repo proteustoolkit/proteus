@@ -57,7 +57,9 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    drag_beta=drag_beta,
                                    # optional: walls([x, y]) -> bool marks the
                                    # boundary nodes that are walls; the rest are open
-                                   wall_function=boundaryConditions.get('walls', None))
+                                   wall_function=boundaryConditions.get('walls', None),
+                                   # optional: drag_law(state) -> nodal beta, re-evaluated every step
+                                   drag_law=physical_parameters.get('drag_law', None))
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #

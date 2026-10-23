@@ -278,7 +278,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  porosity=None,
                  drag_alpha=None,
                  drag_beta=None,
-                 wall_function=None):
+                 wall_function=None,
+                 drag_law=None):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -297,6 +298,14 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # keep the natural boundary flux, i.e. they are open (outflow).
         # None: all boundary nodes with reflecting_BCs, else nodes flagged 99.
         self.wall_function = wall_function
+        # drag_law(state) -> nodal beta: a state-dependent Forchheimer
+        # coefficient, re-evaluated before every step from the nodal state
+        # {x, y, h, u, v, t, age, beta0, phi}, where age is the time since the
+        # node first became wet (0 before that) and beta0 the static
+        # drag_beta. None: beta stays drag_beta.
+        self.drag_law = drag_law
+        self.t_wet = None
+        self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
         # through the wall; the pressure reaction comes from the
@@ -446,6 +455,25 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.model.h_dof_old[:] = self.model.u[0].dof
         self.model.hu_dof_old[:] = self.model.u[1].dof
         self.model.hv_dof_old[:] = self.model.u[2].dof
+        if self.drag_law is not None:
+            self.updateDragLaw(t)
+
+    def updateDragLaw(self, t):
+        """re-evaluate the nodal Forchheimer coefficient from the current state"""
+        h = self.model.h_dof_old
+        if self.t_wet is None:
+            self.t_wet = np.full(h.shape, np.nan)
+            self.drag_beta0_dof = self.drag_beta_dof.copy()
+        newly = np.isnan(self.t_wet) & (h > self.wet_eps)
+        self.t_wet[newly] = t
+        age = np.where(np.isnan(self.t_wet), 0.0, t - self.t_wet)
+        hs = np.maximum(h, self.wet_eps)
+        X = self.model.mesh.nodeArray
+        state = {"x": X[:, 0], "y": X[:, 1], "h": h, "t": t, "age": age,
+                 "u": np.where(h > self.wet_eps, self.model.hu_dof_old / hs, 0.0),
+                 "v": np.where(h > self.wet_eps, self.model.hv_dof_old / hs, 0.0),
+                 "beta0": self.drag_beta0_dof, "phi": self.porosity_dof}
+        self.drag_beta_dof[:] = np.asarray(self.drag_law(state), 'd')
 
     def postStep(self, t, firstStep=False):
         pass

@@ -179,7 +179,9 @@ default_physical_parameters = {'gravity': 9.81,
                                # array or function of [x, y]; None = none
                                'porosity': None,
                                'drag_alpha': None,
-                               'drag_beta': None}
+                               'drag_beta': None,
+                               # drag_law(state) -> nodal beta, re-evaluated every step
+                               'drag_law': None}
 
 # ****************************************** #
 # ********** NUMERICAL PARAMETERS ********** #
