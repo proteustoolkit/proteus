@@ -41,6 +41,7 @@ cE = numerical_parameters['cE']
 LUMPED_MASS_MATRIX = numerical_parameters['LUMPED_MASS_MATRIX']
 INTEGRATE_BY_PARTS_WALLS = numerical_parameters.get('INTEGRATE_BY_PARTS_WALLS', 1)
 BOUNDS_RELAXATION = numerical_parameters.get('BOUNDS_RELAXATION', 1)
+BOUNDS_EXCLUDE_SELF = numerical_parameters.get('BOUNDS_EXCLUDE_SELF', 0)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -54,6 +55,7 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    mannings=mannings,
                                    INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS,
                                    BOUNDS_RELAXATION=BOUNDS_RELAXATION,
+                                   BOUNDS_EXCLUDE_SELF=BOUNDS_EXCLUDE_SELF,
                                    porosity=porosity,
                                    drag_alpha=drag_alpha,
                                    drag_beta=drag_beta,

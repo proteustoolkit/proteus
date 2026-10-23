@@ -1056,6 +1056,10 @@ public:
     int LUMPED_MASS_MATRIX = args.scalar<int>("LUMPED_MASS_MATRIX");
     double dt = args.scalar<double>("dt");
     int LINEAR_FRICTION = args.scalar<int>("LINEAR_FRICTION");
+    // 1: local bounds from the neighbours' bar states only (ubar_ii = u_i
+    // excluded), so an existing odd-even mode is not within bounds; the
+    // low-order state is still added to the bounds below.
+    int BOUNDS_EXCLUDE_SELF = args.scalar<int>("BOUNDS_EXCLUDE_SELF");
     double mannings = args.scalar<double>("mannings");
     // 1 on rows whose advective terms are integrated by parts (no-flux walls)
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
@@ -1413,6 +1417,11 @@ public:
         huLow[i] = hu_dof_old[i];
         hvLow[i] = hv_dof_old[i];
         kin_max[i] = kin[i];
+        if (BOUNDS_EXCLUDE_SELF) {
+          h_min[i] = 1.0e300;
+          h_max[i] = -1.0e300;
+          kin_max[i] = 0.0;
+        }
 
         // loop in j (sparsity pattern)
         for (int offset = csrRowIndeces_DofLoops[i];
@@ -1428,9 +1437,11 @@ public:
                           2.0; // Eqn (6.31)
 
           // COMPUTE LOCAL BOUNDS //
-          kin_max[i] = fmax(psi_ij, kin_max[i]);
-          h_min[i] = std::min(h_min[i], hBT[ij]);
-          h_max[i] = std::max(h_max[i], hBT[ij]);
+          if (!(BOUNDS_EXCLUDE_SELF && j == i)) {
+            kin_max[i] = fmax(psi_ij, kin_max[i]);
+            h_min[i] = std::min(h_min[i], hBT[ij]);
+            h_max[i] = std::max(h_max[i], hBT[ij]);
+          }
 
           /* COMPUTE LOW ORDER SOLUTION. See EQN 6.23 in SW friction paper */
           // This is low order solution WITHOUT sources

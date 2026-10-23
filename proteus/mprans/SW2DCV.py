@@ -280,7 +280,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  drag_beta=None,
                  wall_function=None,
                  drag_law=None,
-                 BOUNDS_RELAXATION=1):
+                 BOUNDS_RELAXATION=1,
+                 BOUNDS_EXCLUDE_SELF=0):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -310,6 +311,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # (second order at smooth extrema; permits O(h_e^2) wiggles);
         # 0: strict bar-state bounds.
         self.BOUNDS_RELAXATION = BOUNDS_RELAXATION
+        # 1: local bounds from the neighbours' bar states only (ubar_ii excluded)
+        self.BOUNDS_EXCLUDE_SELF = BOUNDS_EXCLUDE_SELF
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -1700,6 +1703,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["normaly"] = self.normaly
         argsDict["dLow"] = self.dLow
         argsDict["lstage"] = self.timeIntegration.lstage
+        argsDict["BOUNDS_EXCLUDE_SELF"] = self.coefficients.BOUNDS_EXCLUDE_SELF
         argsDict["new_SourceTerm_hu"] = self.new_SourceTerm_hu
         argsDict["new_SourceTerm_hv"] = self.new_SourceTerm_hv
         argsDict["global_entropy_residual"] = self.global_entropy_residual
