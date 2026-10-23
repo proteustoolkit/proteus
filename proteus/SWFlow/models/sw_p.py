@@ -54,7 +54,10 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS,
                                    porosity=porosity,
                                    drag_alpha=drag_alpha,
-                                   drag_beta=drag_beta)
+                                   drag_beta=drag_beta,
+                                   # optional: walls([x, y]) -> bool marks the
+                                   # boundary nodes that are walls; the rest are open
+                                   wall_function=boundaryConditions.get('walls', None))
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #

@@ -277,7 +277,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  INTEGRATE_BY_PARTS_WALLS=1,
                  porosity=None,
                  drag_alpha=None,
-                 drag_beta=None):
+                 drag_beta=None,
+                 wall_function=None):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -291,6 +292,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.porosity_dof = None
         self.drag_alpha_dof = None
         self.drag_beta_dof = None
+        # wall_function([x, y]) -> bool: which boundary nodes are no-flux
+        # walls (with INTEGRATE_BY_PARTS_WALLS). The other boundary nodes
+        # keep the natural boundary flux, i.e. they are open (outflow).
+        # None: all boundary nodes with reflecting_BCs, else nodes flagged 99.
+        self.wall_function = wall_function
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
         # through the wall; the pressure reaction comes from the
@@ -1313,9 +1319,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.wall_dof = np.zeros(self.u[0].dof.shape, 'd')
         if not self.coefficients.INTEGRATE_BY_PARTS_WALLS:
             return
-        if self.reflectingBoundaryConditions:
+        wall_function = self.coefficients.wall_function
+        if self.reflectingBoundaryConditions or wall_function is not None:
             ebN = self.mesh.exteriorElementBoundariesArray
             nodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
+            if wall_function is not None:
+                X = self.mesh.nodeArray[nodes]
+                nodes = nodes[np.asarray(wall_function([X[:, 0], X[:, 1]]), bool)]
             self.wall_dof[nodes] = 1.0
         else:
             self.wall_dof[self.mesh.nodeMaterialTypes == 99] = 1.0
