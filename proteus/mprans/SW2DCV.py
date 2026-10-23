@@ -279,7 +279,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  drag_alpha=None,
                  drag_beta=None,
                  wall_function=None,
-                 drag_law=None):
+                 drag_law=None,
+                 BOUNDS_RELAXATION=1):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -305,6 +306,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # drag_beta. None: beta stays drag_beta.
         self.drag_law = drag_law
         self.t_wet = None
+        # 1: relax the convex-limiting bounds by the local smoothness
+        # (second order at smooth extrema; permits O(h_e^2) wiggles);
+        # 0: strict bar-state bounds.
+        self.BOUNDS_RELAXATION = BOUNDS_RELAXATION
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -1511,8 +1516,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 subdomain2global=subdomain2global)
         self.par_wall_dof.scatter_forward_insert()
         
-        self.urelax = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
-        self.drelax = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+        if self.coefficients.BOUNDS_RELAXATION:
+            self.urelax[:] = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+            self.drelax[:] = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+        else:
+            self.urelax[:] = 1.0
+            self.drelax[:] = 1.0
         self.par_urelax.scatter_forward_insert()
         self.par_drelax.scatter_forward_insert()
         #
@@ -1714,8 +1723,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         hmax = np.where(h > self.hEps, h, self.hEps)
         kin = 0.5 * (self.hu_dof_old * self.hu_dof_old + self.hv_dof_old * self.hv_dof_old)
         kin = kin * (2.0 * h / (h * h + hmax * hmax))
-        self.delta_Sqd_h[:] = np.add.reduceat(h[rows] - h[colind], rowptr[:-1])
-        self.delta_Sqd_kin[:] = np.add.reduceat(kin[rows] - kin[colind], rowptr[:-1])
+        if self.coefficients.BOUNDS_RELAXATION:
+            self.delta_Sqd_h[:] = np.add.reduceat(h[rows] - h[colind], rowptr[:-1])
+            self.delta_Sqd_kin[:] = np.add.reduceat(kin[rows] - kin[colind], rowptr[:-1])
+        else:
+            self.delta_Sqd_h[:] = 0.0
+            self.delta_Sqd_kin[:] = 0.0
         self.par_delta_Sqd_h.scatter_forward_insert()
         self.par_delta_Sqd_kin.scatter_forward_insert()
         argsDict["delta_Sqd_h"] = self.delta_Sqd_h
