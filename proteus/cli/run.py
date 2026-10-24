@@ -79,6 +79,20 @@ def add_parser(subparsers):
                    help="cache archive writes")
     g.add_argument("-n", "--no-global-sync", action="store_true",
                    help="do not synchronize archive metadata globally")
+    g.add_argument("--archive-mode", choices=["without-a-net", "split", "kitchen-sink", "ymf-only"],
+                   help="what the archive writes: without-a-net (the .h5 alone during the "
+                        "run, the .ymf at close), split (the .h5 and a .ymf kept current at "
+                        "every step; the default), kitchen-sink (split, plus the log and the "
+                        "run's provenance in the .ymf), ymf-only (no .h5: the arrays go in "
+                        "the .ymf)")
+    g.add_argument("--archive-driver", choices=["mpio", "serial", "per-rank"],
+                   help="how the .h5 is written: mpio (every rank, through parallel HDF5; "
+                        "the default), serial (one file, master alone; needs no parallel "
+                        "HDF5) or per-rank (each rank its own <name>_p<rank>.h5; implies -n)")
+    g.add_argument("--archive-document", choices=["global", "per-rank"],
+                   help="with per-rank files, where the grids are described: global (one "
+                        ".ymf whose steps are spatial collections of the ranks' grids; the "
+                        "default) or per-rank (one .ymf per rank, each step a single grid)")
     g.add_argument("-S", "--save-dof", action="store_true",
                    help="save the degrees of freedom")
     g.add_argument("-B", "--write-vpp", action="store_true",
@@ -147,6 +161,9 @@ def _options(args):
         gatherArchive=args.gather_archive,
         subdomainArchives=args.subdomain_archives,
         global_sync=not args.no_global_sync,
+        archiveMode=args.archive_mode,
+        archiveDriver=args.archive_driver,
+        archiveDocument=args.archive_document,
         hotStart=args.hot_start,
         hotStartMode=args.hot_start_mode,
         hotStartTime=args.hot_start_time,
