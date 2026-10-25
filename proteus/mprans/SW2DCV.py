@@ -281,7 +281,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  wall_function=None,
                  drag_law=None,
                  BOUNDS_RELAXATION=1,
-                 BOUNDS_EXCLUDE_SELF=0):
+                 BOUNDS_EXCLUDE_SELF=0,
+                 WALL_RIEMANN=0):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -313,6 +314,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.BOUNDS_RELAXATION = BOUNDS_RELAXATION
         # 1: local bounds from the neighbours' bar states only (ubar_ii excluded)
         self.BOUNDS_EXCLUDE_SELF = BOUNDS_EXCLUDE_SELF
+        # 1: wall rows use the Rusanov flux against the mirror state (wall_dof = 2),
+        # i.e. the wall pressure carries the impedance term h u_n (u_n + lambda)
+        self.WALL_RIEMANN = WALL_RIEMANN
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -1351,7 +1355,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     #
 
     def setWallDOFs(self):
-        """1 on the DOFs whose rows treat the boundary as a no-flux wall."""
+        """1 on the DOFs whose rows treat the boundary as a no-flux wall (2 with
+        WALL_RIEMANN: the wall flux is the Rusanov flux against the mirror state)."""
         self.wall_dof = np.zeros(self.u[0].dof.shape, 'd')
         if not self.coefficients.INTEGRATE_BY_PARTS_WALLS:
             return
@@ -1365,6 +1370,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.wall_dof[nodes] = 1.0
         else:
             self.wall_dof[self.mesh.nodeMaterialTypes == 99] = 1.0
+        if self.coefficients.WALL_RIEMANN:
+            self.wall_dof[self.wall_dof > 0.5] = 2.0
     #
 
     def initDataStructures(self):

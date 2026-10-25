@@ -643,6 +643,32 @@ public:
     return fmax(porosity_dof[i], porosity_dof[j]);
   }
 
+  // Wall rows with wall_dof = 2 (WALL_RIEMANN): the boundary flux is the Rusanov
+  // flux against the mirror state, whose normal momentum is reversed. With
+  // nu = n_i/|n_i|, u_n = u.nu and lambda = |u_n| + sqrt(g h) the mass flux is
+  // zero and the momentum flux is (p + h u_n^2 + lambda h u_n) nu. The
+  // hydrostatic p is already carried by the pressure on c_ij, so only
+  //   dp = h u_n (u_n + lambda)
+  // is added (times n_i). It raises the wall pressure when the flow runs into
+  // the wall and lowers it when the flow leaves, the impedance of the exact
+  // wall Riemann problem. rate = (u_n + lambda)|n_i| >= 0 is its damping rate
+  // on the normal momentum (for the CFL).
+  inline void wallRiemann(double g, double hi, double hui, double hvi,
+                          double nx, double ny, double hEps, double &dp,
+                          double &rate) {
+    dp = 0.;
+    rate = 0.;
+    const double nn = std::sqrt(nx * nx + ny * ny);
+    if (nn <= 0. || hi <= hEps)
+      return;
+    const double one_over_h = 2.0 * hi / (hi * hi + std::pow(fmax(hi, hEps), 2));
+    const double qn = (hui * nx + hvi * ny) / nn;
+    const double un = qn * one_over_h;
+    const double lambda = std::fabs(un) + std::sqrt(g * hi);
+    dp = qn * (un + lambda);
+    rate = (un + lambda) * nn;
+  }
+
   // On an edge touching a wall row, c'_ij = -c_ji no longer equals -c'_ji,
   // so mu_ij computed from row i alone differs from mu_ji. The dissipation
   // sum_j mu_ij (U_j - U_i) is conservative only if mu is symmetric, so take
@@ -746,6 +772,11 @@ public:
             2.0 * hi / (hi * hi + std::pow(fmax(hi, hEps), 2));
         wall_margin = 0.5 * fmax(0., -porosity_dof[i] * (hui * nix + hvi * niy) *
                                          one_over_hiReg);
+      }
+      if (wall_dof[i] > 1.5) {
+        double dp_w, rate_w;
+        wallRiemann(g, hi, hui, hvi, nix, niy, hEps, dp_w, rate_w);
+        wall_margin += 0.5 * porosity_dof[i] * rate_w;
       }
       edge_based_cfl[i] = (fabs(dLowii) + wall_margin) / mi;
       max_edge_based_cfl = fmax(max_edge_based_cfl, edge_based_cfl[i]);
@@ -1470,6 +1501,13 @@ public:
           hLow[i] += dt / mi * un_i * h_dof_old[i];
           huLow[i] += dt / mi * un_i * hu_dof_old[i];
           hvLow[i] += dt / mi * un_i * hv_dof_old[i];
+          if (wall_dof[i] > 1.5) {
+            double dp_w, rate_w;
+            wallRiemann(g, h_dof_old[i], hu_dof_old[i], hv_dof_old[i],
+                        wall_nx[i], wall_ny[i], hEps, dp_w, rate_w);
+            huLow[i] -= dt / mi * porosity_dof[i] * dp_w * wall_nx[i];
+            hvLow[i] -= dt / mi * porosity_dof[i] * dp_w * wall_ny[i];
+          }
           // the rescaled U_i makes the low-order state a positive, not
           // convex, combination; widen the local bounds to contain it
           h_min[i] = std::min(h_min[i], hLow[i]);
@@ -1641,6 +1679,13 @@ public:
           hyp_flux_h[i] -= un_i * hi;
           hyp_flux_hu[i] -= un_i * hui;
           hyp_flux_hv[i] -= un_i * hvi;
+          if (wall_dof[i] > 1.5) {
+            double dp_w, rate_w;
+            wallRiemann(g, hi, hui, hvi, wall_nx[i], wall_ny[i], hEps, dp_w,
+                        rate_w);
+            hyp_flux_hu[i] += phi_i * dp_w * wall_nx[i];
+            hyp_flux_hv[i] += phi_i * dp_w * wall_ny[i];
+          }
         }
 
         // COMPUTE SMOOTHNESS INDICATOR //

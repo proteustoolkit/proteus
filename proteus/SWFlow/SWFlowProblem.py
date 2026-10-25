@@ -192,7 +192,8 @@ default_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                           'cE' : 1.,
                           'INTEGRATE_BY_PARTS_WALLS': 1,
                           'BOUNDS_RELAXATION': 1,
-                          'BOUNDS_EXCLUDE_SELF': 0}
+                          'BOUNDS_EXCLUDE_SELF': 0,
+                          'WALL_RIEMANN': 0}
 default_GN_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                              'cfl': 0.33,
                              'SSPOrder': 3,
