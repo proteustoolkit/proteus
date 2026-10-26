@@ -43,6 +43,7 @@ INTEGRATE_BY_PARTS_WALLS = numerical_parameters.get('INTEGRATE_BY_PARTS_WALLS', 
 BOUNDS_RELAXATION = numerical_parameters.get('BOUNDS_RELAXATION', 1)
 BOUNDS_EXCLUDE_SELF = numerical_parameters.get('BOUNDS_EXCLUDE_SELF', 0)
 WALL_RIEMANN = numerical_parameters.get('WALL_RIEMANN', 0)
+LOW_ORDER_ONLY = numerical_parameters.get('LOW_ORDER_ONLY', 0)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -58,6 +59,7 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    BOUNDS_RELAXATION=BOUNDS_RELAXATION,
                                    BOUNDS_EXCLUDE_SELF=BOUNDS_EXCLUDE_SELF,
                                    WALL_RIEMANN=WALL_RIEMANN,
+                                   LOW_ORDER_ONLY=LOW_ORDER_ONLY,
                                    # optional: {'where': f([x, y]) -> bool, 'stage': f(x, y, t)}
                                    tailwater=boundaryConditions.get('tailwater', None),
                                    porosity=porosity,

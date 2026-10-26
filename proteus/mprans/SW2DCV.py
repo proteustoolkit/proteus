@@ -285,7 +285,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  BOUNDS_RELAXATION=1,
                  BOUNDS_EXCLUDE_SELF=0,
                  WALL_RIEMANN=0,
-                 tailwater=None):
+                 tailwater=None,
+                 LOW_ORDER_ONLY=0):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -329,6 +330,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # outflow. The stage is re-evaluated before every step. None: those
         # nodes keep the natural outflow (ghost state = interior state).
         self.tailwater = tailwater
+        # 1 (diagnostic): return the first-order (graph viscosity) update, no limited antidiffusion
+        self.LOW_ORDER_ONLY = LOW_ORDER_ONLY
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -1026,6 +1029,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         hIndex = index[0::3]
         huIndex = index[1::3]
         hvIndex = index[2::3]
+        low_order = (self.hLow.copy(), self.huLow.copy(), self.hvLow.copy())
         # create limited solution
         limited_hnp1 = np.zeros(self.h_dof_old.shape)
         limited_hunp1 = np.zeros(self.h_dof_old.shape)
@@ -1091,6 +1095,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 self.par_huLow.scatter_forward_insert()
                 self.par_hvLow.scatter_forward_insert()
 
+        if self.coefficients.LOW_ORDER_ONLY:
+            limited_hnp1[:], limited_hunp1[:], limited_hvnp1[:] = low_order
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
         self.timeIntegration.u[huIndex] = limited_hunp1
