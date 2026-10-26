@@ -1,8 +1,10 @@
 # SW2DCV boundary fluxes: integrating the whole flux by parts, wall Riemann flux, tailwater
 
 Design note for branch `swe-ibp-drag-porosity`. Status: wall case prototyped and
-tested (`WALL_RIEMANN`, default off); tailwater case designed, not implemented, with
-three decisions needed (section 5).
+tested (`WALL_RIEMANN`, default off, kept as an option for porous walls such as
+seawalls and port structures; the Torino work uses the default, which is the
+integrated-by-parts scheme with the interior-pressure wall flux); tailwater boundary
+implemented and tested (section 5).
 
 ## 1. What the scheme does at a wall now
 
@@ -98,33 +100,53 @@ an accuracy gain: the weak mirror-state wall is as good as the existing wall, an
 value of the ghost-state form is the boundaries below.** `WALL_RIEMANN` stays in as an
 experimental switch, default off.
 
-## 5. Tailwater (partially open) boundary, design
+## 5. Tailwater (partially open) boundary
 
-Use the same ghost-state edge with `U_b` the downstream state and no wall projection.
-Properties of the Riemann solution between `U_i` (interior) and `U_b`:
+`boundaryConditions['tailwater'] = {'where': f([x, y]) -> bool, 'stage': f(x, y, t)}`
+(`stage` is the surface elevation, a number or an array, re-evaluated every step).
+Nodes selected by `where` that are on the exterior boundary become tailwater rows
+(`tailwater_dof = 1`, `wall_dof = 0`). Decisions taken: characteristic ghost state,
+callable stage, no weir rating.
 
-- Supercritical outflow (both characteristics leave): the interface flux is `f(U_i)`,
-  so the data are ignored automatically, which is the wanted behaviour with strong
-  flow from upstream.
-- Subcritical outflow: one characteristic enters from outside, so the downstream stage
-  matters.
-- A high tailwater blocks or reflects flow, a low one lets it drain.
+**Ghost state.** Depth `h_b = max(stage − Z_i, 0)` (equal to `h_i` at rest when the
+stage matches), tangential velocity of the interior, and the outgoing invariant kept,
+`u_n,b = u_n,i + 2(√(g h_i) − √(g h_b))`. The Riemann problem `(U_i, U_b)` then has a
+single wave of the `u_n − c` family, so the exact Godunov flux needs no iteration:
 
-The current open end (no boundary term) is the special case `U_b = U_i`.
+| case | interface state `U*` |
+|---|---|
+| shock (`h_b > h_i`), speed `s = (h_b u_b − h_i u_i)/(h_b − h_i)` | `U_b` if `s < 0`, else `U_i` |
+| rarefaction (`h_b < h_i`) | `U_b` if `u_b − c_b ≤ 0`; `U_i` if `u_i − c_i ≥ 0`; else the critical state in the fan (`c = (u_i + 2c_i)/3`, `u_n = c`) |
 
-Decisions needed:
+When the flow leaves and carries the information, `U* = U_i` and the data are ignored;
+the data enter only when the tailwater is high enough to send a wave upstream. The
+natural open row already carries `F(U_i)·ν` through `c_ij`, so only
+`dF = F(U*)·ν − F(U_i)·ν`, times `|n_i|`, is added to the low-order and high-order
+updates (and a rate margin to the CFL). `dF = 0` when `U_b = U_i`. On inflow the
+ghost's tangential velocity is zero (the outside brings no tangential momentum).
+Tangential velocity of the interior is kept on outflow.
 
-1. **Ghost velocity.** (a) A pool, `u_b = 0`, `h_b = h_tw`: the physically natural
-   large-basin interpretation, but it launches a wave into a flume that discharges at
-   `u ≠ 0` when `h_tw` is below the interior depth. (b) A characteristic ghost,
-   `h_b = h_tw`, `u_b = u_i + 2(√(g h_i) − √(g h_tw))` (outgoing invariant kept):
-   transmits cleanly, only imposes the stage. (c) Both selectable. Recommendation: (b)
-   as the default with (a) available.
-2. **Data source.** A constant `h_tw`, or a callable `h_tw(x, y, t)` (a rating curve or
-   a recorded stage). Recommendation: callable, constant as a special case.
-3. **Weir.** The Torino flume discharges over a weir. A rating `q = C h^{3/2}` imposed
-   on the mass flux is a separate, simpler option from the Riemann flux. Should it be
-   included?
+**Tests** (`dswe/torino.py` options `tailwater_stage`, `tailwater_corners`,
+`uniform_u`; flat bed, no canopy, no friction, refinement 5 unless stated):
+
+| test | result |
+|---|---|
+| Lake at rest, stage = depth | max `\|hu\|` 1.7e-13, max `\|h − h0\|` 2.3e-13 (no tailwater: the natural open end drains the pool, `\|hu\|` 0.039, `\|dh\|` 0.016) |
+| Supercritical outflow, Fr = 3.03 (sequent depth 0.38 m): stage none / 0.05 / 0.3 / 0.5 | none and 0.05: identical (data ignored); 0.3: interior within 7e-4 m; 0.5: a jump travels upstream (front at L − 1.0 m at t = 1.0 s, L − 1.5 m at 1.5 s) |
+| Ebb (h = 0.15, stage 0.10) | boundary depth 0.1000, outflow 0.445 m/s (the invariant value), clean drainage front |
+| Flood (h = 0.1, stage 0.15), bore speed, exact 1.356 m/s | 1.362 (r4), 1.361 (r5), 1.358 (r6) m/s; boundary depth 0.1503, 0.1496, 0.1500 |
+
+**Two traps found in the flood test.** (1) With the interior's tangential velocity kept on
+inflow the inflow plateau was unstable: at refinement 5 the depth near the end grew to
+0.177 m by t = 6 s, and at refinement 6 it blew up (1.75 m by t = 4 s). Zeroing the
+tangential velocity of the ghost on inflow fixed it (depth 0.151 to t = 8 s). (2) The
+two corner nodes where the tailwater meets the side walls must stay wall rows, or the
+inflow velocity drifts (−0.49 to −0.54 m/s over 4 to 8 s, against −0.48 m/s without the
+corners); the `where` function should exclude nodes shared with walls
+(`tailwater_corners=False` in `torino.py`).
+
+**Not done.** A regression test in the SWFlow suite; per-facet normals at corners; a
+limited antidiffusive flux on the boundary edge; a time-varying stage test (a tide).
 
 ## 6. Known limitations and open items
 
