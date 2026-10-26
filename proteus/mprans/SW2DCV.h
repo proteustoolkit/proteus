@@ -706,22 +706,26 @@ public:
     const double un_b = R - 2.0 * c_b;
     rate = 0.5 * (std::fabs(un_i) + c_i + std::fabs(un_b) + c_b) * nn;
     double hs, uns;
+    bool ghost_state = false;
     if (hb >= hi) {
       if (hb - hi <= 1e-14) // ghost = interior
         return;
       const double s = (hb * un_b - hi * un_i) / (hb - hi);
-      if (s < 0.) { hs = hb; uns = un_b; } else { hs = hi; uns = un_i; }
+      if (s < 0.) { hs = hb; uns = un_b; ghost_state = true; } else { hs = hi; uns = un_i; }
     } else {
-      if (un_b - c_b <= 0.) { hs = hb; uns = un_b; }
+      if (un_b - c_b <= 0.) { hs = hb; uns = un_b; ghost_state = true; }
       else if (un_i - c_i >= 0.) { hs = hi; uns = un_i; }
       else { const double c = R / 3.0; hs = c * c / g; uns = c; }
     }
+    // inflow brings the tangential velocity of the outside (zero), outflow keeps
+    // the interior one
+    const double ut_s = (ghost_state && uns < 0.) ? 0. : ut;
     const double p_s = 0.5 * g * hs * hs, p_i = 0.5 * g * hi * hi;
     const double mass_s = hs * uns, mass_i = hi * un_i;
     dFh = (mass_s - mass_i) * nn;
-    dFhu = (mass_s * (uns * nux + ut * tx) + p_s * nux -
+    dFhu = (mass_s * (uns * nux + ut_s * tx) + p_s * nux -
             (mass_i * (un_i * nux + ut * tx) + p_i * nux)) * nn;
-    dFhv = (mass_s * (uns * nuy + ut * ty) + p_s * nuy -
+    dFhv = (mass_s * (uns * nuy + ut_s * ty) + p_s * nuy -
             (mass_i * (un_i * nuy + ut * ty) + p_i * nuy)) * nn;
   }
 
