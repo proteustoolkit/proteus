@@ -1160,6 +1160,7 @@ public:
     // excluded), so an existing odd-even mode is not within bounds; the
     // low-order state is still added to the bounds below.
     int BOUNDS_EXCLUDE_SELF = args.scalar<int>("BOUNDS_EXCLUDE_SELF");
+    int NODAL_H_BOUNDS = args.scalar<int>("NODAL_H_BOUNDS");
     double mannings = args.scalar<double>("mannings");
     // 1 on rows whose advective terms are integrated by parts (no-flux walls)
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
@@ -1542,8 +1543,16 @@ public:
           // COMPUTE LOCAL BOUNDS //
           if (!(BOUNDS_EXCLUDE_SELF && j == i)) {
             kin_max[i] = fmax(psi_ij, kin_max[i]);
-            h_min[i] = std::min(h_min[i], hBT[ij]);
-            h_max[i] = std::max(h_max[i], hBT[ij]);
+            if (!NODAL_H_BOUNDS) {
+              h_min[i] = std::min(h_min[i], hBT[ij]);
+              h_max[i] = std::max(h_max[i], hBT[ij]);
+            }
+          }
+          // diagnostic: bounds on h from the nodal values of the stencil
+          // (local extremum diminishing test), no bar states, no relaxation
+          if (NODAL_H_BOUNDS) {
+            h_min[i] = std::min(h_min[i], h_dof_old[j]);
+            h_max[i] = std::max(h_max[i], h_dof_old[j]);
           }
 
           /* COMPUTE LOW ORDER SOLUTION. See EQN 6.23 in SW friction paper */
@@ -1617,10 +1626,12 @@ public:
         // limiting paper
         kin_max[i] = std::min(urelax[i] * kin_max[i],
                               kin_max[i] + std::abs(bar_deltaSqd_kin[i]));
-        h_min[i] = std::max(drelax[i] * h_min[i],
-                            h_min[i] - std::abs(bar_deltaSqd_h[i]));
-        h_max[i] = std::min(urelax[i] * h_max[i],
-                            h_max[i] + std::abs(bar_deltaSqd_h[i]));
+        if (!NODAL_H_BOUNDS) {
+          h_min[i] = std::max(drelax[i] * h_min[i],
+                              h_min[i] - std::abs(bar_deltaSqd_h[i]));
+          h_max[i] = std::min(urelax[i] * h_max[i],
+                              h_max[i] + std::abs(bar_deltaSqd_h[i]));
+        }
 
         // clean up hLow from round off error
         if (hLow[i] < hEps)

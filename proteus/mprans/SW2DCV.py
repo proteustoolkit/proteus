@@ -286,7 +286,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  BOUNDS_EXCLUDE_SELF=0,
                  WALL_RIEMANN=0,
                  tailwater=None,
-                 LOW_ORDER_ONLY=0):
+                 LOW_ORDER_ONLY=0,
+                 NODAL_H_BOUNDS=0):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -332,6 +333,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.tailwater = tailwater
         # 1 (diagnostic): return the first-order (graph viscosity) update, no limited antidiffusion
         self.LOW_ORDER_ONLY = LOW_ORDER_ONLY
+        self.NODAL_H_BOUNDS = NODAL_H_BOUNDS
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -1761,6 +1763,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["dLow"] = self.dLow
         argsDict["lstage"] = self.timeIntegration.lstage
         argsDict["BOUNDS_EXCLUDE_SELF"] = self.coefficients.BOUNDS_EXCLUDE_SELF
+        argsDict["NODAL_H_BOUNDS"] = self.coefficients.NODAL_H_BOUNDS
         argsDict["new_SourceTerm_hu"] = self.new_SourceTerm_hu
         argsDict["new_SourceTerm_hv"] = self.new_SourceTerm_hv
         argsDict["global_entropy_residual"] = self.global_entropy_residual
