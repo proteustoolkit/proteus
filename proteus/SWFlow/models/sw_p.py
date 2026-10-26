@@ -45,6 +45,7 @@ BOUNDS_EXCLUDE_SELF = numerical_parameters.get('BOUNDS_EXCLUDE_SELF', 0)
 WALL_RIEMANN = numerical_parameters.get('WALL_RIEMANN', 0)
 LOW_ORDER_ONLY = numerical_parameters.get('LOW_ORDER_ONLY', 0)
 NODAL_H_BOUNDS = numerical_parameters.get('NODAL_H_BOUNDS', 0)
+NO_STAR_STATES = numerical_parameters.get('NO_STAR_STATES', 0)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -62,6 +63,7 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    WALL_RIEMANN=WALL_RIEMANN,
                                    LOW_ORDER_ONLY=LOW_ORDER_ONLY,
                                    NODAL_H_BOUNDS=NODAL_H_BOUNDS,
+                                   NO_STAR_STATES=NO_STAR_STATES,
                                    # optional: {'where': f([x, y]) -> bool, 'stage': f(x, y, t)}
                                    tailwater=boundaryConditions.get('tailwater', None),
                                    porosity=porosity,

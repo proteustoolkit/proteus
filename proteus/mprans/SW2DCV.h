@@ -263,6 +263,8 @@ public:
     proteus::pyarray<double> &muH_minus_muL = args.array<double>("muH_minus_muL");
     double hEps = args.scalar<double>("hEps");
     int LUMPED_MASS_MATRIX = args.scalar<int>("LUMPED_MASS_MATRIX");
+    // diagnostic: no bed in the star states (well-balanced dissipation off)
+    int NO_STAR_STATES = args.scalar<int>("NO_STAR_STATES");
     proteus::pyarray<double> &dLow = args.array<double>("dLow");
     proteus::pyarray<double> &new_SourceTerm_hu =
         args.array<double>("new_SourceTerm_hu");
@@ -330,11 +332,11 @@ public:
               2. * hj / (hj * hj + std::pow(fmax(hj, hEps), 2));
 
           // Compute star states
-          double hStarij = fmax(0., hi + Zi - fmax(Zi, Zj));
+          double hStarij = NO_STAR_STATES ? hi : fmax(0., hi + Zi - fmax(Zi, Zj));
           double huStarij = huni * hStarij * one_over_hiReg;
           double hvStarij = hvni * hStarij * one_over_hiReg;
 
-          double hStarji = fmax(0., hj + Zj - fmax(Zi, Zj));
+          double hStarji = NO_STAR_STATES ? hj : fmax(0., hj + Zj - fmax(Zi, Zj));
           double huStarji = hunj * hStarji * one_over_hjReg;
           double hvStarji = hvnj * hStarji * one_over_hjReg;
 
@@ -1154,6 +1156,8 @@ public:
     proteus::pyarray<double> &muH_minus_muL = args.array<double>("muH_minus_muL");
     double cE = args.scalar<double>("cE");
     int LUMPED_MASS_MATRIX = args.scalar<int>("LUMPED_MASS_MATRIX");
+    // diagnostic: no bed in the star states (well-balanced dissipation off)
+    int NO_STAR_STATES = args.scalar<int>("NO_STAR_STATES");
     double dt = args.scalar<double>("dt");
     int LINEAR_FRICTION = args.scalar<int>("LINEAR_FRICTION");
     // 1: local bounds from the neighbours' bar states only (ubar_ii = u_i
@@ -1440,10 +1444,10 @@ public:
             double pressure_j = 0.5 * g * hj * hj;
 
             // Compute star states
-            double hStarij = fmax(0., hi + Zi - fmax(Zi, Zj));
+            double hStarij = NO_STAR_STATES ? hi : fmax(0., hi + Zi - fmax(Zi, Zj));
             double huStarij = hui * hStarij * one_over_hiReg;
             double hvStarij = hvi * hStarij * one_over_hiReg;
-            double hStarji = fmax(0., hj + Zj - fmax(Zi, Zj));
+            double hStarji = NO_STAR_STATES ? hj : fmax(0., hj + Zj - fmax(Zi, Zj));
             double huStarji = huj * hStarji * one_over_hjReg;
             double hvStarji = hvj * hStarji * one_over_hjReg;
 
@@ -1870,11 +1874,11 @@ public:
           double pressure_j = 0.5 * g * hj * hj;
 
           // COMPUTE STAR STATES
-          double hStarij = fmax(0., hi + Zi - fmax(Zi, Zj));
+          double hStarij = NO_STAR_STATES ? hi : fmax(0., hi + Zi - fmax(Zi, Zj));
           double huStarij = hui * hStarij * one_over_hiReg;
           double hvStarij = hvi * hStarij * one_over_hiReg;
 
-          double hStarji = fmax(0., hj + Zj - fmax(Zi, Zj));
+          double hStarji = NO_STAR_STATES ? hj : fmax(0., hj + Zj - fmax(Zi, Zj));
           double huStarji = huj * hStarji * one_over_hjReg;
           double hvStarji = hvj * hStarji * one_over_hjReg;
 
