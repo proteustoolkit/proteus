@@ -669,6 +669,62 @@ public:
     rate = (un + lambda) * nn;
   }
 
+  // Tailwater rows (tailwater_dof = 1): exact Godunov flux against a
+  // characteristic ghost state. The ghost has depth hb (the stage minus the
+  // bed, equal to h_i at rest when the stage matches), the tangential velocity
+  // of the interior and the outgoing Riemann invariant kept,
+  //   u_n,b = u_n,i + 2 (sqrt(g h_i) - sqrt(g h_b)),
+  // so the Riemann problem (U_i, U_b) contains a single wave of the u_n - c
+  // family and the state at the interface is one of three:
+  //   shock (hb > hi): speed s = (hb u_b - hi u_i)/(hb - hi); U_b if s < 0,
+  //     else U_i (the bore is swept out of the domain);
+  //   rarefaction (hb < hi): U_b if u_b - c_b <= 0, U_i if u_i - c_i >= 0,
+  //     else the critical state inside the fan (c = (u_i + 2 c_i)/3, u_n = c).
+  // Supercritical outflow therefore ignores the data unless the tailwater
+  // is high enough to send a wave upstream. The natural (open) row already
+  // carries F(U_i).nu through c_ij, so only
+  //   dF = F(U*).nu - F(U_i).nu                    (zero when U_b = U_i)
+  // times the boundary length |n_i| is added to the low-order and high-order
+  // updates. rate = (|u_n,i| + c_i + |u_n,b| + c_b)|n_i| / 2 bounds the
+  // damping rate (for the CFL).
+  inline void tailwaterFlux(double g, double hi, double hui, double hvi,
+                            double hb, double nx, double ny, double hEps,
+                            double &dFh, double &dFhu, double &dFhv,
+                            double &rate) {
+    dFh = dFhu = dFhv = rate = 0.;
+    const double nn = std::sqrt(nx * nx + ny * ny);
+    if (nn <= 0. || (hi <= hEps && hb <= hEps))
+      return;
+    const double nux = nx / nn, nuy = ny / nn;
+    const double tx = -nuy, ty = nux;
+    const double one_over_h = 2.0 * hi / (hi * hi + std::pow(fmax(hi, hEps), 2));
+    const double ui = hui * one_over_h, vi = hvi * one_over_h;
+    const double un_i = ui * nux + vi * nuy, ut = ui * tx + vi * ty;
+    const double c_i = std::sqrt(g * fmax(hi, 0.));
+    const double c_b = std::sqrt(g * fmax(hb, 0.));
+    const double R = un_i + 2.0 * c_i;
+    const double un_b = R - 2.0 * c_b;
+    rate = 0.5 * (std::fabs(un_i) + c_i + std::fabs(un_b) + c_b) * nn;
+    double hs, uns;
+    if (hb >= hi) {
+      if (hb - hi <= 1e-14) // ghost = interior
+        return;
+      const double s = (hb * un_b - hi * un_i) / (hb - hi);
+      if (s < 0.) { hs = hb; uns = un_b; } else { hs = hi; uns = un_i; }
+    } else {
+      if (un_b - c_b <= 0.) { hs = hb; uns = un_b; }
+      else if (un_i - c_i >= 0.) { hs = hi; uns = un_i; }
+      else { const double c = R / 3.0; hs = c * c / g; uns = c; }
+    }
+    const double p_s = 0.5 * g * hs * hs, p_i = 0.5 * g * hi * hi;
+    const double mass_s = hs * uns, mass_i = hi * un_i;
+    dFh = (mass_s - mass_i) * nn;
+    dFhu = (mass_s * (uns * nux + ut * tx) + p_s * nux -
+            (mass_i * (un_i * nux + ut * tx) + p_i * nux)) * nn;
+    dFhv = (mass_s * (uns * nuy + ut * ty) + p_s * nuy -
+            (mass_i * (un_i * nuy + ut * ty) + p_i * nuy)) * nn;
+  }
+
   // On an edge touching a wall row, c'_ij = -c_ji no longer equals -c'_ji,
   // so mu_ij computed from row i alone differs from mu_ji. The dissipation
   // sum_j mu_ij (U_j - U_i) is conservative only if mu is symmetric, so take
@@ -710,6 +766,9 @@ public:
     proteus::pyarray<double> &edge_based_cfl = args.array<double>("edge_based_cfl");
     int debug = args.scalar<int>("debug");
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    proteus::pyarray<double> &tailwater_dof = args.array<double>("tailwater_dof");
+    proteus::pyarray<double> &tailwater_depth_dof =
+        args.array<double>("tailwater_depth_dof");
     proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
 
     double max_edge_based_cfl = 0.;
@@ -777,6 +836,12 @@ public:
         double dp_w, rate_w;
         wallRiemann(g, hi, hui, hvi, nix, niy, hEps, dp_w, rate_w);
         wall_margin += 0.5 * porosity_dof[i] * rate_w;
+      }
+      if (tailwater_dof[i] > 0.5) {
+        double dFh_t, dFhu_t, dFhv_t, rate_t;
+        tailwaterFlux(g, hi, hui, hvi, tailwater_depth_dof[i], nix, niy, hEps,
+                      dFh_t, dFhu_t, dFhv_t, rate_t);
+        wall_margin += 0.5 * porosity_dof[i] * rate_t;
       }
       edge_based_cfl[i] = (fabs(dLowii) + wall_margin) / mi;
       max_edge_based_cfl = fmax(max_edge_based_cfl, edge_based_cfl[i]);
@@ -1094,6 +1159,9 @@ public:
     double mannings = args.scalar<double>("mannings");
     // 1 on rows whose advective terms are integrated by parts (no-flux walls)
     proteus::pyarray<double> &wall_dof = args.array<double>("wall_dof");
+    proteus::pyarray<double> &tailwater_dof = args.array<double>("tailwater_dof");
+    proteus::pyarray<double> &tailwater_depth_dof =
+        args.array<double>("tailwater_depth_dof");
     // Canopy: porosity phi (storage phi h, flux phi h u, pressure
     // phi g h grad(h+Z)) and Darcy-Forchheimer drag -(alpha + beta|u|) h u per
     // unit plan area. All nodal; phi = 1, alpha = beta = 0 outside canopies.
@@ -1249,7 +1317,7 @@ public:
         for (int i = 0; i < numDOFsPerEqn; i++)
           for (int offset = csrRowIndeces_DofLoops[i];
                offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-            if (wall_dof[i] > 0.5) {
+            if (wall_dof[i] > 0.5 || tailwater_dof[i] > 0.5) {
               wall_nx[i] += CTx[ij_w];
               wall_ny[i] += CTy[ij_w];
             }
@@ -1520,6 +1588,27 @@ public:
                                 (huLow[i] * huLow[i] + hvLow[i] * hvLow[i]));
         }
 
+        // tailwater rows: Rusanov flux against the ghost state, as a
+        // correction to the natural outflow carried by c_ij
+        if (tailwater_dof[i] > 0.5) {
+          double dFh_t, dFhu_t, dFhv_t, rate_t;
+          tailwaterFlux(g, h_dof_old[i], hu_dof_old[i], hv_dof_old[i],
+                        tailwater_depth_dof[i], wall_nx[i], wall_ny[i], hEps,
+                        dFh_t, dFhu_t, dFhv_t, rate_t);
+          hLow[i] -= dt / mi * porosity_dof[i] * dFh_t;
+          huLow[i] -= dt / mi * porosity_dof[i] * dFhu_t;
+          hvLow[i] -= dt / mi * porosity_dof[i] * dFhv_t;
+          hLow[i] = fmax(hLow[i], 0.);
+          h_min[i] = std::min(h_min[i], hLow[i]);
+          h_max[i] = std::max(h_max[i], hLow[i]);
+          const double one_over_hLow_t =
+              2.0 * hLow[i] /
+              (hLow[i] * hLow[i] + std::pow(fmax(hLow[i], hEps), 2));
+          kin_max[i] = fmax(kin_max[i],
+                            0.5 * one_over_hLow_t *
+                                (huLow[i] * huLow[i] + hvLow[i] * hvLow[i]));
+        }
+
         // Then do relaxation of bounds here. If confused, see convex
         // limiting paper
         kin_max[i] = std::min(urelax[i] * kin_max[i],
@@ -1686,6 +1775,16 @@ public:
             hyp_flux_hu[i] += phi_i * dp_w * wall_nx[i];
             hyp_flux_hv[i] += phi_i * dp_w * wall_ny[i];
           }
+        }
+
+        // tailwater rows: same boundary-flux correction in the high-order update
+        if (tailwater_dof[i] > 0.5) {
+          double dFh_t, dFhu_t, dFhv_t, rate_t;
+          tailwaterFlux(g, hi, hui, hvi, tailwater_depth_dof[i], wall_nx[i],
+                        wall_ny[i], hEps, dFh_t, dFhu_t, dFhv_t, rate_t);
+          hyp_flux_h[i] += phi_i * dFh_t;
+          hyp_flux_hu[i] += phi_i * dFhu_t;
+          hyp_flux_hv[i] += phi_i * dFhv_t;
         }
 
         // COMPUTE SMOOTHNESS INDICATOR //

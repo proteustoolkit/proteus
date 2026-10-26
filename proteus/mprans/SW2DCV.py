@@ -97,6 +97,8 @@ class RKEV(proteus.TimeIntegration.SSP):
         if self.transport.wall_dof is None:
             self.transport.setWallDOFs()
         argsDict["wall_dof"] = self.transport.wall_dof
+        argsDict["tailwater_dof"] = self.transport.tailwater_dof
+        argsDict["tailwater_depth_dof"] = self.transport.tailwater_depth_dof
         argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         argsDict["debug"] = 0
         adjusted_maxCFL = self.transport.sw2d.calculateEdgeBasedCFL(argsDict)
@@ -282,7 +284,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  drag_law=None,
                  BOUNDS_RELAXATION=1,
                  BOUNDS_EXCLUDE_SELF=0,
-                 WALL_RIEMANN=0):
+                 WALL_RIEMANN=0,
+                 tailwater=None):
         # Canopy model (each a scalar, a nodal array, or a function of [x, y]
         # returning nodal values; None means phi = 1, alpha = beta = 0):
         #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
@@ -317,6 +320,15 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # 1: wall rows use the Rusanov flux against the mirror state (wall_dof = 2),
         # i.e. the wall pressure carries the impedance term h u_n (u_n + lambda)
         self.WALL_RIEMANN = WALL_RIEMANN
+        # tailwater = {'where': f([x, y]) -> bool, 'stage': f(x, y, t) -> surface
+        # elevation (a number or an array)}: the exterior boundary nodes selected
+        # by 'where' (and not walls) get the Rusanov flux against a ghost state
+        # with depth max(stage - Z, 0) and the outgoing Riemann invariant
+        # u_n + 2 sqrt(g h) of the interior kept, so the stage is imposed where
+        # the characteristics say it matters and ignored for supercritical
+        # outflow. The stage is re-evaluated before every step. None: those
+        # nodes keep the natural outflow (ghost state = interior state).
+        self.tailwater = tailwater
         self.wet_eps = 1.0e-4
         # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
         # integrate the advective terms by parts with zero advective flux
@@ -469,6 +481,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.model.hv_dof_old[:] = self.model.u[2].dof
         if self.drag_law is not None:
             self.updateDragLaw(t)
+        if self.tailwater is not None:
+            self.model.updateTailwater(t)
 
     def updateDragLaw(self, t):
         """re-evaluate the nodal Forchheimer coefficient from the current state"""
@@ -1358,6 +1372,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         """1 on the DOFs whose rows treat the boundary as a no-flux wall (2 with
         WALL_RIEMANN: the wall flux is the Rusanov flux against the mirror state)."""
         self.wall_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.tailwater_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.tailwater_depth_dof = np.zeros(self.u[0].dof.shape, 'd')
         if not self.coefficients.INTEGRATE_BY_PARTS_WALLS:
             return
         wall_function = self.coefficients.wall_function
@@ -1372,6 +1388,27 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.wall_dof[self.mesh.nodeMaterialTypes == 99] = 1.0
         if self.coefficients.WALL_RIEMANN:
             self.wall_dof[self.wall_dof > 0.5] = 2.0
+        self.setTailwaterDOFs()
+
+    def setTailwaterDOFs(self):
+        """1 on the open boundary nodes that carry a tailwater stage."""
+        tw = self.coefficients.tailwater
+        if tw is None:
+            return
+        ebN = self.mesh.exteriorElementBoundariesArray
+        nodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
+        X = self.mesh.nodeArray[nodes]
+        nodes = nodes[np.asarray(tw['where']([X[:, 0], X[:, 1]]), bool)]
+        self.tailwater_dof[nodes] = 1.0
+        self.wall_dof[nodes] = 0.0
+        self.updateTailwater(0.0)
+
+    def updateTailwater(self, t):
+        """depth of the ghost state at the tailwater nodes: max(stage - Z, 0)"""
+        tw = self.coefficients.tailwater
+        X = self.mesh.nodeArray
+        stage = np.asarray(tw['stage'](X[:, 0], X[:, 1], t), 'd') * np.ones(X.shape[0])
+        self.tailwater_depth_dof[:] = np.maximum(stage - self.coefficients.b.dof, 0.0)
     #
 
     def initDataStructures(self):
@@ -1525,6 +1562,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 n=n,N=N,nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
         self.par_wall_dof.scatter_forward_insert()
+        self.par_tailwater_dof = LAT.ParVec_petsc4py(self.tailwater_dof,
+                                                     bs=1,
+                                                     n=n,N=N,nghosts=nghosts,
+                                                     subdomain2global=subdomain2global)
+        self.par_tailwater_dof.scatter_forward_insert()
         
         if self.coefficients.BOUNDS_RELAXATION:
             self.urelax[:] = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
@@ -1703,6 +1745,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["SECOND_CALL_CALCULATE_RESIDUAL"] = self.secondCallCalculateResidual
         argsDict["COMPUTE_NORMALS"] = self.COMPUTE_NORMALS
         argsDict["wall_dof"] = self.wall_dof
+        argsDict["tailwater_dof"] = self.tailwater_dof
+        argsDict["tailwater_depth_dof"] = self.tailwater_depth_dof
         argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["drag_alpha_dof"] = self.coefficients.drag_alpha_dof
         argsDict["drag_beta_dof"] = self.coefficients.drag_beta_dof

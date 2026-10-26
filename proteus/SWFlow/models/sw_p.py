@@ -58,6 +58,8 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    BOUNDS_RELAXATION=BOUNDS_RELAXATION,
                                    BOUNDS_EXCLUDE_SELF=BOUNDS_EXCLUDE_SELF,
                                    WALL_RIEMANN=WALL_RIEMANN,
+                                   # optional: {'where': f([x, y]) -> bool, 'stage': f(x, y, t)}
+                                   tailwater=boundaryConditions.get('tailwater', None),
                                    porosity=porosity,
                                    drag_alpha=drag_alpha,
                                    drag_beta=drag_beta,
