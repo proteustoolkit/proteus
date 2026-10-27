@@ -18,7 +18,7 @@ else:
 elementQuadrature = SimplexGaussQuadrature(nd,opts.qOrder)
 elementBoundaryQuadrature = SimplexGaussQuadrature(nd-1,opts.qOrder)
 
-nnx=4*2**opts.refinement+1
+nnx = opts.nCells + 1 if opts.nCells > 0 else 4*2**opts.refinement + 1
 nny = nnx
 genMesh = True
 triangleOptions = "VApq30Dena%8.8f" % (((L[0]/(nnx-1))**2)/2.0,)

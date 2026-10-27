@@ -33,14 +33,29 @@ opts = Context.Options([
     ("test", 1.0, "which test to run (default is 1.0):\n"
         "  1.0 = piecewise-linear exactness check, Dirichlet condition on Gamma_s\n"
         "  2.0 = trig MMS rate check, Dirichlet condition on Gamma_s\n"
-        "  3.0 = same geometry and exact solution as 1.0, but with a Robin (convective)\n"
-        "        condition on Gamma_s instead of Dirichlet -- phase-dependent convective\n"
-        "        coefficients (robin_h_water on the mua side, robin_h_air on the mub side)\n"
-        "        meeting exactly at the Gamma_f/Gamma_s triple point. Best run with\n"
-        "        solidShape='line' for a single, clean triply-cut element."),
+        "  2.1 = exactly test=2.0's TrigMMS solution and geometry, plus a genuine, constant\n"
+        "        FLUX jump [beta du/dn] = test21fluxJump across Gamma_f (2.0's own g has\n"
+        "        none -- only a gradient kink from beta itself jumping). [u] stays EXACTLY 0\n"
+        "        everywhere on Gamma_f (not just at the Gamma_f/Gamma_s triple point), so this\n"
+        "        needs no well-posedness bookkeeping at all -- see TrigMMS.fluxJumpConstant.\n"
+        "        Same bulk source as 2.0 (interface_d is affine, so it contributes nothing to\n"
+        "        the Laplacian). Isolates immersedBoundary_fluxJump specifically.\n"
+        "  3.0 = same geometry and exact solution as 2.0 (trig MMS), but with a Robin\n"
+        "        (convective) condition on Gamma_s instead of Dirichlet -- phase-dependent\n"
+        "        convective coefficients (robin_h_water on the mua side, robin_h_air on the\n"
+        "        mub side) meeting exactly at the Gamma_f/Gamma_s triple point. A genuine\n"
+        "        rate check, not just an exactness check, since 2.0's solution is\n"
+        "        non-polynomial. Best run with solidShape='line' for a single, clean\n"
+        "        triply-cut element."),
+    ("fluxLift", True, "add the flux-jump lift J_f*psi to the trial function (False: load term only,\n"
+        "        the earlier scheme)"),
+    ("PG", False, "Petrov-Galerkin: test with ordinary P1 hat functions instead of "
+        "the enriched va/vb IFEM basis. Trial/solution side is unchanged."),
     ("unstructured", False, "use unstructured mesh (default is structured)"),
     ("skew", 0.0001, "skew the domain when using unstructured mesh"),
     ("refinement", 0, "number of times to refine the mesh (default is 0)"),
+    ("nCells", 0, "cells per side of the square; overrides refinement when > 0 (e.g. 10*2**k\n"
+     "        to match the node counts of the fitted and unstructured meshes)"),
     ("qOrder", 6, "order of quadrature (default is 6)"),
     ("pOrder", 1, "order of FEM basis (default is 1)"),
     ("usePetsc", False, "Use PETSc linear solvers"),
@@ -76,7 +91,14 @@ opts = Context.Options([
     ("solidCenterY", 1.0/3.0, "y-coordinate of the solid object's center. The solid sits at "
                               "(0, solidCenterY), so setting this equal to interfaceOffset puts its "
                               "centre on the interface and makes it straddle."),
-    ("embeddedPenalty", 100.0, "Nitsche Dirichlet penalty on the embedded (solid) boundary"),
+    ("embeddedPenalty", 10.0, "Nitsche Dirichlet penalty on the embedded (solid) boundary. A"
+        " penalty this large relative to h grows unboundedly as O(1/h) (see updateEmbeddedBoundaryTerms's"
+        " embeddedBoundary_penalty/h_phi), which is required for coercivity but also degrades"
+        " conditioning at fine mesh; 100.0 (the old default) visibly softened the L-infinity"
+        " rate at the finest meshes tested (down to ~1.7 at h=1/256) without affecting L2 or"
+        " Newton's one-step convergence. 10.0 removes that softening in every test checked"
+        " (see claude_addition.tex Sec. Numerical validation) while still converging cleanly;"
+        " it has not been pushed lower to find where stability actually breaks."),
     ("embeddedGhostPenalty", 0.1, "ghost penalty coefficient on cutfem (solid) cut edges"),
     ("robin_h_water", 600.0, "test=3.0 only: convective heat-transfer coefficient on the water\n"
         "        (mua) side of Gamma_s, W/(m^2 K) -- natural convection in water\n"
@@ -84,7 +106,42 @@ opts = Context.Options([
     ("robin_h_air", 15.0, "test=3.0 only: convective heat-transfer coefficient on the air\n"
         "        (mub) side of Gamma_s, W/(m^2 K) -- natural convection in air, same source.\n"
         "        Water convects roughly 40x more effectively than air, so this pair is a real\n"
-        "        physical contrast, not an arbitrary choice of test data.")
+        "        physical contrast, not an arbitrary choice of test data."),
+    ("test21fluxJump", 0.2, "test=2.1 only: constant flux jump [beta du/dn] = this value\n"
+        "        across Gamma_f, added to test=2.0's TrigMMS solution with [u] left exactly at\n"
+        "        0. Default 0.2 matches the same order of magnitude as ladr_ss_2d_p.py's own\n"
+        "        flux-jump tests (e.g. test=2.0 there uses 2C=0.2)."),
+    ("test1fluxJumpConstant", 0.0, "DEBUGGING ONLY, test=1.0: a genuine, constant FLUX jump\n"
+        "        [beta du/dn] = this value, with [u] left EXACTLY at 0. Both branches stay\n"
+        "        affine (a plain slope change of FloatingObjectExample's outer branch), so this\n"
+        "        is a genuine machine-precision exactness check that isolates\n"
+        "        immersedBoundary_fluxJump specifically (the Dirac-delta D_f term in ADR.h),\n"
+        "        NOT the JA/JB solution-jump machinery -- works with any solidShape, no\n"
+        "        triple-point bookkeeping needed, since it never touches the two-branch\n"
+        "        basis's own value-continuity pinning at all. Default 0.0 exactly reproduces\n"
+        "        test=1.0."),
+    ("test21solutionJump", 0.0, "test=2.1 only: a genuine, constant SOLUTION (value) jump\n"
+        "        [u] = u_outer - u_inner = this value across Gamma_f, added as a flat offset to\n"
+        "        test=2.0's TrigMMS outer branch (u_outer += this value) on top of\n"
+        "        test21fluxJump's own flux jump -- independent knobs, since the offset is\n"
+        "        spatially constant and so changes neither branch's gradient nor the source\n"
+        "        term. Exercises the JA/JB solution-jump machinery specifically (the\n"
+        "        branch-basis reconstruction driven by immersedBoundary_solutionJump_nodes in\n"
+        "        ADR.h), the complement of test21fluxJump, which isolates the Dirac-delta\n"
+        "        flux-jump term instead. Set test21fluxJump=0.0 alongside this to isolate a pure\n"
+        "        solution jump. Default 0.0 exactly reproduces test=2.1's existing\n"
+        "        (already-validated) [u]=0 baseline."),
+    ("test1solutionJump", 0.0, "DEBUGGING ONLY, test=1.0: a genuine, constant SOLUTION jump\n"
+        "        [u] = this value, with [beta du/dn] left at whatever test1fluxJumpConstant\n"
+        "        already gives (independent knobs). Both branches stay exactly affine (a flat\n"
+        "        offset added to FloatingObjectExample's outer branch), so with\n"
+        "        debugExactInit=True this is a genuine machine-precision exactness check of the\n"
+        "        JA/JB solution-jump machinery specifically -- unlike test21solutionJump, whose\n"
+        "        TrigMMS solution is non-polynomial and so can never distinguish real\n"
+        "        discretization error from a defect that happens to be small. Run with a real\n"
+        "        solidShape (e.g. solidShape='line' solidSlope=-0.5 solidOffset=0.3333333333333333)\n"
+        "        to put a masked/triply-cut node in play. Default 0.0 exactly reproduces\n"
+        "        test=1.0.")
 ])
 
 name = opts.name
@@ -130,7 +187,8 @@ def interface_t(x):
 
 # unit normal, = grad(interface_d), pointing from Omega^- into Omega^+
 interface_normal = (-_m/_L, 1.0/_L, 0.0)
-
+# unit tangent, = grad(interface_t); orthogonal to interface_normal by construction.
+interface_tangent = (1.0/_L, _m/_L, 0.0)
 
 class FloatingObjectExample(AnalyticalSolutions.SteadyState):
     """Floating object on a flat free surface.
@@ -150,19 +208,56 @@ class FloatingObjectExample(AnalyticalSolutions.SteadyState):
     style as test=8.0 in ladr_ss_2d_p.py. Both branches are linear, so the source term
     vanishes identically (f = 0) in both phases.
     """
-    def __init__(self, betaMinus=1.0, betaPlus=5.0):
+    def __init__(self, betaMinus=1.0, betaPlus=5.0, fluxJumpConstant=0.0, solutionJumpConstant=0.0):
         self.betaMinus = betaMinus
         self.betaPlus = betaPlus
+        # Debugging-only knob (default 0.0, true no-op): a genuine, constant FLUX jump
+        # [beta du/dn] = fluxJumpConstant, with [u] left EXACTLY at 0. Generalizes the outer
+        # slope: the original outer branch is -d*betaMinus/betaPlus, chosen so
+        # betaPlus*d(u^+)/dd = -betaMinus = betaMinus*d(u^-)/dd (zero flux jump, see class
+        # docstring); replacing betaMinus with (betaMinus - fluxJumpConstant) in that same
+        # ratio instead gives
+        #     betaPlus*d(u^+)/dd - betaMinus*d(u^-)/dd
+        #   = -(betaMinus - fluxJumpConstant) - (-betaMinus) = fluxJumpConstant
+        # exactly, by construction -- while u^+ is still -d*(...), so u^+(0) = u^-(0) = 0,
+        # value continuity is untouched. Both branches remain affine (a constant slope
+        # change), so this is tested purely via immersedBoundary_fluxJump -- the Dirac-delta
+        # (equivalent-polynomial D_f) term in ADR.h, r += jump_flux*D_f -- NOT via JA/JB at
+        # all, isolating that mechanism specifically. On a triply-cut element this D_f is the
+        # SAME comp_DA_cache/comp_DB_cache composite Dirac weight the bulk term already uses
+        # (see ADR.h's comp_valid/composite::dirac_weights), so this is a direct check of
+        # whether that Gamma_s-mask-aware weight is actually being used correctly there.
+        self.fluxJumpConstant = fluxJumpConstant
+        # Debugging-only knob (default 0.0, true no-op): a genuine, constant SOLUTION jump
+        # [u] = solutionJumpConstant, added as a flat offset to the outer branch only (inner
+        # untouched) -- same reasoning as TrigMMS's own solutionJumpConstant below. Since both
+        # branches here are exactly affine (piecewise-linear MMS, u is exactly representable
+        # by P1), this is the sharpest possible test of the JA/JB machinery: with
+        # debugExactInit=True, any nonzero "Newton it 0" residual is unambiguously a scheme
+        # defect, not approximation error -- unlike test=2.1's TrigMMS, which is
+        # non-polynomial and so can never distinguish "small discretization error" from "a
+        # real defect that happens to be small" this way.
+        self.solutionJumpConstant = solutionJumpConstant
         super(FloatingObjectExample, self).__init__()
     def uOfX_inner(self, x):  # Omega- : d <= 0
         return -interface_d(x)
     def uOfX_outer(self, x):  # Omega+ : d > 0
-        return -interface_d(x)*self.betaMinus/self.betaPlus
+        outer_slope = (self.betaMinus - self.fluxJumpConstant)/self.betaPlus
+        return -interface_d(x)*outer_slope + self.solutionJumpConstant
     def uOfX(self, x):
         if interface_d(x) <= 0.0:
             return self.uOfX_inner(x)
         else:
             return self.uOfX_outer(x)
+    def solutionJump(self, x):
+        return self.solutionJumpConstant
+    def fluxJump(self, x):
+        return self.fluxJumpConstant
+    def flux_dot_n(self, x, nx, ny):
+        """beta*grad(u).n at x, for an arbitrary direction (nx,ny) -- the SAME value on
+        either branch, since this solution's flux is continuous across Gamma_f by
+        construction (see the class docstring). grad(-d) = -interface_normal, constant."""
+        return -self.betaMinus*(interface_normal[0]*nx + interface_normal[1]*ny)
 
 class TrigMMS(AnalyticalSolutions.SteadyState):
     """Manufactured solution for the same 3-phase geometry, non-polynomial so that
@@ -206,9 +301,36 @@ class TrigMMS(AnalyticalSolutions.SteadyState):
     diagonal, so the exterior Dirichlet data g is a genuine, nonzero function of position,
     not homogeneous.
     """
-    def __init__(self, betaMinus=1.0, betaPlus=5.0):
+    def __init__(self, betaMinus=1.0, betaPlus=5.0, fluxJumpConstant=0.0, solutionJumpConstant=0.0):
         self.betaMinus = betaMinus
         self.betaPlus = betaPlus
+        # Debugging-only knob (default 0.0, true no-op): a genuine, constant FLUX jump
+        # [beta du/dn] = fluxJumpConstant, with [u] left EXACTLY at 0 -- not just at the
+        # Gamma_f/Gamma_s triple point, everywhere on Gamma_f, so this needs no triple-point
+        # bookkeeping at all (unlike a value jump). Adds fluxJumpConstant*d/betaPlus to the
+        # outer branch: interface_d(x) is affine, so it vanishes at d=0 exactly like _g does
+        # (keeping [u]=0 identically), while contributing a constant to the outer branch's
+        # own normal derivative:
+        #     betaPlus*d(u^+)/dd = d(g)/dd + betaPlus*(fluxJumpConstant/betaPlus)
+        #                        = d(g)/dd + fluxJumpConstant
+        # so [beta du/dn] = betaPlus*d(u^+)/dd - betaMinus*d(u^-)/dd = fluxJumpConstant
+        # exactly, the d(g)/dd pieces cancelling as in the zero-jump case. Since d is affine
+        # (harmonic, zero Laplacian), the existing source term 2*pi^2*g needs no change either
+        # -- see f(x) below.
+        self.fluxJumpConstant = fluxJumpConstant
+        # Debugging-only knob (default 0.0, true no-op): a genuine, constant SOLUTION jump
+        # [u] = solutionJumpConstant, with [beta du/dn] left exactly at whatever
+        # fluxJumpConstant already gives (independent knobs -- see below). Added as a flat
+        # offset to the outer branch ONLY, after dividing by betaPlus (not folded into g),
+        # so the jump value itself is clean and beta-independent:
+        #     u_outer(d=0) - u_inner(d=0) = [0 + 0]/betaPlus + solutionJumpConstant - 0
+        #                                 = solutionJumpConstant
+        # exactly (both g and the fluxJumpConstant*d term already vanish at d=0). A constant
+        # offset has zero gradient and zero Laplacian, so neither branch's flux (already
+        # handled by fluxJumpConstant above) nor the source term f = 2*pi^2*g needs any
+        # change -- this genuinely isolates the JA/JB solution-jump reconstruction in ADR.h
+        # from the separate Dirac-delta flux-jump term.
+        self.solutionJumpConstant = solutionJumpConstant
         super(TrigMMS, self).__init__()
     def _g(self, x):
         # sin(pi d) vanishes on the interface (d = 0), so [u] = 0 there; the cos(pi t)
@@ -217,12 +339,37 @@ class TrigMMS(AnalyticalSolutions.SteadyState):
     def uOfX_inner(self, x):  # Omega- : d <= 0
         return self._g(x)/self.betaMinus
     def uOfX_outer(self, x):  # Omega+ : d > 0
-        return self._g(x)/self.betaPlus
+        return (self._g(x) + self.fluxJumpConstant*interface_d(x))/self.betaPlus + self.solutionJumpConstant
     def uOfX(self, x):
         if interface_d(x) <= 0.0:
             return self.uOfX_inner(x)
         else:
             return self.uOfX_outer(x)
+    def solutionJump(self, x):
+        # [u] = u_outer - u_inner, the sign convention immersedBoundary_solutionJump_nodes
+        # expects in ADR.h (cross-checked against ladr_ss_2d_p.py's LevequeLiExample3, whose
+        # own solutionJump lambda matches its uOfX_outer - uOfX_inner exactly).
+        return self.solutionJumpConstant
+    def fluxJump(self, x):
+        return self.fluxJumpConstant
+    def flux_dot_n(self, x, nx, ny):
+        """beta*grad(u).n at x, for an arbitrary direction (nx,ny). Assumes fluxJumpConstant
+        == 0 (true whenever this is actually called -- test=3.0's Robin construction always
+        builds TrigMMS with the default, and the flux is then the SAME value on either branch,
+        beta*grad(u) = grad(g), beta cancelling exactly, see the class docstring), unlike
+        FloatingObjectExample's this genuinely varies with x. Using
+        grad(g) = pi*cos(pi d)*cos(pi t)*grad(d) - pi*sin(pi d)*sin(pi t)*grad(t) and
+        dotting with (nx,ny) via grad(d).( nx,ny)=interface_normal.(nx,ny) and likewise
+        for grad(t)/interface_tangent (both unit vectors, not generally (nx,ny) itself,
+        e.g. when (nx,ny) is Gamma_s's own normal rather than Gamma_f's)."""
+        assert self.fluxJumpConstant == 0.0, "flux_dot_n assumes a single, branch-independent flux"
+        d = interface_d(x)
+        t = interface_t(x)
+        dgdd = math.pi*math.cos(math.pi*d)*math.cos(math.pi*t)
+        dgdt = -math.pi*math.sin(math.pi*d)*math.sin(math.pi*t)
+        n_dot_normal = interface_normal[0]*nx + interface_normal[1]*ny
+        n_dot_tangent = interface_tangent[0]*nx + interface_tangent[1]*ny
+        return dgdd*n_dot_normal + dgdt*n_dot_tangent
 
 # Interface material parameters (diffusion on each side of the fluid-fluid interface).
 # a(x) below uses these as the source of truth.
@@ -231,16 +378,21 @@ mub = opts.mub   # Omega+ : air   (immersedBoundary sdf > 0)
 jf  = 0.0   # no prescribed solution jump across the interface
 
 if opts.test == 1.0:
-    ans = FloatingObjectExample(betaMinus=mua, betaPlus=mub)
+    ans = FloatingObjectExample(betaMinus=mua, betaPlus=mub, fluxJumpConstant=opts.test1fluxJumpConstant,
+                                solutionJumpConstant=opts.test1solutionJump)
 elif opts.test == 2.0:
     ans = TrigMMS(betaMinus=mua, betaPlus=mub)
+elif opts.test == 2.1:
+    ans = TrigMMS(betaMinus=mua, betaPlus=mub, fluxJumpConstant=opts.test21fluxJump,
+                  solutionJumpConstant=opts.test21solutionJump)
 elif opts.test == 3.0:
-    # Same exact solution as test=1.0 -- only Gamma_s's condition type changes, from
-    # Dirichlet to Robin. Reusing it isolates "did the Robin implementation break
-    # anything" from "is this a new, untested manufactured solution": the bulk PDE,
-    # Gamma_f conditions, and mesh are all identical to a case already known to reproduce
-    # to machine precision.
-    ans = FloatingObjectExample(betaMinus=mua, betaPlus=mub)
+    # Same exact solution as test=2.0 (TrigMMS) -- only Gamma_s's condition type changes,
+    # from Dirichlet to Robin. Reusing a solution already known to reproduce correctly
+    # isolates "did the Robin implementation break anything" from "is this a new, untested
+    # manufactured solution"; using TrigMMS rather than test=1.0's linear solution means
+    # this is a genuine convergence-RATE check, not just an exactness sanity check (test=1.0
+    # is exact for P1 regardless of whether Robin is implemented correctly).
+    ans = TrigMMS(betaMinus=mua, betaPlus=mub)
 else:
     assert False, "Unknown test %s" % opts.test
 
@@ -258,29 +410,31 @@ def a(x):
 def f(x):
     # f = -div(beta grad u), the same expression on both sides of the interface for
     # both cases (see the analytical-solution docstrings).
-    if opts.test == 2.0:
+    if opts.test in (2.0, 2.1, 3.0):
         return 2.0*math.pi**2*ans._g(x)
-    # test 1.0 and 3.0: u is linear in each phase, so -div(beta grad u) = 0 off the
-    # interface. Gamma_s's condition type (Dirichlet vs Robin) never enters the bulk PDE.
+    # test 1.0: u is linear in each phase, so -div(beta grad u) = 0 off the interface.
     return 0.0
 
 # --- test=3.0: Robin (convective) condition on Gamma_s -----------------------------------
 # Physical law:  mu * du/dn = -h * (u - u_infinity)  on Gamma_s, n the fluid's own outward
-# normal (out of the fluid, into the solid). Since test=3.0 reuses test=1.0's exact solution
-# u unchanged, u_infinity is not free data -- it is BACK-SOLVED from the law so that this
-# particular u satisfies it exactly:
+# normal (out of the fluid, into the solid). test=3.0 reuses test=2.0's TrigMMS solution
+# unchanged -- a linear (test=1.0) solution would only give a sanity/exactness check (exact
+# for P1 regardless of whether the Robin condition is implemented correctly), not a genuine
+# convergence RATE check, which needs a non-polynomial u -- so u_infinity is not free data
+# but is BACK-SOLVED from the law so that this particular u satisfies it exactly:
 #
 #     u_infinity = u + (mu * du/dn) / h
 #
 # This is the standard method-of-manufactured-solutions move for a mixed/Robin boundary: h
 # is the genuine physical parameter (see robin_h_water/robin_h_air above), u_infinity is
-# whatever ambient value makes the chosen u consistent with it. u is linear in each phase
-# here, so du/dn is a a constant vector per phase and u_infinity ends up an affine function
-# of position along Gamma_s -- not a single far-field number, but that is normal for a
-# manufactured Robin target and does not make it less physical: only the material
+# whatever ambient value makes the chosen u consistent with it. TrigMMS's du/dn genuinely
+# varies with position (unlike test=1.0's constant-per-phase gradient), so u_infinity is a
+# nontrivial function along Gamma_s -- not a single far-field number, but that is normal for
+# a manufactured Robin target and does not make it less physical: only the material
 # parameters (mua, mub, h_water, h_air) are the modeling choices; u_infinity is derived.
-_grad_ua = (-interface_normal[0], -interface_normal[1])           # grad(-interface_d)
-_grad_ub = (_grad_ua[0]*mua/mub, _grad_ua[1]*mua/mub)              # u_b = u_a * mua/mub
+# ans.flux_dot_n(x, nx, ny) supplies mu*grad(u).n generically -- the SAME value on either
+# branch for both exact solutions used here (flux is continuous by construction, see each
+# class's docstring), so one call covers both embeddedBoundary_robin_uInf_inner/_outer.
 
 def _fluid_outward_normal_on_Gs(x):
     """The fluid's own outward normal on Gamma_s: points OUT of the fluid, INTO the solid.
@@ -291,12 +445,12 @@ def _fluid_outward_normal_on_Gs(x):
 
 def embeddedBoundary_robin_uInf_inner(x, t):
     nx, ny = _fluid_outward_normal_on_Gs(x)
-    flux = mua*(_grad_ua[0]*nx + _grad_ua[1]*ny)   # mua * du_a/dn
+    flux = ans.flux_dot_n(x, nx, ny)   # mua * du_a/dn
     return ans.uOfX_inner(x) + flux/opts.robin_h_water
 
 def embeddedBoundary_robin_uInf_outer(x, t):
     nx, ny = _fluid_outward_normal_on_Gs(x)
-    flux = mub*(_grad_ub[0]*nx + _grad_ub[1]*ny)   # mub * du_b/dn
+    flux = ans.flux_dot_n(x, nx, ny)   # mub * du_b/dn
     return ans.uOfX_outer(x) + flux/opts.robin_h_air
 
 aOfX = {0:a}; fOfX = {0:f}
@@ -370,6 +524,18 @@ solidBoundary_sdf = {"square": solidBoundary_sdf_square,
 def immersedBoundary_u(x,t):
     return ans.uOfX(x)
 
+# test=1.0 (only with test1fluxJumpConstant != 0, a debugging knob) and test=2.1 (its own
+# test21fluxJump, nonzero by default, and test21solutionJump, a debugging knob defaulting to
+# 0.0): prescribed flux-jump/solution-jump data, see FloatingObjectExample/TrigMMS's own
+# fluxJump/solutionJump methods. Every other test leaves both at their ADR.Coefficients
+# default of None, i.e. [u] = 0 and [beta du/dn] = 0, exactly as before; test=1.0 at its own
+# default (test1fluxJumpConstant=0.0) and test=2.1 at test21solutionJump=0.0 wire the same
+# always-zero functions in, which is a true no-op (solutionJump/fluxJump both return 0.0, same
+# as the None-case zero-initialized arrays), so the ordinary test=1.0 path and test=2.1's
+# existing [u]=0 baseline are unchanged.
+immersedBoundary_solutionJump = (lambda x, t: ans.solutionJump(x)) if opts.test in (1.0, 2.1) else None
+immersedBoundary_fluxJump = (lambda x, t: ans.fluxJump(x)) if opts.test in (1.0, 2.1) else None
+
 def embeddedBoundary_u(x,t):
     # Manufactured weak-Dirichlet target on the solid surface. Always the true exact
     # solution, test=3.0 included: embeddedBoundary_u_inner/_outer below are also read
@@ -409,9 +575,13 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 immersedBoundary=True,
                                 immersedBoundary_sdf=immersedBoundary_sdf,
                                 immersedBoundary_u=immersedBoundary_u,
+                                immersedBoundary_solutionJump=immersedBoundary_solutionJump,
+                                immersedBoundary_fluxJump=immersedBoundary_fluxJump,
+                                immersedBoundary_fluxJumpLift=opts.fluxLift,
                                 immersedBoundary_penalty=0.0,
                                 immersedSCIFEM_switch=opts.immersedSCIFEM_switch,
                                 immersedSCIFEM_penalty=opts.immersedSCIFEM_penalty,
+                                PG=opts.PG,
                                 analyticalSolution=analyticalSolution)
 
 def getDBC(x,flag):
