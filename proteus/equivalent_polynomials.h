@@ -992,8 +992,8 @@ namespace equivalent_polynomials
     }
   }
 
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ>::_calculate_lift(const double *xi, double *psi)
+  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
+  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_lift(const double *xi, double *psi)
   {
     const double *c[2] = {_lift_a, _lift_b};
     for (int s = 0; s < 2; s++)

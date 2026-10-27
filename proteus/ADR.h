@@ -2358,7 +2358,6 @@ namespace proteus
 					// and for the interior-penalty scaling further down (same measure the
 					// cutfem ghost penalty uses); note gamma/h here for a VALUE jump, vs
 					// gamma*h there for a gradient jump.
-					const double h_edge = elementBoundaryDiameter.data()[ebN];
 					// Match over nSpace components only: a component the mapping does not
 					// define contributes nothing but noise to the distance, and the paired
 					// points agree EXACTLY in the components it does define, so the winning
@@ -4120,7 +4119,6 @@ namespace proteus
 					// and for the interior-penalty scaling further down (same measure the
 					// cutfem ghost penalty uses); note gamma/h here for a VALUE jump, vs
 					// gamma*h there for a gradient jump.
-					const double h_edge = elementBoundaryDiameter.data()[ebN];
 					// Match over nSpace components only: a component the mapping does not
 					// define contributes nothing but noise to the distance, and the paired
 					// points agree EXACTLY in the components it does define, so the winning
