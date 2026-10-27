@@ -142,6 +142,7 @@ class Coefficients(TC_base):
                  immersedBoundary_fluxJump=None,
                  immersedBoundary_fluxJumpVector=None,
                  immersedBoundary_solutionJump=None,
+                 immersedBoundary_fluxJumpLift=True,
                  analyticalSolution=None,
                  test=1.0):
         self.test = test
@@ -213,6 +214,11 @@ class Coefficients(TC_base):
         self.immersedBoundary_fluxJump=immersedBoundary_fluxJump
         self.immersedBoundary_fluxJumpVector=immersedBoundary_fluxJumpVector
         self.immersedBoundary_solutionJump=immersedBoundary_solutionJump
+        # Flux-jump lift: the IFE basis is built for a homogeneous flux jump, and a prescribed
+        # [beta du/dn] = J_f is represented by adding J_f*psi once to the trial function (psi: the
+        # basis constructor's solution with zero nodal values and unit flux jump), like the
+        # solution-jump lift. The load term -int J_f v stays. False reproduces the load-only scheme.
+        self.immersedBoundary_fluxJumpLift=immersedBoundary_fluxJumpLift
         if self.immersedBoundary:
             assert(self.immersedBoundary_sdf is not None)
             assert(self.immersedBoundary_u is not None)
@@ -283,6 +289,34 @@ class Coefficients(TC_base):
         if self.immersedBoundary and self.immersedBoundary_solutionJump is not None:
             for nN in range(nodeArray.shape[0]):
                 self.immersedBoundary_solutionJump_nodes[nN] = self.immersedBoundary_solutionJump(t=0.0,x=nodeArray[nN])
+        # Prescribed flux jump of each Gamma_f-cut cell, for the flux-jump lift: J_f at the midpoint
+        # of the cell's Gamma_f segment (zero of the linear interpolant of the vertex values), the
+        # vector part dotted with the segment normal (from phi<0 to phi>0). Exact for a constant J_f.
+        nElements_f = femSpace.mesh.elementNodesArray.shape[0]
+        self.immersedBoundary_fluxJump_element = np.zeros((nElements_f,),'d')
+        if (self.immersedBoundary and self.immersedBoundary_fluxJumpLift and
+                (self.immersedBoundary_fluxJump is not None or self.immersedBoundary_fluxJumpVector is not None)):
+            l2g_f = femSpace.dofMap.l2g
+            for eN in range(nElements_f):
+                g = l2g_f[eN,:3]
+                phi = self.immersedBoundary_sdf_nodes[g]
+                if not ((phi < 0.0).any() and (phi > 0.0).any()):
+                    continue
+                X = nodeArray[g]
+                cuts = [X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
+                        for i, j in ((0, 1), (1, 2), (2, 0)) if phi[i]*phi[j] < 0.0]
+                if len(cuts) != 2:
+                    continue
+                xm = 0.5*(cuts[0] + cuts[1])
+                J = 0.0
+                if self.immersedBoundary_fluxJump is not None:
+                    J += self.immersedBoundary_fluxJump(t=0.0,x=xm)
+                if self.immersedBoundary_fluxJumpVector is not None:
+                    A = np.array([[X[1,0]-X[0,0], X[1,1]-X[0,1]], [X[2,0]-X[0,0], X[2,1]-X[0,1]]])
+                    grad = np.linalg.solve(A, np.array([phi[1]-phi[0], phi[2]-phi[0]]))
+                    n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
+                    J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
+                self.immersedBoundary_fluxJump_element[eN] = J
         # Triply-cut (P1 only): a masked node's raw DOF is physically undefined (u_ex isn't
         # defined inside the solid), but gf_f's two-sided basis reads it directly regardless.
         # Fix: substitute the analytic embeddedBoundary_u_inner/_outer value at that node's
@@ -854,6 +888,35 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                compKernelFlag)
     def calculateCoefficients(self):
         pass
+    # 4-point Gauss-Legendre abscissae on [0,1], used to hand the kernel the exterior Dirichlet data of
+    # each phase along an exterior edge (ADR_EXT_NITSCHE). Edge parameter t runs from the lower to the
+    # higher global node number of the edge.
+    _EXT_T = np.array([0.5 - 0.5*0.8611363115940526, 0.5 - 0.5*0.3399810435848563,
+                       0.5 + 0.5*0.3399810435848563, 0.5 + 0.5*0.8611363115940526])
+
+    def _exteriorEdgeBranchData(self):
+        if getattr(self, '_extEdgeData', None) is not None:
+            return self._extEdgeData
+        nExt = self.mesh.nExteriorElementBoundaries_global
+        ua = np.zeros((nExt, 4), 'd')
+        ub = np.zeros((nExt, 4), 'd')
+        ans = self.coefficients.analyticalSolution
+        ans0 = ans.get(0) if ans is not None else None
+        if ans0 is not None and os.environ.get('ADR_EXT_NITSCHE'):
+            for ebNE in range(nExt):
+                ebN = self.mesh.exteriorElementBoundariesArray[ebNE]
+                n0, n1 = sorted(self.mesh.elementBoundaryNodesArray[ebN][:2])
+                P0, P1 = self.mesh.nodeArray[n0], self.mesh.nodeArray[n1]
+                for k, t in enumerate(self._EXT_T):
+                    x = P0 + t*(P1 - P0)
+                    if hasattr(ans0, 'uOfX_inner') and hasattr(ans0, 'uOfX_outer'):
+                        ua[ebNE, k] = ans0.uOfX_inner(x)
+                        ub[ebNE, k] = ans0.uOfX_outer(x)
+                    else:
+                        ua[ebNE, k] = ub[ebNE, k] = ans0.uOfX(x)
+        self._extEdgeData = (ua, ub)
+        return self._extEdgeData
+
     def getResidual(self,u,r):
         import pdb
         import copy
@@ -928,6 +991,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
+        ext_ua, ext_ub = self._exteriorEdgeBranchData()
+        argsDict["ext_edge_u_inner"] = ext_ua
+        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -965,6 +1031,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
         argsDict["immersedBoundary_fluxJumpVector_q"] = self.q['immersedBoundary_fluxJumpVector']
+        argsDict["immersedBoundary_fluxJump_element"] = self.coefficients.immersedBoundary_fluxJump_element
         argsDict["immersedBoundary_solutionJump_nodes"] = self.coefficients.immersedBoundary_solutionJump_nodes
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["mua"] = self.coefficients.mua
@@ -1097,6 +1164,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
+        ext_ua, ext_ub = self._exteriorEdgeBranchData()
+        argsDict["ext_edge_u_inner"] = ext_ua
+        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -1135,6 +1205,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
         argsDict["immersedBoundary_fluxJumpVector_q"] = self.q['immersedBoundary_fluxJumpVector']
+        argsDict["immersedBoundary_fluxJump_element"] = self.coefficients.immersedBoundary_fluxJump_element
         argsDict["immersedBoundary_solutionJump_nodes"] = self.coefficients.immersedBoundary_solutionJump_nodes
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["mua"] = self.coefficients.mua
@@ -1175,6 +1246,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # Catch them the same way genuinely inactive DOFs are handled: unit diagonal, and mark
         # them inactive so the residual is masked out there too. Inert wherever no such row
         # exists, which is every single-level-set case.
+        # Tolerance, not exact equality: same rule as the buried-interface area check in
+        # ADR.h (equivalent_polynomials -- "never compare a geometric fit to exact zero").
+        # A DOF this row-degenerate is fed only by a moment-fit/Dirac weight evaluated at (or
+        # extremely close to) a genuine geometric degeneracy -- e.g. a triple point landing
+        # almost exactly on a mesh node once the mesh is refined enough -- so its diagonal
+        # lands a few ULPs off zero, not bit-exact, the same way a buried sub-region's area
+        # does. An exact-equality check misses that case and leaves a near-singular (not
+        # exactly singular) row that a direct solve can still return a garbage correction
+        # for -- observed as a stalled Newton iteration whose residual never moves, not a
+        # clean failure. _diagTol is scaled to this matrix's own entries so it adapts to
+        # whatever mua/mub/mesh-size combination is in use, the same way areaTol is scaled to
+        # the reference triangle rather than being one fixed absolute number.
+        _diagTol = 1.0e-10 * max(1.0, np.max(np.abs(self.nzval))) if len(self.nzval) else 1.0e-10
         _unsupported = []
         for _row in range(len(self.rowptr) - 1):
             if self.isActiveDOF[_row] == 0.0:
@@ -1183,7 +1267,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             for _i in range(self.rowptr[_row], self.rowptr[_row + 1]):
                 if self.colind[_i] == _row:
                     _diag = self.nzval[_i]
-            if _diag == 0.0:
+            if abs(_diag) < _diagTol:
                 _unsupported.append(_row)
         for _row in _unsupported:
             self.isActiveDOF[_row] = 0.0
@@ -1192,6 +1276,78 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if _unsupported:
             log("ADR: pinned %d unsupported DOF(s) with no Jacobian contribution "
                 "(active element, but inside the embedded solid)" % len(_unsupported), level=4)
+        import os
+        # ADR_DUMP_JACOBIAN=<prefix>: save the final Jacobian (after strong Dirichlet rows and pinned
+        # rows) once, with the strongly imposed Dirichlet DOFs and the active flags, for an offline
+        # study of conditioning and linear solvers on the free (active, non-Dirichlet) unknowns.
+        if os.environ.get("ADR_DUMP_JACOBIAN") and not getattr(self, '_adr_jac_dumped', False):
+            _dir = [self.offset[0] + self.stride[0]*d for d in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys()] \
+                if self.forceStrongConditions else []
+            np.savez(os.environ["ADR_DUMP_JACOBIAN"] + ".npz", rowptr=np.array(self.rowptr), colind=np.array(self.colind),
+                     nzval=np.array(self.nzval), dirichlet=np.array(_dir, dtype='i'), active=np.array(self.isActiveDOF))
+            self._adr_jac_dumped = True
+        if os.environ.get("ADR_DEBUG_COND"):
+            import scipy.sparse as _sp
+            import scipy.sparse.linalg as _spla
+            _n = len(self.rowptr) - 1
+            _A = _sp.csr_matrix((self.nzval, self.colind, self.rowptr), shape=(_n, _n))
+            try:
+                if _n <= 2000:
+                    _dense = _A.toarray()
+                    _sv = np.linalg.svd(_dense, compute_uv=False)
+                    print("ADR_DEBUG_COND: n=%d smallest_sv=%.6e largest_sv=%.6e cond=%.6e rank=%d"
+                          % (_n, _sv[-1], _sv[0], _sv[0] / max(_sv[-1], 1e-300), np.sum(_sv > 1e-10 * _sv[0])))
+                else:
+                    _sv_min = _spla.svds(_A, k=1, which='SM', return_singular_vectors=False)
+                    _sv_max = _spla.svds(_A, k=1, which='LM', return_singular_vectors=False)
+                    print("ADR_DEBUG_COND: n=%d smallest_sv~=%.6e largest_sv~=%.6e"
+                          % (_n, _sv_min[0], _sv_max[0]))
+            except Exception as _e:
+                print("ADR_DEBUG_COND: failed:", _e)
+            # One-shot finite-difference Jacobian consistency check: does the assembled
+            # Jacobian actually predict how getResidual responds to a perturbation, at the
+            # SAME u this Jacobian was just built at? A mismatch here -- not a conditioning
+            # problem -- would explain a well-conditioned linear solve whose correction has
+            # zero effect on the true (residual-defined) objective.
+            if not getattr(self, '_adr_fd_done', False):
+                self._adr_fd_done = True
+                try:
+                    _u = self.u[0].dof.copy()
+                    _r0 = np.zeros(_n, 'd')
+                    self.getResidual(_u, _r0)
+                    _eps = 1.0e-6
+                    _forced = set(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys())
+                    _active = np.argwhere(self.isActiveDOF != 0.0).flatten()
+                    _sample = [i for i in _active if i not in _forced]
+                    print("ADR_DEBUG_FD: n=%d forced=%d testing %d free active dofs"
+                          % (_n, len(_forced), len(_sample)))
+                    _worst_overall = 0.0
+                    _worst_dof = -1
+                    _nbad = 0
+                    for _i in _sample:
+                        _up = _u.copy()
+                        _scale = max(1.0, abs(_u[_i]))
+                        _h = _eps * _scale
+                        _up[_i] += _h
+                        _r1 = np.zeros(_n, 'd')
+                        self.getResidual(_up, _r1)
+                        _fd_col = (_r1 - _r0) / _h
+                        _an_col = _A[:, _i].toarray().flatten()
+                        _tol = 1.0e-3 * max(1.0, np.max(np.abs(_an_col)))
+                        _diff = np.abs(_fd_col - _an_col)
+                        _worst = np.argmax(_diff)
+                        if _diff[_worst] > _tol:
+                            _nbad += 1
+                            print("ADR_DEBUG_FD: MISMATCH dof=%d h=%.3e max|fd-an|=%.6e at row=%d "
+                                  "fd=%.6e an=%.6e (tol=%.3e)"
+                                  % (_i, _h, _diff[_worst], _worst, _fd_col[_worst], _an_col[_worst], _tol))
+                        if _diff[_worst] > _worst_overall:
+                            _worst_overall = _diff[_worst]
+                            _worst_dof = _i
+                    print("ADR_DEBUG_FD: SUMMARY %d/%d free dofs mismatched (tol 1e-3 rel), "
+                          "worst=%.6e at dof=%d" % (_nbad, len(_sample), _worst_overall, _worst_dof))
+                except Exception as _e:
+                    print("ADR_DEBUG_FD: failed:", _e)
         return jacobian
     def invalidateIFEMGeometry(self):
         """
@@ -1254,8 +1410,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def estimate_mt(self):
         pass
     def calculateAuxiliaryQuantitiesAfterStep(self):
-        log("L2 error = {0}".format(self.L2_error**0.5),level=3)
-        log("Linfty error = {0}".format(self.Linfty_error),level=3)
+        log("L2 error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.L2_error**0.5))),level=3)
+        log("Linfty error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.Linfty_error))),level=3)
         pass
     def calculateSolutionAtQuadrature(self):
         pass

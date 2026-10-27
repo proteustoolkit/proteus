@@ -91,6 +91,12 @@ namespace equivalent_polynomials
     inline double VB_x(int i) { return -1.0; };
     inline double VB_y(int i) { return -1.0; };
     inline double VB_z(int i) { return -1.0; };
+    inline double PSIA() { return 0.0; };
+    inline double PSIA_x() { return 0.0; };
+    inline double PSIA_y() { return 0.0; };
+    inline double PSIB() { return 0.0; };
+    inline double PSIB_x() { return 0.0; };
+    inline double PSIB_y() { return 0.0; };
   };
 
   template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis = false>
@@ -174,6 +180,9 @@ namespace equivalent_polynomials
         _vb_y_q[i] = _vb_y[q * nP_ifem + i];
         _vb_z_q[i] = _vb_z[q * nP_ifem + i];
       }
+      const bool cut = !(edge == -1 || corner == -1 || edge == 1 || corner == 1);
+      for (int i = 0; i < 6; i++)
+        _psi_q[i] = cut ? _psi[q * 6 + i] : 0.0;
     }
 
     inline void set_boundary_quad(unsigned int ebq)
@@ -221,6 +230,9 @@ namespace equivalent_polynomials
         _vb_x_q[i] = _vb_x_ebq[ebq * nP_ifem + i];
         _vb_y_q[i] = _vb_y_ebq[ebq * nP_ifem + i];
       }
+      const bool cut = !(edge == -1 || corner == -1 || edge == 1 || corner == 1);
+      for (int i = 0; i < 6; i++)
+        _psi_q[i] = cut ? _psi_ebq[ebq * 6 + i] : 0.0;
     }
 
     inline double *get_H() { return _H; };
@@ -237,6 +249,17 @@ namespace equivalent_polynomials
     inline double VB_x(int i) { return _vb_x_q[i]; };
     inline double VB_y(int i) { return _vb_y_q[i]; };
     inline double VB_z(int i) { return _vb_z_q[i]; };
+    // Unit flux-jump lift psi (branch a / branch b, value and physical gradient) at the current
+    // quadrature point: zero at every node, continuous across the interface, and
+    // mb*dpsi_b/dn - ma*dpsi_a/dn = 1 with n the interface normal (from branch a to branch b).
+    // The basis itself is always built for a homogeneous flux jump; a prescribed jump J_f is
+    // represented by adding J_f*psi to the trial function once (like the solution-jump lift).
+    inline double PSIA() { return _psi_q[0]; };
+    inline double PSIA_x() { return _psi_q[1]; };
+    inline double PSIA_y() { return _psi_q[2]; };
+    inline double PSIB() { return _psi_q[3]; };
+    inline double PSIB_x() { return _psi_q[4]; };
+    inline double PSIB_y() { return _psi_q[5]; };
     inline double *get_normal()
     {
       return level_set_normal;
@@ -284,6 +307,11 @@ namespace equivalent_polynomials
     double phi[nDOF_phi] = {}, nodes[nDOF_phi * 3] = {};
     double _a1[nP_ifem] = {}, _a2[nP_ifem] = {}, _a3[nP_ifem] = {}, _b1[nP_ifem] = {}, _b2[nP_ifem] = {}, _b3[nP_ifem] = {};
     double _a4[nP_ifem] = {}, _a5[nP_ifem] = {}, _a6[nP_ifem] = {}, _b4[nP_ifem] = {}, _b5[nP_ifem] = {}, _b6[nP_ifem] = {};
+    // unit flux-jump lift: coefficients (same monomial order as _a1.._a6) and values/gradients
+    // [psi_a, psi_a_x, psi_a_y, psi_b, psi_b_x, psi_b_y] at the quadrature points
+    double _lift_a[6] = {0., 0., 0., 0., 0., 0.}, _lift_b[6] = {0., 0., 0., 0., 0., 0.};
+    double _psi[nQ * 6] = {}, _psi_ebq[nEBQ * 6] = {}, _psi_q[6] = {0., 0., 0., 0., 0., 0.};
+    inline void _calculate_lift(const double *xi, double *psi);
     double Jac[nSpace * nSpace] = {}, inv_Jac[nSpace * nSpace] = {}, det_Jac = 0.;
     double level_set_normal[nSpace], X_0[nSpace], phys_nodes_cut[(nN - 1) * 3], THETA_01, THETA_02, THETA_31, THETA_32, phys_nodes_cut_quad_01[3], phys_nodes_cut_quad_02[3], phys_nodes_cut_quad_31[3], phys_nodes_cut_quad_32[3];
     static const unsigned int nDOF = ((nSpace - 1) / 2) * (nSpace - 2) * (nP + 1) * (nP + 2) * (nP + 3) / 6 + (nSpace - 1) * (3 - nSpace) * (nP + 1) * (nP + 2) / 2 + (2 - nSpace) * ((3 - nSpace) / 2) * (nP + 1);
@@ -799,7 +827,7 @@ namespace equivalent_polynomials
           if (inside_out)
           {
             const std::array<double, 6> coeffs = proteus::solve_ifem_basis_coefficients(
-              1, x0, y0, nx, ny, mb, ma, jf, Jit00, Jit01, Jit10, Jit11, nodal_values);
+              1, x0, y0, nx, ny, mb, ma, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
               
             _b1[i] = coeffs[0];
             _b2[i] = coeffs[1];
@@ -812,7 +840,7 @@ namespace equivalent_polynomials
           {
 
             const std::array<double, 6> coeffs = proteus::solve_ifem_basis_coefficients(
-              1, x0, y0, nx, ny, ma, mb, jf, Jit00, Jit01, Jit10, Jit11, nodal_values);
+              1, x0, y0, nx, ny, ma, mb, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
             
             _a1[i] = coeffs[0];
             _a2[i] = coeffs[1];
@@ -870,7 +898,7 @@ namespace equivalent_polynomials
           {
              const std::array<double, 6> nodal_values = {v[0], v[1], v[2], v[3], v[4], v[5]};
              const std::array<double, 12> coeffs = proteus::solve_ifem_basis_coefficients(
-              2, x0, y0, nx, ny, mb, ma, jf, Jit00, Jit01, Jit10, Jit11, nodal_values);
+              2, x0, y0, nx, ny, mb, ma, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
             
             _b1[i] = coeffs[0];
             _b2[i] = coeffs[1];
@@ -889,7 +917,7 @@ namespace equivalent_polynomials
           {
             const std::array<double, 6> nodal_values = {v[0], v[1], v[2], v[3], v[4], v[5]};
             const std::array<double, 12> coeffs = proteus::solve_ifem_basis_coefficients(
-              2, x0, y0, nx, ny, ma, mb, jf, Jit00, Jit01, Jit10, Jit11, nodal_values);
+              2, x0, y0, nx, ny, ma, mb, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
 
               _a1[i] = coeffs[0];
               _a2[i] = coeffs[1];
@@ -910,6 +938,76 @@ namespace equivalent_polynomials
     }
     default:
       throw std::runtime_error("Simplex::_calculate_coefficients not implemented for order > 2");
+    }
+    // Unit flux-jump lift: zero nodal values, flux jump 1. The solve is linear in (nodal values,
+    // jf), so a basis built with jf != 0 would carry one copy of this function per basis function;
+    // it is kept separate and added once by the caller, scaled by the prescribed jump.
+    (void)jf;
+    for (int i = 0; i < 6; i++)
+    {
+      _lift_a[i] = 0.0;
+      _lift_b[i] = 0.0;
+    }
+    if (!(corner || edge))
+    {
+      // The solver imposes  m_second*dpsi_second/dn_s - m_first*dpsi_first/dn_s = jf  with
+      // n_s = +-level_set_normal, and level_set_normal is the cut tangent rotated by 90 degrees: its
+      // sign follows the order of the cut points, not the direction of phi. (The homogeneous basis
+      // never notices.) In both inside_out branches the physical jump from a (phi<0) to b (phi>0) is
+      // jf*sign(level_set_normal . grad phi), so that sign is passed as jf for a unit jump.
+      const double gphi_ref[2] = {phi[1] - phi[0], phi[2] - phi[0]};
+      double n_dot_gphi = 0.0;
+      for (int I = 0; I < 2; I++)
+      {
+        double g = 0.0;
+        for (int J = 0; J < 2; J++)
+          g += inv_Jac[J * nSpace + I] * gphi_ref[J];
+        n_dot_gphi += g * level_set_normal[I];
+      }
+      const double jf_unit = (n_dot_gphi >= 0.0) ? 1.0 : -1.0;
+      double *first = inside_out ? _lift_b : _lift_a, *second = inside_out ? _lift_a : _lift_b;
+      const double m_first = inside_out ? mb : ma, m_second = inside_out ? ma : mb;
+      if (nP_ifem == 3)
+      {
+        const std::array<double, 3> zero = {0., 0., 0.};
+        const std::array<double, 6> c = proteus::solve_ifem_basis_coefficients(
+            1, x0, y0, nx, ny, m_first, m_second, jf_unit, Jit00, Jit01, Jit10, Jit11, zero);
+        for (int i = 0; i < 3; i++)
+        {
+          first[i] = c[i];
+          second[i] = c[3 + i];
+        }
+      }
+      else if (nP_ifem == 6)
+      {
+        const std::array<double, 6> zero = {0., 0., 0., 0., 0., 0.};
+        const std::array<double, 12> c = proteus::solve_ifem_basis_coefficients(
+            2, x0, y0, nx, ny, m_first, m_second, jf_unit, Jit00, Jit01, Jit10, Jit11, zero);
+        for (int i = 0; i < 6; i++)
+        {
+          first[i] = c[i];
+          second[i] = c[6 + i];
+        }
+      }
+    }
+  }
+
+  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ>
+  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ>::_calculate_lift(const double *xi, double *psi)
+  {
+    const double *c[2] = {_lift_a, _lift_b};
+    for (int s = 0; s < 2; s++)
+    {
+      const double *a = c[s];
+      const double val = a[0] + a[1] * xi[0] + a[2] * xi[1] + a[3] * xi[0] * xi[1] + a[4] * xi[0] * xi[0] + a[5] * xi[1] * xi[1];
+      const double g_ref[2] = {a[1] + a[3] * xi[1] + 2.0 * a[4] * xi[0], a[2] + a[3] * xi[0] + 2.0 * a[5] * xi[1]};
+      double g[2] = {0.0, 0.0};
+      for (int I = 0; I < nSpace && I < 2; I++)
+        for (int J = 0; J < nSpace && J < 2; J++)
+          g[I] += inv_Jac[J * nSpace + I] * g_ref[J];
+      psi[3 * s + 0] = val;
+      psi[3 * s + 1] = g[0];
+      psi[3 * s + 2] = g[1];
     }
   }
 
@@ -1220,6 +1318,7 @@ namespace equivalent_polynomials
               _calculate_basis(xi, &_va[q * nP_ifem], &_vb[q * nP_ifem]);
               _calculate_basis_gradients(xi, &_va_x[q * nP_ifem], &_va_y[q * nP_ifem], &_vb_x[q * nP_ifem], &_vb_y[q * nP_ifem]);
             }
+            _calculate_lift(xi, &_psi[q * 6]);
           }
           else if (nSpace == 3)
             _calculate_polynomial_3D<nP>(xi, C_H, C_ImH, C_D, _H[q], _ImH[q], _D[q]);
@@ -1263,6 +1362,7 @@ namespace equivalent_polynomials
             _calculate_basis(xi, &_va_ebq[ebq * nP_ifem], &_vb_ebq[ebq * nP_ifem]);
             _calculate_basis_gradients(xi, &_va_x_ebq[ebq * nP_ifem], &_va_y_ebq[ebq * nP_ifem], &_vb_x_ebq[ebq * nP_ifem], &_vb_y_ebq[ebq * nP_ifem]);
           }
+          _calculate_lift(xi, &_psi_ebq[ebq * 6]);
         }
         else if (nSpace == 3)
           _calculate_polynomial_3D<nP>(xi, C_H, C_ImH, C_D, _H_ebq[ebq], _ImH_ebq[ebq], _D_ebq[ebq]);
@@ -1413,6 +1513,12 @@ namespace equivalent_polynomials
       else
         return regularized.VB_z(i);
     }
+    inline double PSIA() { return useExact ? exact.PSIA() : regularized.PSIA(); }
+    inline double PSIA_x() { return useExact ? exact.PSIA_x() : regularized.PSIA_x(); }
+    inline double PSIA_y() { return useExact ? exact.PSIA_y() : regularized.PSIA_y(); }
+    inline double PSIB() { return useExact ? exact.PSIB() : regularized.PSIB(); }
+    inline double PSIB_x() { return useExact ? exact.PSIB_x() : regularized.PSIB_x(); }
+    inline double PSIB_y() { return useExact ? exact.PSIB_y() : regularized.PSIB_y(); }
   };
 } // equivalent_polynomials
 

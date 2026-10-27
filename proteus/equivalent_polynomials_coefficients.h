@@ -2976,38 +2976,51 @@ namespace equivalent_polynomials
       areaB = mB[0];
     }
 
-    // Composite Dirac: split the solid surface between the two fluid regions.
+    // Composite Dirac, general form: fit the Dirac measure of ONE level set's own zero curve,
+    // {phi_target = 0}, split by the SIGN of a second, independent level set phi_split.
     //
-    // The Nitsche condition on an embedded solid integrates over Gamma_s. When the fluid
-    // interface also crosses the element, that surface has a water part and an air part, and each
-    // needs its own material coefficient and its own side of the reconstructed basis. Weighting
-    // the single-cut Dirac by a region fit (ImH_f * D_s) is the product-of-two-fits error again --
-    // measured at ~31% on the segment length, worse than the volume case.
+    // Any Nitsche/Dirac-delta term that integrates over a curve inside an element cut by a
+    // SECOND, independent curve needs this: weighting a single-cut Dirac by a region fit
+    // (e.g. ImH_f * D_s) is a product-of-two-fits error, not moment-exact -- measured at ~31%
+    // on the segment length, worse than the volume-weight case (see composite::weights above).
+    // So fit one Dirac per sub-segment instead, exactly as for the volume regions: right-hand
+    // side = the monomial moments along that piece of {phi_target=0}, then multiply by the
+    // inverse Gram matrix.
     //
-    // So fit one Dirac per sub-segment instead, exactly as for the volume regions: right-hand side
-    // = the monomial moments along that piece of Gamma_s, then multiply by the inverse Gram matrix.
+    //   nodes   : the element's three physical vertices, (x,y) pairs. Needed only for the scale
+    //             factor below.
+    //   cLeft   : Dirac fit for {phi_target = 0} inside {phi_split < 0}
+    //   cRight  : Dirac fit for {phi_target = 0} inside {phi_split > 0}
     //
-    //   nodes : the element's three physical vertices, (x,y) pairs. Needed only for the scale
-    //           factor below.
-    //   cDA   : Dirac fit for Gamma_s inside {phi_f < 0}  (water)
-    //   cDB   : Dirac fit for Gamma_s inside {phi_f > 0}  (air)
+    // Two current uses, both instances of this one general fit:
+    //   - dirac_weights(phi_s, phi_f, ...) below: Gamma_s's own Dirac measure, split by which
+    //     fluid phase borders each stretch (cLeft = water, cRight = air) -- the Nitsche term
+    //     on Gamma_s needs both, since the water and air sides carry different material data.
+    //   - Gamma_f's own Dirac measure (e.g. the prescribed-flux-jump source, [beta du/dn]*D_f
+    //     in ADR.h), split by edge_weights(phi_f, phi_s, ..., cMasked, cActive): the piece
+    //     inside the solid (cLeft = cMasked) must NOT contribute -- only cRight = cActive (the
+    //     part of Gamma_f actually still inside the active fluid domain) belongs in the
+    //     residual. Using the plain, single-curve Dirac fit for Gamma_f here (ignoring Gamma_s
+    //     entirely) double-counts whatever part of Gamma_f's chord falls inside the masked-out
+    //     solid -- exactly the composite-vs-product error above, for the flux-jump term
+    //     specifically.
     //
     // Scale: the moments are built in reference arc length, but the assembly integrates with the
     // physical volume measure, so each fit carries kappa = L_phys / (L_ref * |J|). The map is
     // affine and the segment straight, so kappa is a single constant.
     template <int nP>
-    inline bool dirac_weights(const double phi_s[3], const double phi_f[3], const double nodes[6],
-                              double *cDA, double *cDB)
+    inline bool edge_weights(const double phi_target[3], const double phi_split[3], const double nodes[6],
+                             double *cLeft, double *cRight)
     {
       const int nDOF = ((nP + 1) * (nP + 2)) / 2;
-      // endpoints of {phi_s = 0} on the reference triangle
+      // endpoints of {phi_target = 0} on the reference triangle
       const double V[3][2] = {{0., 0.}, {1., 0.}, {0., 1.}};
       double Q[2][2];
       int nq = 0;
       for (int e = 0; e < 3 && nq < 2; ++e)
       {
         const int a = e, b = (e + 1) % 3;
-        const double sa = phi_s[a], sb = phi_s[b];
+        const double sa = phi_target[a], sb = phi_target[b];
         if (sa * sb < 0.0)
         {
           const double t = sa / (sa - sb);
@@ -3031,8 +3044,8 @@ namespace equivalent_polynomials
       const double Lphys = std::sqrt(dx * dx + dy * dy);
       const double kappa = Lphys / (Lref * detJ);
 
-      // where does the fluid interface cut this segment?
-      const double f0 = phi_f[0], fx = phi_f[1] - phi_f[0], fy = phi_f[2] - phi_f[0];
+      // where does the splitting curve cut this segment?
+      const double f0 = phi_split[0], fx = phi_split[1] - phi_split[0], fy = phi_split[2] - phi_split[0];
       const double g0 = f0 + fx * Q[0][0] + fy * Q[0][1];
       const double g1 = f0 + fx * Q[1][0] + fy * Q[1][1];
       double loA = 0.0, hiA = 1.0, loB = 0.0, hiB = 1.0;
@@ -3071,14 +3084,25 @@ namespace equivalent_polynomials
       _set_Ainv<2, nP>(Ainv);
       for (int i = 0; i < nDOF; ++i)
       {
-        cDA[i] = 0.0; cDB[i] = 0.0;
+        cLeft[i] = 0.0; cRight[i] = 0.0;
         for (int j = 0; j < nDOF; ++j)
         {
-          cDA[i] += Ainv[i * nDOF + j] * bA[j];
-          cDB[i] += Ainv[i * nDOF + j] * bB[j];
+          cLeft[i] += Ainv[i * nDOF + j] * bA[j];
+          cRight[i] += Ainv[i * nDOF + j] * bB[j];
         }
       }
       return true;
+    }
+
+    // Gamma_s's own Dirac measure, split by which fluid phase (Gamma_f's sign) borders each
+    // stretch -- cDA = water side, cDB = air side. A thin, semantically-named wrapper around
+    // the general edge_weights above; unchanged behavior/signature from before edge_weights
+    // existed, so every existing call site is untouched.
+    template <int nP>
+    inline bool dirac_weights(const double phi_s[3], const double phi_f[3], const double nodes[6],
+                              double *cDA, double *cDB)
+    {
+      return edge_weights<nP>(phi_s, phi_f, nodes, cDA, cDB);
     }
 
     // Composite weights for an element cut by both level sets.
