@@ -283,6 +283,10 @@ namespace equivalent_polynomials
     int edge = 0, corner = 0;
     bool split = false;
     bool flip_the_cell = false;
+    // set when the P2 cut logic deliberately reverses the cell orientation (see
+    // _calculate_permutation); its D already has the intended sign, so the
+    // orientation correction in _calculate_C must not be applied again.
+    bool p2_cell_flipped = false;
 
   private:
     int P2_ifem_case = 0;
@@ -401,7 +405,7 @@ namespace equivalent_polynomials
       // handed in with negative orientation therefore produced a sign-flipped D (test_2D/3D).
       // Correct the sign here rather than reordering the permutation: the permutation feeds
       // solve_ifem_basis_coefficients, and reordering it changes the P2 IFEM basis.
-      if (det_Jac < 0.0)
+      if (det_Jac < 0.0 && !p2_cell_flipped)
         for (unsigned int i = 0; i < nDOF; i++)
           C_D[i] = -C_D[i];
     }
@@ -425,6 +429,7 @@ namespace equivalent_polynomials
       permutation[3] = permutation[5];
       permutation[5] = temp;
       flip_the_cell = false;
+      p2_cell_flipped = true;
 
       // std::cout << "Flipping the permutation to: " << std::endl;
       // for (unsigned int i = 0; i < nP_ifem; i++)
@@ -1149,6 +1154,7 @@ namespace equivalent_polynomials
   template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
   inline int Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::calculate(const double *phi_dof, const double *phi_nodes, const double *xi_r, double ma, double mb, double jf, bool isBoundary, bool scale)
   {
+    p2_cell_flipped = false;
     // initialize phi_dof_corrected -- correction can only be actually computed on cut cells
     for (unsigned int i = 0; i < nDOF_phi; i++)
       phi_dof_corrected[i] = phi_dof[i];
