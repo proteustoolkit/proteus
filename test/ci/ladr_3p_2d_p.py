@@ -56,7 +56,9 @@ opts = Context.Options([
     ("refinement", 0, "number of times to refine the mesh (default is 0)"),
     ("nCells", 0, "cells per side of the square; overrides refinement when > 0 (e.g. 10*2**k\n"
      "        to match the node counts of the fitted and unstructured meshes)"),
-    ("qOrder", 6, "order of quadrature (default is 6)"),
+    ("qOrder", 0, "order of quadrature. 0 (default) picks 6 for pOrder=1 and 8 for pOrder=2: the manuscript\n"
+     "        tables for p=2 are reproduced with order 8 (order 6 leaves a few-percent quadrature error in the\n"
+     "        facet and Gamma_s terms), and the P1 model has no order-8 instantiation."),
     ("pOrder", 1, "order of FEM basis (default is 1)"),
     ("usePetsc", False, "Use PETSc linear solvers"),
     ("name", "ladr_3p_2d", "name of the test (default is ladr_3p_2d)"),

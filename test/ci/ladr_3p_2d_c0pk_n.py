@@ -15,8 +15,9 @@ elif opts.pOrder == 2:
     femSpaces = {0:C0_AffineQuadraticOnSimplexWithNodalBasis}
 else:
     raise ValueError("pOrder must be 1 or 2")
-elementQuadrature = SimplexGaussQuadrature(nd,opts.qOrder)
-elementBoundaryQuadrature = SimplexGaussQuadrature(nd-1,opts.qOrder)
+qOrder = opts.qOrder if opts.qOrder > 0 else (8 if opts.pOrder == 2 else 6)
+elementQuadrature = SimplexGaussQuadrature(nd,qOrder)
+elementBoundaryQuadrature = SimplexGaussQuadrature(nd-1,qOrder)
 
 nnx = opts.nCells + 1 if opts.nCells > 0 else 4*2**opts.refinement + 1
 nny = nnx
