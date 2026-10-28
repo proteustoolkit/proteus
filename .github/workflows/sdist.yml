@@ -118,6 +118,10 @@ jobs:
             echo "-- python ${{ matrix.python }} differs from the file's pin $FILE_PY; converting exact pins to floors"
             sed -i.bak -E 's/^(  - [a-z0-9_.-]+) *=([0-9][^ =]*)(=[^ ]*)$/\1 >=\2\3/' environment-ci.yml
             sed -i.bak -E 's/^(  - [a-z0-9_.-]+) *=([0-9][^ =]*)$/\1 >=\2/' environment-ci.yml
+            # pytest 9.2.0 breaks pytest-forked 1.7.5: every test it forks reports "running the
+            # test EXITED with status 3" (556 of 556 on linux-aarch64, PR #1292). The floor
+            # above would take 9.2.0; the exact pins that other legs use keep 9.1.1.
+            sed -i.bak -E 's/^(  - pytest) *>=([0-9][^ ,]*)$/\1 >=\2,<9.2/' environment-ci.yml
             sed -i.bak "s/^  - python >=.*/  - python =${{ matrix.python }}/" environment-ci.yml
           fi
           rm -f environment-ci.yml.bak
