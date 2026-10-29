@@ -125,6 +125,10 @@ jobs:
             echo "-- python ${{ matrix.python }} differs from the file's pin $FILE_PY; converting exact pins to floors"
             sed -i.bak -E 's/^(  - [a-z0-9_.-]+) *=([0-9][^ =]*)(=[^ ]*)$/\1 >=\2\3/' environment-ci.yml
             sed -i.bak -E 's/^(  - [a-z0-9_.-]+) *=([0-9][^ =]*)$/\1 >=\2/' environment-ci.yml
+            # pytest 9.2.0 breaks pytest-forked 1.7.5: every test it forks reports "running the
+            # test EXITED with status 3" (556 of 556 on linux-aarch64, PR #1292). The floor
+            # above would take 9.2.0; the exact pins that other legs use keep 9.1.1.
+            sed -i.bak -E 's/^(  - pytest) *>=([0-9][^ ,]*)$/\1 >=\2,<9.2/' environment-ci.yml
             sed -i.bak "s/^  - python >=.*/  - python =${{ matrix.python }}/" environment-ci.yml
           fi
           rm -f environment-ci.yml.bak
@@ -166,6 +170,13 @@ jobs:
           # single-threaded BLAS instead.
           export OPENBLAS_NUM_THREADS=1
           export OMP_NUM_THREADS=1
+          # Open MPI picks UCX for point-to-point, and on a runner whose network card is an
+          # Azure MANA one (some ubuntu-24.04-arm VMs; others have none) UCX tries
+          # ud_verbs/mana_0, fails with "Address not valid", and MPI_Init aborts: every
+          # multi-process test then fails (19 on linux-aarch64, PR #1301) while the single-process
+          # ones pass. The runner needs no RDMA transport, so use the plain ob1 path. MPICH
+          # ignores the variable.
+          export OMPI_MCA_pml=ob1
           mkdir test_output && cd test_output
           # These are known-failing (real numerics/environment issues, not
           # collection errors) and deliberately left unskipped in source so
