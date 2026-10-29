@@ -14,6 +14,13 @@ on:
     branches: [main, 1.9.x]
   pull_request:
 
+# The standard macOS runners are the bottleneck (a median wait of 7-9 h, p90 17-21 h, against 0 min on Linux), and every
+# push to a pull request left the previous run queued. A pull request's older run is cancelled when it is pushed to
+# again; runs for pushes to main and 1.9.x each get their own group, so every commit there keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
