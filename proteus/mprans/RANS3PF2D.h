@@ -1837,6 +1837,8 @@ namespace proteus
         proteus::pyarray<int>& csrColumnOffsets_1D = args.array<int>("csrColumnOffsets_1D");
         proteus::pyarray<int>& rowptr_1D = args.array<int>("rowptr_1D");
         proteus::pyarray<int>& colind_1D = args.array<int>("colind_1D");
+        proteus::pyarray<double>& uStar_psi_dof = args.array<double>("uStar_psi_dof");
+        proteus::pyarray<double>& vStar_psi_dof = args.array<double>("vStar_psi_dof");
         proteus::pyarray<double>& isBoundary_1D = args.array<double>("isBoundary_1D");
         int INT_BY_PARTS_PRESSURE = args.scalar<int>("INT_BY_PARTS_PRESSURE");
         gf.useExact=useExact;
@@ -3300,41 +3302,11 @@ namespace proteus
 		  }
 		else // via smoothness indicator
 		  {
-		    // computation of beta
-		    double uStari = uStar_dof[i];
-		    double vStari = vStar_dof[i];
-
-		    double u_beta_numerator = 0., u_beta_denominator = 0.;
-		    double v_beta_numerator = 0., v_beta_denominator = 0.;
-
-		    // loop on sparsity pattern
-		    for (int offset=rowptr_1D[i]; offset<rowptr_1D[i+1]; offset++)
-		      {
-			int j = colind_1D[offset];
-			double uStarj = uStar_dof[j];
-			double vStarj = vStar_dof[j];
-
-			// for u component
-			u_beta_numerator += (uStarj - uStari);
-			u_beta_denominator += fabs(uStarj - uStari);
-			// for v component
-			v_beta_numerator += (vStarj - vStari);
-			v_beta_denominator += fabs(vStarj - vStari);
-		      }
-		    double u_beta = fabs(u_beta_numerator)/(u_beta_denominator+1E-10);
-		    double v_beta = fabs(v_beta_numerator)/(v_beta_denominator+1E-10);
-		    // compute psi=beta^power
-		    if (ANISOTROPIC_DIFFUSION==1)
-		      {
-			uStar_psi[i] = (POWER_SMOOTHNESS_INDICATOR==0 ? 1.0 : std::pow(u_beta, POWER_SMOOTHNESS_INDICATOR));
-			vStar_psi[i] = (POWER_SMOOTHNESS_INDICATOR==0 ? 1.0 : std::pow(v_beta, POWER_SMOOTHNESS_INDICATOR));
-		      }
-		    else // ISOTROPIC ARTIFICIAL DIFFUSION
-		      {
-			double psi = (POWER_SMOOTHNESS_INDICATOR==0 ? 1.0 : std::pow(fmax(u_beta,v_beta), POWER_SMOOTHNESS_INDICATOR));
-			uStar_psi[i] = psi;
-			vStar_psi[i] = psi;
-		      }
+		    // The smoothness indicator psi of dof i is computed in Python from the lagged star
+		    // velocities once per time step, on the dofs whose graph rows are complete, and scattered
+		    // to the ghosts. Computing it here for a ghost dof would use a truncated row.
+		    uStar_psi[i] = uStar_psi_dof[i];
+		    vStar_psi[i] = vStar_psi_dof[i];
 		    // for computation of gamma
 		    uStar_hi[i] /= den_hi[i];
 		    vStar_hi[i] /= den_hi[i];
