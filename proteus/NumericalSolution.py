@@ -673,8 +673,11 @@ class NS_base(object):  # (HasTraits):
             #the spin-up above, and the step controllers' initializeTimeHistory
             #in initialize_dt_system, rebuilt the lag state from the restart
             #state; put back the state the archived step ended with
-            for index,m in enumerate(self.modelList):
-                self.restoreSolverState(m,index,self.tCount)
+            restored = [self.restoreSolverState(m,index,self.tCount) for index,m in enumerate(self.modelList)]
+            if all(restored):
+                #the models' first-step branches (a low-order first step, no extrapolation from the
+                #previous solutions) belong to a run with no history; this one has its history back
+                self.firstStep = False
             synced = [m for m in self.modelList if hasattr(m.stepController,"syncAfterRestore")]
             if synced:
                 for m in synced:
@@ -1219,7 +1222,7 @@ class NS_base(object):  # (HasTraits):
     SOLVER_STATE_GROUP = "solver_state"
 
     #: the lagged objects of a level model whose state a hot start restores
-    SOLVER_STATE_OWNERS = ("shockCapturing", "stabilization", "timeIntegration")
+    SOLVER_STATE_OWNERS = ("shockCapturing", "stabilization", "timeIntegration", "coefficients")
 
     def _solver_state_group_path(self, model, owner=None):
         path = "%s/%s" % (self.SOLVER_STATE_GROUP, model.name)
@@ -1329,16 +1332,16 @@ class NS_base(object):  # (HasTraits):
         that wrote it (same number of ranks and the same pieces of the mesh): if
         any rank finds another step or another fingerprint, none restores and
         the run goes on as a restart, history rebuilt from the restart state,
-        with a message saying so.
+        with a message saying so. Returns whether the state was restored.
         """
         ar = self.ar[index]
         hdf = ar.hdfFile
         if ar.inline or ar.dataItemFormat != "HDF" or hdf is None:
-            return
+            return False
         if self.opts.hotStartMode == "restart":
             logEvent("Hot start (restart): the history of model %s is rebuilt from the restart state" % model.name,
                      level=0)
-            return
+            return False
         base = self._solver_state_group_path(model)
         suffix = "_p%d" % ar.rank
         from mpi4py import MPI
@@ -1369,7 +1372,7 @@ class NS_base(object):  # (HasTraits):
                 why = "none was archived, or it was written by a different number of ranks or partition"
             logEvent("Hot start: no solver state to restore at step %d for model %s (%s); "
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
-            return
+            return False
         for owner, obj in self._solver_state_owners(model):
             if obj.state() is None or not hasattr(obj, "set_state"):
                 continue
@@ -1386,6 +1389,7 @@ class NS_base(object):  # (HasTraits):
                 value = hdf[path][name][...]
                 st[key] = value if kind == "a" else value.reshape(-1)[0].item()
             obj.set_state(st)
+        return True
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None):

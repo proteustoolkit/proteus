@@ -681,8 +681,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                     self.q_phi[i, j] = self.phaseFunction(pt)
                     self.q_vf[i, j] = smoothedHeaviside(self.epsFact * he, self.phaseFunction(pt))
             for i, quad_pts in enumerate(self.model.ebqe['x']):
+                # ebqe is indexed by exterior element boundary, not by element: use the diameter of the element
+                # that owns the boundary. (On a partition with more exterior boundaries than elements the old
+                # elementDiameter[i] ran off the end; elsewhere it silently used an unrelated element's size.)
+                ebN = self.mesh.exteriorElementBoundariesArray[i]
+                he = self.elementDiameter[self.mesh.elementBoundaryElementsArray[ebN, 0]]
                 for j, pt in enumerate(quad_pts):
-                    he = self.elementDiameter[i]
                     self.ebqe_phi[i, j] = self.phaseFunction(pt)
                     self.ebqe_vf[i, j] = smoothedHeaviside(self.epsFact * he, self.phaseFunction(pt))
         if self.use_ball_as_particle:

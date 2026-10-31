@@ -18,6 +18,14 @@ class SGE_base(object):
         self.coefficients=coefficients
         self.trackSubScales = trackSubScales
         self.usesGradientStabilization = False
+    def state(self):
+        """Nothing to carry beyond the solution (the state contract, see TimeIntegration.TI_base.state)."""
+        return None
+
+    def set_state(self, state):
+        """Restore what ``state()`` returned; see TimeIntegration.TI_base.state."""
+        pass
+
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
         self.tau=[]

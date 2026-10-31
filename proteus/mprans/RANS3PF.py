@@ -88,7 +88,7 @@ class NumericalFlux(
         self.hasInterior = False
 
 
-class ShockCapturing(proteus.ShockCapturing.ShockCapturing_base):
+class ShockCapturing(proteus.ShockCapturing.DelayedLagState, proteus.ShockCapturing.ShockCapturing_base):
 
     def __init__(
             self,
@@ -936,6 +936,36 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
       
     def evaluate(self, t, c):
         pass
+
+    #: what preStep and postStep leave on the level model for the next step: the entropy residual of the
+    #: last step, the two previous solutions (for the extrapolated star velocity), dt, the first-step flag,
+    #: and the velocity at the quadrature points as it was after the last step and before it. A hot start
+    #: rebuilds them from the restart state, which is not the state the archived step ended with.
+    _state_model_arrays = ("entropyResidualPerNode", "u_dof_old", "v_dof_old", "w_dof_old",
+                           "u_dof_old_old", "v_dof_old_old", "w_dof_old_old")
+    _state_q_arrays = (('velocity', 0), ('velocityOld', 0))
+
+    def state(self):
+        m = getattr(self, "model", None)
+        if m is None or not hasattr(m, "entropyResidualPerNode"):
+            return None
+        st = {"dt_last": float(getattr(m, "dt_last", 0.0)), "firstStep": bool(m.firstStep)}
+        for name in self._state_model_arrays:
+            if hasattr(m, name):
+                st[name] = getattr(m, name).copy()
+        for key in self._state_q_arrays:
+            st["q_%s_%d" % key] = m.q[key].copy()
+        return st
+
+    def set_state(self, state):
+        m = self.model
+        m.dt_last = state["dt_last"]
+        m.firstStep = bool(state["firstStep"])
+        for name in self._state_model_arrays:
+            if name in state and hasattr(m, name):
+                getattr(m, name)[:] = state[name]
+        for key in self._state_q_arrays:
+            m.q[key][:] = state["q_%s_%d" % key]
 
     def preStep(self, t, firstStep=False):
         if firstStep:

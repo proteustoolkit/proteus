@@ -2292,7 +2292,29 @@ class DiscontinuousGalerkinDOFMap(DOFMap):
     A DOF map to use with discontinuous Galerkin spaces, which have
     unique degrees of freedom on each element.
     """
+    @staticmethod
+    def requireEveryRankOwnsElements(mesh):
+        """Stop, on every rank at once, if a rank has no elements.
+
+        Continuous spaces tolerate an idle rank, but the DG trace and sparsity
+        code does not: the first empty rank fails in getBasisValuesTrace or
+        csparsity, and the ranks that did not fail wait forever in the next
+        collective call. The minimum is collective, so every rank raises.
+        """
+        from . import Comm
+        comm = Comm.get()
+        if comm.size() == 1:
+            return
+        nOwned = getattr(mesh, 'nElements_owned', mesh.nElements_global)
+        if comm.globalMin(nOwned) == 0:
+            raise RuntimeError(
+                "a discontinuous Galerkin space needs every rank to own elements, but "
+                "at least one of the %d ranks owns none (rank %d owns %d). "
+                "Use a finer mesh, fewer ranks, or a different parallelPartitioningType."
+                % (comm.size(), comm.rank(), nOwned))
+
     def __init__(self,mesh,localFunctionSpace):
+        self.requireEveryRankOwnsElements(mesh)
         DOFMap.__init__(self,mesh.nElements_global*localFunctionSpace.dim)
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
