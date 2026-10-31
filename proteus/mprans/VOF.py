@@ -1300,6 +1300,20 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_u_u"] = self.csrRowIndeces[(0, 0)]
         argsDict["csrColumnOffsets_u_u"] = self.csrColumnOffsets[(0, 0)]
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0, 0)]
+        if self.coefficients.STABILIZATION_TYPE == 2:
+            # entropy viscosity: the normalized entropy residual of a ghost dof comes from a truncated
+            # graph row and the dissipation of an owned dof reads it. Compute it (phase 0), scatter it,
+            # then the rest; phase 0 has already added the element residuals to r.
+            global_entropy_residual_dof = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["global_entropy_residual_dof"] = global_entropy_residual_dof
+            argsDict["phase"] = 0
+            self.calculateResidual(argsDict)
+            r.fill(0.0)
+            self.scatterDOFArray(global_entropy_residual_dof)
+            argsDict["phase"] = 1
+        else:
+            argsDict["global_entropy_residual_dof"] = self.psi_dof
+            argsDict["phase"] = 1
         self.calculateResidual(argsDict)
 
         if self.forceStrongConditions:

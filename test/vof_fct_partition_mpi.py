@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""VOF edge-based (STABILIZATION_TYPE=3, smoothness indicator) with FCT, a blob advected across a rank cut.
+"""VOF edge-based (STAB=3 smoothness indicator, the default, or STAB=2 entropy viscosity) with FCT, a blob advected across a rank cut.
 
 Run by test_vof_partition_independence.py under mpiexec in an empty directory; leaves u.csv (owned nodes,
 sorted by x, y). Same blob and velocity as vof_partition_mpi.py, explicit lumped-mass RKEV, node partition with one
@@ -64,7 +64,7 @@ p = defaults.Physics_base(nd=2, name="vof_part")
 p.domain = domain
 p.LevelModelType = VOF.LevelModel
 p.coefficients = Coefficients(LS_model=None, V_model=None, RD_model=None, ME_model=0,
-                              checkMass=False, epsFact=0.0, STABILIZATION_TYPE=3,
+                              checkMass=False, epsFact=0.0, STABILIZATION_TYPE=int(os.environ.get('STAB', '3')),
                               LUMPED_MASS_MATRIX=True, FCT=True)
 p.initialConditions = {0: Blob()}
 p.dirichletConditions = {0: inflow}

@@ -2112,6 +2112,12 @@ namespace proteus
         proteus::pyarray<double>& ebqe_flux = args.array<double>("ebqe_flux");
         int stage = args.scalar<int>("stage");
         proteus::pyarray<double>&  uTilde_dof = args.array<double>("uTilde_dof");
+        // With entropy viscosity the dissipation of an owned dof reads the normalized entropy residual
+        // of its neighbours: ghosts whose graph rows are truncated. Phase 0 stops after computing it
+        // (global_entropy_residual_dof); Python scatters it and calls again with phase 1, which
+        // recomputes everything up to there and takes the scattered values.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
         double cE = args.scalar<double>("cE");
         double cMax = args.scalar<double>("cMax");
         double cK = args.scalar<double>("cK");
@@ -2531,6 +2537,15 @@ namespace proteus
             // dissipation of an owned dof reads it, so Python computes it on the owners and scatters it.
             psi[i] = psi_dof.data()[i];
           }
+        if (phase == 0)
+          {
+            for (int i=0; i<numDOFs; i++)
+              global_entropy_residual_dof.data()[i] = global_entropy_residual[i];
+            return;
+          }
+        if (STABILIZATION_TYPE==2) //EV Stab
+          for (int i=0; i<numDOFs; i++)
+            global_entropy_residual[i] = global_entropy_residual_dof.data()[i];
         /////////////////////////////////////////////
         // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
         /////////////////////////////////////////////
