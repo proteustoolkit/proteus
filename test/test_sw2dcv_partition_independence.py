@@ -50,7 +50,7 @@ def _field(ranks, cwd, **overrides):
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 def test_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
-    for d in ("1", "2", "3", "4", "5", "6"):
+    for d in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
         (tmp_path / d).mkdir()
     serial = _field(1, tmp_path / "1")
     parallel = _field(2, tmp_path / "2")
@@ -62,3 +62,7 @@ def test_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
     assert numpy.abs(serial - ghosts).max() < 1e-10
     reads_ghosts = _field(2, tmp_path / "6", GHOSTCFL=1, OLDMAX=1)
     assert numpy.abs(serial - reads_ghosts).max() > 1e-6
+    # the consistent mass matrix: a linear solve per stage, whose tolerance decides how close the runs are
+    serial_c = _field(1, tmp_path / "7", CONSISTENT=1, TIGHT=1)
+    assert numpy.abs(serial_c - _field(2, tmp_path / "8", CONSISTENT=1, TIGHT=1)).max() < 1e-8
+    assert numpy.abs(serial_c - _field(2, tmp_path / "9", CONSISTENT=1)).max() > 1e-6
