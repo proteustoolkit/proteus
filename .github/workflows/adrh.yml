@@ -71,12 +71,11 @@ jobs:
   # GitHub-hosted larger runner with a GPU (Settings > Actions > Runners > New runner > Linux GPU; the 4-core
   # Tesla T4, Turing, sm75) and set the Actions variable ADRH_GPU_RUNNER to the runner's label, and optionally
   # ADRH_GPU_ARCH (Kokkos architecture name, default TURING75; AMPERE80, ADA89, HOPPER90 ...). With the variable
-  # unset the job is skipped. It runs nightly, on manual dispatch, and on pull requests labelled "gpu"; a fork with its
-  # own GPU sets ADRH_GPU_ON_PR=true to run it on every pull request that touches the paths above.
+  # unset the job is skipped. It runs nightly, on manual dispatch, and on pull requests labelled "gpu".
   gpu:
     if: >-
       vars.ADRH_GPU_RUNNER != '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && (vars.ADRH_GPU_ON_PR == 'true' || contains(github.event.pull_request.labels.*.name, 'gpu'))))
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'gpu')))
     name: CUDA ${{ vars.ADRH_GPU_ARCH || 'TURING75' }}
     runs-on: ${{ vars.ADRH_GPU_RUNNER }}
     timeout-minutes: 60

@@ -15,16 +15,6 @@ on:
   pull_request:
   # The macOS Intel legs do not run on pull requests (see matrix.exclude below); a manual run has them.
   workflow_dispatch:
-    inputs:
-      canary:
-        description: 'Canary: relax every exact pin to a floor on every leg (what the nightly schedule does)'
-        type: boolean
-        default: false
-  # Fork only (dev is the fork's default branch, and scheduled workflows run from the default branch): the nightly
-  # canary. It resolves every leg's environment from floors instead of the committed lock, so an upstream release
-  # that breaks us (pytest 9.2.0 vs pytest-forked, hypre 3.2.0 + complex PETSc) shows up here, not on a PR.
-  schedule:
-    - cron: '17 5 * * *'
 
 # Why: the standard macOS runners are the bottleneck. Measured over the last ~80 runs, Linux jobs start at once
 # (median wait 0 min) and macOS jobs wait a median of 7-9 h (p90 17-21 h) for a runner, then run for 20-90 min; a
@@ -38,11 +28,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    # Where a fork has its own machines, set the Actions variable FAST_LEGS to a comma-separated list of leg keys
-    # (linux-x64, linux-aarch64, macos-arm64, macos-x64) and those legs run on the self-hosted runner their `fast`
-    # label names instead of the GitHub-hosted one. Unset (the default, and the organisation's setting) every leg
-    # runs hosted, exactly as before; a machine that is down is dropped from the list.
-    runs-on: ${{ contains(format(',{0},', vars.FAST_LEGS), format(',{0},', matrix.leg.key)) && fromJSON(matrix.leg.fast) || matrix.leg.os }}
+    runs-on: ${{ matrix.leg.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -91,8 +77,6 @@ jobs:
             os: ubuntu-latest
             python: "3.12.5"
             env_file: environment-openmpi-dev.yml
-            key: linux-x64
-            fast: '["self-hosted","linux-x64"]'
             # This leg runs the suite under coverage (pyproject.toml,
             # [tool.coverage]) and keeps coverage.xml and the HTML report as
             # the job's artifacts: what the suite exercises of the proteus
@@ -105,14 +89,10 @@ jobs:
             os: ubuntu-latest
             python: "3.13.15"
             env_file: environment-openmpi-dev.yml
-            key: linux-x64
-            fast: '["self-hosted","linux-x64"]'
           - name: macos-15 (Intel) / py3.12
             os: macos-15-intel
             python: "3.12.5"
             env_file: environment-openmpi-dev.yml
-            key: macos-x64
-            fast: '["self-hosted","macos-x64"]'
             # This runner is shared and slow: a suite that takes 15 min on
             # Linux has taken 2 h 15 min here, and the tests' subprocess
             # timeouts (sized for a workstation) then report hangs that were
@@ -132,14 +112,10 @@ jobs:
             os: ubuntu-24.04-arm
             python: "3.12.5"
             env_file: environment-openmpi-dev.yml
-            key: linux-aarch64
-            fast: '["self-hosted","linux-aarch64"]'
           - name: macos-15 (Apple Silicon) / py3.12
             os: macos-15
             python: "3.12.5"
             env_file: environment-mpich-dev.yml
-            key: macos-arm64
-            fast: '["self-hosted","macos-arm64"]'
     name: ${{ matrix.leg.name }}${{ matrix.suite == 'fsi' && ' / FSI IBM' || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -152,7 +128,7 @@ jobs:
           # activate-environment below matches whichever one this leg copied
           sed -i.bak "s/^name: .*/name: proteus-dev/" environment-ci.yml
           FILE_PY=$(sed -n 's/^  - python =\(.*\)$/\1/p' environment-ci.yml)
-          if [ "${{ matrix.leg.python }}" = "$FILE_PY" ] && [ "${{ github.event_name == 'schedule' || inputs.canary }}" != "true" ]; then
+          if [ "${{ matrix.leg.python }}" = "$FILE_PY" ]; then
             # This leg's python IS the one the file pins, so use the file verbatim:
             # that is the only leg that actually tests the committed lock.
             echo "-- python ${{ matrix.leg.python }} matches the file's pin; using the lock as-is"
@@ -189,18 +165,8 @@ jobs:
           fi
           rm -f environment-ci.yml.bak
           cat environment-ci.yml
-      - name: Remove the conda environment a previous job left on this self-hosted runner
-        # Fork overlay: setup-miniconda updates an existing proteus-dev in place, and mamba then fails with
-        # "Cannot find a valid extracted directory cache" while unlinking and re-linking a package. Start clean.
-        if: runner.environment == 'self-hosted'
-        shell: bash
-        run: rm -rf "$HOME/miniconda3/envs/proteus-dev" "$HOME/conda_pkgs_dir"
       - name: Set up conda environment with PETSc/MPI/HDF5
         uses: conda-incubator/setup-miniconda@v3
-        env:
-          # Fork overlay: a fresh package cache per job. A cache that persists between jobs on a self-hosted
-          # runner goes stale ("Cannot find a valid extracted directory cache") after a cancelled run.
-          CONDA_PKGS_DIRS: ${{ runner.temp }}/conda_pkgs
         with:
           miniforge-version: latest
           environment-file: environment-ci.yml
@@ -436,19 +402,7 @@ jobs:
             python -m pytest -v -n 2 --dist load --import-mode=importlib \
               --durations=5 "${FSI_IBM_TESTS[@]/#/../}"
           else
-            # Fork overlay: on a self-hosted runner "-n auto" is every core of the machine, and several
-            # runners share one machine (and the tests start 2-3 MPI ranks each). Give each runner its share of
-            # the cores, halved for the ranks, capped at 24. Hosted runners keep "auto".
-            XDIST=auto
-            if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
-              SIBS=$(ls -d "$(dirname "$(cd "$RUNNER_TEMP/../.." && pwd)")"/actions-runner-cekees* 2>/dev/null | wc -l)
-              NCPU=$(python -c 'import os; print(os.cpu_count())')
-              XDIST=$(( NCPU / (SIBS > 0 ? SIBS : 1) / 2 ))
-              [ "$XDIST" -lt 2 ] && XDIST=2
-              [ "$XDIST" -gt 24 ] && XDIST=24
-            fi
-            echo "pytest workers: $XDIST"
-            python -m pytest -v -n "$XDIST" --dist load --import-mode=importlib \
+            python -m pytest -v -n auto --dist load --import-mode=importlib \
               --durations=30 "${COV_ARGS[@]}" "${DESELECT_ARGS[@]}" "${IGNORE_ARGS[@]}" \
               "${FSI_IBM_TESTS[@]/#/--deselect=}" ../test
           fi
