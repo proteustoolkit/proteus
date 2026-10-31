@@ -17,7 +17,7 @@ from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
-from proteus.LinearAlgebraTools import SparseMat
+from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF
 from proteus import TimeIntegration
 from . import cVOS3P
@@ -1064,6 +1064,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.fluxMatrix = None
         self.uDotLow = None
         self.uLow = None
+        self._dofVecs = {}
         self.dt_times_dC_minus_dL = None
         self.min_u_bc = None
         self.max_u_bc = None
@@ -1170,9 +1171,25 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.mesh.nodeVelocityArray = np.zeros(
                 self.mesh.nodeArray.shape, 'd')
 
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
     def FCTStep(self):
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
         limited_solution = np.zeros((len(rowptr) - 1),'d')
+        # uLow of a ghost dof is built from a truncated graph row in calculateResidual, and the
+        # limiter of an owned dof reads it, so take the owners' values
+        self.scatterDOFArray(self.uLow)
         self.u_free_dof_stage_0_l = np.zeros((len(rowptr) - 1),'d')
         self.timeIntegration.u_dof_stage[0][self.timeIntegration.lstage],  # soln
         fromFreeToGlobal=0
