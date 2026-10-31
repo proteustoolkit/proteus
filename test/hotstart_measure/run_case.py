@@ -67,6 +67,9 @@ vortex2D.soname = "hs_%s%d" % (ti, torder)
 if os.environ.get("HS_LAG") == "0":
     vortex2D.lag_shockCapturing_vof = False
     vortex2D.lag_shockCapturing_ls = False
+# HS_RD_LAG=1 turns the lagged shock capturing on for the redistancing model (mprans.RDLS)
+if os.environ.get("HS_RD_LAG") == "1":
+    vortex2D.lag_shockCapturing_rd = True
 if os.environ.get("HS_RD") == "0":
     vortex2D.applyRedistancing = False
     vortex2D.applyCorrection = False

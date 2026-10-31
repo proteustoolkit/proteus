@@ -90,17 +90,17 @@ def _vortex(tmp_path, ti_ls, ti_vof, tol, **extra):
 def test_vortex2d_with_flcbdf_reaches_the_end(tmp_path, ti_ls, ti_vof, tol):
     """vortex2D to t = 8 with FLCBDF on the level set (also at the default
     tolerance 1e-4), on the volume of fluid, and on both, with no Newton
-    failure. Both at 1e-4 needs a dt floor, see the next test."""
+    failure. Both at 1e-4 without a floor is test/test_flcbdf_small_dt.py."""
     times, log = _vortex(tmp_path, ti_ls, ti_vof, tol)
     assert times and times[-1] >= 8.0 - 1e-8
     assert "System Step Failed" not in log
 
 
 def test_dt_floor_gets_both_models_at_1e_4_past_the_lagged_shock_capturing_collapse(tmp_path):
-    """Both models on FLCBDF at tol 1e-4 stop at t = 0.93 without a floor: the
-    level set's lagged shock capturing (strong residual mt + H) feeds back at
-    tiny BDF steps and the error test cannot be met at any dt. With dt_min the
-    step stays at the floor and the error test is accepted there."""
+    """The dt floor, which used to be the only way past the collapse of both models at tol 1e-4 at
+    t = 0.93 (the lagged shock capturing fed on the BDF time derivative; FLCBDF no longer puts it
+    in that residual, see test/test_flcbdf_small_dt.py). With dt_min the step stays at the floor
+    and the error test is accepted there."""
     times, log = _vortex(tmp_path, "flcbdf", "flcbdf", 1e-4, HS_DTMIN="3e-4", HS_ENDN="11")
     assert times and times[-1] >= 1.1 - 1e-8
     assert "System Step Failed" not in log
@@ -164,23 +164,49 @@ def test_vortex2d_with_flcbdf_on_two_ranks_reaches_the_end(tmp_path):
     assert abs(n[2] - n[1]) < 0.1 * n[1]
 
 
-def test_hotstart_with_flcbdf_on_two_ranks_reproduces_the_uninterrupted_run(tmp_path):
-    """FLCBDF on both models, two ranks: each rank archives its own copy of every integrator's
-    state (solver_state/..._p<rank>) and the hot start from it, on the same partition, ends where
-    the run that was never stopped does."""
+def _two_rank_run(tmp_path, tol):
+    """Both models on FLCBDF, run under mpiexec by the hot start measurement harness. Returns the
+    runner (output directory, ranks, harness arguments), the environment and the harness directory."""
     root = os.path.abspath(os.path.join(here, "..", ".."))
     hm = os.path.join(root, "test", "hotstart_measure")
-    env = dict(os.environ, HS_FLCBDF_TOL="1e-2", HS_PARALLEL="1", HS_PARALLEL_ATOL="1e-14",
+    env = dict(os.environ, HS_FLCBDF_TOL=tol, HS_PARALLEL="1", HS_PARALLEL_ATOL="1e-14",
                PYTHONPATH=os.pathsep.join([root, here, os.environ.get("PYTHONPATH", "")]))
-    def run(out, *mode):
-        subprocess.run(["mpiexec", "-n", "2", sys.executable, os.path.join(hm, "run_case.py"),
-                        str(tmp_path / out), "flcbdf", "1", *mode], env=env, check=True, capture_output=True)
-    run("full", "full")
-    run("hot", "stop", "10")
-    run("hot", "hot", "10")
+    def run(out, ranks, *mode):
+        return subprocess.run(["mpiexec", "-n", str(ranks), sys.executable, os.path.join(hm, "run_case.py"),
+                               str(tmp_path / out), "flcbdf", "1", *mode], env=env, check=True,
+                              capture_output=True, text=True)
+    return run, env, hm
+
+
+@pytest.mark.parametrize("tol", ["1e-2", "1e-4"])
+def test_hotstart_with_flcbdf_on_two_ranks_reproduces_the_uninterrupted_run(tmp_path, tol):
+    """FLCBDF on both models, two ranks: each rank archives its own copy of every integrator's
+    state (solver_state/..._p<rank>) and the hot start from it, on the same partition, ends where
+    the run that was never stopped does. At 1e-4 the models take many more steps, and used to
+    stall at t = 0.93 (see test/test_flcbdf_small_dt.py)."""
+    run, env, hm = _two_rank_run(tmp_path, tol)
+    run("full", 2, "full")
+    run("hot", 2, "stop", "10")
+    run("hot", 2, "hot", "10")
     out = subprocess.run([sys.executable, os.path.join(hm, "compare.py"),
                           str(tmp_path / "full" / "hs_flcbdf1.h5"), str(tmp_path / "hot" / "hs_flcbdf1.h5"),
                           "flcbdf1", "10"], env=env, check=True, capture_output=True, text=True).stdout
     final = [l for l in out.splitlines() if l.startswith("FINAL")][0]
     errs = [float(x) for x in re.findall(r"(?:L2|Linf)=([0-9.e+-]+)", final)]
     assert len(errs) == 8 and max(errs) < 1e-10, final
+
+
+def test_hotstart_with_flcbdf_from_another_number_of_ranks_restarts_the_history_and_finishes(tmp_path):
+    """The state is per rank and tied to the partition that wrote it: stopped on two ranks and
+    hot started on one, no model finds its state, each says so, rebuilds its history from the
+    solution (a restart), and the run goes on to the end. It does not hang and it does not read the
+    wrong rank's arrays."""
+    run, env, hm = _two_rank_run(tmp_path, "1e-2")
+    run("hot", 2, "stop", "10")
+    run("hot", 1, "hot", "10")
+    log = (tmp_path / "hot" / "proteus_default.log").read_text()
+    assert "no solver state to restore at step 10" in log
+    assert "System Step Failed" not in log
+    import h5py
+    with h5py.File(tmp_path / "hot" / "hs_flcbdf1.h5", "r") as f:
+        assert "u_t80" in f

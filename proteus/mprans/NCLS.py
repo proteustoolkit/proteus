@@ -1220,6 +1220,9 @@ class LevelModel(OneLevelTransport):
 
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["dt"] = self.timeIntegration.dt
+        # FLCBDF shrinks dt until the BDF time derivative dominates the lagged shock-capturing
+        # residual (numDiff*dt ~ const); keep the time term out of that residual for FLCBDF only
+        argsDict["sc_drop_time"] = 1.0 if isinstance(self.timeIntegration, proteus.TimeIntegration.FLCBDF) else 0.0
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         argsDict["mesh_dof"] = self.mesh.nodeArray

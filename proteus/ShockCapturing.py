@@ -9,31 +9,37 @@ from . import cshockCapturing
 class DelayedLagState(object):
     """state()/set_state() for a shock capturing that starts unlagged
     (``numDiff_last`` aliased to ``numDiff``) and switches to lagging after
-    ``nStepsToDelay`` history updates (mprans NCLS and VOF).
+    ``nStepsToDelay`` history updates (mprans NCLS, VOF and RANS3PF).
 
     The state is the machine, not just the array: ``lag``, ``nSteps``, and
     whether ``numDiff_last`` is still the alias. ``set_state`` rebuilds the
     separate copy that the switch makes, which writing values into an
     aliased array cannot do.
     """
+    def _components(self):
+        # RANS3PF keeps a dict keyed 0..2 whatever the space dimension; NCLS and VOF a list of nc arrays
+        return sorted(self.numDiff_last) if isinstance(self.numDiff_last, dict) else range(len(self.numDiff_last))
+
     def state(self):
-        alias = all(l is n for l, n in zip(self.numDiff_last, self.numDiff))
+        last = [self.numDiff_last[ci] for ci in self._components()]
+        alias = all(l is self.numDiff[ci] for ci, l in zip(self._components(), last))
         st = {'lag': bool(self.lag),
               'nSteps': int(self.nSteps),
               'alias': bool(alias)}
         if not alias:
-            for ci, a in enumerate(self.numDiff_last):
+            for ci, a in zip(self._components(), last):
                 st['numDiff_last_%d' % ci] = numpy.array(a, copy=True)
         return st
 
     def set_state(self, state):
         self.lag = bool(state['lag'])
         self.nSteps = int(state['nSteps'])
+        comps = list(self._components())
         if state['alias']:
-            self.numDiff_last = list(self.numDiff)
+            last = [self.numDiff[ci] for ci in comps]
         else:
-            self.numDiff_last = [numpy.array(state['numDiff_last_%d' % ci], copy=True)
-                                 for ci in range(self.nc)]
+            last = [numpy.array(state['numDiff_last_%d' % ci], copy=True) for ci in comps]
+        self.numDiff_last = dict(zip(comps, last)) if isinstance(self.numDiff_last, dict) else last
 
 class ShockCapturing_base(object):
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True):
@@ -46,6 +52,14 @@ class ShockCapturing_base(object):
         self.lagRequested=lag
         #mwf had to put in da_sge, df_sge
         self.coefficients = coefficients
+    def state(self):
+        """Nothing to carry beyond the solution (the state contract, see TimeIntegration.TI_base.state)."""
+        return None
+
+    def set_state(self, state):
+        """Restore what ``state()`` returned; see TimeIntegration.TI_base.state."""
+        pass
+
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
         self.numDiff=[]
