@@ -30,8 +30,9 @@ def _parun(ranks, cwd, options, name):
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     argv = [_bin("parun"), "-C", options, "-D", name, "dambreak_Colagrossi_so.py"]
-    if ranks > 1:
-        launcher = _bin("mpiexec") if os.path.exists(_bin("mpiexec")) else shutil.which("mpiexec")
+    # even for one rank (test/test_archive_parallel_metadata.run_ranks says why)
+    launcher = _bin("mpiexec") if os.path.exists(_bin("mpiexec")) else shutil.which("mpiexec")
+    if launcher:
         argv = [launcher, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env, cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]

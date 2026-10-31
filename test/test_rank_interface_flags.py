@@ -43,8 +43,10 @@ def _run(ranks, cwd, pinned=True, **env_overrides):
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in env_overrides.items()})
-    argv = [sys.executable, HELPER] if ranks == 1 else \
-        [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, HELPER]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=600, env=env,
                          cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
