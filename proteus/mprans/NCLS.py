@@ -7,6 +7,7 @@ from proteus.LinearAlgebraTools import ParVec_petsc4py
 from proteus.Transport import TC_base, logEvent, NonlinearEquation, Quadrature, Comm
 from proteus.Transport import memory, FluxBoundaryConditions, ExplicitLumpedMassMatrix
 from proteus.Transport import globalMax, SSP, ExplicitConsistentMassMatrixWithRedistancing
+from proteus.Comm import globalSum
 from proteus import Norms
 from . import cArgumentsDict
 import proteus.NumericalFlux
@@ -983,7 +984,10 @@ class LevelModel(OneLevelTransport):
         argsDict["Cy"] = Cy
         argsDict["Cz"] = Cz
         argsDict["ML"] = self.ML
-        L2_norm = self.ncls.calculateRedistancingResidual(argsDict)
+        dofMap = self.u[0].femSpace.dofMap
+        rank = self.comm.rank()
+        argsDict["numOwnedDOFs"] = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        L2_norm = np.sqrt(globalSum(self.ncls.calculateRedistancingResidual(argsDict) ** 2))
 
         if (self.coefficients.pure_redistancing == True):
             self.edge_based_cfl[:] = edge_based_cfl

@@ -5,7 +5,7 @@ from proteus.mprans.cMCorr import *
 import numpy as np
 from proteus.Transport import OneLevelTransport, logEvent, memory, fabs
 from proteus.Transport import TC_base, l2Norm, NonlinearEquation
-from proteus.LinearAlgebraTools import SparseMat
+from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from . import cArgumentsDict
 import proteus.NonlinearSolvers
 import proteus.StepControl
@@ -543,6 +543,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.Jacobian_sparseFactor = None
         self.lumped_L2p_vof_mass_correction = None
         self.limited_L2p_vof_mass_correction = None
+        self._dofVecs = {}
         self.L2p_vof_mass_correction = None
 
         comm = Comm.get()
@@ -605,6 +606,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                  compKernelFlag)
     # mwf these are getting called by redistancing classes,
 
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
     def FCTStep(self):
         rowptr, colind, MassMatrix = self.MassMatrix.getCSRrepresentation()
         if (self.limited_L2p_vof_mass_correction is None):
@@ -619,7 +633,22 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_DofLoops"] = rowptr
         argsDict["csrColumnOffsets_DofLoops"] = colind
         argsDict["matrix"] = MassMatrix
+        # solH (the L2 projection) of a ghost dof is not its owner's, and the limiter of an owned dof reads R of
+        # its neighbours, whose rows are truncated when they are ghosts: take the owners' values, scattering R
+        # between the two phases of the kernel
+        self.scatterDOFArray(self.L2p_vof_mass_correction)
+        Rpos = np.ones(self.limited_L2p_vof_mass_correction.shape)
+        Rneg = np.ones(self.limited_L2p_vof_mass_correction.shape)
+        argsDict["Rpos_dof"] = Rpos
+        argsDict["Rneg_dof"] = Rneg
+        argsDict["phase"] = 0
         self.mcorr.FCTStep(argsDict)
+        self.scatterDOFArray(Rpos)
+        self.scatterDOFArray(Rneg)
+        argsDict["phase"] = 1
+        self.mcorr.FCTStep(argsDict)
+        # the limited solution is written into the VOF dofs, ghosts included
+        self.scatterDOFArray(self.limited_L2p_vof_mass_correction)
 
     def calculateCoefficients(self):
         pass

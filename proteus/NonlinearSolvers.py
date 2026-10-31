@@ -1253,6 +1253,9 @@ class NewtonWithL2ProjectionForMassCorrection(Newton):
     A simple iterative solver that is Newton's method
     if you give it the right Jacobian
     """
+    #relative tolerance of the KSP solve of the L2 projection (the LU solver is direct)
+    projectionRelativeTolerance = 1.0e-12
+
     def solve(self,u,r=None,b=None,par_u=None,par_r=None):
         """
         Solve F(u) = b
@@ -1262,6 +1265,10 @@ class NewtonWithL2ProjectionForMassCorrection(Newton):
         r -- F(u) - b
         """
 
+        # The LU solver keeps one SparseFactor for the Jacobian and one for the mass matrix of the L2 projection.
+        # The KSP solver (parallel runs) has no such object: the mass matrix values are put in the matrix of the
+        # solver instead (see below).
+        lu = hasattr(self.linearSolver, 'sparseFactor')
         from . import Viewers
         if self.linearSolver.computeEigenvalues:
             self.u0[:]=u
@@ -1290,11 +1297,12 @@ class NewtonWithL2ProjectionForMassCorrection(Newton):
                 self.F.getJacobian(self.J)
                 # Set linear solver to be the jacobian
                 self.linearSolver.L = self.J
-                # Save sparse factor for Jacobian. Just for the first time
-                if (self.F.Jacobian_sparseFactor is None):
-                    self.F.Jacobian_sparseFactor = self.linearSolver.sparseFactor #(MQL)
-                # Set sparse factor to be the jacobian sparse factor
-                self.linearSolver.sparseFactor = self.F.Jacobian_sparseFactor
+                if lu:
+                    # Save sparse factor for Jacobian. Just for the first time
+                    if (self.F.Jacobian_sparseFactor is None):
+                        self.F.Jacobian_sparseFactor = self.linearSolver.sparseFactor #(MQL)
+                    # Set sparse factor to be the jacobian sparse factor
+                    self.linearSolver.sparseFactor = self.F.Jacobian_sparseFactor
                 if self.linearSolver.computeEigenvalues:
                     logEvent("Calculating eigenvalues of J^t J")
                     self.JLast[:]=self.J
@@ -1314,7 +1322,8 @@ class NewtonWithL2ProjectionForMassCorrection(Newton):
             # Set matrix of linear soler to be the Jacobian
             self.linearSolver.L = self.J
             # Set sparse factor
-            self.linearSolver.sparseFactor = self.F.Jacobian_sparseFactor
+            if lu:
+                self.linearSolver.sparseFactor = self.F.Jacobian_sparseFactor
             if not self.directSolver:
                 if self.EWtol:
                     self.setLinearSolverTolerance(r)
@@ -1340,30 +1349,44 @@ class NewtonWithL2ProjectionForMassCorrection(Newton):
                 logEvent("+++++ L2 projection of mass-corrected VOF +++++",level=2)
                 if (self.F.MassMatrix is None):
                     self.F.getMassMatrix()
-                    # Set matrix of linear solver to be the Mass Matrix
-                    self.linearSolver.L = self.F.MassMatrix
-                    # Create a sparse factor for the Mass Matrix
-                    if (self.F.MassMatrix_sparseFactor is None):
-                        self.F.MassMatrix_sparseFactor = superluWrappers.SparseFactor(self.linearSolver.n)
-                    # reference the self.linearSolver.sparseFactor to use the new sparse Factor
-                    self.linearSolver.sparseFactor = self.F.MassMatrix_sparseFactor
-                    # Compute the new sparse factor; i.e., self.F.MassMatrix_sparseFactor
-                    self.linearSolver.prepare(b=r)
+                    if lu:
+                        # Set matrix of linear solver to be the Mass Matrix
+                        self.linearSolver.L = self.F.MassMatrix
+                        # Create a sparse factor for the Mass Matrix
+                        if (self.F.MassMatrix_sparseFactor is None):
+                            self.F.MassMatrix_sparseFactor = superluWrappers.SparseFactor(self.linearSolver.n)
+                        # reference the self.linearSolver.sparseFactor to use the new sparse Factor
+                        self.linearSolver.sparseFactor = self.F.MassMatrix_sparseFactor
+                        # Compute the new sparse factor; i.e., self.F.MassMatrix_sparseFactor
+                        self.linearSolver.prepare(b=r)
                 # Compute rhs for L2 projection and low (lumped) L2 projection
                 self.F.setMassQuadratureEdgeBasedStabilizationMethods()
                 r[:] = self.F.rhs_mass_correction
                 # Solve mass matrix for L2 projection
                 self.du[:]=0.0
-                # Set linear matrix to be Mass Matrix
-                self.linearSolver.L = self.F.MassMatrix
-                # Set sparse factors to be the sparse factors of the mass matrix
-                self.linearSolver.sparseFactor = self.F.MassMatrix_sparseFactor
-                if not self.directSolver:
+                if lu:
+                    # Set linear matrix to be Mass Matrix
+                    self.linearSolver.L = self.F.MassMatrix
+                    # Set sparse factors to be the sparse factors of the mass matrix
+                    self.linearSolver.sparseFactor = self.F.MassMatrix_sparseFactor
+                else:
+                    # The mass matrix has the sparsity of the Jacobian: put its values in the matrix the KSP solver
+                    # was built on and prepare it again. The Jacobian is assembled afresh at the next solve.
+                    rowptr, colind, jacobian_values = self.J.getCSRrepresentation()
+                    jacobian_values[:] = self.F.MassMatrix_a
+                    self.linearSolver.prepare(b=r)
+                    self.updateJacobian = True
+                    # a linear problem that has to be solved accurately, not a Newton step: no Eisenstat-Walker
+                    # tolerance (which also overwrites norm_r with the norm of this right hand side)
+                    self.linearSolver.setResTol(self.projectionRelativeTolerance, 0.0)
+                if lu and not self.directSolver:
                     if self.EWtol:
                         self.setLinearSolverTolerance(r)
                 if not self.linearSolverFailed:
                     self.linearSolver.solve(u=self.du,b=r,par_u=self.par_du,par_b=par_r)
                     self.linearSolverFailed = self.linearSolver.failed()
+                if self.par_du is not None:
+                    self.par_du.scatter_forward_insert()  # the FCT step reads the ghosts of the projection
                 # copy the solution to the L2p vector
                 self.F.L2p_vof_mass_correction[:] = self.du
                 # Perform limitation on L2 projection
