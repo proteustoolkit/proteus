@@ -17,7 +17,7 @@ from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
-from proteus.LinearAlgebraTools import SparseMat
+from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF,TwoStageNewton
 from proteus import TimeIntegration
 from . import cVOF3P
@@ -935,11 +935,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.ML = None  # lumped mass matrix
         self.MC_global = None  # consistent mass matrix
         self.uLow = None
+        self._dofVecs = {}
         self.dt_times_dC_minus_dL = None
         self.dLow = None
         self.min_u_bc = None
         self.max_u_bc = None
         self.quantDOFs = np.zeros(self.u[0].dof.shape, 'd')
+        self.psi_dof = np.ones(self.u[0].dof.shape, 'd')
 
         # For Taylor Galerkin methods
         self.stage = 1
@@ -956,9 +958,36 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         else:
             self.calculateResidual = self.vof.calculateResidualEdgeBased
             
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
+    def updateSmoothnessIndicator(self):
+        """Smoothness indicator psi of the edge-based stabilization, from u_dof_old, scattered to the ghosts."""
+        rowptr, colind = self.rowptr, self.colind
+        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
+        # the kernel weighs every term of the row of i with the porosity (1 - vos) of i
+        d = (1. - self.coefficients.vos_dof)[rows] * (self.u_dof_old[rows] - self.u_dof_old[colind])
+        alpha = np.bincount(rows, weights=d, minlength=len(rowptr) - 1) / (
+            np.bincount(rows, weights=np.abs(d), minlength=len(rowptr) - 1) + 1E-15)
+        self.psi_dof[:] = alpha ** 2  # POWER_SMOOTHNESS_INDICATOR is 2 in VOF3P.h
+        self.scatterDOFArray(self.psi_dof)
+
     def FCTStep(self):
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
         limited_solution = np.zeros(self.u[0].dof.shape)
+        # uLow of a ghost dof is built from a truncated graph row in calculateResidual, and the
+        # limiter of an owned dof reads it, so take the owners' values
+        self.scatterDOFArray(self.uLow)
 
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["dt"] = self.timeIntegration.dt
@@ -978,7 +1007,18 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["max_u_bc"] = self.max_u_bc
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
         argsDict["STABILIZATION_TYPE"] = self.coefficients.STABILIZATION_TYPE
+        Rpos = np.ones(self.u[0].dof.shape)
+        Rneg = np.ones(self.u[0].dof.shape)
+        argsDict["Rpos_dof"] = Rpos
+        argsDict["Rneg_dof"] = Rneg
+        argsDict["phase"] = 0
         self.vof.FCTStep(argsDict)
+        self.scatterDOFArray(Rpos)
+        self.scatterDOFArray(Rneg)
+        argsDict["phase"] = 1
+        self.vof.FCTStep(argsDict)
+        # ghost entries of limited_solution come from truncated rows
+        self.scatterDOFArray(limited_solution)
         #self.timeIntegration.u[:] = limited_solution
         fromFreeToGlobal=0 #direction copying
         cfemIntegrals.copyBetweenFreeUnknownsAndGlobalUnknowns(fromFreeToGlobal,
@@ -1225,6 +1265,23 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["min_u_bc"] = self.min_u_bc
         argsDict["max_u_bc"] = self.max_u_bc
         argsDict["quantDOFs"] = self.quantDOFs
+        if self.coefficients.STABILIZATION_TYPE > 1:
+            self.updateSmoothnessIndicator()
+        argsDict["psi_dof"] = self.psi_dof
+        if self.coefficients.STABILIZATION_TYPE == 2:
+            # entropy viscosity: the normalized entropy residual of a ghost dof comes from a truncated
+            # graph row and the dissipation of an owned dof reads it. Compute it (phase 0), scatter it,
+            # then the rest; phase 0 has already added the element residuals to r.
+            global_entropy_residual_dof = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["global_entropy_residual_dof"] = global_entropy_residual_dof
+            argsDict["phase"] = 0
+            self.calculateResidual(argsDict)
+            r.fill(0.0)
+            self.scatterDOFArray(global_entropy_residual_dof)
+            argsDict["phase"] = 1
+        else:
+            argsDict["global_entropy_residual_dof"] = self.psi_dof
+            argsDict["phase"] = 1
         self.calculateResidual(argsDict)
 
         if self.forceStrongConditions:
