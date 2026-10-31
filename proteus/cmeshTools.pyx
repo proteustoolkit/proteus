@@ -470,6 +470,48 @@ cpdef void generateFrom2DMFile(CMesh cmesh,
     else:
         failed = False
 
+def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
+                       elementMaterialTypes=None):
+    """Fill a CMesh of simplices from arrays, the in-memory counterpart of the file readers.
+
+    ``nodes`` is (nNodes, 3) coordinates, ``elements`` (nElements, 3 or 4)
+    zero-based node numbers; the material types default to zero. The element
+    boundaries are constructed as every file reader does, so the caller goes
+    on to allocate and compute the geometric info as after a read.
+    """
+    cdef double[:, ::1] x = np.ascontiguousarray(nodes, dtype=np.float64)
+    cdef cppm.proteus_index_t[:, ::1] e = np.ascontiguousarray(elements, dtype=INDEX_DTYPE)
+    cdef int[::1] nmt, emt
+    cdef int i, j
+    cdef int nNodes = x.shape[0]
+    cdef int nElements = e.shape[0]
+    cdef int nNodes_element = e.shape[1]
+    if x.shape[1] != 3:
+        raise ValueError("nodes must have shape (nNodes, 3), not (%d, %d)" % (x.shape[0], x.shape[1]))
+    if nNodes_element not in (3, 4):
+        raise ValueError("elements must be triangles or tetrahedra, not %d nodes each" % nNodes_element)
+    nmt = np.zeros(nNodes, dtype=np.intc) if nodeMaterialTypes is None else \
+        np.ascontiguousarray(nodeMaterialTypes, dtype=np.intc)
+    emt = np.zeros(nElements, dtype=np.intc) if elementMaterialTypes is None else \
+        np.ascontiguousarray(elementMaterialTypes, dtype=np.intc)
+    if nmt.shape[0] != nNodes or emt.shape[0] != nElements:
+        raise ValueError("material types must match the nodes and elements")
+    if nElements > 0 and (np.min(e) < 0 or np.max(e) >= nNodes):
+        raise ValueError("an element refers to a node outside 0..%d" % (nNodes - 1))
+    cppm.allocateNodeAndElementNodeDataStructures(cmesh.mesh, nElements, nNodes, nNodes_element)
+    for i in range(nNodes):
+        for j in range(3):
+            cmesh.mesh.nodeArray[3*i + j] = x[i, j]
+        cmesh.mesh.nodeMaterialTypes[i] = nmt[i]
+    for i in range(nElements):
+        for j in range(nNodes_element):
+            cmesh.mesh.elementNodesArray[nNodes_element*i + j] = e[i, j]
+        cmesh.mesh.elementMaterialTypes[i] = emt[i]
+    if nNodes_element == 3:
+        cppm.constructElementBoundaryElementsArray_triangle(cmesh.mesh)
+    else:
+        cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh)
+
 cpdef void computeGeometricInfo_tetrahedron(CMesh cmesh):
     cppm.computeGeometricInfo_tetrahedron(cmesh.mesh);
 

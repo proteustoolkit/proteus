@@ -5230,6 +5230,22 @@ class TriangularMesh(Mesh):
         from .import cmeshTools
         cmeshTools.writeTriangleFiles(self.cmesh,filebase,base)
         
+    def generateFromArrays(self,nodes,elements,nodeMaterialTypes=None,elementMaterialTypes=None):
+        """Build the mesh from arrays of node coordinates and zero-based element nodes"""
+        from .import cmeshTools
+        self.cmesh = cmeshTools.CMesh()
+        cmeshTools.generateFromArrays(self.cmesh,nodes,elements,nodeMaterialTypes,elementMaterialTypes)
+        cmeshTools.allocateGeometricInfo_triangle(self.cmesh)
+        cmeshTools.computeGeometricInfo_triangle(self.cmesh)
+        self.buildFromC(self.cmesh)
+
+    def generateFromYmfFile(self,prefix):
+        """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
+        info = readMeshYmf(prefix)
+        assert info.elementTopologyName == 'Triangle', info.elementTopologyName
+        self.generateFromArrays(info.nodeArray,info.elementNodesArray,
+                                info.nodeMaterialTypes,info.elementMaterialTypes)
+
     def generateFrom2DMFile(self,filebase,base=1):
         from .import cmeshTools
         self.cmesh = cmeshTools.CMesh()
@@ -7332,6 +7348,101 @@ def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0):
     return MeshInfo
 #
 
+#: the space of a ymf mesh file that holds the mesh, as in a proteus archive
+YMF_MESH_SPACE = "Spatial_Domain"
+
+def writeMeshYmf(prefix, nodeArray, elementNodesArray, nodeMaterialTypes=None,
+                 elementMaterialTypes=None, topologyName='Triangle'):
+    """Write a mesh as a ymf file ``prefix.ymf`` and its arrays ``prefix.h5``
+
+    The mesh is one uniform space, :data:`YMF_MESH_SPACE`, at time 0 of a
+    format 2 archive, so what reads a mesh from a proteus archive reads it:
+    :func:`readMeshYmf` is :func:`readMeshFromArchive` for a file that holds
+    a mesh and nothing else. ``elementNodesArray`` is (nElements, nNodes)
+    and zero-based.
+    """
+    from ymf import archive as ymf_archive
+    nodeArray = np.ascontiguousarray(nodeArray, dtype='d')
+    elementNodesArray = np.ascontiguousarray(elementNodesArray, dtype='i')
+    if nodeMaterialTypes is None:
+        nodeMaterialTypes = np.zeros((nodeArray.shape[0],), 'i')
+    if elementMaterialTypes is None:
+        elementMaterialTypes = np.zeros((elementNodesArray.shape[0],), 'i')
+    arrays = [("nodes", nodeArray),
+              ("elements", elementNodesArray),
+              ("nodeMaterialTypes", np.ascontiguousarray(nodeMaterialTypes, dtype='i')),
+              ("elementMaterialTypes", np.ascontiguousarray(elementMaterialTypes, dtype='i'))]
+    h5_name = os.path.basename(prefix) + '.h5'
+    with h5py.File(prefix + '.h5', 'w') as f:
+        for name, array in arrays:
+            f.create_dataset(name, data=array)
+    items = {name: ymf_archive.data_item_for(array, "%s:/%s" % (h5_name, name))
+             for name, array in arrays}
+    grid = ymf_archive.uniform_grid(
+        ymf_archive.topology(topologyName, elementNodesArray.shape[0], items["elements"]),
+        ymf_archive.geometry(items["nodes"]),
+        [ymf_archive.attribute("nodeMaterialTypes", items["nodeMaterialTypes"], center="Node"),
+         ymf_archive.attribute("elementMaterialTypes", items["elementMaterialTypes"], center="Cell")])
+    domain = ymf_archive.new_domain()
+    ymf_archive.add_instant(domain, 0.0, {YMF_MESH_SPACE: grid})
+    ymf_archive.write_ymf(domain, prefix + '.ymf')
+
+def readMeshYmf(prefix, MeshTag=YMF_MESH_SPACE, verbose=0):
+    """Read the mesh in ``prefix.ymf`` and ``prefix.h5``, as written by :func:`writeMeshYmf`
+
+    :return: a BasicMeshInfo object, as :func:`readMeshFromArchive` returns
+    """
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    return _readMeshFromDomain(domain, prefix + '.h5', MeshTag=MeshTag, verbose=verbose)
+
+def convert2DMToYmf(filebase, prefix=None, base=1):
+    """Convert the XMS 2DM triangle mesh ``filebase.3dm`` to a ymf mesh, ``prefix.ymf`` and ``prefix.h5``
+
+    ``base`` is the index base of the node numbers, and of the element
+    materials, as in the file readers; ``prefix`` is ``filebase`` by default.
+    Node materials are zero unless ``filebase.bc`` gives them, as ``NDS``
+    lines. Its ``FCS`` lines tag element boundaries, which a ymf mesh has no
+    place for yet, so they are refused rather than dropped.
+
+    :return: the prefix written
+    """
+    prefix = filebase if prefix is None else prefix
+    elements, elementMaterials, nodes = [], [], []
+    with open(filebase + '.3dm') as f:
+        for line in f:
+            words = line.split()
+            if not words:
+                continue
+            if words[0] == 'E3T':
+                if nodes:
+                    raise ValueError("%s.3dm: an E3T element follows the nodes" % (filebase,))
+                elements.append([int(w) - base for w in words[2:5]])
+                elementMaterials.append(int(words[5]) - base)
+            elif words[0] == 'ND':
+                nodes.append([float(w) for w in words[2:5]])
+            elif words[0] in ('E2L', 'E4Q', 'E6T', 'E8Q', 'E9Q'):
+                raise NotImplementedError(
+                    "%s.3dm: %s elements are not triangles" % (filebase, words[0]))
+    nodeMaterials = np.zeros((len(nodes),), 'i')
+    if os.path.exists(filebase + '.bc'):
+        with open(filebase + '.bc') as f:
+            for line in f:
+                words = line.split()
+                if words and words[0] == 'NDS':
+                    nodeMaterials[int(words[1]) - base] = int(words[2])
+                elif words and words[0] == 'FCS':
+                    raise NotImplementedError(
+                        "%s.bc tags element boundaries (FCS), which a ymf mesh cannot hold yet"
+                        % (filebase,))
+    writeMeshYmf(prefix,
+                 np.array(nodes, dtype='d').reshape(-1, 3),
+                 np.array(elements, dtype='i').reshape(-1, 3),
+                 nodeMaterialTypes=nodeMaterials,
+                 elementMaterialTypes=np.array(elementMaterials, dtype='i'),
+                 topologyName='Triangle')
+    return prefix
+
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
     """
     Write a hex mesh in Ido's format with base numbering index_base
@@ -8837,8 +8948,12 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
     elif isinstance(domain, Domain.Mesh2DMDomain):
         mesh = TriangularMesh()
-        logEvent("Reading coarse mesh from 2DM file")
-        mesh.generateFrom2DMFile(domain.meshfile)
+        logEvent("Reading coarse mesh from 2DM file, converted to a ymf mesh")
+        ymf_prefix = os.path.basename(domain.meshfile) + "_2dm"
+        if comm.rank() == 0:
+            convert2DMToYmf(domain.meshfile, ymf_prefix)
+        comm.barrier()
+        mesh.generateFromYmfFile(ymf_prefix)
         mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
                                                     nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                     parallelPartitioningType=meshOptions.parallelPartitioningType)
