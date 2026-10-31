@@ -1625,6 +1625,15 @@ namespace proteus
         int STABILIZATION_TYPE = args.scalar<int>("STABILIZATION_TYPE");
         int ENTROPY_TYPE = args.scalar<int>("ENTROPY_TYPE");
         double cE = args.scalar<double>("cE");
+
+        // The dissipation of an owned dof reads psi and the normalized entropy residual of its
+        // neighbours, which are ghosts built from truncated graph rows when across a rank cut.
+        // Phase 0 stops after computing them (writing psi_dof and global_entropy_residual_dof);
+        // Python scatters them from the owners and calls again with phase 1, which recomputes
+        // everything up to there (nothing but members is touched before) and takes the scattered values.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
+        proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
         // NOTE: This function follows a different (but equivalent) implementation of the smoothness based indicator than VOF.h
         // inverse of mass matrix in reference element
         //double inverse_elMassMatrix_degree2 [9][9]=
@@ -1999,6 +2008,21 @@ namespace proteus
               }
           }
         // END OF COMPUTING SMOOTHNESS INDICATOR
+        if (phase == 0)
+          {
+            for (int i=0; i<numDOFs; i++)
+              {
+                psi_dof.data()[i] = psi[i];
+                global_entropy_residual_dof.data()[i] = global_entropy_residual[i];
+              }
+            return;
+          }
+        for (int i=0; i<numDOFs; i++)
+          {
+            psi[i] = psi_dof.data()[i];
+            if (STABILIZATION_TYPE==1) //EV stab
+              global_entropy_residual[i] = global_entropy_residual_dof.data()[i];
+          }
 
         /////////////////////////////////////////////
         // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
