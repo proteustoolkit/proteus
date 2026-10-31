@@ -5,6 +5,9 @@ subdomain as the domain size, and the limiter of an owned dof reads hLow, huLow,
 limiting iteration updates from a truncated graph row. The domain size is now the trace of the lumped mass matrix
 and the limiting iterations are driven from Python with the owners' values scattered between them. The controls
 run with the subdomain volume and without the scatters, and differ.
+
+The time step is chosen from the edge based cfl of the owned dofs only, since the cfl of a ghost dof comes from a
+truncated row and can exceed the global maximum; the ghost-cfl control puts garbage there, which the step must ignore.
 """
 import os
 import shutil
@@ -46,10 +49,15 @@ def _field(ranks, cwd, **overrides):
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 def test_gn_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
-    for d in ("1", "2", "3", "4"):
+    for d in ("1", "2", "3", "4", "5", "6"):
         (tmp_path / d).mkdir()
     serial = _field(1, tmp_path / "1")
     parallel = _field(2, tmp_path / "2")
     assert numpy.abs(serial - parallel).max() < 1e-10
     assert numpy.abs(serial - _field(2, tmp_path / "3", NOSCAT=1)).max() > 1e-9
     assert numpy.abs(serial - _field(2, tmp_path / "4", OLDVOL=1)).max() > 1e-6
+    # the time step reads the cfl of the dofs it owns only: garbage in the ghosts' must not matter
+    ghosts = _field(2, tmp_path / "5", GHOSTCFL=1)
+    assert numpy.abs(serial - ghosts).max() < 1e-10
+    reads_ghosts = _field(2, tmp_path / "6", GHOSTCFL=1, OLDMAX=1)
+    assert numpy.abs(serial - reads_ghosts).max() > 1e-6
