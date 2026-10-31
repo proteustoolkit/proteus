@@ -276,17 +276,31 @@ public:
     proteus::pyarray<double> &kin_max = args.array<double>("kin_max");
     double KE_tiny = args.scalar<double>("KE_tiny");
 
+    // The limiter of an owned dof reads R, hLow, huLow and the row length of its neighbours, which
+    // are ghosts with truncated graph rows when they are across a rank cut. So Python drives the
+    // limiting iterations and scatters from the owners between the phases:
+    //   phase 0: build the FCT matrices; phase 1: compute R of every dof; phase 2: limit and update.
+    int phase = args.scalar<int>("phase");
+    proteus::pyarray<double> &Rneg_dof = args.array<double>("Rneg_dof");
+    proteus::pyarray<double> &Rpos_dof = args.array<double>("Rpos_dof");
+    proteus::pyarray<double> &lambda_dof = args.array<double>("lambda_dof");
+    proteus::pyarray<double> &FCT_h_dof = args.array<double>("FCT_h_dof");
+    proteus::pyarray<double> &FCT_hu_dof = args.array<double>("FCT_hu_dof");
+    proteus::pyarray<double> &FCT_hv_dof = args.array<double>("FCT_hv_dof");
+    proteus::pyarray<double> &Lij_dof = args.array<double>("Lij_dof");
+
     // Declare stuff for limiting on h and h*heta
-    std::valarray<double> Rneg(0.0, numDOFs), Rpos(0.0, numDOFs);
+    std::valarray<double> Rneg(Rneg_dof.data(), numDOFs), Rpos(Rpos_dof.data(), numDOFs);
 
     // Create FCT component matrices in vector form
-    std::valarray<double> FCT_h(0.0, dH_minus_dL.size()),
-        FCT_hu(0.0, dH_minus_dL.size()), FCT_hv(0.0, dH_minus_dL.size());
+    std::valarray<double> FCT_h(FCT_h_dof.data(), dH_minus_dL.size()),
+        FCT_hu(FCT_hu_dof.data(), dH_minus_dL.size()), FCT_hv(FCT_hv_dof.data(), dH_minus_dL.size());
 
     ////////////////////////////////////////////////////
     // Loop to define FCT matrices for each component //
     ////////////////////////////////////////////////////
     int ij = 0;
+    if (phase == 0)
     for (int i = 0; i < numDOFs; i++) {
       // Read some vectors
       double high_order_hnp1i = high_order_hnp1[i];
@@ -362,14 +376,25 @@ public:
     // Main loop to define limiters and computed limited solution //////
     ////////////////////////////////////////////////////////////////////
 
-    // Create Lij_array and initialize with 1
-    std::valarray<double> Lij_array(1.0, dH_minus_dL.size());
+    if (phase == 0) {
+      for (size_t k = 0; k < dH_minus_dL.size(); k++) {
+        FCT_h_dof.data()[k] = FCT_h[k];
+        FCT_hu_dof.data()[k] = FCT_hu[k];
+        FCT_hv_dof.data()[k] = FCT_hv[k];
+        Lij_dof.data()[k] = 1.0;
+      }
+      return;
+    }
 
-    /* Loop over limiting iterations */
-    for (int limit_iter = 0; limit_iter < LIMITING_ITERATION; limit_iter++) {
+    // Lij_array starts at 1 and is carried across the iterations by Python
+    std::valarray<double> Lij_array(Lij_dof.data(), dH_minus_dL.size());
+
+    // One limiting iteration per call
+    {
 
       /* Loop to define FCT Rpos and Rneg values */
       ij = 0;
+      if (phase == 1)
       for (int i = 0; i < numDOFs; i++) {
 
         double hi = h_old[i];
@@ -419,6 +444,14 @@ public:
           }
         }
       } // i loop ends here
+
+      if (phase == 1) {
+        for (int i = 0; i < numDOFs; i++) {
+          Rneg_dof.data()[i] = Rneg[i];
+          Rpos_dof.data()[i] = Rpos[i];
+        }
+        return;
+      }
 
       /* Here we compute the limiters */
       ij = 0;
@@ -485,8 +518,7 @@ public:
             }
 
             // root of jth-DOF (To compute transpose component)
-            double lambdai =
-                csrRowIndeces_DofLoops[j + 1] - csrRowIndeces_DofLoops[j] - 1;
+            double lambdai = lambda_dof[j];
             double mj = lumped_mass_matrix[j];
             double cj = kin_max[j] * hLow[j] -
                         0.5 * (huLow[j] * huLow[j] + hvLow[j] * hvLow[j]);
@@ -580,7 +612,13 @@ public:
       FCT_h = (1.0 - Lij_array) * FCT_h;
       FCT_hu = (1.0 - Lij_array) * FCT_hu;
       FCT_hv = (1.0 - Lij_array) * FCT_hv;
-    } // end loop for limiting iteration
+      for (size_t k = 0; k < dH_minus_dL.size(); k++) {
+        FCT_h_dof.data()[k] = FCT_h[k];
+        FCT_hu_dof.data()[k] = FCT_hu[k];
+        FCT_hv_dof.data()[k] = FCT_hv[k];
+        Lij_dof.data()[k] = Lij_array[k];
+      }
+    } // end of the limiting iteration
   }   // end convex limiting function
 
   double calculateEdgeBasedCFL(arguments_dict &args) {
@@ -1089,6 +1127,8 @@ public:
       //     * Low order solution (in terms of bar states)
 
       // Here we declare some arrays for local bounds
+      const proteus::pyarray<double> &delta_Sqd_h_dof = args.array<double>("delta_Sqd_h_dof");
+      const proteus::pyarray<double> &delta_Sqd_kin_dof = args.array<double>("delta_Sqd_kin_dof");
       std::valarray<double> delta_Sqd_h(0.0, numDOFsPerEqn),
           bar_deltaSqd_h(0.0, numDOFsPerEqn), delta_Sqd_kin(0.0, numDOFsPerEqn),
           bar_deltaSqd_kin(0.0, numDOFsPerEqn);
@@ -1104,20 +1144,13 @@ public:
                             max_of_h_and_hEps[i] * max_of_h_and_hEps[i]));
       }
 
-      /* First loop to define: delta_Sqd_h, delta_Sqd_kin */
+      /* delta_Sqd_h, delta_Sqd_kin: sums over the graph row of i. The bar_deltaSqd of an owned dof
+         reads them at its neighbours, which are ghosts whose rows are truncated, so Python computes
+         them on the owned dofs and scatters them. */
       for (int i = 0; i < numDOFsPerEqn; i++) {
-
-        for (int offset = csrRowIndeces_DofLoops[i];
-             offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-
-          int j = csrColumnOffsets_DofLoops[offset];
-
-          if (i != j) {
-            delta_Sqd_h[i] += h_dof_old[i] - h_dof_old[j];
-            delta_Sqd_kin[i] += kin[i] - kin[j];
-          }
-        } // j loop ends here
-      }   // i loops ends here
+        delta_Sqd_h[i] = delta_Sqd_h_dof[i];
+        delta_Sqd_kin[i] = delta_Sqd_kin_dof[i];
+      }
 
       // Stuff for bar states here (BT = BarTilde)
       std::valarray<double> hBT(0.0, dH_minus_dL.size()),

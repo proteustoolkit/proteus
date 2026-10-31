@@ -933,6 +933,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.RHS_high_hbeta = None
         self.size_of_domain = None
         self.delta_Sqd_h = None
+        self._dofVecs = {}
         self.delta_Sqd_heta = None
         # low-order solution using bar states
         self.hLow = None
@@ -1121,6 +1122,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # for parallel entropy residual
         self.par_global_entropy_residual = None
 
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = LAT.ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
     def FCTStep(self):
         # NOTE: this function is meant to be called within the solver
         comm = Comm.get()
@@ -1200,7 +1214,22 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaj_inv"] = self.thetaj_inv
         argsDict["g"] = self.coefficients.g
         argsDict["inverse_mesh"] = self.inverse_mesh
+        # The limiter of an owned dof reads hLow, huLow, ... of its neighbours, which are ghosts with
+        # truncated graph rows, and each limiting iteration updates them, so the iterations are driven
+        # from here and the owners' values are scattered between them.
+        LIMITING_ITERATION = 2  # as in GN_SW2DCV.h
+        for name in ("FCT_h", "FCT_hu", "FCT_hv", "FCT_heta", "FCT_hw", "FCT_hbeta"):
+            argsDict[name + "_dof"] = np.zeros(self.Cx.size)
+        argsDict["phase"] = 0
         self.dsw_2d.convexLimiting(argsDict)
+        argsDict["phase"] = 1
+        lows = (self.hLow, self.huLow, self.hvLow, self.hetaLow, self.hwLow, self.hbetaLow)
+        for iteration in range(LIMITING_ITERATION):
+            self.dsw_2d.convexLimiting(argsDict)
+            for a in lows:
+                self.scatterDOFArray(a)
+        for a in (limited_hnp1, limited_hunp1, limited_hvnp1, limited_hetanp1, limited_hwnp1, limited_hbetanp1):
+            self.scatterDOFArray(a)
 
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
@@ -1616,8 +1645,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def initDataStructures(self):
         comm = Comm.get()
 
-        self.size_of_domain = self.mesh.volume
-
         # old vectors
         self.h_dof_old = np.copy(self.u[0].dof)
         self.hu_dof_old = np.copy(self.u[1].dof)
@@ -1769,6 +1796,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                           n=n, N=N, nghosts=nghosts,
                                           subdomain2global=subdomain2global)
         self.par_ML.scatter_forward_insert()
+        # the trace of the lumped mass matrix is the domain volume; mesh.volume is the subdomain's,
+        # which includes its overlap
+        self.size_of_domain = comm.globalSum(self.ML[:n].sum())
         self.par_inverse_mesh = LAT.ParVec_petsc4py(self.inverse_mesh,
                                                     bs=1,
                                                     n=n, N=N, nghosts=nghosts,
