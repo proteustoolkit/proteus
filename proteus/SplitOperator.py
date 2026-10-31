@@ -39,6 +39,14 @@ class SO_base(object):
         self.stepExactEps = 1.0e-12
         self.stepFailures = 0
         #self.atol_iso=1.e-8 #tjp added for iterative SO routine tolerance
+    def state(self):
+        """Nothing to carry beyond the solution (the state contract, see TimeIntegration.TI_base.state)."""
+        return None
+
+    def set_state(self, state):
+        """Restore what ``state()`` returned; see TimeIntegration.TI_base.state."""
+        pass
+
     def converged(self):
         #no iteration
         if self.its > 0:

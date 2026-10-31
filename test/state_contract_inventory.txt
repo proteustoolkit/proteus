@@ -1,0 +1,131 @@
+# The state contract inventory: for every time integrator (TI), shock capturing (SC), subgrid error (SG),
+# model step controller (STEP) and system step controller (SO) class, how a hot start treats its history.
+# test/test_state_contract.py keeps this file complete and consistent with the code; a new class fails it
+# until it is added here.
+#
+#   state       defines state()/set_state(): archived per rank in solver_state/ and restored after the spin-up
+#   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
+#               continue exactly without its own state, given the state of the other owners of the model
+#               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
+#               test/hotstart_measure with HS_RD_LAG=1: mprans.RDLS.ShockCapturing, 1e-16 on every field;
+#               test/test_hotstart_rans3pf.py: mprans.RANS3PF.SubgridError and Min_dt_cfl_controller, bit-identical given the state of the rest;
+#               the vortex2D backward Euler hot start, 1e-16: Min_dt_controller, Newton_controller, MCorr.Newton_controller, Sequential_MinModelStep)
+#   follows     carries no history of its own: it re-derives its next step from a restored object
+#               (the FLCBDF controllers read the restored integrator, syncAfterRestore)
+#   unmeasured  may carry history; a hot start rebuilds it from the restart state and nobody has measured
+#               what that costs. Moving a class out of here means measuring it (test/hotstart_measure).
+#
+# family  module  class  category
+SC ShockCapturing Eikonal_SC unmeasured
+SC ShockCapturing HamiltonJacobiJaffre_SC unmeasured
+SC ShockCapturing HamiltonJacobi_SC unmeasured
+SC ShockCapturing JaffreGradU_SC unmeasured
+SC ShockCapturing NavierStokes_SC unmeasured
+SC ShockCapturing NavierStokes_SC_opt unmeasured
+SC ShockCapturing ResGradDelayLag_SC unmeasured
+SC ShockCapturing ResGradFFDarcyDelayLag_SC unmeasured
+SC ShockCapturing ResGradFFDarcy_SC unmeasured
+SC ShockCapturing ResGradJuanes_SC unmeasured
+SC ShockCapturing ResGradQuadDelayLag_SC unmeasured
+SC ShockCapturing ResGradQuad_SC unmeasured
+SC ShockCapturing ResGrad_SC unmeasured
+SC ShockCapturing ScalarAdvection_SC unmeasured
+SC mprans.Dissipation ShockCapturing unmeasured
+SC mprans.Kappa ShockCapturing unmeasured
+SC mprans.NCLS ShockCapturing state
+SC mprans.NCLS3P ShockCapturing unmeasured
+SC mprans.RANS2P ShockCapturing unmeasured
+SC mprans.RANS3PF ShockCapturing state
+SC mprans.RANS3PSed ShockCapturing unmeasured
+SC mprans.RDLS ShockCapturing rebuilt
+SC mprans.SW2D ShockCapturing unmeasured
+SC mprans.TADR ShockCapturing unmeasured
+SC mprans.VOF ShockCapturing state
+SC mprans.VOF3P ShockCapturing unmeasured
+SC mprans.VOS3P ShockCapturing unmeasured
+SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
+SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
+SG SubgridError AdvectionDiffusionReactionTransientSubscales_ASGS unmeasured
+SG SubgridError AdvectionDiffusionReaction_ASGS unmeasured
+SG SubgridError AdvectionLag_ASGS unmeasured
+SG SubgridError Advection_ASGS unmeasured
+SG SubgridError DarcyFC_ASGS unmeasured
+SG SubgridError FFDarcyFC_ASGS unmeasured
+SG SubgridError HamiltonJacobiDiffusionReaction_ASGS unmeasured
+SG SubgridError HamiltonJacobi_ASGS unmeasured
+SG SubgridError HamiltonJacobi_ASGS_opt state
+SG SubgridError NavierStokesASGS_velocity_pressure unmeasured
+SG SubgridError NavierStokesASGS_velocity_pressure_opt unmeasured
+SG SubgridError NavierStokesASGS_velocity_pressure_optV2 unmeasured
+SG SubgridError NavierStokesTransientSubScalesASGS_velocity_pressure unmeasured
+SG SubgridError NavierStokesWithBodyForceASGS_velocity_pressure unmeasured
+SG SubgridError ShallowWater_CFL unmeasured
+SG SubgridError StokesASGS_velocity unmeasured
+SG SubgridError StokesASGS_velocity_pressure unmeasured
+SG SubgridError StokesStabilization_1 unmeasured
+SG SubgridError TwophaseStokes_LS_FC_ASGS unmeasured
+SG mprans.Dissipation SubgridError unmeasured
+SG mprans.Kappa SubgridError unmeasured
+SG mprans.NCLS SubgridError unmeasured
+SG mprans.NCLS3P SubgridError unmeasured
+SG mprans.RANS2P SubgridError unmeasured
+SG mprans.RANS3PF SubgridError rebuilt
+SG mprans.RANS3PSed SubgridError unmeasured
+SG mprans.RDLS SubgridError unmeasured
+SG mprans.SW2D SubgridError unmeasured
+SG mprans.TADR SubgridError unmeasured
+SG mprans.VOF SubgridError unmeasured
+SG mprans.VOF3P SubgridError unmeasured
+SG mprans.VOS3P SubgridError unmeasured
+SO SplitOperator ISO_fixed_MinAdaptiveModelStep unmeasured
+SO SplitOperator SequentialNotInOrder_MinAdaptiveModelStep unmeasured
+SO SplitOperator SequentialNotInOrder_MinFLCBDFModelStep unmeasured
+SO SplitOperator Sequential_FixedStep_Simple unmeasured
+SO SplitOperator Sequential_MinAdaptiveModelStep unmeasured
+SO SplitOperator Sequential_MinAdaptiveModelStep_SS unmeasured
+SO SplitOperator Sequential_MinFLCBDFModelStep follows
+SO SplitOperator Sequential_MinModelStep rebuilt
+SO SplitOperator Sequential_NonUniformFixedStep unmeasured
+SO SplitOperator Sequential_tnList unmeasured
+STEP StepControl FLCBDF_controller follows
+STEP StepControl FLCBDF_controller_sys follows
+STEP StepControl GustafssonFullNewton_dt_controller unmeasured
+STEP StepControl HeuristicNL_dt_controller unmeasured
+STEP StepControl Min_dt_RKcontroller unmeasured
+STEP StepControl Min_dt_cfl_controller rebuilt
+STEP StepControl Min_dt_controller rebuilt
+STEP StepControl Min_dt_controller_FCT unmeasured
+STEP StepControl Newton_controller rebuilt
+STEP StepControl Osher_PsiTC_controller unmeasured
+STEP StepControl Osher_PsiTC_controller2 unmeasured
+STEP StepControl Osher_controller unmeasured
+STEP StepControl PsiTCtte_controller unmeasured
+STEP mprans.MCorr Newton_controller rebuilt
+STEP mprans.MCorr3P Newton_controller unmeasured
+STEP mprans.RDLS PsiTC unmeasured
+TI TimeIntegration BackwardEuler rebuilt
+TI TimeIntegration BackwardEuler_cfl rebuilt
+TI TimeIntegration CentralDifference_2ndD unmeasured
+TI TimeIntegration ExplicitRK_base unmeasured
+TI TimeIntegration FLCBDF state
+TI TimeIntegration FLCBDF_TwophaseDarcy_fc state
+TI TimeIntegration ForwardEuler unmeasured
+TI TimeIntegration ForwardEuler_A unmeasured
+TI TimeIntegration ForwardEuler_H unmeasured
+TI TimeIntegration IMEX_AD_Euler unmeasured
+TI TimeIntegration IMEX_HJ_Euler unmeasured
+TI TimeIntegration LinearSSPRKPIintegration unmeasured
+TI TimeIntegration LinearSSPRKintegration unmeasured
+TI TimeIntegration OuterTheta unmeasured
+TI TimeIntegration PsiTCtte unmeasured
+TI TimeIntegration PsiTCtte_new unmeasured
+TI TimeIntegration SSP unmeasured
+TI TimeIntegration SSPRKPIintegration unmeasured
+TI TimeIntegration VBDF state
+TI mprans.GN_SW2DCV RKEV unmeasured
+TI mprans.NCLS RKEV rebuilt
+TI mprans.SW2DCV RKEV unmeasured
+TI mprans.TADR RKEV unmeasured
+TI mprans.VOF RKEV rebuilt
+TI mprans.VOF3P RKEV unmeasured
+TI mprans.VOS3P RKEV unmeasured

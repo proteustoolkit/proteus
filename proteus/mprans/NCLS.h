@@ -210,6 +210,7 @@ namespace proteus
       void calculateResidual(arguments_dict& args)
       {
         double dt = args.scalar<double>("dt");
+        double sc_drop_time = args.scalar<double>("sc_drop_time");
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
         proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
@@ -454,8 +455,8 @@ namespace proteus
                 //
                 //calculate shock capturing diffusion
                 //
-                ck.calculateNumericalDiffusion(shockCapturingDiffusion,elementDiameter.data()[eN],pdeResidual_u,grad_u,numDiff0);
-                ck.calculateNumericalDiffusion(shockCapturingDiffusion,sc_uref, sc_alpha,G,G_dd_G,pdeResidual_u,grad_u,numDiff1);
+                ck.calculateNumericalDiffusion(shockCapturingDiffusion,elementDiameter.data()[eN],(pdeResidual_u - (sc_drop_time*ck.Mass_strong(m_t))),grad_u,numDiff0);
+                ck.calculateNumericalDiffusion(shockCapturingDiffusion,sc_uref, sc_alpha,G,G_dd_G,(pdeResidual_u - (sc_drop_time*ck.Mass_strong(m_t))),grad_u,numDiff1);
                 q_numDiff_u.data()[eN_k] = useMetrics*numDiff1+(1.0-useMetrics)*numDiff0;
 
                 //

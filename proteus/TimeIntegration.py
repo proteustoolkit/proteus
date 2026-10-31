@@ -218,6 +218,25 @@ class TI_base(object):
         """
         calculate any coefficients that depend on new time step
         """
+    def state(self):
+        """The state contract: what a hot start restores to continue this object exactly.
+
+        Plain data (python scalars and numpy arrays; an alias between two arrays is recorded as a
+        flag, not as two arrays) that the solution does not determine and that the spin-up of a
+        restart would rebuild differently: the value from the last evaluation inside the previous
+        step, a state machine's counters, a multistep history. None when there is nothing to carry.
+        ``set_state(state)`` puts it back after the spin-up. NumericalSolution archives it per rank
+        (``solver_state/<model>/<owner>``) and only the same partition reads it back.
+
+        This default carries nothing; whether that is right for a class is recorded in
+        test/state_contract_inventory.txt, which test/test_state_contract.py keeps complete.
+        """
+        return None
+
+    def set_state(self, state):
+        """Restore what ``state()`` returned; see the contract there."""
+        pass
+
     def setFromOptions(self,nOptions):
         """
         allow classes to set various numerical parameters

@@ -155,6 +155,27 @@ class Coefficients(TC_base):
         copyInstructions = {}
         return copyInstructions
 
+    #: what postStep leaves for the next step: the pressure of the step just taken and the sharp pressure
+    #: (and its gradient) the fluid model uses. A hot start rebuilds them from the restart state, which
+    #: moves the pressure update p - p_last - phi and the next momentum solve.
+    _state_arrays = {"q_u_last": lambda m: m.q[('u_last', 0)],
+                     "ebqe_u_last": lambda m: m.ebqe[('u_last', 0)],
+                     "q_p_sharp": lambda m: m.q_p_sharp,
+                     "ebqe_p_sharp": lambda m: m.ebqe_p_sharp,
+                     "q_grad_p_sharp": lambda m: m.q_grad_p_sharp,
+                     "ebqe_grad_p_sharp": lambda m: m.ebqe_grad_p_sharp}
+
+    def state(self):
+        m = getattr(self, "model", None)
+        if m is None or not hasattr(m, "q_p_sharp"):
+            return None
+        return {k: get(m).copy() for k, get in self._state_arrays.items()}
+
+    def set_state(self, state):
+        for k, get in self._state_arrays.items():
+            if k in state:
+                get(self.model)[:] = state[k]
+
     def postStep(self, t, firstStep=False):
         """
         Give the TC object an opportunity to modify itself before the time step.
