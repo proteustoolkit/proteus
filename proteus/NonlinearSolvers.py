@@ -1094,6 +1094,8 @@ class ExplicitConsistentMassMatrixWithRedistancing(Newton):
                 self.linearSolver.solve(u=self.du,b=r,par_u=self.par_du,par_b=par_r)
                 self.linearSolverFailed = self.linearSolver.failed()
             u[:]=self.du
+            if par_u is not None:
+                par_u.scatter_forward_insert()
             self.F.uStar_dof[:] = u
         else:
             self.F.uStar_dof[:] = self.F.u_dof_old[:]
@@ -1124,6 +1126,8 @@ class ExplicitConsistentMassMatrixWithRedistancing(Newton):
                 self.linearSolver.solve(u=self.du,b=r,par_u=self.par_du,par_b=par_r)
                 self.linearSolverFailed = self.linearSolver.failed()
             u-=self.du
+            if par_u is not None:
+                par_u.scatter_forward_insert()  # the ghost entries of du are not the owners'
             # DISTRIBUTE SOLUTION FROM u to u[ci].dof
             self.F.auxiliaryCallCalculateResidual = True
             self.computeResidual(u,r,b)
@@ -1155,6 +1159,8 @@ class ExplicitConsistentMassMatrixWithRedistancing(Newton):
                     self.linearSolver.solve(u=self.du,b=r,par_u=self.par_du,par_b=par_r)
                     self.linearSolverFailed = self.linearSolver.failed()
                 u-=self.du
+                if par_u is not None:
+                    par_u.scatter_forward_insert()  # the ghost entries of du are not the owners'
                 self.F.L2_norm_redistancing = self.F.getRedistancingResidual(u,r)
                 numIter += 1
             #self.F.redistancing_L2_norm_history.append(

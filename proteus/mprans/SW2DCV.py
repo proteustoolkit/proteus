@@ -67,6 +67,17 @@ class RKEV(proteus.TimeIntegration.SSP):
             self.u_dof_last[ci] = transport.u[ci].dof.copy()
             self.u_dof_lstage[ci] = transport.u[ci].dof.copy()
 
+    def ownedMaxCFL(self):
+        """Maximum of the edge based cfl over the dofs this rank owns: the cfl of a ghost dof is built from a
+        truncated graph row, so it is not the cfl of the dof and may exceed the global maximum."""
+        t = self.transport
+        if t.comm.size() == 1:
+            return self.edge_based_cfl.max()
+        dofMap = t.u[0].femSpace.dofMap
+        rank = t.comm.rank()
+        nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        return self.edge_based_cfl[:nOwned].max()
+
     def choose_dt(self):
         maxCFL = 1.0e-6
         # COMPUTE edge_based_cfl
@@ -103,11 +114,9 @@ class RKEV(proteus.TimeIntegration.SSP):
         argsDict["debug"] = 0
         adjusted_maxCFL = self.transport.sw2d.calculateEdgeBasedCFL(argsDict)
 
-        # owned DOFs only: a ghost row sees a truncated stencil (and wall
-        # vector), so its CFL number is not the owner's
-        par_dof = getattr(self.transport.u[0], "par_dof", None)
-        n_owned = par_dof.dim_proc if par_dof is not None else self.edge_based_cfl.size
-        maxCFL = max(maxCFL, globalMax(self.edge_based_cfl[:n_owned].max()))
+        # the cfl of a ghost dof comes from a truncated row (adjusted_maxCFL is the maximum over all
+        # local dofs, ghosts included), so only the owned dofs count
+        maxCFL = max(maxCFL, globalMax(self.ownedMaxCFL()))
         self.dt = self.runCFL/maxCFL
 
         if self.dtLast is None:
@@ -1076,29 +1085,36 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["h_max"] = self.h_max
         argsDict["kin_max"] = self.kin_max
         argsDict["KE_tiny"] = self.KE_tiny
-        # Two limiting passes, each in two kernel calls with ghost exchanges:
-        # stage 0 computes R+- (exchanged), stage 1 computes l_ij and applies
-        # the limited fluxes; hLow/huLow/hvLow are exchanged between passes.
-        n_limit_iter = 2
-        nnz = self.dH_minus_dL.size
-        if self.FCT_all is None or self.FCT_all.size != 4 * nnz:
-            self.FCT_all = np.zeros(4 * nnz, 'd')
-        argsDict["FCT_all"] = self.FCT_all
-        argsDict["Rneg_dof"] = self.Rneg_dof
-        argsDict["Rpos_dof"] = self.Rpos_dof
-        argsDict["num_neighbours"] = self.num_neighbours
-        for limit_iter in range(n_limit_iter):
-            argsDict["limit_iter"] = limit_iter
-            argsDict["limit_stage"] = 0
+        # The limiter of an owned dof reads R, hLow, huLow and the row length of its neighbours, which
+        # are ghosts with truncated graph rows, so the limiting iterations are driven from here and
+        # the owners' values are scattered between the phases of the kernel.
+        LIMITING_ITERATION = 2  # as in SW2DCV.h
+        n = self.h_dof_old.shape[0]
+        Rneg, Rpos = np.zeros(n), np.zeros(n)
+        lambda_dof = (np.diff(rowptr) - 1).astype('d')
+        self.scatterDOFArray(lambda_dof)
+        argsDict["Rneg_dof"] = Rneg
+        argsDict["Rpos_dof"] = Rpos
+        argsDict["lambda_dof"] = lambda_dof
+        argsDict["FCT_h_dof"] = np.zeros(self.nnz)
+        argsDict["FCT_hu_dof"] = np.zeros(self.nnz)
+        argsDict["FCT_hv_dof"] = np.zeros(self.nnz)
+        argsDict["Lij_dof"] = np.zeros(self.nnz)
+        argsDict["phase"] = 0
+        self.sw2d.convexLimiting(argsDict)
+        for iteration in range(LIMITING_ITERATION):
+            argsDict["phase"] = 1
             self.sw2d.convexLimiting(argsDict)
-            self.par_Rneg.scatter_forward_insert()
-            self.par_Rpos.scatter_forward_insert()
-            argsDict["limit_stage"] = 1
+            self.scatterDOFArray(Rneg)
+            self.scatterDOFArray(Rpos)
+            argsDict["phase"] = 2
             self.sw2d.convexLimiting(argsDict)
-            if limit_iter < n_limit_iter - 1:
-                self.par_hLow.scatter_forward_insert()
-                self.par_huLow.scatter_forward_insert()
-                self.par_hvLow.scatter_forward_insert()
+            self.scatterDOFArray(self.hLow)
+            self.scatterDOFArray(self.huLow)
+            self.scatterDOFArray(self.hvLow)
+        self.scatterDOFArray(limited_hnp1)
+        self.scatterDOFArray(limited_hunp1)
+        self.scatterDOFArray(limited_hvnp1)
 
         if self.coefficients.LOW_ORDER_ONLY:
             limited_hnp1[:], limited_hunp1[:], limited_hvnp1[:] = low_order
@@ -1432,13 +1448,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # hEps
         self.eps = 1E-5
         self.hEps = self.eps * comm.globalMax(self.u[0].dof.max())
-        # size_of_domain used in relaxation of bounds: the plan area of the
-        # whole domain. In parallel each subdomain also holds overlap
-        # elements, so sum only the owned elements and reduce across ranks
-        # (summing mesh.volume double-counts the overlap).
-        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
-        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
-        self.mesh.globalMesh.volume = self.size_of_domain
+        # size_of_domain (relaxation of the bounds) is set below, with the parallel vectors
         # normal vectors
         self.normalx = np.zeros(self.u[0].dof.shape, 'd')
         self.normaly = np.zeros(self.u[0].dof.shape, 'd')
@@ -1456,6 +1466,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.muH_minus_muL = np.zeros(self.Cx.shape, 'd')
         #
         self.hLow = np.zeros(self.u[0].dof.shape, 'd')
+        self.delta_Sqd_h = np.zeros(self.u[0].dof.shape, 'd')
+        self.delta_Sqd_kin = np.zeros(self.u[0].dof.shape, 'd')
+        self._dofVecs = {}
         self.huLow = np.zeros(self.u[0].dof.shape, 'd')
         self.hvLow = np.zeros(self.u[0].dof.shape, 'd')
         #
@@ -1509,27 +1522,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 bs=1,
                                                 n=n,N=N,nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
-        # nodal quantities the kernels read at neighbours: computed on every
-        # local row, then the owners' values are copied to the ghosts
-        self.delta_Sqd_h = np.zeros(self.u[0].dof.shape, 'd')
-        self.delta_Sqd_kin = np.zeros(self.u[0].dof.shape, 'd')
-        self.Rneg_dof = np.zeros(self.u[0].dof.shape, 'd')
-        self.Rpos_dof = np.zeros(self.u[0].dof.shape, 'd')
-        self.par_delta_Sqd_h = LAT.ParVec_petsc4py(self.delta_Sqd_h, bs=1, n=n, N=N, nghosts=nghosts,
-                                                   subdomain2global=subdomain2global)
-        self.par_delta_Sqd_kin = LAT.ParVec_petsc4py(self.delta_Sqd_kin, bs=1, n=n, N=N, nghosts=nghosts,
-                                                     subdomain2global=subdomain2global)
-        self.par_Rneg = LAT.ParVec_petsc4py(self.Rneg_dof, bs=1, n=n, N=N, nghosts=nghosts,
-                                            subdomain2global=subdomain2global)
-        self.par_Rpos = LAT.ParVec_petsc4py(self.Rpos_dof, bs=1, n=n, N=N, nghosts=nghosts,
-                                            subdomain2global=subdomain2global)
-        self.FCT_all = None  # FCT matrices and l_ij kept between limiter calls
-        # neighbours per DOF (row length - 1); a ghost's local row is
-        # truncated, so take the owner's count
-        self.num_neighbours = (np.diff(self.rowptr_cMatrix) - 1).astype('d')
-        self.par_num_neighbours = LAT.ParVec_petsc4py(self.num_neighbours, bs=1, n=n, N=N, nghosts=nghosts,
-                                                      subdomain2global=subdomain2global)
-        self.par_num_neighbours.scatter_forward_insert()
         #
         self.par_extendedSourceTerm_hu = LAT.ParVec_petsc4py(self.extendedSourceTerm_hu,
                                                 bs=1,
@@ -1579,6 +1571,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                      subdomain2global=subdomain2global)
         self.par_tailwater_dof.scatter_forward_insert()
         
+        # size_of_domain, used in the relaxation of the bounds, is the plan area of the whole
+        # domain: the sum of the owned elements' areas over the ranks (a subdomain's mesh.volume
+        # includes its overlap). Not the trace of the lumped mass matrix: with a canopy the mass
+        # matrix carries the porosity (storage phi h), so its trace is the pore volume.
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
         if self.coefficients.BOUNDS_RELAXATION:
             self.urelax[:] = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
             self.drelax[:] = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
@@ -1590,6 +1588,40 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         self.dataStructuresInitialized = True
     #
+
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = LAT.ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
+    def updateSecondDifferences(self):
+        """Sums over the graph row of i of h_i - h_j and kin_i - kin_j (j != i), for the local bounds,
+        scattered to the ghosts: the row of a ghost dof is truncated."""
+        rowptr, colind = self.rowptr_cMatrix, self.colind_cMatrix
+        h, hu, hv = self.h_dof_old, self.hu_dof_old, self.hv_dof_old
+        hmax = np.maximum(h, self.hEps)
+        kin = 0.5 * (hu * hu + hv * hv) * (2.0 * h / (h * h + hmax * hmax))
+        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
+        off = colind != rows
+        r, c = rows[off], colind[off]
+        n = len(rowptr) - 1
+        if self.coefficients.BOUNDS_RELAXATION:
+            self.delta_Sqd_h[:] = np.bincount(r, weights=h[r] - h[c], minlength=n)
+            self.delta_Sqd_kin[:] = np.bincount(r, weights=kin[r] - kin[c], minlength=n)
+        else:
+            # strict bar-state bounds: no relaxation by the local smoothness
+            self.delta_Sqd_h[:] = 0.0
+            self.delta_Sqd_kin[:] = 0.0
+        self.scatterDOFArray(self.delta_Sqd_h)
+        self.scatterDOFArray(self.delta_Sqd_kin)
 
     def getResidual(self, u, r):
         """
@@ -1782,25 +1814,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["urelax"] = self.urelax
         argsDict["drelax"] = self.drelax
 
+        argsDict["delta_Sqd_h_dof"] = self.delta_Sqd_h
+        argsDict["delta_Sqd_kin_dof"] = self.delta_Sqd_kin
+        if self.secondCallCalculateResidual == 0:
+            self.updateSecondDifferences()
+
         ## call calculate residual
-        # delta_Sqd = sum over neighbours j of (q_i - q_j), for the bounds
-        # relaxation; computed here so the ghost values can be exchanged
-        rowptr = self.rowptr_cMatrix; colind = self.colind_cMatrix
-        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
-        h = self.h_dof_old
-        hmax = np.where(h > self.hEps, h, self.hEps)
-        kin = 0.5 * (self.hu_dof_old * self.hu_dof_old + self.hv_dof_old * self.hv_dof_old)
-        kin = kin * (2.0 * h / (h * h + hmax * hmax))
-        if self.coefficients.BOUNDS_RELAXATION:
-            self.delta_Sqd_h[:] = np.add.reduceat(h[rows] - h[colind], rowptr[:-1])
-            self.delta_Sqd_kin[:] = np.add.reduceat(kin[rows] - kin[colind], rowptr[:-1])
-        else:
-            self.delta_Sqd_h[:] = 0.0
-            self.delta_Sqd_kin[:] = 0.0
-        self.par_delta_Sqd_h.scatter_forward_insert()
-        self.par_delta_Sqd_kin.scatter_forward_insert()
-        argsDict["delta_Sqd_h"] = self.delta_Sqd_h
-        argsDict["delta_Sqd_kin"] = self.delta_Sqd_kin
         self.calculateResidual(argsDict)
 
         ## distribute local bounds and low order solutions (with bar states)

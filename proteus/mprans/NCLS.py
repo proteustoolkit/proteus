@@ -3,6 +3,7 @@ import proteus.MeshTools
 from proteus.mprans.cNCLS import *
 import numpy as np
 from proteus.Transport import OneLevelTransport, cfemIntegrals, SparseMat
+from proteus.LinearAlgebraTools import ParVec_petsc4py
 from proteus.Transport import TC_base, logEvent, NonlinearEquation, Quadrature, Comm
 from proteus.Transport import memory, FluxBoundaryConditions, ExplicitLumpedMassMatrix
 from proteus.Transport import globalMax, SSP, ExplicitConsistentMassMatrixWithRedistancing
@@ -101,9 +102,20 @@ class RKEV(proteus.TimeIntegration.SSP):
                 for k in range(self.nStages + 1):
                     self.u_dof_stage[ci].append(transport.u[ci].dof.copy())
 
+    def ownedMaxCFL(self):
+        """Maximum of the edge based cfl over the dofs this rank owns: the cfl of a ghost dof is built from a
+        truncated graph row, so it is not the cfl of the dof and may exceed the global maximum."""
+        t = self.transport
+        if t.comm.size() == 1:
+            return self.cfl.max()
+        dofMap = t.u[0].femSpace.dofMap
+        rank = t.comm.rank()
+        nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        return self.cfl[:nOwned].max()
+
     def choose_dt(self):
         maxCFL = 1.0e-6
-        maxCFL = max(maxCFL, globalMax(self.cfl.max()))
+        maxCFL = max(maxCFL, globalMax(self.ownedMaxCFL()))
         self.dt = self.runCFL/maxCFL
         if self.dtLast is None:
             self.dtLast = self.dt
@@ -501,6 +513,7 @@ class LevelModel(OneLevelTransport):
             for ci in range(1, coefficients.nc):
                 assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
+        self._dofVecs = {}
         self.free_u = None
         # Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
@@ -867,6 +880,19 @@ class LevelModel(OneLevelTransport):
         self.waterline_prints = 0
 
     # mwf these are getting called by redistancing classes,
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
     def calculateCoefficients(self):
         pass
 
@@ -1306,7 +1332,22 @@ class LevelModel(OneLevelTransport):
         argsDict["STABILIZATION_TYPE"] = self.coefficients.STABILIZATION_TYPE
         argsDict["ENTROPY_TYPE"] = self.coefficients.ENTROPY_TYPE
         argsDict["cE"] = self.coefficients.cE
-        self.calculateResidual(argsDict)
+        if self.coefficients.STABILIZATION_TYPE == 0:
+            self.calculateResidual(argsDict)
+        else:
+            # psi and the normalized entropy residual of a ghost dof come from a truncated graph row, and
+            # the dissipation of an owned dof reads them: compute them (phase 0), scatter, then the rest
+            psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+            global_entropy_residual_dof = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["psi_dof"] = psi_dof
+            argsDict["global_entropy_residual_dof"] = global_entropy_residual_dof
+            argsDict["phase"] = 0
+            self.calculateResidual(argsDict)
+            r.fill(0.0)  # phase 0 already added the element residuals; phase 1 recomputes them
+            self.scatterDOFArray(psi_dof)
+            self.scatterDOFArray(global_entropy_residual_dof)
+            argsDict["phase"] = 1
+            self.calculateResidual(argsDict)
         
         self.quantDOFs[:] = self.interface_locator
 

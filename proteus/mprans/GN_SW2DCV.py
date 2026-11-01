@@ -67,6 +67,17 @@ class RKEV(proteus.TimeIntegration.SSP):
             self.u_dof_last[ci] = transport.u[ci].dof.copy()
             self.u_dof_lstage[ci] = transport.u[ci].dof.copy()
 
+    def ownedMaxCFL(self):
+        """Maximum of the edge based cfl over the dofs this rank owns: the cfl of a ghost dof is built from a
+        truncated graph row, so it is not the cfl of the dof and may exceed the global maximum."""
+        t = self.transport
+        if t.comm.size() == 1:
+            return self.edge_based_cfl.max()
+        dofMap = t.u[0].femSpace.dofMap
+        rank = t.comm.rank()
+        nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        return self.edge_based_cfl[:nOwned].max()
+
     def choose_dt(self):
         maxCFL = 1.0e-6
         # COMPUTE edge_based_cfl
@@ -100,11 +111,9 @@ class RKEV(proteus.TimeIntegration.SSP):
         argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         adjusted_maxCFL = self.transport.dsw_2d.calculateEdgeBasedCFL(argsDict)
 
-        # owned DOFs only: a ghost row sees a truncated stencil (and wall
-        # vector), so its CFL number is not the owner's
-        par_dof = getattr(self.transport.u[0], "par_dof", None)
-        n_owned = par_dof.dim_proc if par_dof is not None else self.edge_based_cfl.size
-        maxCFL = max(maxCFL, globalMax(self.edge_based_cfl[:n_owned].max()))
+        # the cfl of a ghost dof comes from a truncated row (adjusted_maxCFL is the maximum over all
+        # local dofs, ghosts included), so only the owned dofs count
+        maxCFL = max(maxCFL, globalMax(self.ownedMaxCFL()))
         self.dt = self.runCFL/maxCFL
 
         if self.dtLast is None:
@@ -968,6 +977,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.RHS_high_hbeta = None
         self.size_of_domain = None
         self.delta_Sqd_h = None
+        self._dofVecs = {}
         self.delta_Sqd_heta = None
         # low-order solution using bar states
         self.hLow = None
@@ -1143,7 +1153,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.par_normalx = None
         self.par_normaly = None
         self.par_ML = None
-        self.FCT_all = None  # FCT matrices kept between limiting passes
         # low order solution #
         self.par_hLow = None
         self.par_huLow = None
@@ -1157,6 +1166,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.par_kin_max = None
         # for parallel entropy residual
         self.par_global_entropy_residual = None
+
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = LAT.ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
 
     def FCTStep(self):
         # NOTE: this function is meant to be called within the solver
@@ -1239,22 +1261,22 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["g"] = self.coefficients.g
         argsDict["inverse_mesh"] = self.inverse_mesh
-        # Two limiting passes, one per kernel call; the second pass reads the
-        # neighbours' low-order states, so exchange them with the ghost DOFs
-        # in between (a ghost row's own update uses an incomplete stencil).
-        n_limit_iter = 2
-        if self.FCT_all is None or self.FCT_all.size != 6 * self.Cx.size:
-            self.FCT_all = np.zeros(6 * self.Cx.size, 'd')
-        argsDict["FCT_all"] = self.FCT_all
-        argsDict["n_limit_iter"] = n_limit_iter
-        for limit_iter in range(n_limit_iter):
-            argsDict["limit_iter"] = limit_iter
+        # The limiter of an owned dof reads hLow, huLow, ... of its neighbours, which are ghosts with
+        # truncated graph rows, and each limiting iteration updates them, so the iterations are driven
+        # from here and the owners' values are scattered between them.
+        LIMITING_ITERATION = 2  # as in GN_SW2DCV.h
+        for name in ("FCT_h", "FCT_hu", "FCT_hv", "FCT_heta", "FCT_hw", "FCT_hbeta"):
+            argsDict[name + "_dof"] = np.zeros(self.Cx.size)
+        argsDict["phase"] = 0
+        self.dsw_2d.convexLimiting(argsDict)
+        argsDict["phase"] = 1
+        lows = (self.hLow, self.huLow, self.hvLow, self.hetaLow, self.hwLow, self.hbetaLow)
+        for iteration in range(LIMITING_ITERATION):
             self.dsw_2d.convexLimiting(argsDict)
-            if limit_iter < n_limit_iter - 1:
-                self.par_hLow.scatter_forward_insert()
-                self.par_huLow.scatter_forward_insert()
-                self.par_hvLow.scatter_forward_insert()
-                self.par_hetaLow.scatter_forward_insert()
+            for a in lows:
+                self.scatterDOFArray(a)
+        for a in (limited_hnp1, limited_hunp1, limited_hvnp1, limited_hetanp1, limited_hwnp1, limited_hbetanp1):
+            self.scatterDOFArray(a)
 
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
@@ -1718,12 +1740,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         comm = Comm.get()
         self.setWallDOFs()
 
-        # Plan area of the whole domain (bounds relaxation uses m_i / area).
-        # In parallel each subdomain also holds overlap elements, so sum only
-        # the owned elements and reduce across ranks.
-        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
-        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
-
         # old vectors
         self.h_dof_old = np.copy(self.u[0].dof)
         self.hu_dof_old = np.copy(self.u[1].dof)
@@ -1883,6 +1899,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 n=n, N=N, nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
         self.par_wall_dof.scatter_forward_insert()
+        # size_of_domain, used in the relaxation of the bounds, is the plan area of the whole
+        # domain: the sum of the owned elements' areas over the ranks (a subdomain's mesh.volume
+        # includes its overlap). Not the trace of the lumped mass matrix: with a canopy the mass
+        # matrix carries the porosity (storage phi h), so its trace is the pore volume.
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
         self.par_inverse_mesh = LAT.ParVec_petsc4py(self.inverse_mesh,
                                                     bs=1,
                                                     n=n, N=N, nghosts=nghosts,

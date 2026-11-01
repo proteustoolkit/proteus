@@ -245,25 +245,33 @@ public:
     const proteus::pyarray<double> &inverse_mesh =
         args.array<double>("inverse_mesh");
 
-    // Create FCT component matrices in vector form
-    std::valarray<double> FCT_h(0., Cx.size()), FCT_hu(0., Cx.size()),
-        FCT_hv(0., Cx.size()), FCT_heta(0., Cx.size()), FCT_hw(0., Cx.size()),
-        FCT_hbeta(0., Cx.size());
+    // The limiter of an owned dof reads hLow, huLow, ... of its neighbours, which are ghosts with
+    // truncated graph rows when across a rank cut, and each limiting iteration updates them. So Python
+    // drives the iterations and scatters from the owners between them: phase 0 builds the FCT
+    // matrices, phase 1 does one limiting iteration (and the limited solution from it).
+    const int phase = args.scalar<int>("phase");
+    proteus::pyarray<double> &FCT_h_dof = args.array<double>("FCT_h_dof");
+    proteus::pyarray<double> &FCT_hu_dof = args.array<double>("FCT_hu_dof");
+    proteus::pyarray<double> &FCT_hv_dof = args.array<double>("FCT_hv_dof");
+    proteus::pyarray<double> &FCT_heta_dof = args.array<double>("FCT_heta_dof");
+    proteus::pyarray<double> &FCT_hw_dof = args.array<double>("FCT_hw_dof");
+    proteus::pyarray<double> &FCT_hbeta_dof = args.array<double>("FCT_hbeta_dof");
 
-    // One limiting pass per call. Between passes the caller exchanges the
-    // low-order states with the ghost DOFs: pass 2 reads hLow[j] etc. at
-    // neighbours, and a ghost row's own pass-1 update uses an incomplete
-    // stencil. The FCT matrices persist in FCT_all (6 x nnz) across calls.
-    const int limit_iter_arg = args.scalar<int>("limit_iter");
-    const int n_limit_iter = args.scalar<int>("n_limit_iter");
-    proteus::pyarray<double> &FCT_all = args.array<double>("FCT_all");
-    const std::size_t nnz_fct = Cx.size();
+    // Create FCT component matrices in vector form
+    std::valarray<double> FCT_h(FCT_h_dof.data(), Cx.size()),
+        FCT_hu(FCT_hu_dof.data(), Cx.size()),
+        FCT_hv(FCT_hv_dof.data(), Cx.size()),
+        FCT_heta(FCT_heta_dof.data(), Cx.size()),
+        FCT_hw(FCT_hw_dof.data(), Cx.size()),
+        FCT_hbeta(FCT_hbeta_dof.data(), Cx.size());
+
 
     ////////////////////////////////////////////////////
     // Loop to define FCT matrices for each component //
     ////////////////////////////////////////////////////
     int ij = 0;
-    for (int i = 0; i < numDOFs && limit_iter_arg == 0; i++) {
+    if (phase == 0)
+    for (int i = 0; i < numDOFs; i++) {
       // Read un at ith node
       const double hi = h_old[i];
       const double one_over_hi =
@@ -409,15 +417,16 @@ public:
     // Main loop to define limiters and compute limited solution //////
     ////////////////////////////////////////////////////////////////////
 
-    if (limit_iter_arg > 0) {
-      for (std::size_t k = 0; k < nnz_fct; k++) {
-        FCT_h[k] = FCT_all[0 * nnz_fct + k];
-        FCT_hu[k] = FCT_all[1 * nnz_fct + k];
-        FCT_hv[k] = FCT_all[2 * nnz_fct + k];
-        FCT_heta[k] = FCT_all[3 * nnz_fct + k];
-        FCT_hw[k] = FCT_all[4 * nnz_fct + k];
-        FCT_hbeta[k] = FCT_all[5 * nnz_fct + k];
+    if (phase == 0) {
+      for (size_t k = 0; k < Cx.size(); k++) {
+        FCT_h_dof.data()[k] = FCT_h[k];
+        FCT_hu_dof.data()[k] = FCT_hu[k];
+        FCT_hv_dof.data()[k] = FCT_hv[k];
+        FCT_heta_dof.data()[k] = FCT_heta[k];
+        FCT_hw_dof.data()[k] = FCT_hw[k];
+        FCT_hbeta_dof.data()[k] = FCT_hbeta[k];
       }
+      return;
     }
 
     // Create Lij_array and initialize with 1
@@ -426,9 +435,9 @@ public:
     // define tolerance for limiting
     const double eps = 1e-14;
 
-    /* Loop over # of limiting iterations */
-    for (int limit_iter = limit_iter_arg; limit_iter < limit_iter_arg + 1;
-         limit_iter++) {
+    /* One limiting iteration per call */
+    {
+      const int limit_iter = 0;
 
       /* Loop to compute limiter l^j_i and l^i_j */
       ij = 0;
@@ -872,19 +881,15 @@ public:
       FCT_heta = (1. - Lij_array) * FCT_heta;
       FCT_hw = (1. - Lij_array) * FCT_hw;
       FCT_hbeta = (1. - Lij_array) * FCT_hbeta;
-    } // end loop for limiting iteration
-
-    if (limit_iter_arg < n_limit_iter - 1) {
-      for (std::size_t k = 0; k < nnz_fct; k++) {
-        FCT_all[0 * nnz_fct + k] = FCT_h[k];
-        FCT_all[1 * nnz_fct + k] = FCT_hu[k];
-        FCT_all[2 * nnz_fct + k] = FCT_hv[k];
-        FCT_all[3 * nnz_fct + k] = FCT_heta[k];
-        FCT_all[4 * nnz_fct + k] = FCT_hw[k];
-        FCT_all[5 * nnz_fct + k] = FCT_hbeta[k];
+      for (size_t k = 0; k < Cx.size(); k++) {
+        FCT_h_dof.data()[k] = FCT_h[k];
+        FCT_hu_dof.data()[k] = FCT_hu[k];
+        FCT_hv_dof.data()[k] = FCT_hv[k];
+        FCT_heta_dof.data()[k] = FCT_heta[k];
+        FCT_hw_dof.data()[k] = FCT_hw[k];
+        FCT_hbeta_dof.data()[k] = FCT_hbeta[k];
       }
-      return; // the caller exchanges hLow etc. and calls the next pass
-    }
+    } // end of the limiting iteration
 
     /* Update final solution */
     for (int i = 0; i < numDOFs; i++) {
