@@ -10,7 +10,7 @@ atol_u[0] = 1.0e-5
 rtol_u[0] = 1.0e-5
 #DT = 1.0e-6#None#0.025#1.0e-1/timeScale
 # T/nDTout = 1.25e-4 d = 0.003 h, inside the 0.01 h ceiling the paper uses.
-tnList = [0.0]; nDTout = 1000#cek don't have stability worked out yet, blows up for large time steps
+tnList = [0.0]; nDTout = ct.nDT if ct.nDT > 0 else 1000#cek don't have stability worked out yet, blows up for large time steps
 for i in range(nDTout):
     tnList.append(0.0+(i+1)*(T)/float(nDTout))
 if useFLCBDF:
@@ -78,6 +78,8 @@ elementBoundaryQuadrature = SimplexGaussQuadrature(nd-1,1)
 #     dz = 0.0005 m (0.05 cm) -> nn = 10001   reference solution
 dz = 0.5
 nn = int(round(L[0]/dz)) + 1
+if ct.nn > 0:
+    nn = ct.nn
 nLevels = 1#10-2
 #nn=3
 #nLevels = 10
@@ -129,7 +131,11 @@ tolFac = 0.0
 nl_atol_res = 1.0e-8
 
 maxNonlinearIts = 100#1001
+if ct.nl_solver == 'lscheme':
+    maxNonlinearIts = 1000  # linear convergence
 maxLineSearches =100
+if ct.nl_solver != 'newton':
+    maxLineSearches = 0  # lscheme: contracts in energy, not monotonically in r; hybrid: replaces it
 
 matrix = SparseMatrix
 #matrix = Numeric.array

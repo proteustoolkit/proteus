@@ -139,6 +139,17 @@ fullNewtonFlag = True
 nonlinearSolverNorm = l2Norm
 """Norm to use for nonlinear algebraic residual"""
 
+nonlinearSolverUNorm = None
+"""Norm for the Newton increment and iterate in the 'u', 'du' and 'r_and_du' tests: a callable
+(as nonlinearSolverNorm), 'L2' (finite element L2 norm, sqrt(x^T M x), consistent mass) or
+'L2_lumped'. None uses nonlinearSolverNorm. The 'L2' options need model support (femL2Norm)."""
+
+nl_rtol_du = 1.0e-4
+"""Relative tolerance of the 'du' and 'r_and_du' tests: ||du|| < nl_rtol_du*||u|| + nl_atol_du"""
+
+nl_atol_du = 1.0e-16
+"""Absolute tolerance of the 'du' and 'r_and_du' tests"""
+
 tolFac = 0.01
 
 atol = 1.0e-8

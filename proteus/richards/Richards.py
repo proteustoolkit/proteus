@@ -15,9 +15,27 @@ from proteus.NonlinearSolvers import ExplicitLumpedMassMatrixForRichards
 
 
 class ThetaScheme(TimeIntegration.BackwardEuler):
-    def __init__(self,transport,integrateInterpolationPoints=False):
+    """Two-level theta method for the Richards LevelModel.
+
+    The storage term is always (m(u^{n+1}) - m(u^n))/dt; the Galerkin flux terms
+    are weighted theta*F(u^{n+1}) + (1-theta)*F(u^n). theta = 1 (default) is
+    backward Euler and theta = 1/2 is Crank-Nicolson. Set it in the numerics
+    file with ``timeIntegrationTheta = 0.5``.
+
+    With STABILIZATION_TYPE=0 the theta weighting applies to the Galerkin
+    element integrals (exterior boundary fluxes stay implicit). With the
+    edge-based schemes the low-order operator stays backward Euler and theta
+    enters only the high-order flux used to build the FCT correction.
+    """
+    def __init__(self,transport,integrateInterpolationPoints=False,theta=1.0):
         self.transport=transport
         TimeIntegration.BackwardEuler.__init__(self,transport, integrateInterpolationPoints)
+        self.theta = theta
+    def setFromOptions(self,nOptions):
+        TimeIntegration.BackwardEuler.setFromOptions(self,nOptions)
+        if 'timeIntegrationTheta' in dir(nOptions):
+            self.theta = float(nOptions.timeIntegrationTheta)
+        assert 0.0 <= self.theta <= 1.0, "timeIntegrationTheta must be in [0,1]"
     def updateTimeHistory(self,resetFromDOF=False):
         TimeIntegration.BackwardEuler.updateTimeHistory(self,resetFromDOF)
         self.transport.u_dof_old[:] = self.u
@@ -242,6 +260,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  SC=0.0,
                  FCT=True,
                  num_fct_iter=1,
+                 FCT_SATURATED_LOW_ORDER=True,
+                 FCT_TYPE='semi-implicit',
+                 FCT_PRELIMITER_POWER=3.0,
+                 FCT_PRELIMITER_VARIABLE='pressure',
+                 LSCHEME_L=0.0,
+                 NONLINEAR_SOLVER=None,
+                 LSCHEME_RETRY_ITS=1,
+                 LSCHEME_TRIGGER='residual',
+                 LSCHEME_THETA_MAX=0.5,
+                 FCT_PREDICTOR_FALLBACK=True,
                  # FOR ENTROPY VISCOSITY
                  cE=1.0,
                  uL=0.0,
@@ -301,10 +329,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # the Kirchhoff transform hbar = exp(alpha*psi) linearise Richards and
         # the closed forms exist.  alpha is Gardner's exponent [1/m] and
         # vgm_n_types is unused.
+        #
+        # 'HornungMessing' is the manufactured law s = thetaR + thetaSR*(1 -
+        # (4/pi^2) atan(psi)^2), kr = 1/(1+psi^2) for psi < 0 (saturated above).
+        # Use thetaR = 0, thetaSR = pi^2/2, Ks = 2 for the published test;
+        # alpha and vgm_n_types are unused.
         psk_types = {"VG": 0,          # van Genuchten retention + Mualem  kr
                      "BC": 1,          # Brooks-Corey  retention + Burdine kr
                      "BC_MUALEM": 2,   # Brooks-Corey  retention + Mualem  kr
-                     "Gardner": 3}     # Gardner exponential retention + kr=Se
+                     "Gardner": 3,     # Gardner exponential retention + kr=Se
+                     "HornungMessing": 4}
         try:
             if isinstance(PSK_type, int):
                 PSK_type = [key for key, value in psk_types.items() if value == PSK_type][0]
@@ -365,10 +399,71 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.ENTROPY_TYPE = ENTROPY_TYPE
         self.FCT = FCT
         self.num_fct_iter=num_fct_iter
+        # When True (default), the FCT correction is switched off at DOFs whose low-order
+        # predictor is saturated (u >= 0) for retention laws with a saturated
+        # plateau (VG, BC, Hornung-Messing; not Gardner). There theta is pinned at
+        # theta_S, so a limited mass below it cannot be inverted back to the
+        # positive head and the theta -> psi recovery collapses to psi ~ 0-.
+        self.FCT_SATURATED_LOW_ORDER = FCT_SATURATED_LOW_ORDER
+        # FCT_TYPE (with FCT=True and an edge-based STABILIZATION_TYPE):
+        #  'semi-implicit' -- Barua, Kees & Kuzmin (WRR): low-order solve, then an explicit
+        #                     correction of theta and a theta -> psi inversion (FCTStep).
+        #  'implicit'      -- Dielmann, Kuzmin & Kees (JNMA): Galerkin theta-scheme predictor p^H,
+        #                     fluxes at p^H, nodal-variation prelimiter (exponent
+        #                     FCT_PRELIMITER_POWER; <= 0 turns it off), Zalesak with the global bounds
+        #                     [theta_R, theta_S] relative to theta^n, then an implicit low-order solve
+        #                     from the corrected datum theta^{n,FCT}. No inversion.
+        if FCT_TYPE not in ('semi-implicit', 'implicit'):
+            raise ValueError("FCT_TYPE must be 'semi-implicit' or 'implicit', not %r" % (FCT_TYPE,))
+        self.FCT_TYPE = FCT_TYPE
+        self.FCT_PRELIMITER_POWER = FCT_PRELIMITER_POWER
+        # Variable the implicit FCT nodal-variation detector acts on: 'pressure' (p^H, as in the
+        # JNMA MFEM implementation) or 'hydraulic_head' (u^H = p^H + z, as first written in the
+        # JNMA draft). They coincide without gravity.
+        prelimiter_variables = {'pressure': 0, 'hydraulic_head': 1}
+        if FCT_PRELIMITER_VARIABLE not in prelimiter_variables:
+            raise ValueError("FCT_PRELIMITER_VARIABLE must be one of %s, not %r"
+                             % (list(prelimiter_variables), FCT_PRELIMITER_VARIABLE))
+        self.FCT_PRELIMITER_VARIABLE = FCT_PRELIMITER_VARIABLE
+        self.FCT_PRELIMITER_HEAD = prelimiter_variables[FCT_PRELIMITER_VARIABLE]
+        # Nonlinear iteration matrix. LSCHEME_L = L >= sup dm/dpsi defines the L-scheme matrix
+        # J = (L/dt) M_L + A~(p^k) (low order, upwind k_r frozen), used for every residual (Galerkin,
+        # low order, implicit-FCT final) as in the JNMA defect correction p^{k+1} = p^k - J^{-1} R(p^k).
+        # NONLINEAR_SOLVER:
+        #   'newton'  -- exact Jacobians (default when LSCHEME_L = 0)
+        #   'lscheme' -- L-scheme matrix in every iteration (default when LSCHEME_L > 0); linear
+        #                convergence, so raise maxNonlinearIts and set maxLineSearches = 0
+        #   'hybrid'  -- Newton, but a step that fails the trigger is undone and replaced by
+        #                LSCHEME_RETRY_ITS L-scheme iterations (instead of a line search), then Newton
+        #                resumes. LSCHEME_TRIGGER: 'residual' (the Newton step did not reduce ||r||) or
+        #                'theta' (also when Deuflhard's contraction estimate
+        #                Theta_k = ||J_k^{-1} r(u_{k+1})|| / ||du_k|| exceeds LSCHEME_THETA_MAX;
+        #                Theta ~ h_k/2 of the Kantorovich ball test, one extra back-solve per iteration).
+        self.LSCHEME_L = LSCHEME_L
+        if NONLINEAR_SOLVER is None:
+            NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
+        if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
+            raise ValueError("NONLINEAR_SOLVER must be 'newton', 'lscheme' or 'hybrid'")
+        if NONLINEAR_SOLVER != 'newton' and not LSCHEME_L > 0.0:
+            raise ValueError("NONLINEAR_SOLVER=%r needs LSCHEME_L > 0" % (NONLINEAR_SOLVER,))
+        if LSCHEME_TRIGGER not in ('residual', 'theta'):
+            raise ValueError("LSCHEME_TRIGGER must be 'residual' or 'theta'")
+        self.NONLINEAR_SOLVER = NONLINEAR_SOLVER
+        self.LSCHEME_RETRY_ITS = int(LSCHEME_RETRY_ITS)
+        self.LSCHEME_TRIGGER = LSCHEME_TRIGGER
+        self.LSCHEME_THETA_MAX = float(LSCHEME_THETA_MAX)
+        # FCT_TYPE='implicit': if the Galerkin predictor's nonlinear solve fails, redo the step's
+        # predictor with the low-order operator (fluxes then evaluated at p^L, as in the WRR scheme)
+        # instead of failing the step. Typical on dry-soil fronts (Szymkiewicz).
+        self.FCT_PREDICTOR_FALLBACK = FCT_PREDICTOR_FALLBACK
         self.uL = uL
         self.uR = uR
         self.cK = cK
-        self.forceStrongConditions = False
+        # Strong Dirichlet: Dirichlet DOFs are set from the BC each residual and
+        # masked out of the residual and the FCT correction (bc_mask = 0). With
+        # the default False they are enforced weakly through the boundary flux
+        # and remain free DOFs, so the FCT correction also moves them.
+        self.forceStrongConditions = forceStrongConditions
         self.cE = cE
         self.outputQuantDOFs = outputQuantDOFs
         #For seepage anb
@@ -397,6 +492,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.densityModel = modelList[self.density_model]
 
     def preStep(self, t, firstStep=False):
+        # every step of the implicit FCT starts with the Galerkin predictor
+        if hasattr(self, 'model') and hasattr(self.model, 'fct_phase'):
+            self.model.fct_phase = 'predictor'
         # Refresh coupled density every step from the transport (TADR) model,
         # mirroring how TADR refreshes velocity / aliases moisture content.
         if self.density_model is None or not hasattr(self, 'densityModel'):
@@ -996,6 +1094,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.Rpos = None
         self.Rneg = None
         self.FluxCorrectionMatrix = None
+        # FCT_TYPE='implicit': which of the three solves of a time step the residual is for
+        # ('predictor' Galerkin, 'flux' evaluation at p^H, 'final' low order); see ImplicitFCTStep.
+        self.fct_phase = 'predictor'
+        self.fct_resolve = False
+        self.fct_fallback_count = 0
+        self.lscheme_active = False  # set by Newton in NONLINEAR_SOLVER='hybrid'
+        self.alpha_nv = None
+        self.m_fct = None
         # Aux quantity at DOFs to be filled by optimized code (MQL)
         self.quantDOFs = np.zeros(self.u[0].dof.shape, 'd')
         self.mLow = np.zeros(self.u[0].dof.shape, 'd')
@@ -1125,6 +1231,80 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             for cj in range(self.nc):
                 self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
    
+    def checkFCTParallelLayout(self):
+        """Refuse a partition on which an OWNED DOF misses part of its element star.
+
+        The FCT limiters (both FCT_TYPEs) are nonlinear in the assembled rows (ML, MC, the
+        flux matrices, P_i, Q_i), so a row must be complete at every owned DOF. An additive
+        residual does not need this, which is why Galerkin and the low order still agree with
+        serial on such partitions. Element partitioning with nLayersOfOverlapForParallel = 0
+        violates it: a node on the cut is owned by one rank but sees only that rank's elements
+        (Hornung-Messing h = 1/16, 2 ranks: WRR FCT 2.8e-3 vs 6.8e-5 serial). Element
+        partitioning with overlap >= 1 and node partitioning both pass.
+
+        Test: ownedElementStarsIncomplete().
+        """
+        bad = self.ownedElementStarsIncomplete()
+        if bad > 0:
+            raise ValueError("Richards FCT in parallel: %d owned DOFs miss part of their element star, so the "
+                             "limiter would act on partial rows. Use parallelPartitioningType = "
+                             "MeshParallelPartitioningTypes.node, or element partitioning with "
+                             "nLayersOfOverlapForParallel >= 1." % bad)
+
+    def ownedElementStarsIncomplete(self):
+        """Global number of owned DOFs whose element star is not entirely on their rank (0 in serial).
+
+        The number of local elements containing each owned DOF must equal its global count,
+        which is assembled by a reverse-add of the counts over the uniquely owned elements
+        (eN < nElements_owned). Rows of element-assembled matrices (ML, MC, ...) are complete
+        at owned DOFs exactly when this is 0.
+        """
+        par = getattr(self.u[0], 'par_dof', None)
+        if par is None or self.comm.size() == 1:
+            return 0
+        l2g = np.asarray(self.l2g[0]['freeGlobal'])
+        ndof = self.u[0].dof.shape[0]
+        n_local = np.bincount(l2g.ravel(), minlength=ndof).astype('d')[:ndof]
+        n_owned_elements = getattr(self.mesh, 'nElements_owned', self.mesh.nElements_global)
+        saved = self.u[0].dof.copy()
+        self.u[0].dof[:] = np.bincount(l2g[:n_owned_elements].ravel(), minlength=ndof).astype('d')[:ndof]
+        par.scatter_reverse_add()
+        n_global = self.u[0].dof.copy()
+        self.u[0].dof[:] = saved
+        n_owned = par.dim_proc
+        bad_local = int(np.count_nonzero(n_local[:n_owned] != n_global[:n_owned]))
+        return int(self.comm.globalSum(float(bad_local)))
+
+    def femL2Norm(self, x, lumped=False):
+        """Finite element L2 norm of a nodal vector x (free DOFs, local numbering with ghosts).
+
+        ||x||_{L2} = sqrt(sum_{i owned} x_i (M_C x)_i), M_C the consistent mass matrix, i.e. the
+        L2(Omega) norm of the finite element function with these nodal values (the quantity
+        MFEM's GridFunction::ComputeL2Error(0) evaluates). lumped=True uses M_L instead.
+        x must hold current ghost values. The consistent version needs complete rows of M_C
+        at owned DOFs (node partitioning, or element partitioning with overlap >= 1); it
+        raises otherwise. Used by NonlinearSolvers for unorm = 'L2' / 'L2_lumped'.
+        """
+        if self.MC_global is None:
+            raise RuntimeError("femL2Norm: the mass matrix is assembled with the first residual")
+        n_owned = getattr(getattr(self.u[0], 'par_dof', None), 'dim_proc', self.ML.shape[0])
+        if lumped:
+            local = float(np.dot(self.ML[:n_owned], x[:n_owned] * x[:n_owned]))
+        else:
+            if getattr(self, '_femL2_checked', False) is False:
+                bad = self.ownedElementStarsIncomplete()
+                if bad > 0:
+                    raise ValueError("femL2Norm: %d owned DOFs miss part of their element star, so M_C x is "
+                                     "incomplete there. Use node partitioning, element partitioning with "
+                                     "overlap >= 1, or unorm = 'L2_lumped'." % bad)
+                self._femL2_checked = True
+            Mx = getattr(self, '_femL2_Mx', None)
+            if Mx is None or Mx.shape != x.shape:
+                Mx = self._femL2_Mx = np.zeros_like(x)
+            self.MC_global.matvec(x, Mx)
+            local = float(np.dot(x[:n_owned], Mx[:n_owned]))
+        return np.sqrt(max(self.comm.globalSum(local), 0.0))
+
     def ghostScatter(self, *arrays):
         """Forward-insert (owner -> ghost copy) each free-DOF array.  No-op in serial.
 
@@ -1155,7 +1335,113 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             a[:] = self.u[0].dof
         self.u[0].dof[:] = saved
 
+    def lschemeOn(self):
+        """True when the next residual should assemble the L-scheme matrix instead of the Jacobian."""
+        c = self.coefficients
+        return c.LSCHEME_L > 0.0 and (c.NONLINEAR_SOLVER == 'lscheme' or self.lscheme_active)
+
+    def setLScheme(self, on):
+        """Newton's switch for NONLINEAR_SOLVER='hybrid' (takes effect at the next residual)."""
+        self.lscheme_active = bool(on)
+
+    def nonlinearHybridOptions(self):
+        """Options Newton reads for NONLINEAR_SOLVER='hybrid', else None."""
+        c = self.coefficients
+        if c.NONLINEAR_SOLVER != 'hybrid':
+            return None
+        return {'its': c.LSCHEME_RETRY_ITS, 'trigger': c.LSCHEME_TRIGGER, 'theta_max': c.LSCHEME_THETA_MAX}
+
+    def defectCorrection(self):
+        """True when the current Galerkin solve uses the L-scheme matrix (assembled by the edge kernel)."""
+        return self.kernelStabilizationType() == 0 and self.lschemeOn()
+
+    def kernelStabilizationType(self):
+        """STABILIZATION_TYPE passed to the kernels. The implicit FCT changes it per phase:
+        Galerkin for the predictor, the edge-based low order for the flux evaluation, and
+        Implicit_FCT (the low order plus the limited correction) for the final solve."""
+        if self.coefficients.FCT and self.coefficients.FCT_TYPE == 'implicit':
+            return {'predictor': 0, 'low_predictor': 2, 'flux': 2, 'final': 3}[self.fct_phase]
+        return self.coefficients.STABILIZATION_TYPE
+
+    def fctPredictorFallback(self):
+        """Called by Newton when the implicit FCT's Galerkin predictor failed. Switches this step's
+        predictor to the low-order operator and returns True, or returns False (no fallback)."""
+        c = self.coefficients
+        if not (c.FCT and c.FCT_TYPE == 'implicit' and c.FCT_PREDICTOR_FALLBACK
+                and self.fct_phase == 'predictor'):
+            return False
+        self.fct_phase = 'low_predictor'
+        self.fct_fallback_count += 1
+        logEvent("Implicit FCT: low-order predictor fallback #%d at t = %g"
+                 % (self.fct_fallback_count, self.timeIntegration.t), level=1)
+        return True
+
+    def ImplicitFCTStep(self):
+        """Implicit FCT (JNMA), called by Newton after each converged solve.
+
+        After the Galerkin predictor: evaluate the fluxes at p^H, limit them, store the
+        correction in fluxCorrection and ask Newton (fct_resolve) for the final low-order
+        solve, M_L (m(p) - m^{n,FCT})/dt + A~(p) u(p) = 0, starting from p^H.
+        After the final solve: nothing to do but rearm the predictor.
+        """
+        if self.fct_phase == 'final':
+            self.fct_phase = 'predictor'
+            return
+        rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
+        nFree = len(rowptr) - 1
+        if self.alpha_nv is None:
+            self.alpha_nv = np.zeros(nFree, 'd')
+            self.m_fct = np.zeros(nFree, 'd')
+        # edge-based residual at p^H: fills mLow = m(p^H), mn = m(p^n) and dt (f^H - f^L)_ij at p^H
+        self.fct_phase = 'flux'
+        r_scratch = np.zeros(self.u[0].dof.shape, 'd')
+        self.getResidual(self.u[0].dof.copy(), r_scratch)
+        self.ghostScatter(self.mLow, self.mn)
+        argsDict = cArgumentsDict.ArgumentsDict()
+        argsDict["bc_mask"] = self.bc_mask
+        argsDict["numDOFs"] = nFree
+        argsDict["dt"] = self.timeIntegration.dt
+        argsDict["rho"] = self.coefficients.rho
+        argsDict["gravity"] = self.coefficients.gravity
+        argsDict["mesh_dof"] = self.mesh.nodeArray
+        argsDict["u_dof"] = self.u[0].dof
+        argsDict["ML"] = self.ML
+        argsDict["MC"] = MassMatrix
+        argsDict["mn"] = self.mn
+        argsDict["mLow"] = self.mLow
+        argsDict["dt_times_fH_minus_fL"] = self.dt_times_dC_minus_dL
+        argsDict["csrRowIndeces_DofLoops"] = rowptr
+        argsDict["csrColumnOffsets_DofLoops"] = colind
+        argsDict["thetaR"] = self.coefficients.thetaR_types
+        argsDict["thetaSR"] = self.coefficients.thetaSR_types
+        argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
+        argsDict["prelimiter_power"] = float(self.coefficients.FCT_PRELIMITER_POWER)
+        argsDict["prelimiter_head"] = int(self.coefficients.FCT_PRELIMITER_HEAD)
+        argsDict["alpha_nv"] = self.alpha_nv
+        argsDict["Rpos"] = self.Rpos
+        argsDict["Rneg"] = self.Rneg
+        argsDict["FluxCorrectionMatrix"] = self.FluxCorrectionMatrix
+        argsDict["fluxCorrection"] = self.fluxCorrection
+        argsDict["limited_solution"] = self.m_fct
+        if getattr(self.u[0], 'par_dof', None) is None:
+            argsDict["fct_pass"] = 0
+            self.richards.ImplicitFCTStep(argsDict)
+        else:
+            # alpha_ij reads alpha_nv_j and R_j at ghost columns: the owners' values cross the cut
+            argsDict["fct_pass"] = 1
+            self.richards.ImplicitFCTStep(argsDict)
+            self.ghostScatter(self.alpha_nv)
+            argsDict["fct_pass"] = 2
+            self.richards.ImplicitFCTStep(argsDict)
+            self.ghostScatter(self.Rpos, self.Rneg)
+            argsDict["fct_pass"] = 3
+            self.richards.ImplicitFCTStep(argsDict)
+        self.fct_phase = 'final'
+        self.fct_resolve = True
+
     def FCTStep(self):
+        if self.coefficients.FCT_TYPE == 'implicit':
+            return self.ImplicitFCTStep()
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
         limited_solution = np.zeros((len(rowptr) - 1),'d')
         # Ghost-sync everything the limiter reads at a column before it reads it.
@@ -1181,6 +1467,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["dt_times_fH_minus_fL"] = self.dt_times_dC_minus_dL
         argsDict["min_m_bc"] = self.min_m_bc
         argsDict["max_m_bc"] = self.max_m_bc
+        # 1 where the low-order predictor (still in u[0].dof here) is saturated
+        # and the correction must vanish; all zeros leaves the limiter unchanged.
+        if self.coefficients.FCT_SATURATED_LOW_ORDER and self.coefficients.PSK_type != 3:
+            satLow = (self.u[0].dof[:len(rowptr) - 1] >= 0.0).astype('d')
+        else:
+            satLow = np.zeros((len(rowptr) - 1,), 'd')
+        argsDict["satLow"] = satLow
         argsDict["Rpos"] = self.Rpos
         argsDict["Rneg"] = self.Rneg
         argsDict["FluxCorrectionMatrix"] = self.FluxCorrectionMatrix
@@ -1524,6 +1817,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             if getattr(self.u[0], 'par_dof', None) is not None or self.comm.size() == 1:
                 self.ghostScatter(self.freeDOFMaterialTypes)
                 self._freeDOFMaterialTypes_synced = True
+                if self.coefficients.FCT:
+                    self.checkFCTParallelLayout()
         #
         # cek end computationa of cterm_global
         #
@@ -1562,7 +1857,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             for cj in range(len(self.dirichletConditionsForceDOF)):
                 for dofN,g in list(self.dirichletConditionsForceDOF[cj].DOFBoundaryConditionsDict.items()):
                     self.u[cj].dof[dofN] = g(self.dirichletConditionsForceDOF[cj].DOFBoundaryPointDict[dofN],self.timeIntegration.t)
-                    self.u_dof_old[dofN] = self.u[cj].dof[dofN]
+                    # The old-time value must be g(t^n): the Newton vector that
+                    # ThetaScheme copies into u_dof_old never sees the value set
+                    # above, and g(t^{n+1}) would corrupt the (1-theta) fluxes.
+                    dt = self.timeIntegration.dt
+                    t_old = self.timeIntegration.t - (dt if dt is not None else 0.0)
+                    self.u_dof_old[dofN] = g(self.dirichletConditionsForceDOF[cj].DOFBoundaryPointDict[dofN], t_old)
                     self.bc_mask[dofN] = 0.0
         degree_polynomial = 1
         try:
@@ -1572,8 +1872,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["bc_mask"] = self.bc_mask
         argsDict["dt"] = self.timeIntegration.dt
-        argsDict["Theta"] = 1.0
-        argsDict["Theta_h"] = 0.5
+        # ThetaScheme.theta weights the high-order (Galerkin) fluxes; the low-order
+        # edge-based operator is always backward Euler (Theta = 1).
+        time_theta = getattr(self.timeIntegration, 'theta', 1.0)
+        argsDict["Theta"] = time_theta if self.kernelStabilizationType() == 0 else 1.0
+        argsDict["Theta_h"] = time_theta
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         argsDict["mesh_dof"] = self.mesh.nodeArray
@@ -1662,7 +1965,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_u"] = self.ebqe[('u',0)]
         argsDict["ebqe_theta"] = self.ebqe[('theta',0)]
         argsDict["ebqe_flux"] = self.ebqe[('advectiveFlux',0)]
-        argsDict['STABILIZATION_TYPE'] = self.coefficients.STABILIZATION_TYPE
+        argsDict['STABILIZATION_TYPE'] = self.kernelStabilizationType()
         # ENTROPY VISCOSITY and ARTIFICIAL COMRPESSION
         argsDict["cE"] = self.coefficients.cE
         argsDict["cK"] = self.coefficients.cK
@@ -1693,7 +1996,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["MC"] = self.MC_a
         # PARAMETERS FOR 1st or 2nd ORDER MPP METHOD
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
-        argsDict["STABILIZATTION_TYPE"] = self.coefficients.STABILIZATION_TYPE
+        argsDict["STABILIZATTION_TYPE"] = self.kernelStabilizationType()
         argsDict["ENTROPY_TYPE"] = self.coefficients.ENTROPY_TYPE
         # FLUX CORRECTED TRANSPORT
         argsDict["dLow"] = self.dLow
@@ -1746,7 +2049,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #     with open("seepage_flux_try.txt", "a") as f:
         #         f.write(f"Rank {rank}:, {self.timeIntegration.t:.6f}, {seepage_flux_value:.8f}\n")
 
-        if (self.coefficients.STABILIZATION_TYPE == 0):  # SUPG
+        if (self.kernelStabilizationType() == 0):  # SUPG
             self.calculateResidual = self.richards.calculateResidual
             self.calculateJacobian = self.richards.calculateJacobian
         else:
@@ -1755,6 +2058,26 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         
         if self.delta_x_ij is None:
             self.delta_x_ij = -np.ones((self.nNonzerosInJacobian*3,),'d')
+        # edge-based kernels assemble their own (Newton or L-scheme) matrix with the residual
+        argsDict["LSCHEME_L"] = float(self.coefficients.LSCHEME_L) if self.lschemeOn() else 0.0
+        if self.defectCorrection():
+            # Defect correction: assemble the low-order L-scheme matrix (L/dt) M_L + A~(p^k) into
+            # self.jacobian through the edge-based kernel (its residual is discarded); getJacobian
+            # then uses it as is, while r below is the Galerkin residual.
+            if not hasattr(self, '_dc_scratch') or self._dc_scratch.shape != r.shape:
+                self._dc_scratch = np.zeros(r.shape, 'd')
+            self._dc_scratch[:] = 0.0
+            argsDict["STABILIZATION_TYPE"] = 2
+            argsDict["STABILIZATTION_TYPE"] = 2
+            argsDict["Theta"] = 1.0
+            argsDict["globalResidual"] = self._dc_scratch
+            argsDict["LSCHEME_L"] = float(self.coefficients.LSCHEME_L)
+            self.richards.calculateResidual_entropy_viscosity(argsDict)
+            argsDict["STABILIZATION_TYPE"] = 0
+            argsDict["STABILIZATTION_TYPE"] = 0
+            argsDict["Theta"] = time_theta
+            argsDict["globalResidual"] = r
+            argsDict["LSCHEME_L"] = 0.0
         self.calculateResidual(argsDict)
         # if getattr(self, "_theta_log_count", 0) < 5:
         #     q_theta = self.q[('theta',0)]
@@ -1925,7 +2248,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.richards.invert(argsDict)
      
     def getJacobian(self,jacobian):
-        if (self.coefficients.STABILIZATION_TYPE == 0):  # SUPG
+        if (self.kernelStabilizationType() == 0 and not self.defectCorrection()):  # SUPG
             cfemIntegrals.zeroJacobian_CSR(self.nNonzerosInJacobian,
                                            jacobian)
         degree_polynomial = 1
@@ -2006,9 +2329,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0,0)]
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
         argsDict["VMS"] = self.coefficients.VMS
+        argsDict["Theta"] = getattr(self.timeIntegration, 'theta', 1.0) if self.kernelStabilizationType() == 0 else 1.0
         #argsDict["anb_seepage_flux"] = self.coefficients.anb_seepage_flux
 
-        self.calculateJacobian(argsDict)
+        if not self.defectCorrection():
+            self.calculateJacobian(argsDict)
+        # else: the L-scheme matrix was assembled with the residual (see getResidual)
         if self.coefficients.forceStrongConditions:
             for dofN in list(self.dirichletConditionsForceDOF[0].DOFBoundaryConditionsDict.keys()):
                 global_dofN = self.offset[0]+self.stride[0]*dofN

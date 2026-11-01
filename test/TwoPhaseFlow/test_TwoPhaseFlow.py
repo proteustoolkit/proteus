@@ -102,21 +102,14 @@ class TestTwoPhaseFlow(object):
         # anything real. See the audit task on baseline tolerances suite-wide.
         self.compare_vs_saved_files("moses", decimal=5)
 
-    # NOTE: need thorough evaluation -- unskipped this session. The
-    # "PUMI is broken" annotation no longer matches reality: verified
-    # explicitly (this call uses os.system(), which never raises on
-    # nonzero exit, so a mere pytest PASS wasn't proof by itself) that the
-    # underlying `parun --genPUMI` run exits 0 and produces real PUMI mesh
-    # files (Reconstructed0.smb, finalMesh0.smb).
-    def test_damBreak_genPUMI(self):
+    # The PUMI run reads the mesh the --genPUMI run writes (Reconstructed0.smb,
+    # finalMesh0.smb), so the two are one test: it does not depend on another
+    # test having run. os.system() never raises on nonzero exit, so the
+    # compare_vs_saved_files() call is the real assertion; it passes against the
+    # existing baseline.
+    def test_damBreak_genPUMI_runPUMI(self):
         os.system("parun --TwoPhaseFlow --genPUMI --path " + self.path + " "
                   "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'")
-
-    # NOTE: need thorough evaluation -- unskipped this session; see
-    # test_damBreak_genPUMI above. This one's compare_vs_saved_files() call
-    # below is a real assertion (unlike the os.system() call), and it
-    # passes against the existing baseline.
-    def test_damBreak_runPUMI(self):
         os.system("parun --TwoPhaseFlow --path " + self.path + " "
                   "damBreak_PUMI.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1 adapt=0'")
         self.compare_vs_saved_files("damBreak_PUMI")

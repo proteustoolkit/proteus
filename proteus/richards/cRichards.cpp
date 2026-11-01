@@ -28,6 +28,7 @@ PYBIND11_MODULE(cRichards, m)
     .def("calculateJacobian", &Richards_base::calculateJacobian)
     .def("invert", &Richards_base::invert)
     .def("FCTStep", &Richards_base::FCTStep)
+    .def("ImplicitFCTStep", &Richards_base::ImplicitFCTStep)
     .def("kth_FCT_step", &Richards_base::kth_FCT_step)
     .def("calculateResidual_entropy_viscosity", &Richards_base::calculateResidual_entropy_viscosity)
     .def("calculateMassMatrix", &Richards_base::calculateMassMatrix);

@@ -1524,7 +1524,7 @@ def wl2Norm(x,h):
     """
     Compute the parallel weighted l_2 norm with weight h
     """
-    return math.sqrt(globalSum(wDot(x,x,h)))
+    return math.sqrt(wDot(x,x,h))  # wDot is already the global (reduced) sum
 
 
 def wl1Norm(x,h):

@@ -11,6 +11,15 @@ from proteus import Context
 ct = Context.Options([
     ("STABILIZATION_TYPE", 2, "0: Galerkin (no stabilization), 2: entropy viscosity"),
     ("FCT", True, "apply the flux-corrected-transport limiter"),
+    ("fct_type", "semi-implicit", "FCT=True: 'semi-implicit' (WRR) or 'implicit' (JNMA)"),
+    ("nn", 0, "nodes in the column; 0 = the benchmark grid"),
+    ("nDT", 0, "fixed time steps on [0, T]; 0 = the benchmark's 1000"),
+    ("lscheme_L", 0.0, "L-scheme constant, L >= sup theta' (needed for nl_solver lscheme/hybrid)"),
+    ("nl_solver", "newton", "newton | lscheme (JNMA defect correction) | hybrid (Newton, L-scheme retry)"),
+    ("ls_its", 1, "hybrid: L-scheme iterations replacing a rejected Newton step"),
+    ("ls_trigger", "residual", "hybrid: residual (no decrease) | theta (also Theta_k > theta_max)"),
+    ("theta_max", 0.5, "hybrid, ls_trigger=theta: contraction threshold"),
+    ("fct_fallback", True, "implicit FCT: low-order predictor when the Galerkin predictor fails"),
 ], mutable=True)
 
 # Szymkiewicz (2009), Water Resour. Res. 45, W10403 -- Test Problem 1:
@@ -103,6 +112,13 @@ coefficients = Richards.Coefficients(nd,
                                      ENTROPY_TYPE=1,
                                      LUMPED_MASS_MATRIX=False,
                                      FCT=ct.FCT,
+                                     FCT_TYPE=ct.fct_type,
+                                     LSCHEME_L=ct.lscheme_L,
+                                     NONLINEAR_SOLVER=ct.nl_solver,
+                                     LSCHEME_RETRY_ITS=ct.ls_its,
+                                     LSCHEME_TRIGGER=ct.ls_trigger,
+                                     LSCHEME_THETA_MAX=ct.theta_max,
+                                     FCT_PREDICTOR_FALLBACK=ct.fct_fallback,
                                      MONOLITHIC=False,
                                      num_fct_iter=1,
                                          # FOR ENTROPY VISCOSITY

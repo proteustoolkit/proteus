@@ -41,9 +41,47 @@ class NonlinearEquation(object):
         self.nonlinear_function_jacobian_evaluations = 0
 
 
+def resolveNorm(spec, F):
+    """Return the norm function selected by `spec` for the nonlinear equation `F`.
+
+    `spec` is a callable taking the owned entries of a vector (e.g. l2Norm), or one of
+    the finite element norms of a nodal vector x, which the model F must provide:
+
+    'L2'        ||x||_{L^2} = sqrt(x^T M_C x), M_C the consistent mass matrix (F.femL2Norm)
+    'L2_lumped' sqrt(x^T M_L x), M_L the lumped mass matrix (F.femL2Norm(x, lumped=True))
+
+    The finite element norms take the full local vector (owned and ghost entries), since
+    M_C x at an owned row needs the ghost values; they are marked with full_vector = True.
+    """
+    if spec is None or callable(spec):
+        return spec
+    if spec in ('L2', 'L2_lumped'):
+        if not hasattr(F, 'femL2Norm'):
+            raise ValueError("norm '%s' needs a model with femL2Norm(x, lumped=False); %s has none"
+                             % (spec, type(F).__name__))
+        lumped = (spec == 'L2_lumped')
+        def fem_norm(x):
+            return F.femL2Norm(x, lumped=lumped)
+        fem_norm.full_vector = True
+        fem_norm.__name__ = 'femL2Norm_lumped' if lumped else 'femL2Norm'
+        return fem_norm
+    raise ValueError("unknown norm specification %r (use a callable, 'L2' or 'L2_lumped')" % (spec,))
+
+
 class NonlinearSolver(object):
     """
     The base class for nonlinear solvers.
+
+    Convergence tests (convergenceTest):
+
+    'r'        ||r_k|| < rtol_r ||r_0|| + atol_r (norm)
+    'u'        s ||du_k|| < tol_du, s = rho/(1-rho) from the observed contraction rho (unorm)
+    'du'       ||du_k|| < rtol_du ||u_k|| + atol_du: the last increment relative to the
+               current iterate (unorm). unorm='L2' with atol_du = 0 gives the criterion
+               ||p^{k+1}-p^k||_{L2} < tol ||p^{k+1}||_{L2}
+    'r_and_du' both 'r' and 'du' (the increment test alone does not control the residual,
+               i.e. the discrete mass balance)
+    'its', 'rits' fixed iteration counts (with 'rits' also stopping on 'r')
     """
 
     def __init__(self,
@@ -114,10 +152,12 @@ class NonlinearSolver(object):
         self.computeRates = computeRates
         self.printInfo = printInfo
         self.norm_function = norm
+        unorm = resolveNorm(unorm, F)
         if unorm is not None:
             self.unorm_function = unorm
         else:
             self.unorm_function = self.norm_function
+        self.u_current = None  # the iterate the 'du' tests compare against (set by solve)
         self.tol_du = tol_du
         self.infoString=''
         self.convergenceHistoryIsCorrupt=False
@@ -137,6 +177,8 @@ class NonlinearSolver(object):
 
 
     def unorm(self,u):
+        if getattr(self.unorm_function, 'full_vector', False):
+            return self.unorm_function(u)
         try:
             return self.unorm_function(u[self.F.owned_local])
         except AttributeError:
@@ -269,7 +311,10 @@ class NonlinearSolver(object):
         self.convergedFlag = False
         if self.its != 0:
             self.norm_r = self.norm(r)
-        if self.computeRates == True or self.convergenceTest == 'u':
+        du_test = self.convergenceTest in ('du', 'r_and_du')
+        if du_test and self.its != 0 and getattr(self, 'par_du', None) is not None:
+            self.par_du.scatter_forward_insert()  # ghost values of du for full-vector norms
+        if self.computeRates == True or self.convergenceTest == 'u' or (du_test and self.its != 0):
             self.norm_du = self.unorm(self.du)
         if self.computeRates ==  True:
             self.computeConvergenceRates()
@@ -285,6 +330,20 @@ class NonlinearSolver(object):
             if (self.convergingIts != 0 and
                 self.s * self.norm_du < self.tol_du):
                 self.convergedFlag = True
+        if du_test and self.its != 0:
+            if self.u_current is None:
+                raise RuntimeError("convergenceTest '%s' needs the current iterate (set u_current)"
+                                   % self.convergenceTest)
+            self.norm_u = self.unorm(self.u_current)
+            du_ok = self.norm_du < self.rtol_du*self.norm_u + self.atol_du
+            r_ok = self.norm_r < self.rtol_r*self.norm_r0 + self.atol_r
+            logEvent("   %s it %d: ||du|| = %12.5e  ||u|| = %12.5e  ||du||/(rtol_du ||u|| + atol_du) = %g  "
+                     "||r||/(rtol_r ||r0|| + atol_r) = %g"
+                     % (type(self).__name__, self.its, self.norm_du, self.norm_u,
+                        self.norm_du/max(self.rtol_du*self.norm_u + self.atol_du, 1.0e-300),
+                        self.norm_r/max(self.rtol_r*self.norm_r0 + self.atol_r, 1.0e-300)), level=2)
+            if du_ok and (r_ok or self.convergenceTest == 'du'):
+                self.convergedFlag = True
         if self.convergedFlag == True and self.computeRates == True:
             self.computeAverages()
         if self.printInfo == True:
@@ -297,7 +356,7 @@ class NonlinearSolver(object):
         if self.linearSolverFailed == True:
             self.failedFlag = True
             return self.failedFlag
-        if self.its == self.maxIts and self.convergenceTest in ['r','u']:
+        if self.its == self.maxIts and self.convergenceTest in ['r','u','du','r_and_du']:
             self.solveCalls_failed +=1
             self.recordedIts_failed +=self.its
             self.failedFlag = True
@@ -379,7 +438,8 @@ class Newton(NonlinearSolver):
                  fullNewton=True,
                  directSolver=False,
                  EWtol=True,
-                 maxLSits = 100):
+                 maxLSits = 100,
+                 unorm = None):
         import copy
         self.par_du = par_du
         if par_du is not None:
@@ -393,7 +453,8 @@ class Newton(NonlinearSolver):
                                  norm,
                                  convergenceTest,
                                  computeRates,
-                                 printInfo)
+                                 printInfo,
+                                 unorm=unorm)
         self.updateJacobian=True
         self.fullNewton=fullNewton
         self.linearSolver = linearSolver
@@ -411,6 +472,65 @@ class Newton(NonlinearSolver):
             self.JLsolver=LU(self.J_t_J,computeEigenvalues=True)
             self.dJLsolver=LU(self.dJ_t_dJ,computeEigenvalues=True)
             self.u0 = numpy.zeros(self.F.dim,'d')
+
+    def _scatterResidual(self, r, par_r):
+        if par_r is not None:
+            if not self.par_fullOverlap:
+                par_r.scatter_reverse_add()
+            else:
+                par_r.scatter_forward_insert()
+
+    def lschemeRetry(self, hybrid, u, r, b, par_u, par_r):
+        """Hybrid Newton/L-scheme step test, called after the Newton update u -= du and r = F(u).
+
+        Trigger 'residual': the Newton step did not reduce ||r|| (where a line search would start).
+        Trigger 'theta': also when Deuflhard's affine-covariant contraction estimate
+        Theta_k = ||J_k^{-1} F(u_{k+1})|| / ||du_k|| exceeds hybrid['theta_max'] (Theta ~ h_k/2 in
+        the Newton-Kantorovich ball test; one extra back-solve with the current factorization).
+        On a trigger the Newton step is undone and replaced by hybrid['its'] L-scheme iterations
+        (F.setLScheme), after which Newton resumes. Returns True if the line search is to be skipped.
+        """
+        norm_r_cur = self.norm(r)
+        if numpy.isfinite(norm_r_cur) and norm_r_cur <= self.rtol_r*self.norm_r0 + self.atol_r:
+            return True
+        trigger = (not numpy.isfinite(norm_r_cur)) or norm_r_cur >= 0.9999*self.norm_r
+        theta = None
+        if not trigger and hybrid['trigger'] == 'theta':
+            du_k = numpy.copy(self.du)
+            self.du[:] = 0.0
+            self.linearSolver.solve(u=self.du, b=r, par_u=self.par_du, par_b=par_r)
+            theta = self.norm(self.du)/max(self.norm(du_k), 1.0e-300)
+            self.du[:] = du_k
+            self.theta_hist.append(theta)
+            trigger = theta > hybrid['theta_max']
+        if not trigger:
+            return True
+        logEvent("   Newton it %d: %s, replacing the step by %d L-scheme iteration(s)"
+                 % (self.its, ("Theta = %.3g" % theta) if theta is not None else "no residual decrease",
+                    hybrid['its']), level=1)
+        u += self.du
+        if par_u is not None:
+            par_u.scatter_forward_insert()
+        self.lscheme_retries += 1
+        self.F.setLScheme(True)
+        try:
+            for k in range(hybrid['its']):
+                self.computeResidual(u, r, b)          # assembles the L-scheme matrix too
+                self._scatterResidual(r, par_r)
+                self.F.getJacobian(self.J)
+                self.linearSolver.prepare(b=r, newton_its=self.its-1)
+                self.du[:] = 0.0
+                self.linearSolver.solve(u=self.du, b=r, par_u=self.par_du, par_b=par_r)
+                u -= self.du
+                if par_u is not None:
+                    par_u.scatter_forward_insert()
+                self.lscheme_its += 1
+        finally:
+            self.F.setLScheme(False)
+        self.computeResidual(u, r, b)                  # back to Newton (re-assembles its Jacobian)
+        self._scatterResidual(r, par_r)
+        self.updateJacobian = True
+        return True
 
     def setLinearSolverTolerance(self,r):
         """
@@ -494,6 +614,15 @@ class Newton(NonlinearSolver):
             else:
                 #no overlap or overlap (until we compute norms over only owned dof)
                 par_r.scatter_forward_insert()
+        # Implicit FCT (Richards FCT_TYPE='implicit'): keep the predictor's initial guess so a
+        # failed Galerkin predictor can be redone with the low-order operator (fctPredictorFallback).
+        fct_u0 = numpy.copy(u) if getattr(self.F, 'fct_phase', None) == 'predictor' else None
+        # Hybrid Newton/L-scheme (e.g. Richards NONLINEAR_SOLVER='hybrid'): see lschemeRetry.
+        hybrid = self.F.nonlinearHybridOptions() if hasattr(self.F, 'nonlinearHybridOptions') else None
+        self.lscheme_its = 0
+        self.lscheme_retries = 0
+        self.theta_hist = []
+        self.u_current = u  # updated in place by the iteration; used by the 'du' tests
         r=self.solveInitialize(u,r,b)
         self.norm_r_hist = []
         self.norm_du_hist = []
@@ -547,6 +676,9 @@ class Newton(NonlinearSolver):
                     par_r.scatter_forward_insert()
 
             #print "global r",r
+            skipLineSearch = False
+            if hybrid is not None and not linear:
+                skipLineSearch = self.lschemeRetry(hybrid, u, r, b, par_u, par_r)
             if self.linearSolver.computeEigenvalues:
                 #approximate Lipschitz constant of J
                 logEvent("Calculating eigenvalues of dJ^t dJ")
@@ -587,15 +719,19 @@ class Newton(NonlinearSolver):
                 print("norm_J",self.norm_2_J_current)
                 print("lambda_min",min(self.linearSolver.eigenvalues_r))
                 print("lambda_i_min",min(self.linearSolver.eigenvalues_i))
-            if self.lineSearch:
+            if self.lineSearch and not skipLineSearch:
                 norm_r_cur = self.norm(r)
                 ls_its = 0
                     #print norm_r_cur,self.atol_r,self.rtol_r
     #                 while ( (norm_r_cur >= 0.99 * self.norm_r + self.atol_r) and
     #                         (ls_its < self.maxLSits) and
     #                         norm_r_cur/norm_r_last < 1.0):
-                if norm_r_cur > self.rtol_r*self.norm_r0 + self.atol_r:#make sure hasn't converged already
-                    while ( (norm_r_cur >= 0.9999 * self.norm_r) and
+                # A non-finite trial residual (e.g. a step that leaves the
+                # constitutive laws' domain) compares False against everything,
+                # so test it explicitly; otherwise the line search is skipped
+                # and Newton continues from a NaN iterate.
+                if not numpy.isfinite(norm_r_cur) or norm_r_cur > self.rtol_r*self.norm_r0 + self.atol_r:#make sure hasn't converged already
+                    while ( (not numpy.isfinite(norm_r_cur) or norm_r_cur >= 0.9999 * self.norm_r) and
                             (ls_its < self.maxLSits)):
                         self.convergingIts = 0
                         ls_its +=1
@@ -671,11 +807,23 @@ class Newton(NonlinearSolver):
                 % (self.its,self.norm_r,(self.norm_r/(self.rtol_r*self.norm_r0+self.atol_r))),level=1)
             if hasattr(self.F.coefficients,'FCT') and self.F.coefficients.FCT==True:
                 if self.failedFlag:
+                    if fct_u0 is not None and getattr(self.F, 'fctPredictorFallback', None) is not None \
+                       and self.F.fctPredictorFallback():
+                        logEvent("Implicit FCT: Galerkin predictor failed, using the low-order predictor")
+                        u[:] = fct_u0
+                        return self.solve(u, r, b, par_u, par_r)
                     logEvent("Skipping FCT Step After Newton due to nonlinear solver failure")
                 else:
                     logEvent("FCT Step After Newton")
                     self.F.FCTStep()
                     u[:] = self.F.u[0].dof
+                    # Implicit FCT (Richards FCT_TYPE='implicit'): the FCT step limited the
+                    # fluxes of the predictor just computed and needs one more solve, the
+                    # low-order problem with the corrected datum, from the same initial guess.
+                    if getattr(self.F, 'fct_resolve', False):
+                        self.F.fct_resolve = False
+                        logEvent("Implicit FCT: final low-order solve")
+                        return self.solve(u, r, b, par_u, par_r)
             logEvent(memory("Exiting Newton.solve","NonlinearSolvers"),level=4)
             return self.failedFlag
         logEvent("  NumericalAnalytics NewtonIteration: %d, NewtonNorm: %12.5e"
@@ -3290,7 +3438,10 @@ def multilevelNonlinearSolverChooser(nonlinearOperatorList,
                                      EWtol=True,
                                      maxLSits=100,
                                      parallelUsesFullOverlap = True,
-                                     nonlinearSolverNorm = l2Norm):
+                                     nonlinearSolverNorm = l2Norm,
+                                     nonlinearSolverUNorm = None,
+                                     relativeToleranceDu = 1.0e-4,
+                                     absoluteToleranceDu = 1.0e-16):
     if (levelNonlinearSolverType == TwoStageNewton):
         levelNonlinearSolverType = TwoStageNewton
     elif (levelNonlinearSolverType == ExplicitLumpedMassMatrixShallowWaterEquationsSolver):
@@ -3473,7 +3624,10 @@ def multilevelNonlinearSolverChooser(nonlinearOperatorList,
                                                    fullNewton=levelSolverFullNewtonFlag,
                                                    directSolver=linearDirectSolverFlag,
                                                    EWtol=EWtol,
-                                                   maxLSits=maxLSits ))
+                                                   maxLSits=maxLSits,
+                                                   rtol_du=relativeToleranceDu,
+                                                   atol_du=absoluteToleranceDu,
+                                                   unorm=nonlinearSolverUNorm))
     elif levelNonlinearSolverType in [POD_Newton,POD_DEIM_Newton]:
         for l in range(nLevels):
             if par_duList is not None and len(par_duList) > 0:

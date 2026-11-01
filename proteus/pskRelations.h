@@ -1475,6 +1475,119 @@ inline void gardner_invert_newton(const double m,
   // Bracketed throughout, so the last iterate is the best available answer.
 }
 
+// -----------------------------------------------------------------------------
+// Hornung-Messing manufactured law (Ait Hammou Oulhaj, Cances & Chainais-
+// Hillairet 2018; Dielmann, Kuzmin & Kees, JNMA), written with u = -psiC:
+//
+//   S_e     = 1 - (4/pi^2) atan(u)^2,   k_rw = 1/(1+u^2)          for u < 0
+//   S_e     = 1,                        k_rw = 1                  for u >= 0
+//   theta_w = thetaR + thetaSR * S_e
+//
+// With thetaR = 0, thetaSR = pi^2/2 and K_s = 2 this is s(p) = pi^2/2 -
+// 2 atan(p)^2 and eta(p) = 2/(1+p^2). S_e and k_rw are C^1 across u = 0 and
+// S_e -> 0 only as u -> -infinity. alpha and n_vg are unused.
+// -----------------------------------------------------------------------------
+inline void hm_wetting(const double psiC,
+                       const double alpha,
+                       const double n_vg,
+                       const double thetaR,
+                       const double thetaSR,
+                       double &thetaW,
+                       double &DthetaW_DpsiC,
+                       double &KWr,
+                       double &DKWr_DpsiC)
+{
+  (void)alpha; (void)n_vg;
+  if (psiC > 0.0) {
+    const double u    = -psiC;
+    const double at   = std::atan(u);
+    const double opu2 = 1.0 + u * u;
+    const double c    = 4.0 / (M_PI * M_PI);
+    const double Se   = 1.0 - c * at * at;
+    // d/dpsiC = -d/du
+    thetaW        = thetaR + thetaSR * Se;
+    DthetaW_DpsiC = thetaSR * (2.0 * c * at / opu2);
+    KWr           = 1.0 / opu2;
+    DKWr_DpsiC    = 2.0 * u / (opu2 * opu2);
+  } else {
+    thetaW        = thetaR + thetaSR;
+    DthetaW_DpsiC = 0.0;
+    KWr           = 1.0;
+    DKWr_DpsiC    = 0.0;
+  }
+}
+
+// Analytic inverse theta_w -> u on the unsaturated branch,
+//   u = -tan((pi/2) sqrt(1 - S_e)).
+// Same conventions as vgm_invert_analytic: at or above thetaS a negative u is
+// moved to 0 (any u >= 0 has the same theta) and a nonnegative u is kept; below
+// the dry cut u is set to the cut.
+constexpr double hm_uMin = -1.0e8;
+inline void hm_invert_analytic(const double m,
+                               const double rho,
+                               const double alpha,
+                               const double n_vg,
+                               const double thetaR,
+                               const double thetaSR,
+                               double &u)
+{
+  (void)alpha; (void)n_vg;
+  const double thetaW = m / rho;
+  const double thetaS = thetaR + thetaSR;
+  const double c      = 4.0 / (M_PI * M_PI);
+  const double SeMin  = 1.0 - c * std::atan(hm_uMin) * std::atan(hm_uMin);
+  if (thetaW > thetaR + SeMin * thetaSR && thetaW < thetaS) {
+    const double Se = (thetaW - thetaR) / thetaSR;
+    const double u_new = -std::tan(0.5 * M_PI * std::sqrt(1.0 - Se));
+    if (std::isfinite(u_new)) u = u_new;
+  } else if (thetaW >= thetaS) {
+    if (u < 0.0) u = 0.0;
+  } else {
+    u = hm_uMin;
+  }
+}
+
+// Inverse of the full mass m = rho exp(beta u) theta_w(u). g(u) is increasing
+// on the unsaturated branch, so a bracketed Newton/bisection on
+// [hm_uMin, 0] is safe. If m is at or above the saturated mass the head is
+// not determined by m; then u is left alone when u >= 0 and moved to 0 otherwise.
+inline void hm_invert_newton(const double m,
+                             const double rho,
+                             const double beta,
+                             const double alpha,
+                             const double n_vg,
+                             const double thetaR,
+                             const double thetaSR,
+                             double &u)
+{
+  auto g_of = [&](const double uu, double &gp) -> double {
+    double thetaW, dth_dpsiC, kr, dkr;
+    hm_wetting(-uu, alpha, n_vg, thetaR, thetaSR, thetaW, dth_dpsiC, kr, dkr);
+    const double rhom = rho * std::exp(beta * uu);
+    gp = rhom * (beta * thetaW - dth_dpsiC);
+    return rhom * thetaW - m;
+  };
+  double gp;
+  if (g_of(0.0, gp) <= 0.0) { if (u < 0.0) u = 0.0; return; } // saturated
+  double lo = hm_uMin, hi = 0.0;
+  if (g_of(lo, gp) > 0.0) { u = lo; return; }                  // drier than the cut
+  {
+    double ua = u;
+    hm_invert_analytic(m * std::exp(-beta * u), rho, alpha, n_vg, thetaR, thetaSR, ua);
+    u = (ua > lo && ua < hi) ? ua : 0.5 * (lo + hi);
+  }
+  const double tol = 1e-12 * std::max(1.0, std::fabs(m));
+  for (int it = 0; it < 200; ++it) {
+    const double g = g_of(u, gp);
+    if (std::fabs(g) < tol) return;
+    if (g > 0.0) hi = u; else lo = u;
+    double u_next = (gp > 0.0) ? u - g / gp : 0.5 * (lo + hi);
+    if (!(u_next > lo && u_next < hi)) u_next = 0.5 * (lo + hi);
+    if (std::fabs(u_next - u) <= 1e-15 * std::max(1.0, std::fabs(u))) return;
+    u = u_next;
+  }
+}
+
 } // namespace psk
 } // namespace richards
 } // namespace proteus

@@ -124,10 +124,10 @@ class TestHsu(unittest.TestCase):
         self.assertTrue(gs0 == 0.5*(2-sedF)/(1-sedF)**3)
         sedF = 0.55
         gs0 = gl.sedSt.gs0(sedF)
-        self.assertTrue(round(gs0,f) ==round( 0.5*(2-0.49)/(1-0.49)**3 * (0.64-0.49)/(0.64-sedF),f))
+        npt.assert_almost_equal(gs0, 0.5*(2-0.49)/(1-0.49)**3 * (0.64-0.49)/(0.64-sedF), decimal=f)
         sedF = 0.65
         gs0 = gl.sedSt.gs0(sedF)
-        self.assertTrue(round(gs0,f) == round(0.5*(2-0.49)/(1-0.49)**3 * (0.64-0.49)/(0.64-0.635),f))
+        npt.assert_almost_equal(gs0, 0.5*(2-0.49)/(1-0.49)**3 * (0.64-0.49)/(0.64-0.635), decimal=f)
 
 
 
@@ -161,7 +161,7 @@ class TestHsu(unittest.TestCase):
         ss = (rhoS/rhoFluid-1)
         es = 2.*beta * (1-aa)*sedF/((1-sedF)*rhoFluid)*kappa_n+ss*gc*nuT/gl.sigmaC/(1.-sedF)
         kappa_sed = gl.sedSt.kappa_sed1(sedF,rhoFluid,rhoS,uf,us,gradC,nu,theta_n,kappa_n,epsilon_n,nuT,g)
-        self.assertTrue(round(kappa_sed,f) ==round( es,f))
+        npt.assert_almost_equal(kappa_sed, es, decimal=f)
 
         
     def test_dTkeSed_dk(self):
@@ -194,7 +194,7 @@ class TestHsu(unittest.TestCase):
 
         kappa_sed = gl.sedSt.dkappa_sed1_dk(sedF,rhoFluid,rhoS,uf,us,gradC,nu,theta_n,kappa_n,epsilon_n,nuT)
 
-        self.assertTrue(round(kappa_sed,f) ==round( es1,f))
+        npt.assert_almost_equal(kappa_sed, es1, decimal=f)
 
     def test_dEpsSed_dE(self):
         gl=GlobalVariables()
@@ -230,7 +230,7 @@ class TestHsu(unittest.TestCase):
 
         eps_sed = gl.sedSt.deps_sed_deps(sedF,rhoFluid,rhoS,uf,us,gradC,nu,theta_n,kappa_n,epsilon_n,nuT,g)
         valid = gl.C3e*es1/kappa_n+gl.C4e*es2/kappa_n
-        self.assertTrue(round(eps_sed,f) ==round(valid,f))
+        npt.assert_almost_equal(eps_sed, valid, decimal=f)
 
     def testPsc(self):
         gl=GlobalVariables()
@@ -241,7 +241,7 @@ class TestHsu(unittest.TestCase):
         theta = random.random() + 1e-30
         rhoS = 2000
         psc = gl.sedSt.psc(sedF,rhoS,theta)
-        self.assertTrue(round(psc,f) ==round(rhoS*sedF*(1. + 2*(1.+gl.eR)*sedF*gl.sedSt.gs0(sedF))*theta,f))
+        npt.assert_almost_equal(psc, rhoS*sedF*(1. + 2*(1.+gl.eR)*sedF*gl.sedSt.gs0(sedF))*theta, decimal=f)
 
     def testPscTerm(self):
         gl=GlobalVariables()
@@ -256,7 +256,7 @@ class TestHsu(unittest.TestCase):
         divU = dudx + dvdy + dwdz
         rhoS = 2000
         test = gl.sedSt.psc_term(sedF,rhoS,theta,dudx,dvdy,dwdz)
-        self.assertTrue(round(test,f) == round(-2.*gl.sedSt.psc(sedF,rhoS,theta)*divU/(3.*rhoS*sedF),f))
+        npt.assert_almost_equal(test, -2.*gl.sedSt.psc(sedF,rhoS,theta)*divU/(3.*rhoS*sedF), decimal=f)
 
 
     def testdpsc_term_dtheta(self):
@@ -272,7 +272,7 @@ class TestHsu(unittest.TestCase):
         divU = dudx + dvdy + dwdz
         rhoS = 2000
         test = gl.sedSt.dpsc_term_dtheta(sedF,rhoS,dudx,dvdy,dwdz)
-        self.assertTrue(round(test,f) == round(-2.*gl.sedSt.psc(sedF,rhoS,theta)*divU/(3.*rhoS*sedF)/theta,f))
+        npt.assert_almost_equal(test, -2.*gl.sedSt.psc(sedF,rhoS,theta)*divU/(3.*rhoS*sedF)/theta, decimal=f)
     def testMu_sc(self):
         gl=GlobalVariables()
         import random
@@ -285,7 +285,7 @@ class TestHsu(unittest.TestCase):
         test = gl.sedSt.mu_sc(sedF,rhoS,theta)
         g0 = gl.sedSt.gs0(sedF)
         valid = rhoS * gl.grain * sqrt(theta) * ( 0.8 *sedF**2 * g0 * (1. + gl.eR) / sqrt(np.pi) + (1./15) *sedF**2 * g0 * (1. + gl.eR) * sqrt(np.pi) +  (1./6.) *sedF * sqrt(np.pi) +  (5./48.) * sqrt(np.pi)/((1+gl.eR)*g0))        
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
     def testL_sc(self):
         gl=GlobalVariables()
@@ -300,7 +300,7 @@ class TestHsu(unittest.TestCase):
         g0 = gl.sedSt.gs0(sedF)
         valid = (4./3.)*sedF**2 * rhoS * gl.grain *g0*(1+gl.eR)* (sqrt(theta)/sqrt(np.pi) )
         
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
     def test_tsc_term(self):
         gl=GlobalVariables()
@@ -336,7 +336,7 @@ class TestHsu(unittest.TestCase):
             for j in i:
                 valid+=j/(3.*rhoS*sedF)
                 
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
 
     def testgamma_s(self):
@@ -356,7 +356,7 @@ class TestHsu(unittest.TestCase):
         test = gl.sedSt.gamma_s(sedF,rhoS,theta , theta_np1, dudx, dvdy, dwdz)
         divU = dudx + dvdy + dwdz
         valid =  - 3. *  (1. - gl.eR**2) * sedF**2 * rhoS * g0 * theta_np1 * ( (sqrt(theta)/sqrt(np.pi)) * (4./gl.grain) - divU) * (2./(3.*rhoS*sedF))
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
     def testdgamma_s_dtheta(self):
         gl=GlobalVariables()
@@ -376,7 +376,7 @@ class TestHsu(unittest.TestCase):
         divU = dudx + dvdy + dwdz
         
         valid =  - 3. *  (1. - gl.eR**2) * sedF**2 * rhoS * g0  * ( (sqrt(theta)/sqrt(np.pi)) * (4./gl.grain) - divU) * (2./(3.*rhoS*sedF))
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
     def testJint1(self):
         gl=GlobalVariables()
@@ -411,7 +411,7 @@ class TestHsu(unittest.TestCase):
 
         test = gl.sedSt.jint1(sedF,rhoFluid, rhoS, uf,us, kappa_n,epsilon_n, theta_n, nu)
 
-        self.assertTrue(round(test,f) ==round(2*aa*beta*sedF*kappa_n*(2./(3.*sedF*rhoS)),f ))
+        npt.assert_almost_equal(test, 2*aa*beta*sedF*kappa_n*(2./(3.*sedF*rhoS)), decimal=f)
 
 
     def testJint2(self):
@@ -434,7 +434,7 @@ class TestHsu(unittest.TestCase):
        
         test = gl.sedSt.jint2(sedF,rhoFluid, rhoS,uf,us, theta_n, nu)
 
-        self.assertTrue(round(test,f) ==round(-3*beta*sedF*theta_n*(2./(3.*sedF*rhoS)),f ))
+        npt.assert_almost_equal(test, -3*beta*sedF*theta_n*(2./(3.*sedF*rhoS)), decimal=f)
 
     def testJint2dTheta(self):
         gl=GlobalVariables()
@@ -456,7 +456,7 @@ class TestHsu(unittest.TestCase):
        
         test = gl.sedSt.djint2_dtheta(sedF,rhoFluid, rhoS,uf,us, nu)
 
-        self.assertTrue(round(test,f) ==round(-3*beta*sedF*(2./(3.*sedF*rhoS)),f ))
+        npt.assert_almost_equal(test, -3*beta*sedF*(2./(3.*sedF*rhoS)), decimal=f)
 
 
     def testK_diff(self):
@@ -472,7 +472,7 @@ class TestHsu(unittest.TestCase):
         g0 = gl.sedSt.gs0(sedF)
         valid = rhoS * gl.grain * sqrt(theta) * ( 2. *sedF**2 * g0 * (1. + gl.eR) / sqrt(np.pi) + (9./16) *sedF**2 * g0 * (1. + gl.eR) * sqrt(np.pi) +  (15./16.) *sedF * sqrt(np.pi) +  (25./64.) * sqrt(np.pi)/((1+gl.eR)*g0))
         
-        self.assertTrue(round(test,f) == round(valid,f))
+        npt.assert_almost_equal(test, valid, decimal=f)
 
 
     def test_p_fr_limiter(self):
@@ -625,7 +625,7 @@ class TestHsu(unittest.TestCase):
         valid =gl.sedSt.p_friction(sedF) + gl.sedSt.psc(sedF, rhoS, theta) + (2./3.*(mu+muf) - l)*divU 
 
 
-        self.assertTrue(round(test,f) == round(valid,f))        
+        npt.assert_almost_equal(test, valid, decimal=f)        
 
         
         
@@ -692,7 +692,7 @@ class TestHsu(unittest.TestCase):
         nuT = 1e-2
         beta = gl.sedSt.betaCoeff(sedF, rhoFluid,uf, us, nu)      
         mint = gl.sedSt.dmInt_duFluid(sedF, rhoFluid, uf, us , nu)
-        self.assertTrue(round(mint,10) == round(  - sedF*beta/(1.-sedF)/rhoFluid , 10))
+        npt.assert_almost_equal(mint, - sedF*beta/(1.-sedF)/rhoFluid, decimal=10)
     def testdMintdUs(self):
         import random
         gl=GlobalVariables()
@@ -706,7 +706,7 @@ class TestHsu(unittest.TestCase):
         nuT = 1e-2
         beta = gl.sedSt.betaCoeff(sedF, rhoFluid,uf, us, nu)      
         mint = gl.sedSt.dmInt_duSolid(sedF, rhoFluid, uf, us , nu)
-        self.assertTrue(round(mint,10) == round(  sedF*beta/(1.-sedF)/rhoFluid  , 10))
+        npt.assert_almost_equal(mint, sedF*beta/(1.-sedF)/rhoFluid, decimal=10)
 
 
 

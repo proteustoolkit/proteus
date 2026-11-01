@@ -421,7 +421,10 @@ class NS_base(object):  # (HasTraits):
                 maxLSits=n.maxLineSearches,
                 #\todo need to add logic in multilevel NL solver chooser to account for numerical method's stencil as well
                 parallelUsesFullOverlap=(n.nLayersOfOverlapForParallel > 0 or n.parallelPartitioningType == MeshTools.MeshParallelPartitioningTypes.node),
-                nonlinearSolverNorm = n.nonlinearSolverNorm))
+                nonlinearSolverNorm = n.nonlinearSolverNorm,
+                nonlinearSolverUNorm = getattr(n, 'nonlinearSolverUNorm', None),
+                relativeToleranceDu = getattr(n, 'nl_rtol_du', 1.0e-4),
+                absoluteToleranceDu = getattr(n, 'nl_atol_du', 1.0e-16)))
             model.solver=self.nlsList[-1]
             model.viewer = Viewers.V_base(p,n,s)
             Profiling.memory("MultilevelNonlinearSolver for"+p.name)
