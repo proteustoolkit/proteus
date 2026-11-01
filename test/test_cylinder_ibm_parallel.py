@@ -59,7 +59,7 @@ def _run(ranks, cwd):
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     argv = [PARUN, "-l1", "cylinder_so.py", "-C", "T=0.3 onlySaveFinalSolution=True"]
-    if ranks > 1:
+    if MPIEXEC:  # even for one rank (test_archive_parallel_metadata.run_ranks says why)
         argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env,
                          cwd=str(cwd))

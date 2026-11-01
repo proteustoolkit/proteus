@@ -34,7 +34,7 @@ def run_ranks(ranks, tmp_path):
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     cmd = [sys.executable, HELPER]
-    if ranks > 1:
+    if MPIEXEC:  # even for one rank (test_archive_parallel_metadata.run_ranks says why)
         cmd = [MPIEXEC, "-n", str(ranks)] + cmd
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env, cwd=str(tmp_path))
     assert result.returncode == 0, "%d ranks failed:\nSTDOUT:\n%s\nSTDERR:\n%s" % (

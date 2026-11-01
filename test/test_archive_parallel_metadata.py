@@ -168,7 +168,7 @@ RANK_SCRIPT = textwrap.dedent(
 def run_ranks(tmp_path, n_ranks, global_sync, hot_start=False,
               skip_close=False, incremental=True, mode=None, driver=None,
               with_log=False, name="archive"):
-    """Run the rank script under mpiexec (or directly for one rank).
+    """Run the rank script under mpiexec (directly only if there is none).
 
     ``hot_start`` continues the archive an earlier call wrote, for one
     more step, the way a hot-started run does. ``mode`` and ``driver`` are
@@ -187,8 +187,16 @@ def run_ranks(tmp_path, n_ranks, global_sync, hot_start=False,
     # default and ignores both.
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
+    # Under mpiexec even for one rank. Run directly, the script is an MPICH
+    # singleton, and MPICH 5 names a singleton's shared memory after its pid
+    # (/mpich_shm_<hex pid>_0), attaching to the name if it already exists. A
+    # killed MPI process never unlinks it, so on a long-running machine stale
+    # names pile up, and once a pid comes round again MPI_Init finds one --
+    # another user's gives EACCES and the run aborts in "MPIDI_POSIX_comm_bootstrap:
+    # Out of memory" (three CI runs in a row on a shared Mac). Under mpiexec the
+    # name is a hash of the job's name, which hydra makes random per launch.
     cmd = [sys.executable, "-c", RANK_SCRIPT]
-    if n_ranks > 1:
+    if MPIEXEC:
         cmd = [MPIEXEC, "-n", str(n_ranks)] + cmd
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
                             env=env)

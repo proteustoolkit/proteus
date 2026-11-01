@@ -50,8 +50,10 @@ def _run(ranks, cwd, helper=None, **overrides):
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in overrides.items()})
     helper = helper or HELPER
-    argv = [sys.executable, helper] if ranks == 1 else \
-        [MPIEXEC, "-n", str(ranks), sys.executable, helper]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, helper]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env,
                          cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
@@ -114,8 +116,10 @@ def _ncls_residual(ranks, cwd, rd, helper=None, **extra):
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in extra.items()})
     helper = helper or NCLS_HELPER
-    argv = [sys.executable, helper] if ranks == 1 else \
-        [MPIEXEC, "-n", str(ranks), sys.executable, helper]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, helper]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env,
                          cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
@@ -176,7 +180,10 @@ def _rans3pf(ranks, cwd, **overrides):
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in overrides.items()})
-    argv = [sys.executable, RANS3PF_HELPER] if ranks == 1 else         [MPIEXEC, "-n", str(ranks), sys.executable, RANS3PF_HELPER]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, RANS3PF_HELPER]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
     line = [l for l in out.stdout.splitlines() if l.startswith("RESULT")][0]
@@ -209,8 +216,10 @@ def _clsvof(ranks, cwd, **overrides):
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in overrides.items()})
-    argv = [sys.executable, CLSVOF_HELPER] if ranks == 1 else \
-        [MPIEXEC, "-n", str(ranks), sys.executable, CLSVOF_HELPER]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, CLSVOF_HELPER]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     return subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env, cwd=str(cwd))
 
 

@@ -242,6 +242,66 @@ jobs:
           cd /tmp
           python -c "import proteus; from proteus import Comm; Comm.init(); print(proteus.__file__)"
 
+      # A one-rank test runs its script without mpiexec, as an MPICH
+      # singleton, and MPICH 5 names a singleton's shared memory after its
+      # pid: /mpich_shm_<hex pid>_0 (posix_init.c), opened with O_EXCL and,
+      # if the name exists, attached to instead. A killed or aborted MPI
+      # process never unlinks it, and on macOS the name then lives until
+      # reboot. On a self-hosted Mac those names pile up (493 on chewbacca
+      # after 11 days), and when a pid is reused MPI_Init finds a stale
+      # object: another user's gives EACCES and MPI_Init aborts with
+      # "MPIDI_POSIX_comm_bootstrap(288): Out of memory" -- in a different
+      # test each run, three runs in a row on PR #138. libomp leaves
+      # /tmp/__KMP_REGISTERED_LIB_<pid> the same way ("OMP: Can't open
+      # TEMP"). This removes the runner user's own stale names before the
+      # tests; names of pids still alive are kept. Other users' names it
+      # cannot remove: those need their owner (or a reboot). macOS cannot
+      # list POSIX shm, so every pid's name is probed (a fraction of a
+      # second).
+      - name: Remove stale MPI shared-memory names (self-hosted macOS)
+        if: runner.os == 'macOS' && runner.environment == 'self-hosted'
+        shell: bash -l {0}
+        run: |
+          python -I - <<'EOF'
+          import _posixshmem, errno, glob, os
+
+          def alive(pid):
+              try:
+                  os.kill(pid, 0)
+              except ProcessLookupError:
+                  return False
+              except PermissionError:
+                  pass
+              return True
+
+          me = os.getuid()
+          removed, foreign = 0, 0
+          for pid in range(1, 100000):
+              for prefix in ("mpich_shm", "mpich_vci"):
+                  name = "/%s_%x_0" % (prefix, pid)
+                  try:
+                      fd = _posixshmem.shm_open(name, os.O_RDONLY, 0)
+                  except OSError as e:
+                      foreign += e.errno == errno.EACCES
+                      continue
+                  uid = os.fstat(fd).st_uid
+                  os.close(fd)
+                  if uid == me and not alive(pid):
+                      _posixshmem.shm_unlink(name)
+                      removed += 1
+          kmp = 0
+          for path in glob.glob("/tmp/__KMP_REGISTERED_LIB_*"):
+              try:
+                  pid = int(path.rsplit("_", 1)[1])
+                  if os.lstat(path).st_uid == me and not alive(pid):
+                      os.unlink(path)
+                      kmp += 1
+              except (OSError, ValueError):
+                  pass
+          print("removed %d stale MPICH shm names and %d libomp files; "
+                "%d names belong to other users" % (removed, kmp, foreign))
+          EOF
+
       - name: Run test suite
         shell: bash -l {0}
         run: |
@@ -348,16 +408,22 @@ jobs:
           #
           # The sampler records what the runner is doing while the tests run
           # (load, CPU user/sys split, busiest processes and their thread
-          # counts, memory); the next step prints it. It is left running, not
-          # killed: the runner reaps it at the end of the job, and pytest
-          # stays this step's last command, so its status is the step's.
+          # counts, memory); the next step prints it. It is not killed (pytest
+          # stays this step's last command, so its status is the step's), but
+          # it ends itself: the loop runs only while this step's shell is
+          # alive. The earlier "the runner reaps it at the end of the job" holds
+          # for a GitHub-hosted VM, which is destroyed. A self-hosted macOS
+          # runner does not reap it: 72 loops piled up on one Mac in 1.9 days
+          # (a `top -l 1` every 30 s each, ~340% CPU at one sample) and starved
+          # the MPI tests of the machine it shares with people.
           # (Two earlier versions failed the step after every test had
           # passed: an "exit $status", which on Ubuntu goes through
           # ~/.bash_logout in this login shell, and a "kill" of a sampler
           # that had already died on "ps | head"'s broken pipe on macOS.)
+          STEP_PID=$$
           ( set +e
             P="$RUNNER_TEMP/ps.txt"
-            while sleep 30; do
+            while kill -0 "$STEP_PID" 2>/dev/null && sleep 30; do
               echo "=== $(date -u +%H:%M:%S) $(uptime)"
               if [ "$RUNNER_OS" = macOS ]; then
                 top -l 1 -n 0 > "$RUNNER_TEMP/top.txt"

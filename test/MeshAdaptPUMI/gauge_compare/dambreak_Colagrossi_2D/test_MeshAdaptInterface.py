@@ -30,6 +30,10 @@ def _parun(ranks, cwd, options, name):
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     argv = [_bin("parun"), "-C", options, "-D", name, "dambreak_Colagrossi_so.py"]
+    # One rank runs directly, not under mpiexec as the other one-rank launchers do
+    # (test/test_archive_parallel_metadata.run_ranks): a serial run ends in PUMI's
+    # reconstruction, which calls exit(0) without MPI_Finalize, and Open MPI's
+    # launcher reports that as an abnormal termination with exit status 1.
     if ranks > 1:
         launcher = _bin("mpiexec") if os.path.exists(_bin("mpiexec")) else shutil.which("mpiexec")
         argv = [launcher, "-n", str(ranks)] + argv

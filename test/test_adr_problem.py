@@ -1035,8 +1035,10 @@ def _adv_partition_run(ranks, cwd, **overrides):
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in overrides.items()})
-    argv = [sys.executable, ADV_PARTITION_HELPER] if ranks == 1 else \
-        [MPIEXEC, "-n", str(ranks), sys.executable, ADV_PARTITION_HELPER]
+    # even for one rank (test_archive_parallel_metadata.run_ranks says why)
+    argv = [sys.executable, ADV_PARTITION_HELPER]
+    if MPIEXEC:
+        argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=600, env=env,
                          cwd=str(cwd))
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
