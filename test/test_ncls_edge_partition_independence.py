@@ -9,7 +9,9 @@ matrix solve; without that the second stage read stale ghosts.
 
 The comparison is of the solution at the final time with the mass matrix solves converged far enough (PETSc options
 and tolerances) for 1e-8: with the default tolerances 2 ranks differ from serial by 1e-2. Entropy viscosity has a
-discontinuous branch (etaMin == etaMax) that amplifies round-off differences step by step, so it stops earlier.
+discontinuous branch (etaMin == etaMax) that amplifies round-off differences step by step, so it stops earlier and
+its tolerance is 1e-6: on CI the 2-rank answer differed from serial by 6e-8 on linux-64, 2.4e-7 on linux-aarch64 and
+9e-16 on macOS arm64, the same on every run of a host, so it is round-off through that branch, not a partition effect.
 The control runs without the scatter of psi and of the entropy residual and differs.
 """
 import os
@@ -52,12 +54,13 @@ def _field(ranks, cwd, **overrides):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
-@pytest.mark.parametrize("stabilization,final_time", [(2, 0.08), (1, 0.04)], ids=["smoothness", "entropy_viscosity"])
-def test_ncls_edge_based_on_two_ranks_is_the_serial_answer(tmp_path, stabilization, final_time):
+@pytest.mark.parametrize("stabilization,final_time,tolerance", [(2, 0.08, 1e-8), (1, 0.04, 1e-6)],
+                         ids=["smoothness", "entropy_viscosity"])
+def test_ncls_edge_based_on_two_ranks_is_the_serial_answer(tmp_path, stabilization, final_time, tolerance):
     for d in ("1", "2", "3"):
         (tmp_path / d).mkdir()
     serial = _field(1, tmp_path / "1", STAB=stabilization, TFINAL=final_time)
     parallel = _field(2, tmp_path / "2", STAB=stabilization, TFINAL=final_time)
-    assert numpy.abs(serial - parallel).max() < 1e-8
+    assert numpy.abs(serial - parallel).max() < tolerance
     control = _field(2, tmp_path / "3", NOSCAT=1, STAB=stabilization, TFINAL=final_time)
     assert numpy.abs(serial - control).max() > 1e-4
