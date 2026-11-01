@@ -55,8 +55,8 @@ namespace proteus
 			const char *e = std::getenv("ADR_TC_EDGE_INCLUDE_DEAD");
 			return e ? std::atoi(e) : 0;
 		}
-		static void tcBuildNodeFluid(std::vector<char> &nodeFluid, int nElements, const xt::pyarray<int> &l2g,
-									 const xt::pyarray<double> &phi_s_nodes, size_t nNodes)
+		static void tcBuildNodeFluid(std::vector<char> &nodeFluid, int nElements, const proteus::pyarray<int> &l2g,
+									 const proteus::pyarray<double> &phi_s_nodes, size_t nNodes)
 		{
 			nodeFluid.assign(nNodes, 0);
 			for (int e = 0; e < nElements; e++)
@@ -70,7 +70,7 @@ namespace proteus
 						nodeFluid[l2g.data()[e * nDOF_trial_element + i]] = 1;
 			}
 		}
-		static bool tcDeadOK(int mode, const std::vector<char> &nodeFluid, const xt::pyarray<int> &l2g, int eN)
+		static bool tcDeadOK(int mode, const std::vector<char> &nodeFluid, const proteus::pyarray<int> &l2g, int eN)
 		{
 			if (mode == 0)
 				return false;
@@ -1454,8 +1454,8 @@ namespace proteus
 			const bool gpMu = std::getenv("ADR_GP_MU") != nullptr;
 			const double gpMuA = gpMu ? mua : 1.0, gpMuB = gpMu ? mub : 1.0, gpMuAB = gpMu ? 0.5 * (mua + mub) : 1.0;
 			const double extNitschePen = std::getenv("ADR_EXT_NITSCHE_PEN") ? std::atof(std::getenv("ADR_EXT_NITSCHE_PEN")) : 0.0;
-			xt::pyarray<double> &ext_edge_u_inner = args.array<double>("ext_edge_u_inner");
-			xt::pyarray<double> &ext_edge_u_outer = args.array<double>("ext_edge_u_outer");
+			proteus::pyarray<double> &ext_edge_u_inner = args.array<double>("ext_edge_u_inner");
+			proteus::pyarray<double> &ext_edge_u_outer = args.array<double>("ext_edge_u_outer");
 			std::vector<int> ebN2ebNE;
 			if (extNitsche)
 			{
@@ -3478,8 +3478,8 @@ namespace proteus
 			const bool gpMu = std::getenv("ADR_GP_MU") != nullptr;
 			const double gpMuA = gpMu ? mua : 1.0, gpMuB = gpMu ? mub : 1.0, gpMuAB = gpMu ? 0.5 * (mua + mub) : 1.0;
 			const double extNitschePen = std::getenv("ADR_EXT_NITSCHE_PEN") ? std::atof(std::getenv("ADR_EXT_NITSCHE_PEN")) : 0.0;
-			xt::pyarray<double> &ext_edge_u_inner = args.array<double>("ext_edge_u_inner");
-			xt::pyarray<double> &ext_edge_u_outer = args.array<double>("ext_edge_u_outer");
+			proteus::pyarray<double> &ext_edge_u_inner = args.array<double>("ext_edge_u_inner");
+			proteus::pyarray<double> &ext_edge_u_outer = args.array<double>("ext_edge_u_outer");
 			std::vector<int> ebN2ebNE;
 			if (extNitsche)
 			{
