@@ -8,6 +8,16 @@ import numpy
 from . import csubgridError
 from . import FemTools
 from .Profiling import logEvent
+
+
+def _c_char_flag(stabFlag):
+    """The csubgridError tau kernels take a C char ('1' or '2'); Python 3 must pass its code."""
+    if isinstance(stabFlag, (str, bytes)):
+        assert len(stabFlag) == 1, "stabFlag must be a single character, got %r" % (stabFlag,)
+        return ord(stabFlag)
+    return int(stabFlag)
+
+
 class SGE_base(object):
     def __init__(self,coefficients,nd,lag=False,trackSubScales=False):
         self.nc = coefficients.nc
@@ -71,7 +81,7 @@ class SGE_base(object):
 class Advection_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
         self.mesh=mesh
@@ -118,7 +128,7 @@ class Advection_ASGS(SGE_base):
 class AdvectionLag_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
 
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
@@ -163,7 +173,7 @@ class AdvectionLag_ASGS(SGE_base):
 class AdvectionDiffusionReaction_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
         self.mesh=mesh
@@ -300,7 +310,7 @@ class FFDarcyFC_ASGS(SGE_base):
     """
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         self.dftemp = None
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
@@ -421,7 +431,7 @@ class DarcyFC_ASGS(SGE_base):
     """
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         self.dftemp = None; self.drtmp = {(0,0):None,(1,0):None}
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
@@ -610,7 +620,7 @@ class DarcyFC_ASGS(SGE_base):
 class HamiltonJacobi_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
         self.cq=cq
@@ -643,7 +653,7 @@ class HamiltonJacobi_ASGS(SGE_base):
 class HamiltonJacobiDiffusionReaction_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
         self.mesh=mesh
@@ -769,7 +779,7 @@ class HamiltonJacobiDiffusionReaction_ASGS(SGE_base):
 class HamiltonJacobi_ASGS_opt(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
     def initializeElementQuadrature(self,mesh,t,cq):
         import copy
         self.cq=cq
@@ -954,7 +964,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,delayLagSteps=5,hFactor=1.0,noPressureStabilization=False):
         self.noPressureStabilization=noPressureStabilization
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         coefficients.stencil[0].add(0)
         self.nSteps=0
         self.delayLagSteps=delayLagSteps
@@ -1210,7 +1220,7 @@ class NavierStokesASGS_velocity_pressure_opt(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,delayLagSteps=5,hFactor=1.0,noPressureStabilization=False):
         self.noPressureStabilization=noPressureStabilization
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         coefficients.stencil[0].add(0)
         self.nSteps=0
         self.delayLagSteps=delayLagSteps
@@ -1247,7 +1257,7 @@ class NavierStokesASGS_velocity_pressure_optV2(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,delayLagSteps=0,hFactor=1.0,noPressureStabilization=False):
         self.noPressureStabilization=noPressureStabilization
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         coefficients.stencil[0].add(0)
         self.nSteps=0
         self.delayLagSteps=delayLagSteps
@@ -1603,7 +1613,7 @@ class TwophaseStokes_LS_FC_ASGS(SGE_base):
         self.nd = nd
         self.components=list(range(self.nc))
         self.lag=lag
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         coefficients.stencil[0].add(0)
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
@@ -1881,7 +1891,7 @@ class AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,interpolationFemSpaceType=None,tau_00_force=None,
                  tau_11_force=None):
         SGE_base.__init__(self,coefficients,nd,lag)
-        self.stabilizationFlag = stabFlag
+        self.stabilizationFlag = _c_char_flag(stabFlag)
         self.interpolationFemSpaceType = interpolationFemSpaceType
         assert self.interpolationFemSpaceType is not None
         self.usesFEMinterpolant = True
