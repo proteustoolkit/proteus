@@ -1563,8 +1563,12 @@ namespace proteus
 					for (int ebN_element = 0; ebN_element < nDOF_mesh_trial_element; ebN_element++)
 					{
 						const int ebN = elementBoundariesArray.data()[eN * nDOF_mesh_trial_element + ebN_element];
-						// internal and actually a cut edge
-						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 && (ebN < nElementBoundaries_owned))
+						// Every interior face of a Gamma_s-cut element, owned or not. The residual is assembled
+						// with full overlap (each rank sums all of its local elements into the rows it owns
+						// and drops the rest), so a face term has to be summed on every rank that has both
+						// of its elements; skipping the faces another rank owns lost their contribution to
+						// this rank's owned rows (2 ranks: 7 wrong rows, solution off by up to 3e-3).
+						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1)
 							cutfem_boundaries.insert(ebN);
 					}
 				}

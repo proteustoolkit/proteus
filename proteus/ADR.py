@@ -599,6 +599,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.dirichletConditions = dofBoundaryConditionsDict
         self.dirichletNodeSetList=None #explicit Dirichlet  conditions for now, no Dirichlet BC constraints
         self.coefficients = coefficients
+        # The ghost-penalty and SCIFEM face terms couple the vertex opposite a face in one element to
+        # the face's other element. With full-overlap assembly a rank owns such a row only if that
+        # other element is local too, which needs two layers of overlap; with one, the face looks
+        # exterior on the rank that owns the row and its contribution is lost.
+        _c = coefficients
+        _faceTerms = ((_c.embeddedBoundary and _c.embeddedBoundary_ghost_penalty != 0.0) or
+                      (_c.immersedBoundary and (_c.immersedSCIFEM_switch != 0.0 or _c.immersedSCIFEM_penalty != 0.0)))
+        _layers = getattr(self.mesh, 'nLayersOfOverlap', None)
+        if _faceTerms and Comm.get().size() > 1 and _layers is not None and _layers < 2:
+            raise ValueError("ADR: the ghost-penalty/SCIFEM face terms need two layers of mesh overlap in "
+                             "parallel, but the mesh has {0}. Set MeshTools.getMeshOptions(domain)."
+                             "nLayersOfOverlapForParallel = 2 in the p module and nLayersOfOverlapForParallel = 2 "
+                             "in the n module.".format(_layers))
         self.coefficients.initializeSDF(self.u[0].femSpace)
         # Level sets as ordinary finite element functions, purely so they land in the
         # h5/xmf archive next to the solution and can be contoured in ParaView. The
