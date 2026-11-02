@@ -6,6 +6,7 @@ from proteus.Transport import pi
 import os
 from proteus import cfemIntegrals, Quadrature, Norms, Comm
 from proteus.NonlinearSolvers import NonlinearEquation
+from proteus.LinearAlgebraTools import ParVec_petsc4py
 from proteus.FemTools import (DOFBoundaryConditions,
                               FluxBoundaryConditions,
                               C0_AffineLinearOnSimplexWithNodalBasis)
@@ -971,6 +972,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         if firstStep:
             self.model.entropyResidualPerNode[:] = 1.E15 # first step use low order stab
         #
+        # The entropy residual of a ghost dof is accumulated from the elements this rank holds around it,
+        # which is a partial sum; the dissipation of an owned dof uses the value of its neighbours.
+        self.model.scatterDOFArray(self.model.entropyResidualPerNode)
         self.model.laggedEntropyResidualPerNode[:] = self.model.entropyResidualPerNode[:]
         ###########################
         # COMPUTE STAR VELOCITIES #
@@ -995,6 +999,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 self.model.wStar_dof[:] = (1+r)*self.model.u[2].dof[:] - r*self.model.w_dof_old[:]
             self.model.q[('velocityStar', 0)][:] = (1 + r) * self.model.q[('velocity', 0)] - r * self.model.q[('velocityOld', 0)]
         self.model.q[('velocityOld', 0)][:] = self.model.q[('velocity', 0)]
+        self.model.smoothnessIndicatorIsStale = True
 
         ######################
         # SAVE OLD SOLUTIONS #
@@ -1434,6 +1439,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.uStar_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.vStar_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.wStar_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.uStar_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.vStar_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.wStar_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.smoothnessIndicatorIsStale = True
+        self._dofVecs = {}
         # mesh
         self.ebqe['x'] = np.zeros(
             (self.mesh.nExteriorElementBoundaries_global,
@@ -2235,6 +2245,48 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                         self.colind_1D[offset_1D[j//nSpace]] = self.colind[offset]//nSpace
                 ith_row += 1
 
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a velocity-space dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        par = self._dofVecs.get(id(a))
+        if par is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            par = self._dofVecs[id(a)] = ParVec_petsc4py(
+                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+        par.scatter_forward_insert()
+
+    def updateSmoothnessIndicator(self):
+        """Smoothness indicator psi of ARTIFICIAL_VISCOSITY=3, from the lagged star velocities.
+
+        beta_i = |sum_j (u*_j - u*_i)| / (sum_j |u*_j - u*_i| + 1e-10) over the graph row of i, and
+        psi_i = max over components of beta_i**POWER_SMOOTHNESS_INDICATOR (the kernel's isotropic branch;
+        POWER_SMOOTHNESS_INDICATOR is 2 in RANS3PF.h). The dissipation at an owned dof uses the psi of its
+        neighbours, so a residual entry depends on the star velocities two graph hops away. A ghost dof's
+        graph row is truncated at the edge of the overlap, so psi is only right on owned dofs: it is
+        computed everywhere and the owners' values are then scattered to the ghosts.
+        """
+        rowptr, colind = self.rowptr_1D, self.colind_1D
+        rowLength = np.diff(rowptr)
+        components = [self.uStar_dof, self.vStar_dof]
+        if self.nSpace_global == 3:
+            components.append(self.wStar_dof)
+        beta = np.zeros(len(rowLength))
+        for star in components:
+            difference = star[colind] - np.repeat(star[:len(rowLength)], rowLength)
+            numerator = np.add.reduceat(difference, rowptr[:-1])
+            denominator = np.add.reduceat(np.abs(difference), rowptr[:-1])
+            beta = np.maximum(beta, np.abs(numerator) / (denominator + 1.0E-10))
+        psi = beta ** 2
+        for out in (self.uStar_psi_dof, self.vStar_psi_dof, self.wStar_psi_dof):
+            out[:] = psi
+        self.scatterDOFArray(self.uStar_psi_dof)
+        self.vStar_psi_dof[:] = self.uStar_psi_dof
+        self.wStar_psi_dof[:] = self.uStar_psi_dof
+        self.smoothnessIndicatorIsStale = False
+
     def getResidual(self, u, r):
         """
         Calculate the element residuals and add in to the global residual
@@ -2329,6 +2381,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.uStar_dMatrix = np.zeros(self.nnz_1D)
             self.vStar_dMatrix = np.zeros(self.nnz_1D)
             self.wStar_dMatrix = np.zeros(self.nnz_1D)
+        if self.coefficients.ARTIFICIAL_VISCOSITY == 3 and self.smoothnessIndicatorIsStale:
+            self.updateSmoothnessIndicator()
         #
         if self.isBoundary_1D is None:
             self.isBoundary_1D = np.zeros(self.u[0].dof.shape[0])
@@ -2446,6 +2500,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["uStar_dof"] = self.uStar_dof
         argsDict["vStar_dof"] = self.vStar_dof
         argsDict["wStar_dof"] = self.wStar_dof
+        argsDict["uStar_psi_dof"] = self.uStar_psi_dof
+        argsDict["vStar_psi_dof"] = self.vStar_psi_dof
+        argsDict["wStar_psi_dof"] = self.wStar_psi_dof
         argsDict["g"] = self.coefficients.g
         argsDict["useVF"] = self.coefficients.useVF
         argsDict["vf"] = self.coefficients.q_vf

@@ -1930,13 +1930,24 @@ namespace proteus
         proteus::pyarray<double>& max_u_bc = args.array<double>("max_u_bc");
         int LUMPED_MASS_MATRIX = args.scalar<int>("LUMPED_MASS_MATRIX");
         int STABILIZATION_TYPE = args.scalar<int>("STABILIZATION_TYPE");
-        Rpos.resize(numDOFs,0.0);
-        Rneg.resize(numDOFs,0.0);
-        FluxCorrectionMatrix.resize(NNZ,0.0);
+        // phase 0 computes the limiter coefficients R of every dof, phase 1 applies them. The limiter of an
+        // owned dof reads R of its neighbours, whose graph rows are truncated when they are ghosts, so
+        // Python scatters R from the owners between the two phases.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& Rpos_dof = args.array<double>("Rpos_dof");
+        proteus::pyarray<double>& Rneg_dof = args.array<double>("Rneg_dof");
+        if (phase == 0)
+          {
+            // resize also zeroes, so phase 1 must not do it: it needs the matrix phase 0 filled
+            Rpos.resize(numDOFs,0.0);
+            Rneg.resize(numDOFs,0.0);
+            FluxCorrectionMatrix.resize(NNZ,0.0);
+          }
         //////////////////
         // LOOP in DOFs //
         //////////////////
         int ij=0;
+        if (phase == 0)
         for (int i=0; i<numDOFs; i++)
           {
             //read some vectors
@@ -2002,12 +2013,21 @@ namespace proteus
             ///////////////////////
             Rpos[i] = ((Pposi==0) ? 1. : fmin(1.0,Qposi/Pposi));
             Rneg[i] = ((Pnegi==0) ? 1. : fmin(1.0,Qnegi/Pnegi));
+            Rpos_dof.data()[i] = Rpos[i];
+            Rneg_dof.data()[i] = Rneg[i];
           } // i DOFs
 
         //////////////////////
         // COMPUTE LIMITERS //
         //////////////////////
         ij=0;
+        if (phase == 1)
+        for (int i=0; i<numDOFs; i++)
+          {
+            Rpos[i] = Rpos_dof.data()[i];
+            Rneg[i] = Rneg_dof.data()[i];
+          }
+        if (phase == 1)
         for (int i=0; i<numDOFs; i++)
           {
             double ith_Limiter_times_FluxCorrectionMatrix = 0.;
@@ -2093,6 +2113,12 @@ namespace proteus
         proteus::pyarray<double>& ebqe_flux = args.array<double>("ebqe_flux");
         int stage = args.scalar<int>("stage");
         proteus::pyarray<double>&  uTilde_dof = args.array<double>("uTilde_dof");
+        // With entropy viscosity the dissipation of an owned dof reads the normalized entropy residual
+        // of its neighbours: ghosts whose graph rows are truncated. Phase 0 stops after computing it
+        // (global_entropy_residual_dof); Python scatters it and calls again with phase 1, which
+        // recomputes everything up to there and takes the scattered values.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
         double cE = args.scalar<double>("cE");
         double cMax = args.scalar<double>("cMax");
         double cK = args.scalar<double>("cK");
@@ -2115,6 +2141,7 @@ namespace proteus
         proteus::pyarray<double>& min_u_bc = args.array<double>("min_u_bc");
         proteus::pyarray<double>& max_u_bc = args.array<double>("max_u_bc");
         proteus::pyarray<double>& quantDOFs = args.array<double>("quantDOFs");
+        proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
         // NOTE: This function follows a different (but equivalent) implementation of the smoothness based indicator than NCLS.h
         // Allocate space for the transport matrices
         // This is used for first order KUZMIN'S METHOD
@@ -2507,11 +2534,19 @@ namespace proteus
             double alphai = alpha_numerator/(alpha_denominator+1E-15);
             quantDOFs[i] = alphai;
 
-            if (POWER_SMOOTHNESS_INDICATOR==0)
-              psi[i] = 1.0;
-            else
-              psi[i] = std::pow(alphai,POWER_SMOOTHNESS_INDICATOR); //NOTE: they use alpha^2 in the paper
+            // The indicator of a ghost dof would be built from a truncated graph row here, and the
+            // dissipation of an owned dof reads it, so Python computes it on the owners and scatters it.
+            psi[i] = psi_dof.data()[i];
           }
+        if (phase == 0)
+          {
+            for (int i=0; i<numDOFs; i++)
+              global_entropy_residual_dof.data()[i] = global_entropy_residual[i];
+            return;
+          }
+        if (STABILIZATION_TYPE==2) //EV Stab
+          for (int i=0; i<numDOFs; i++)
+            global_entropy_residual[i] = global_entropy_residual_dof.data()[i];
         /////////////////////////////////////////////
         // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
         /////////////////////////////////////////////
