@@ -3839,8 +3839,12 @@ class ParametricFiniteElementSpace(object):
                                           'd')
         for ebN in self.referenceFiniteElement.referenceElement.range_nElementBoundaries:
             for k in range_n_xi:
+                # Map the boundary point onto face ebN first, as getBasisValuesTraceRef does. Without
+                # this every face's gradients are taken on reference face 2; that is invisible for P1
+                # (constant gradients) but wrong for P2 and higher.
+                xiHat_k = self.referenceFiniteElement.referenceElement.boundaryMapList[ebN](xiArray[k])
                 for j in self.referenceFiniteElement.localFunctionSpace.range_dim:
-                    self.grad_psi_trace[ebN,k,j,:] = self.referenceFiniteElement.localFunctionSpace.basisGradients[j](xiArray[k])
+                    self.grad_psi_trace[ebN,k,j,:] = self.referenceFiniteElement.localFunctionSpace.basisGradients[j](xiHat_k)
         return self.grad_psi_trace
     def getBasisGradientValuesGlobalExteriorTrace(self,
                                                   xiArray,

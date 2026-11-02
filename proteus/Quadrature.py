@@ -260,6 +260,18 @@ class GaussTriangle(Q_base):
         abWeights= [w6ab for i in range(6)]
         sixthOrderPoints.extend(abPerms); sixthOrderWeights.extend(abWeights)
 
+        #8th order: Dunavant (1985), 16 interior points, positive weights; exact through degree 8
+        #(checked against int_T x^a y^b = a! b!/(a+b+2)!). Also used for order 7.
+        eighthOrderOrbits = ((0.144315607677787,(1./3.,1./3.,1./3.)),
+                             (0.095091634267285,(0.081414823414554,0.459292588292723,0.459292588292723)),
+                             (0.103217370534718,(0.658861384496480,0.170569307751760,0.170569307751760)),
+                             (0.032458497623198,(0.898905543365938,0.050547228317031,0.050547228317031)),
+                             (0.027230314174435,(0.008394777409958,0.263112829634638,0.728492392955404)))
+        eighthOrderPoints = []; eighthOrderWeights = []
+        for w8,(l0,l1,l2) in eighthOrderOrbits:
+            for b in sorted(set([(l0,l1,l2),(l0,l2,l1),(l1,l0,l2),(l1,l2,l0),(l2,l0,l1),(l2,l1,l0)])):
+                eighthOrderPoints.append((b[1],b[2])); eighthOrderWeights.append(0.5*w8)
+
         Q_base.__init__(self,order)
         self.pointsAll=(
             ( EVec(1.0/3.0,1.0/3.0),),
@@ -268,7 +280,9 @@ class GaussTriangle(Q_base):
             ( EVec(a1,a1),EVec(1.0-2.0*a1,a1),EVec(a1,1.0-2.0*a1),
               EVec(a2,a2),EVec(1.0-2.0*a2,a2),EVec(a2,1.0-2.0*a2)),
             tuple(EVec(p[0],p[1]) for p in fifthOrderPoints),
-            tuple(EVec(p[0],p[1]) for p in sixthOrderPoints)
+            tuple(EVec(p[0],p[1]) for p in sixthOrderPoints),
+            tuple(EVec(p[0],p[1]) for p in eighthOrderPoints),
+            tuple(EVec(p[0],p[1]) for p in eighthOrderPoints)
             )#points All
 
         self.weightsAll=(
@@ -277,7 +291,9 @@ class GaussTriangle(Q_base):
             (-27.0/96.0, 25.0/96.0, 25.0/96.0, 25.0/96.0),
             (w1,w1,w1,w2,w2,w2),
             tuple(fifthOrderWeights),
-            tuple(sixthOrderWeights)
+            tuple(sixthOrderWeights),
+            tuple(eighthOrderWeights),
+            tuple(eighthOrderWeights)
             )#weightsAll
         self.setOrder(order)
 
