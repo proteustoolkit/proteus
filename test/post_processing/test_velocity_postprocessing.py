@@ -6,9 +6,11 @@ element: the conservation residual the post-processor stores, the same residual 
 velocity (source integral minus the outward flux through the faces), the face fluxes and the velocity at the element
 quadrature points.
 
-Two properties are tested:
+These properties are tested:
 
 * A conservative variant balances every element: the recomputed residual is round-off.
+* The optimized variants (pwl-opt, pwl-bdm-opt) need weak Dirichlet conditions, balance the elements whose face
+  velocities they compute, and give the serial answer on two ranks.
 * The local Larson-Niklasson variants (pwl, pwl-bdm, pwl-bdm2) give the serial answer on two ranks, at overlap 0
   and 1. Two things were wrong there, and overlap 2 hid both. Each face flux is corrected by the solutions of the
   local problems on the stars of its nodes, and a ghost node's star is cut by the partition; now the node's owner
@@ -81,13 +83,28 @@ def test_a_conservative_variant_balances_every_element(tmp_path, variant, order,
 
 
 @pytest.mark.parametrize("variant", ["pwl-opt", "pwl-bdm-opt"])
-def test_the_optimized_variants_are_not_conservative(tmp_path, variant):
-    """Recorded, not endorsed: the -opt variants leave residuals of 0.5 on this problem (0.46 by their own measure).
+def test_an_optimized_variant_needs_weak_dirichlet_conditions(tmp_path, variant):
+    """The -opt variants take the boundary flux from the model's face velocity, so they refuse strong conditions."""
+    out = _run(1, tmp_path, variant, 1, check=False, VPP_STRONG=True)
+    assert out.returncode != 0
+    assert "weak (Nitsche-type)" in out.stdout + out.stderr
 
-    They are on the list of variants to keep or drop (campaign C10a); this test fails when that changes.
+
+@pytest.mark.parametrize("variant", ["pwl-opt", "pwl-bdm-opt"])
+def test_an_optimized_variant_balances_the_interior_elements(tmp_path, variant):
+    """With weak conditions the -opt variants balance every element whose face velocities they compute.
+
+    They leave the boundary flux to the model. The mprans models (RANS2P, RANS3PF) put the weak boundary flux into
+    the face velocity; this problem's classic Transport puts a one-sided value there, so the elements in the boundary
+    row miss by up to 0.5 while the 200 interior elements balance to round-off (4e-15 measured).
     """
     rows = _run(1, tmp_path, variant, 1)
-    assert numpy.abs(rows[:, 3]).max() > 0.1
+    h = 1.0 / 12  # the mesh spacing (13 x 13 nodes)
+    cx, cy, residual = rows[:, 0], rows[:, 1], numpy.abs(rows[:, 3])
+    boundary_row = (cx < h) | (cx > 1 - h) | (cy < h) | (cy > 1 - h)
+    assert (~boundary_row).sum() == 200
+    assert residual[~boundary_row].max() < 1e-12
+    assert residual[boundary_row].max() > 0.1  # fails when the classic Transport supplies the weak boundary flux
 
 
 PARALLEL = [("pwl", 1, 0), ("pwl", 1, 1), ("pwl-bdm", 1, 0), ("pwl-bdm", 1, 1),
@@ -103,6 +120,16 @@ def test_a_local_variant_on_two_ranks_is_the_serial_answer(tmp_path, variant, or
     assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12  # the same elements, in the same order
     assert numpy.abs(parallel[:, 3]).max() < 1e-12
     assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 1e-10
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("variant,overlap", [("pwl-opt", 0), ("pwl-opt", 1), ("pwl-bdm-opt", 1)])
+def test_an_optimized_variant_on_two_ranks_is_the_serial_answer(tmp_path, variant, overlap):
+    """The -opt variants solve the stars of owned nodes and sum the face corrections across ranks (ParVec)."""
+    serial = _run(1, tmp_path / "1", variant, 1)
+    parallel = _run(2, tmp_path / "2", variant, 1, overlap)
+    assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12
+    assert numpy.abs(serial[:, 3:] - parallel[:, 3:]).max() < 1e-10
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")

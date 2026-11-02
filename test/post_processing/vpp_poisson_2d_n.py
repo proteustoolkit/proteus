@@ -1,4 +1,7 @@
-"""Numerics for vpp_poisson_2d_p: C0 P1 or P2 (VPP_ORDER), the post-processing variant from VPP_VARIANT."""
+"""Numerics for vpp_poisson_2d_p: C0 P1 or P2 (VPP_ORDER), the post-processing variant from VPP_VARIANT.
+
+Dirichlet conditions are weak (SIPG exterior flux) unless VPP_STRONG=1.
+"""
 import os
 from proteus.default_n import *
 try:
@@ -41,5 +44,10 @@ l_atol_res = 1.0e-13
 nLayersOfOverlapForParallel = int(os.environ.get("VPP_OVERLAP", "1"))
 parallelPartitioningType = MeshParallelPartitioningTypes.node
 numericalFluxType = ConstantAdvection_Diffusion_SIPG_exterior
+if os.environ.get("VPP_STRONG"):
+    # strong Dirichlet conditions (no weak boundary flux), serial only: the direct solver takes the reduced system
+    numericalFluxType = StrongDirichlet
+    multilevelLinearSolver = LU
+    levelLinearSolver = LU
 
 conservativeFlux = {0: os.environ.get("VPP_VARIANT", "pwl")}

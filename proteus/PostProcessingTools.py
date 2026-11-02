@@ -320,6 +320,9 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
     """
     P1-nonconforming velocity postprocessing
 
+    Flagged for likely removal (campaign C10a, decision deferred 2026-11-02): it applies only to a Crouzeix-Raviart
+    (P1 nonconforming) potential, no deck or test uses it, and two branches name misspelled objects
+    (``cpostprocesssing``, ``f_ci_wieght``) that would raise NameError if reached.
     """
     from .cpostprocessing import postProcessRT0potentialFromP1nc,postProcessRT0potentialFromP1nc_sd
     from .cpostprocessing import postProcessRT0velocityFromP1nc,postProcessRT0velocityFromP1nc_sd
@@ -1548,12 +1551,24 @@ class VPP_PWL_RT0_OPT(VPP_PWL_RT0):
     calculated correctly (i.e., it's consistent with either flux or
     weak dirichlet approximation)
 
+    Refused unless the numerical flux uses weak (Nitsche-type) Dirichlet
+    conditions. The mprans models (RANS2P, RANS3PF) put the weak boundary
+    flux into ebq_global['velocityAverage']; the classic Transport does not
+    (its exterior value is one-sided), so with it only the interior
+    elements balance.
+
     Assumes layout the same across components
     """
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_PWL_RT0.__init__(self,vectorTransport,vtComponents=vtComponents)
         #have to directly modify the type now to set to optimized
         self.postProcessingType = 'pwl-opt'
+        # The optimized variants take the boundary flux from the face velocity the model computed and never load a
+        # boundary condition themselves, so every exterior face must carry the weak (Nitsche-type) boundary flux.
+        if self.vt.numericalFlux is None or not self.vt.numericalFlux.useWeakDirichletConditions:
+            raise RuntimeError("conservativeFlux 'pwl-opt' and 'pwl-bdm-opt' need weak (Nitsche-type) Dirichlet "
+                               "conditions: the boundary flux must come from the model's face velocity; "
+                               "use 'pwl' or 'pwl-bdm' with strong Dirichlet conditions")
 
         from .LinearAlgebraTools import ParVec_petsc4py as ParVec
 
