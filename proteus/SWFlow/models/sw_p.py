@@ -32,10 +32,20 @@ if domain is None:
 g = physical_parameters['gravity']
 LINEAR_FRICTION = physical_parameters['LINEAR_FRICTION']
 mannings = physical_parameters['mannings']
+porosity = physical_parameters.get('porosity', None)
+drag_alpha = physical_parameters.get('drag_alpha', None)
+drag_beta = physical_parameters.get('drag_beta', None)
 
 # NUMERICAL PARAMETERS #
 cE = numerical_parameters['cE']
 LUMPED_MASS_MATRIX = numerical_parameters['LUMPED_MASS_MATRIX']
+INTEGRATE_BY_PARTS_WALLS = numerical_parameters.get('INTEGRATE_BY_PARTS_WALLS', 1)
+BOUNDS_RELAXATION = numerical_parameters.get('BOUNDS_RELAXATION', 1)
+BOUNDS_EXCLUDE_SELF = numerical_parameters.get('BOUNDS_EXCLUDE_SELF', 0)
+WALL_RIEMANN = numerical_parameters.get('WALL_RIEMANN', 0)
+LOW_ORDER_ONLY = numerical_parameters.get('LOW_ORDER_ONLY', 0)
+NODAL_H_BOUNDS = numerical_parameters.get('NODAL_H_BOUNDS', 0)
+NO_STAR_STATES = numerical_parameters.get('NO_STAR_STATES', 0)
 
 # ********************************** #
 # ********** COEFFICIENTS ********** #
@@ -46,7 +56,24 @@ coefficients = SW2DCV.Coefficients(g=g,
                                    cE=cE,
                                    LUMPED_MASS_MATRIX=LUMPED_MASS_MATRIX,
                                    LINEAR_FRICTION=LINEAR_FRICTION,
-                                   mannings=mannings)
+                                   mannings=mannings,
+                                   INTEGRATE_BY_PARTS_WALLS=INTEGRATE_BY_PARTS_WALLS,
+                                   BOUNDS_RELAXATION=BOUNDS_RELAXATION,
+                                   BOUNDS_EXCLUDE_SELF=BOUNDS_EXCLUDE_SELF,
+                                   WALL_RIEMANN=WALL_RIEMANN,
+                                   LOW_ORDER_ONLY=LOW_ORDER_ONLY,
+                                   NODAL_H_BOUNDS=NODAL_H_BOUNDS,
+                                   NO_STAR_STATES=NO_STAR_STATES,
+                                   # optional: {'where': f([x, y]) -> bool, 'stage': f(x, y, t)}
+                                   tailwater=boundaryConditions.get('tailwater', None),
+                                   porosity=porosity,
+                                   drag_alpha=drag_alpha,
+                                   drag_beta=drag_beta,
+                                   # optional: walls([x, y]) -> bool marks the
+                                   # boundary nodes that are walls; the rest are open
+                                   wall_function=boundaryConditions.get('walls', None),
+                                   # optional: drag_law(state) -> nodal beta, re-evaluated every step
+                                   drag_law=physical_parameters.get('drag_law', None))
 
 # **************************************** #
 # ********** INITIAL CONDITIONS ********** #

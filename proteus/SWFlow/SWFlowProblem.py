@@ -173,7 +173,15 @@ default_physical_parameters = {'gravity': 9.81,
                                'gen_start': 0.0,
                                'gen_length': 0.0,
                                'abs_start': 0.0,
-                               'abs_length': 0.0,}
+                               'abs_length': 0.0,
+                               # canopy: porosity phi and Darcy-Forchheimer
+                               # drag -(alpha + beta|u|) h u; scalar, nodal
+                               # array or function of [x, y]; None = none
+                               'porosity': None,
+                               'drag_alpha': None,
+                               'drag_beta': None,
+                               # drag_law(state) -> nodal beta, re-evaluated every step
+                               'drag_law': None}
 
 # ****************************************** #
 # ********** NUMERICAL PARAMETERS ********** #
@@ -181,7 +189,15 @@ default_physical_parameters = {'gravity': 9.81,
 default_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                           'cfl': 0.33,
                           'SSPOrder': 3,
-                          'cE' : 1.}
+                          'cE' : 1.,
+                          'INTEGRATE_BY_PARTS_WALLS': 1,
+                          'BOUNDS_RELAXATION': 1,
+                          'BOUNDS_EXCLUDE_SELF': 0,
+                          'WALL_RIEMANN': 0,
+                          'LOW_ORDER_ONLY': 0,
+                          'NODAL_H_BOUNDS': 0,
+                          'NO_STAR_STATES': 0}
 default_GN_swe_parameters = {'LUMPED_MASS_MATRIX': 0,
                              'cfl': 0.33,
-                             'SSPOrder': 3}
+                             'SSPOrder': 3,
+                             'INTEGRATE_BY_PARTS_WALLS': 1}
