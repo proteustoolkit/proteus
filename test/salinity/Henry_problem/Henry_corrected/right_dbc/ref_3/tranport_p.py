@@ -51,7 +51,10 @@ def a(x):
 aOfX = {0:a}
 alpha_L= 0.0
 alpha_T= 0.0
-Dm= 18.8571e-3
+Dm= 18.8571e-6 # m2/s, the manuscript's D_m (was 18.8571e-3)
+# Compatible flow -> transport coupling (Barua & Kees, Sec. 2.2): the transport is driven by
+# the flow step's realized edge exchanges E_ij and carries its storage M, with a backward-Euler
+# low-order step and Zalesak limiting on S = Mc (proteus TADR STABILIZATION_TYPE='Compatible').
 coefficients = MyCoefficients(
     aOfX,
     alpha_L=alpha_L,
@@ -62,12 +65,10 @@ coefficients = MyCoefficients(
     specified_velocity=False,
     checkMass=checkMass,
     FCT=True,
-    LUMPED_MASS_MATRIX=True,
-    STABILIZATION_TYPE=4,
+    LUMPED_MASS_MATRIX=False,
+    STABILIZATION_TYPE='Compatible',
     diagonal_conductivity= True,
-    ENTROPY_TYPE='LOG',
-    cE=0.1, cK=1.0, physicalDiffusion=0.0,
-    rho_f=1.0, rho_s=1.025) #ct.physicalDiffusion,)
+    rho_f=1.0, rho_s=1.025)
 coefficients.variableNames=['u']
 
 #####################

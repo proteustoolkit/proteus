@@ -21,7 +21,7 @@ if not galerkin:
     timeIntegration = Richards.ThetaScheme
 timeOrder = 1
 #stepController = Min_dt_controller
-nonlinearIterationsFloor = 3
+nonlinearIterationsFloor = 4  # Newton takes 3 iterations to nl_atol_res; with a floor of 3 dt never grows
 nonlinearIterationsCeil  = 6 # 8
 dtNLgrowFactor = 2
 dtNLreduceFactor = 0.5
@@ -78,13 +78,13 @@ matrix = SparseMatrix
 #multilevelLinearSolver = LU
 #multilevelLinearSolver = PETSc
 #multilevelLinearSolver = NI
-multilevelLinearSolver = KSP_petsc4py
+multilevelLinearSolver = LU  # direct solve; the compatible transport is serial
 
 
 #levelLinearSolver = LU
 #levelLinearSolver = PETSc
 #levelLinearSolver = MGM
-levelLinearSolver = KSP_petsc4py
+levelLinearSolver = LU
 
 linearSmoother = Jacobi
 linearSmoother = GaussSeidel
