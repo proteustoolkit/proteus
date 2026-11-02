@@ -59,7 +59,6 @@ coefficients = Richards.Coefficients(
     gravity=dimensionless_gravity,
     density=dimensionless_density,
     beta=0.0,
-    DENSITY_MODEL=None,
     density_model=1,
     diagonal_conductivity=True,
     STABILIZATION_TYPE=2,
