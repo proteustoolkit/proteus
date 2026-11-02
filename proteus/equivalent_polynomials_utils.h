@@ -147,6 +147,50 @@ namespace equivalent_polynomials
     }
   }
 
+  // Indicator of {t in [0,1] : f(t) > 0 and g(t) > 0} for affine f, g given by their values at the
+  // edge ends -- e.g. one Gamma_f branch AND the fluid side of Gamma_s on a triply-cut edge. The set
+  // is an interval [lo,hi], so its fit is chi(t>lo) - chi(t>hi), each a calculate_edge_H fit of
+  // phi = t - c: exact for the same integrand degrees (<= nP). All zeros if the interval is empty.
+  template <int nP>
+  inline void calculate_edge_interval_H(double f0, double f1, double g0, double g1, double C[nP + 1])
+  {
+    double lo = 0.0, hi = 1.0;
+    bool empty = false;
+    for (int k = 0; k < 2; k++)
+    {
+      const double p0 = (k == 0) ? f0 : g0, p1 = (k == 0) ? f1 : g1;
+      if (p0 > 0.0 && p1 > 0.0)
+        continue;
+      if (p0 <= 0.0 && p1 <= 0.0)
+      {
+        empty = true;
+        continue;
+      }
+      const double theta = p0 / (p0 - p1);
+      if (p0 > 0.0 && theta < hi)
+        hi = theta;
+      else if (p0 <= 0.0 && theta > lo)
+        lo = theta;
+    }
+    for (int i = 0; i <= nP; i++)
+      C[i] = 0.0;
+    if (empty || hi <= lo)
+      return;
+    double C_lo[nP + 1], C_hi[nP + 1];
+    if (lo > 0.0)
+      calculate_edge_H<nP>(-lo, 1.0 - lo, C_lo);
+    else
+      for (int i = 0; i <= nP; i++)
+        C_lo[i] = (i == 0) ? 1.0 : 0.0;
+    if (hi < 1.0)
+      calculate_edge_H<nP>(-hi, 1.0 - hi, C_hi);
+    else
+      for (int i = 0; i <= nP; i++)
+        C_hi[i] = 0.0;
+    for (int i = 0; i <= nP; i++)
+      C[i] = C_lo[i] - C_hi[i];
+  }
+
   template <int nP>
   inline double evaluate_edge_poly(const double C[nP + 1], double t)
   {
