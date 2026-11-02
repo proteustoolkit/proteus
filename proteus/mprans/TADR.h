@@ -568,6 +568,14 @@ inline
       //////////////////////////////////////////////////////////////////////////
       double physicalDiffusion = args.scalar<double>("physicalDiffusion");
       const double eb_adjoint_sigma = args.scalar<double>("eb_adjoint_sigma");
+      // The dissipation of an owned dof reads psi and the normalized entropy residual of its graph
+      // neighbours: ghosts whose rows are truncated when across a rank cut. Phase 0 stops after computing
+      // them (writing psi_dof and global_entropy_residual_dof); Python scatters them from the owners and
+      // calls again with phase 1, which recomputes everything up to there (the element loops add to
+      // globalResidual, which Python zeroes in between) and takes the scattered values.
+      const int phase = args.scalar<int>("phase");
+      proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
+      proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
       
       double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
       const double eps_rho = (rho_s - rho_f)/rho_f;
@@ -1585,6 +1593,21 @@ inline
                 psi[i] = 1.0;
               else
                 psi[i] = std::pow(alphai,POWER_SMOOTHNESS_INDICATOR); //NOTE: they use alpha^2 in the paper
+            }
+          if (phase == 0)
+            {
+              for (int i=0; i<numDOFs; i++)
+                {
+                  psi_dof.data()[i] = psi[i];
+                  global_entropy_residual_dof.data()[i] = global_entropy_residual[i];
+                }
+              return;
+            }
+          for (int i=0; i<numDOFs; i++)
+            {
+              psi[i] = psi_dof.data()[i];
+              if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity)
+                global_entropy_residual[i] = global_entropy_residual_dof.data()[i];
             }
           /////////////////////////////////////////////
           // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
@@ -2605,6 +2628,12 @@ inline
     int nDOF_trial_element_fct            = args.scalar<int>("nDOF_trial_element_fct");
     const double rho_f = args.scalar<double>("rho_f");
     const double rho_s = args.scalar<double>("rho_s");
+    // phase 0 computes the limiter coefficients R of every dof, phase 1 applies them. The limiter of an owned dof
+    // reads R of its neighbours, whose graph rows are truncated when they are ghosts, so Python scatters R from
+    // the owners between the two phases.
+    const int phase = args.scalar<int>("phase");
+    proteus::pyarray<double>& Rpos_dof = args.array<double>("Rpos_dof");
+    proteus::pyarray<double>& Rneg_dof = args.array<double>("Rneg_dof");
 //    STABILIZATION STABILIZATION_TYPE{args.scalar<int>("STABILIZATION_TYPE")};
     STABILIZATION STABILIZATION_TYPE = static_cast<STABILIZATION>(args.scalar<int>("STABILIZATION_TYPE"));
 //      ENTROPY ENTROPY_TYPE = static_cast<ENTROPY>(args.scalar<int>("ENTROPY_TYPE"));    
@@ -2631,11 +2660,16 @@ inline
       if (ML_proj[i] > 1.0e-14) { theta_dof[i] /= ML_proj[i]; rho_dof[i] /= ML_proj[i]; }
       else { theta_dof[i] = 1.0; rho_dof[i] = rho_f; }
     }
-    Rpos.resize(numDOFs,0.0);
-    Rneg.resize(numDOFs,0.0);
-    FluxCorrectionMatrix.resize(NNZ,0.0);
+    if (phase == 0)
+      {
+        // resize also zeroes, so phase 1 must not do it: it needs the matrix phase 0 filled
+        Rpos.resize(numDOFs,0.0);
+        Rneg.resize(numDOFs,0.0);
+        FluxCorrectionMatrix.resize(NNZ,0.0);
+      }
     int ij=0;
     //loop over nodes (i)
+    if (phase == 0)
     for (int i=0; i<numDOFs; i++)
       {
         //read some vectors
@@ -2716,8 +2750,17 @@ inline
         const double Qnegi = lumped_volume*(theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*mini)*mini - mLowi);
         Rpos[i] = ((Pposi==0) ? 1. : fmax(0.0, fmin(1.0,Qposi/Pposi)));
         Rneg[i] = ((Pnegi==0) ? 1. : fmax(0.0, fmin(1.0,Qnegi/Pnegi)));
+        Rpos_dof.data()[i] = Rpos[i];
+        Rneg_dof.data()[i] = Rneg[i];
       }//i
     ij=0;
+    if (phase == 1)
+    for (int i=0; i<numDOFs; i++)
+      {
+        Rpos[i] = Rpos_dof.data()[i];
+        Rneg[i] = Rneg_dof.data()[i];
+      }
+    if (phase == 1)
     for (int i=0; i<numDOFs; i++)
       {
         double ith_Limiter_times_FluxCorrectionMatrix = 0.;

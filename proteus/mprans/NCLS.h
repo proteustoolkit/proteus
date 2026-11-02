@@ -1238,6 +1238,9 @@ namespace proteus
 
       double calculateRedistancingResidual(arguments_dict& args)
       {
+        // the L2 norm is over the dofs this rank owns, so that Python can sum it over the ranks: a norm that
+        // differs from rank to rank sends them through different numbers of redistancing iterations
+        int numOwnedDOFs = args.scalar<int>("numOwnedDOFs");
         double dt = args.scalar<double>("dt");
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
@@ -1423,7 +1426,8 @@ namespace proteus
             else
               psi[i] = std::pow(alphai,POWER_SMOOTHNESS_INDICATOR); //NOTE: they use alpha^2 in the paper
             // compute L2 norm
-            L2_norm += std::pow(L2_norm_per_node[i],2);
+            if (i < numOwnedDOFs)
+              L2_norm += std::pow(L2_norm_per_node[i],2);
           }
         L2_norm = std::sqrt(L2_norm);
         // END OF COMPUTING SMOOTHNESS INDICATOR

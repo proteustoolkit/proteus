@@ -1,4 +1,4 @@
-"""VOF edge-based stabilization with FCT (STABILIZATION_TYPE=3 and 2) must not depend on the partition.
+"""VOF and VOF3P edge-based stabilization with FCT (STABILIZATION_TYPE=3, 2 and 4) must not depend on the partition.
 
 An owned dof reads the smoothness indicator, uLow and the limiter coefficients R of its graph neighbours. With one
 overlap layer those across a rank cut are ghosts whose graph rows are truncated, so a blob advected across the cut
@@ -49,17 +49,18 @@ def _field(ranks, cwd, **overrides):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
-@pytest.mark.parametrize("stabilization", [3, 2], ids=["smoothness", "entropy_viscosity"])
-def test_vof_edge_based_fct_on_two_ranks_is_the_serial_answer(tmp_path, stabilization):
+@pytest.mark.parametrize("model", ["VOF", "VOF3P"])
+@pytest.mark.parametrize("stabilization", [3, 2, 4], ids=["smoothness", "entropy_viscosity", "dk_fct"])
+def test_vof_edge_based_fct_on_two_ranks_is_the_serial_answer(tmp_path, model, stabilization):
     for d in ("1", "2", "3", "4", "5"):
         (tmp_path / d).mkdir()
-    serial = _field(1, tmp_path / "1", STAB=stabilization)
-    parallel = _field(2, tmp_path / "2", STAB=stabilization)
+    serial = _field(1, tmp_path / "1", STAB=stabilization, MODEL=model)
+    parallel = _field(2, tmp_path / "2", STAB=stabilization, MODEL=model)
     assert numpy.abs(serial - parallel).max() < 1e-8
-    control = _field(2, tmp_path / "3", NOFIX=1, STAB=stabilization)
+    control = _field(2, tmp_path / "3", NOFIX=1, STAB=stabilization, MODEL=model)
     assert numpy.abs(serial - control).max() > 1e-3
     # the time step reads the cfl of the dofs it owns only: garbage in the ghosts' must not matter
-    ghosts = _field(2, tmp_path / "4", GHOSTCFL=1, STAB=stabilization)
+    ghosts = _field(2, tmp_path / "4", GHOSTCFL=1, STAB=stabilization, MODEL=model)
     assert numpy.abs(serial - ghosts).max() < 1e-8
-    reads_ghosts = _field(2, tmp_path / "5", GHOSTCFL=1, OLDMAX=1, STAB=stabilization)
+    reads_ghosts = _field(2, tmp_path / "5", GHOSTCFL=1, OLDMAX=1, STAB=stabilization, MODEL=model)
     assert numpy.abs(serial - reads_ghosts).max() > 1e-6
