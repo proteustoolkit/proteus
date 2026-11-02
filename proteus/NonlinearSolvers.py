@@ -1197,6 +1197,8 @@ class ExplicitConsistentMassMatrixForVOF(Newton):
             self.linearSolver.solve(u=self.du,b=r,par_u=self.par_du,par_b=par_r)
             self.linearSolverFailed = self.linearSolver.failed()
         u-=self.du
+        if par_u is not None:
+            par_u.scatter_forward_insert()  # the ghost entries of du are not the owners'; the FCT step reads them
         ############
         # FCT STEP #
         ############
