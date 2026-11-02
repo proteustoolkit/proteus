@@ -914,6 +914,35 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                compKernelFlag)
     def calculateCoefficients(self):
         pass
+
+    def _mesh_l2g(self):
+        """Vertex numbers of each element in the numbering of the mesh_dof array.
+
+        For P1, mesh_dof is the node array and the vertices are the element's nodes. For P2,
+        mesh_dof is the dof map's Lagrange-node array (the kernel also reads it through u_l2g for
+        the cut geometry), so the vertices must be the element's vertex dofs, the first entries of
+        each row of the dof map. Node numbers coincide with those only in serial, where vertex dofs
+        are numbered first; on a partitioned mesh they did not, and P2 elements were mapped with the
+        coordinates of other points (NaN residual on 2 ranks). Arrays the kernel reads through
+        mesh_l2g must be in the same numbering (see _nodeDiameters).
+        """
+        if self.u[0].femSpace.max_nDOF_element == 3:
+            return self.mesh.elementNodesArray
+        if getattr(self, '_mesh_l2g_vertices', None) is None:
+            nV = self.mesh.elementNodesArray.shape[1]
+            self._mesh_l2g_vertices = np.ascontiguousarray(self.u[0].femSpace.dofMap.l2g[:, :nV])
+        return self._mesh_l2g_vertices
+
+    def _nodeDiameters(self):
+        """mesh.nodeDiametersArray in the numbering of _mesh_l2g, which the kernel reads it through
+        (the Nitsche penalty length h_phi). For P2 that is the vertex dofs, not the nodes."""
+        if self.u[0].femSpace.max_nDOF_element == 3:
+            return self.mesh.nodeDiametersArray
+        if getattr(self, '_nodeDiameters_vertices', None) is None:
+            d = np.zeros((self.u[0].femSpace.dim,), 'd')
+            d[self._mesh_l2g()] = self.mesh.nodeDiametersArray[self.mesh.elementNodesArray]
+            self._nodeDiameters_vertices = d
+        return self._nodeDiameters_vertices
     # 4-point Gauss-Legendre abscissae on [0,1], used to hand the kernel the exterior Dirichlet data of
     # each phase along an exterior edge (ADR_EXT_NITSCHE). Edge parameter t runs from the lower to the
     # higher global node number of the edge.
@@ -964,8 +993,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         # ToDo: Have lagrange nodes for all DOFmaps. 
         argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
-        # argsDict["mesh_dof"] = self.mesh.nodeArray
-        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints
         argsDict["dV_ref"] = self.elementQuadratureWeights[('u',0)]
@@ -975,7 +1003,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["u_grad_test_ref"] = self.u[0].femSpace.grad_psi
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["cfl"] = self.q[('cfl',0)]
         argsDict["Ct_sge"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
@@ -1054,7 +1082,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_u_q"] = self.q['immersedBoundary_u']
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
@@ -1141,8 +1169,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
-        # argsDict["mesh_dof"] = self.mesh.nodeArray
-        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints
         argsDict["dV_ref"] = self.elementQuadratureWeights[('u',0)]
@@ -1152,7 +1179,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["u_grad_test_ref"] = self.u[0].femSpace.grad_psi
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["cfl"] = self.q[('cfl',0)]
         argsDict["Ct_sge"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
@@ -1230,7 +1257,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_u_q"] = self.q['immersedBoundary_u']
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
