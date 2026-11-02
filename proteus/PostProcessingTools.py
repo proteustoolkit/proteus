@@ -64,6 +64,16 @@ def VelocityPostProcessingChooser(transport):
     return velocityPostProcessor
 
 
+def _requireOneRank(postProcessingType):
+    """The global-correction variants solve one system over the mesh they are given, which on more than one rank is
+    the rank's subdomain, not the domain."""
+    from . import Comm
+    if Comm.get().size() > 1:
+        raise RuntimeError("conservativeFlux '%s' runs on one rank only: it solves one global correction problem, "
+                           "and on %d ranks each would solve its own subdomain's; use 'pwl' or 'pwl-bdm'"
+                           % (postProcessingType, Comm.get().size()))
+
+
 #####################################################################################################
 #begin pulling out different velocity cases into separate classes to make this more manageable
 #####################################################################################################
@@ -191,6 +201,10 @@ class VelocityPostProcessingAlgorithmBase(object):
                      #
                 #
             #end setting flux boundary elements
+            # a face the partition cut (flag -1) is interior to the domain: its flux is not a boundary condition,
+            # and the transport's boundary flux there is the subdomain's, not the solution's
+            cut = self.vt.mesh.elementBoundaryMaterialTypes[self.vt.mesh.exteriorElementBoundariesArray] == -1
+            self.fluxElementBoundaries[ci][cut] = 0
         #
         self.velocityWriter = Archiver.XdmfWriter()
     def computeGeometricInfo(self):
@@ -767,7 +781,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                      self.vt.internalNodesArray,
                                                      self.fluxBoundaryNodes[ci],
                                                      self.nodeStarFactors[ci])
-        #
+        self.sendStarSolutionsToGhosts(ci)
 
         self.getConservationResidualPWL(ci,correctFlux=False)
 
@@ -778,6 +792,117 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
         if verbose > 0:
             logEvent("Max local conservation (dgp1 enriched) = %12.5e" % max(numpy.absolute(self.q[('conservationResidual',ci)].flat[0:self.vt.mesh.nElements_owned])))
 
+
+    def takeCutFaceVelocitiesFromInteriorRanks(self,ci):
+        """Replace the velocity on faces the partition cut by its value on a rank where the face is interior.
+
+        An owned element can have a face whose other element is not on the rank (with node partitioning the rank
+        that owns the elements around a cut need not hold their neighbours). There the face is exterior: its average
+        velocity is one-sided and the correction lacks the neighbour's side, so the flux is wrong. A cut face has a
+        ghost node, and the owner of that node holds every element around it, so the face is interior there. Each rank
+        asks those owners for the face velocity at the face quadrature points (matched by position) and corrects the
+        conservation residual of its element by the change in outward flux. Cut faces are the exterior faces the
+        partitioner flagged -1. Call after sendStarSolutionsToGhosts; serial runs return at once.
+        """
+        from . import Comm
+        comm = Comm.get()
+        if comm.size() == 1:
+            return
+        mpi = comm.comm.tompi4py()
+        mesh = self.vt.mesh
+        globalMesh = mesh.globalMesh
+        rank, size = mpi.rank, mpi.size
+        nodeOffsets = numpy.asarray(globalMesh.nodeOffsets_subdomain_owned)
+        node_l2g = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        face_l2g = numpy.asarray(globalMesh.elementBoundaryNumbering_subdomain2global)
+        nOwned = mesh.nNodes_owned
+        velocity = self.ebq_global[('velocity',ci)]
+        x = self.vt.ebq_global['x']
+        requests = [[] for r in range(size)]
+        asked_for = {}
+        for ebN in mesh.exteriorElementBoundariesArray:
+            if mesh.elementBoundaryMaterialTypes[ebN] != -1:
+                continue  # the partitioner flags the faces it cut -1; every other exterior face is the domain's
+            ghosts = [nN for nN in mesh.elementBoundaryNodesArray[ebN] if nN >= nOwned]
+            assert ghosts, "a cut face with only owned nodes: the owned nodes' stars would be incomplete"
+            owner = int(numpy.searchsorted(nodeOffsets, node_l2g[ghosts[0]], side='right') - 1)
+            requests[owner].append(int(face_l2g[ebN]))
+            asked_for[int(face_l2g[ebN])] = ebN
+        asked = mpi.alltoall(requests)
+        face_g2l = dict((int(g), ebN) for ebN, g in enumerate(face_l2g[:mesh.nElementBoundaries_global]))
+        interior = numpy.zeros((mesh.nElementBoundaries_global,), 'bool')
+        interior[mesh.interiorElementBoundariesArray] = True
+        replies = []
+        for r in range(size):
+            reply = []
+            for ebN_global in asked[r]:
+                ebN = face_g2l.get(ebN_global)
+                if ebN is not None and interior[ebN]:
+                    reply.append((ebN_global, x[ebN].copy(), velocity[ebN].copy()))
+            replies.append(reply)
+        received = mpi.alltoall(replies)
+        dS = self.vt.ebq[('dS_u',ci)]
+        normal = self.vt.ebq_global['n']
+        for reply in received:
+            for ebN_global, x_other, v_other in reply:
+                ebN = asked_for[ebN_global]
+                eN = mesh.elementBoundaryElementsArray[ebN,0]
+                ebN_element = mesh.elementBoundaryLocalElementBoundariesArray[ebN,0]
+                old = velocity[ebN].copy()
+                for k in range(velocity.shape[1]):
+                    j = numpy.argmin(numpy.linalg.norm(x_other - x[ebN,k], axis=1))
+                    assert numpy.linalg.norm(x_other[j] - x[ebN,k]) <= 1.0e-10*max(1.0, numpy.abs(x[ebN,k]).max())
+                    velocity[ebN,k] = v_other[j]
+                dflux = ((velocity[ebN] - old)*normal[ebN]).sum(axis=-1)
+                self.q[('conservationResidual',ci)][eN] += (dflux*dS[eN,ebN_element]).sum()
+
+    def sendStarSolutionsToGhosts(self,ci):
+        """Replace the star solutions of ghost nodes by their owners'.
+
+        A face flux is corrected by the star problems of the face's nodes. On a rank, the star of a node it owns is
+        complete, but the star of a ghost node is cut by the partition unless the overlap is two layers deep, so its
+        local solution is wrong and so are the fluxes of the owned elements around it. Each rank asks the owners of
+        its ghost nodes for their star solutions, keyed by global element number, and takes the values for the star
+        elements it has. Serial runs return at once.
+        """
+        from . import Comm
+        comm = Comm.get()
+        if comm.size() == 1:
+            return
+        mpi = comm.comm.tompi4py()
+        mesh = self.vt.mesh
+        globalMesh = mesh.globalMesh
+        rank, size = mpi.rank, mpi.size
+        nodeOffsets = numpy.asarray(globalMesh.nodeOffsets_subdomain_owned)
+        node_l2g = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        element_l2g = numpy.asarray(globalMesh.elementNumbering_subdomain2global)
+        nOwned = mesh.nNodes_owned
+        # owned nodes come first and are numbered contiguously from the rank's offset
+        assert (node_l2g[:nOwned] == numpy.arange(nodeOffsets[rank], nodeOffsets[rank + 1])).all()
+        ghosts = node_l2g[nOwned:mesh.nNodes_global]
+        owners = numpy.searchsorted(nodeOffsets, ghosts, side='right') - 1
+        requests = [ghosts[owners == r].tolist() for r in range(size)]
+        asked = mpi.alltoall(requests)
+        nsf = self.nodeStarFactors[ci]
+        replies = []
+        for r in range(size):
+            reply = []
+            for nN_global in asked[r]:
+                I = int(nN_global - nodeOffsets[rank])
+                reply.append((nN_global, element_l2g[self.globalNode2globalElementList[I]], nsf.getSubdomainU(I)))
+            replies.append(reply)
+        received = mpi.alltoall(replies)
+        ghost_local = dict((int(g), nOwned + i) for i, g in enumerate(ghosts))
+        for reply in received:
+            for nN_global, elements, U_owner in reply:
+                I = ghost_local[int(nN_global)]
+                value = dict(zip(elements.tolist(), U_owner.tolist()))
+                star = self.globalNode2globalElementList[I]
+                U = nsf.getSubdomainU(I)
+                assert len(U) == len(star)
+                for k, eN in enumerate(star):
+                    U[k] = value[int(element_l2g[eN])]  # the owner's star is complete, so it has every element
+                nsf.setSubdomainU(I, U)
 
     def getConservationResidualPWL(self,ci,correctFlux=False):
         """
@@ -790,7 +915,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                          self.vt.mesh.elementBoundaryElementsArray,
                                                          self.vt.mesh.elementBoundaryLocalElementBoundariesArray,
                                                          self.vt.mesh.elementNodesArray,
-                                                         self.vt.u[0].femSpace.dofMap.l2g,
+                                                         self.vt.mesh.elementNodesArray, # node numbers index the stars; a P2 vertex dof is the node only in serial
                                                          self.nodeStarElementsArray,
                                                          self.nodeStarElementNeighborsArray,
                                                          self.nElements_node,
@@ -804,6 +929,8 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                          self.q[('conservationResidual',ci)], # output
                                                          self.ebq_global[('velocity',ci)],    # output
                                                          self.ebq[('velocity',ci)])           # output
+        if not correctFlux:
+            self.takeCutFaceVelocitiesFromInteriorRanks(ci)
         #set boundary flux
         updateCoef = 0.0 #overwrite first
         cfemIntegrals.loadBoundaryFluxIntoGlobalElementBoundaryVelocity(self.vt.mesh.exteriorElementBoundariesArray,
@@ -841,7 +968,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                          self.vt.mesh.elementBoundaryElementsArray,
                                                          self.vt.mesh.elementBoundaryLocalElementBoundariesArray,
                                                          self.vt.mesh.elementNodesArray,
-                                                         self.vt.u[0].femSpace.dofMap.l2g,
+                                                         self.vt.mesh.elementNodesArray, # node numbers index the stars; a P2 vertex dof is the node only in serial
                                                          self.nodeStarElementsArray,
                                                          self.nodeStarElementNeighborsArray,
                                                          self.nElements_node,
@@ -2128,6 +2255,7 @@ class VPP_PWC_RT0(VelocityPostProcessingAlgorithmBase):
 #       make sure works with weak dirichlet conditions
 #       remove python loops in building global Jacobian
     def __init__(self,vectorTransport=None,vtComponents=[0]):
+        _requireOneRank('pwc')
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='pwc',
                                                      vectorTransport=vectorTransport,
                                                      vtComponents=vtComponents)
@@ -2345,6 +2473,7 @@ class VPP_SUN_RT0(VelocityPostProcessingAlgorithmBase):
 #       make sure works with weak dirichlet conditions
 #       remove python loops in building global Jacobian
     def __init__(self,vectorTransport=None,vtComponents=[0]):
+        _requireOneRank('sun-rt0')
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='sun-rt0',
                                                      vectorTransport=vectorTransport,
                                                      vtComponents=vtComponents)
@@ -2603,6 +2732,7 @@ class VPP_SUN_GS_RT0(VelocityPostProcessingAlgorithmBase):
 
     """
     def __init__(self,vectorTransport=None,vtComponents=[0]):
+        _requireOneRank('sun-gs-rt0')
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='sun-gs-rt0',
                                                      vectorTransport=vectorTransport,
                                                      vtComponents=vtComponents)
