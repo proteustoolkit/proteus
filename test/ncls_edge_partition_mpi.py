@@ -11,6 +11,7 @@ discontinuous branch, etaMin == etaMax, that amplifies round-off differences ste
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm, MeshTools as MT
+from mpi4py import MPI
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LS_with_edgeBased_EV", "NCLS")
 sys.path.insert(0, os.getcwd())
@@ -43,10 +44,13 @@ def calculateSolution(self, *args, **kwargs):
     model = self.modelList[0].levelModelList[-1]
     nOwned = model.mesh.nNodes_owned
     comm = Comm.get().comm.tompi4py()
+    # scatterDOFArray must not keep a vector per array it was handed (it kept 1080 per rank)
+    nVecs = comm.allreduce(len(model._dofVecs), op=MPI.MAX)
     gathered = comm.gather(np.column_stack([model.mesh.nodeArray[:nOwned, :2], model.u[0].dof[:nOwned]]), root=0)
     if comm.rank == 0:
         a = np.vstack(gathered)
         np.savetxt("u.csv", a[np.lexsort((a[:, 1], a[:, 0]))], delimiter=",", header="x,y,u")
+        open("dofvecs.txt", "w").write("%d\n" % nVecs)
     return result
 NS.NS_base.calculateSolution = calculateSolution
 

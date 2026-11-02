@@ -1311,14 +1311,20 @@ class LevelModel(OneLevelTransport):
         """Replace the ghost entries of a dof array by the owners' values (in place)."""
         if self.comm.size() == 1:
             return
-        par = self._dofVecs.get(id(a))
-        if par is None:
+        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
+        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
             dofMap = self.u[0].femSpace.dofMap
             rank = self.comm.rank()
             nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            par = self._dofVecs[id(a)] = ParVec_petsc4py(
-                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
         par.scatter_forward_insert()
+        a[:] = buf
 
     def FCTStep(self):
         # Explicit solvers call FCTStep() unconditionally.
