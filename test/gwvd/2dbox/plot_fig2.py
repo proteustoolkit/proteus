@@ -2,7 +2,7 @@
 Povich et al. (2013) Fig. 2: mass fraction along x = 10 m at the last archived time for the 2-D box,
 comparing velocity treatments (CV/NoCV x PE/LN) against the density-free reference.
 
-usage: python plot_fig2.py ref_dir case_dir [case_dir ...]
+usage: python plot_fig2.py [--step N --days D] ref_dir case_dir [case_dir ...]
 Each directory holds one run's archive (*.h5). Prints the 10-90% transition thickness and the
 difference from the reference profile, and writes fig2_profiles.png beside this script's caller.
 """
@@ -19,11 +19,14 @@ X_PROFILE = 10.0
 D_MOL = 1.0e-8
 
 
+STEP = None  # archive step to read; None = last
+
+
 def profile(run_dir):
     path = glob.glob(os.path.join(run_dir, "*.h5"))[0]
     with h5py.File(path, "r") as f:
         steps = sorted(int(m.group(1)) for k in f if (m := re.match(r"mf_t(\d+)$", k)))
-        s = steps[-1]
+        s = steps[-1] if STEP is None else STEP
         mf = f["mf_t%d" % s][:]
         nodes = f["nodesSpatial_Domain0"][:]
         elements = f["elementsSpatial_Domain0"][:]
@@ -80,4 +83,11 @@ def main(ref_dir, case_dirs, t_seconds=86400.0 * 1000.0):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2:])
+    args, days = sys.argv[1:], 1000.0
+    while args and args[0].startswith("--"):
+        if args[0] == "--step":
+            STEP = int(args[1])
+        elif args[0] == "--days":
+            days = float(args[1])
+        args = args[2:]
+    main(args[0], args[1:], t_seconds=86400.0 * days)
