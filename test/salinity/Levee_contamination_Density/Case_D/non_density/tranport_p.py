@@ -27,7 +27,7 @@ class MyCoefficients(TADR.Coefficients):
 
 LevelModelType = TADR.LevelModel
 logEvent = Profiling.logEvent
-a0 = 18.8571e-4
+a0 = 18.8571e-3
 
 
 def a(x):
@@ -39,6 +39,9 @@ alpha_L = 0.1
 alpha_T = 0.01
 Dm = 18.8571e-3
 
+# Compatible flow -> transport coupling (Barua & Kees, Sec. 2.2): the transport is driven by
+# the flow step's realized edge exchanges E_ij and carries its storage M, with a backward-Euler
+# low-order step and Zalesak limiting on S = Mc (proteus TADR STABILIZATION_TYPE='Compatible').
 coefficients = MyCoefficients(
     aOfX,
     alpha_L=alpha_L,
@@ -49,13 +52,9 @@ coefficients = MyCoefficients(
     specified_velocity=False,
     checkMass=checkMass,
     FCT=True,
-    LUMPED_MASS_MATRIX=True,
-    STABILIZATION_TYPE=2,
+    LUMPED_MASS_MATRIX=False,
+    STABILIZATION_TYPE="Compatible",
     diagonal_conductivity=True,
-    ENTROPY_TYPE="POWER",
-    cE=0.1,
-    cK=1.0,
-    physicalDiffusion=0.0,
     rho_f=1.0,
     rho_s=1.0,
 )
