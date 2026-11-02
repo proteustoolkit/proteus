@@ -64,3 +64,21 @@ def test_ncls_edge_based_on_two_ranks_is_the_serial_answer(tmp_path, stabilizati
     assert numpy.abs(serial - parallel).max() < tolerance
     control = _field(2, tmp_path / "3", NOSCAT=1, STAB=stabilization, TFINAL=final_time)
     assert numpy.abs(serial - control).max() > 1e-4
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+def test_ncls_redistancing_on_two_ranks_is_the_serial_answer(tmp_path):
+    """The redistancing residual reads psi at the graph neighbours too; it now runs in two phases with psi scattered.
+
+    Measured at t=0.002 (smoothness indicator, redistancing on, macOS arm64): 2.3e-4 without the scatter, 5.9e-7 with
+    it. What is left is the width of sign() and the stopping tolerance, epsFactRedistancing * mesh.h, where mesh.h is
+    the subdomain's (0.035294 on rank 1, 0.035538 serial); with a global h the runs agree to 7e-17. Longer runs are not
+    a partition test: the redistancing flow amplifies round-off by ~1e7 by t=0.08 (a 1e-11 perturbation of a serial
+    run moves it by 1.3e-4).
+    """
+    for d in ("1", "2", "3"):
+        (tmp_path / d).mkdir()
+    serial = _field(1, tmp_path / "1", REDIST="True", TFINAL=0.002)
+    assert numpy.abs(serial - _field(2, tmp_path / "2", REDIST="True", TFINAL=0.002)).max() < 1e-5
+    control = _field(2, tmp_path / "3", REDIST="True", TFINAL=0.002, NOPSISCAT=1)
+    assert numpy.abs(serial - control).max() > 1e-4
