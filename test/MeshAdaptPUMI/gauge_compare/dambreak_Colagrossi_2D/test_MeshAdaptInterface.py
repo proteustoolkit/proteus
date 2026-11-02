@@ -42,6 +42,33 @@ def _parun(ranks, cwd, options, name):
     return out.stdout + out.stderr
 
 
+def _global_counts(out):
+    """The global "Number of elements N" after each (re)construction, in order.
+
+    A rank's own line starts with "Rank"; under mpiexec the ranks' stdout interleaves and a global line can land
+    on the tail of a rank's line with no newline between them (seen once on CI, linux-aarch64: counts came back
+    as [2812, 2762], the first line lost, and the test failed although the mesh had adapted). So judge each
+    match by the text between it and the previous match or newline, not by the start of its line.
+    """
+    counts, prev_end = [], 0
+    for m in re.finditer(r"Number of elements (\d+)", out):
+        start = max(out.rfind("\n", 0, m.start()) + 1, prev_end)
+        if "Rank" not in out[start:m.start()]:
+            counts.append(int(m.group(1)))
+        prev_end = m.end()
+    return counts
+
+
+def test_global_counts_survive_interleaved_rank_lines():
+    clean = "Number of elements 1585\nRank 0: Number of elements 800\nRank 1: Number of elements 785\n"
+    assert _global_counts(clean) == [1585]
+    glued_after_rank = "Rank 1: Number of elements 785Number of elements 1585\nNumber of elements 2812\n"
+    assert _global_counts(glued_after_rank) == [1585, 2812]
+    glued_before_rank = "Number of elements 1585Rank 0: Number of elements 800\n"
+    assert _global_counts(glued_before_rank) == [1585]
+    assert _global_counts("Rank 0: Number of elements 800\n") == []
+
+
 @pytest.mark.parametrize("ranks", [1, 2])
 def test_interface_adaptation_conserves_the_water(tmp_path, ranks):
     case = tmp_path / "case"
@@ -52,8 +79,7 @@ def test_interface_adaptation_conserves_the_water(tmp_path, ranks):
     _parun(ranks, case, "gen_mesh=False adapt=0 " + base, "baseline")
     out = _parun(ranks, case, "gen_mesh=False adapt=1 sizeInputs='interface' " + base, "adapt_interface")
 
-    # the global count after each (re)construction; a rank's own lines start with "Rank:"
-    counts = [int(c) for c in re.findall(r"^(?!Rank)(?:: )?Number of elements (\d+)", out, flags=re.M)]
+    counts = _global_counts(out)   # the global count after each (re)construction
     assert counts, out[-1000:]
     assert max(counts) > 1.5 * counts[0], counts  # it adapted: the interface band is refined
 
