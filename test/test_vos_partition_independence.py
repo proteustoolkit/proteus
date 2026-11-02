@@ -1,9 +1,11 @@
 """VOS3P edge-based FCT (STABILIZATION_TYPE=4) must not depend on the partition.
 
-The limiter of an owned dof reads uLow of its graph neighbours. With one overlap layer those across a rank cut are
-ghosts whose uLow was built from a truncated graph row, so 1D advection of test/VOS on 2 ranks kept a pulse peak of
-0.044 where serial keeps 0.281. uLow is now scattered from the owners before the FCT step; the control runs without
-that scatter and differs.
+The FCT limiter of an owned dof reads uLow of its graph neighbours. With one overlap layer the neighbours across a
+rank cut are ghosts whose graph rows are truncated: uLow is now scattered from the owners. Without it a 2-rank run
+kept a pulse peak of 0.044 where serial keeps 0.281. The time step is chosen from the edge based cfl of the owned
+dofs only (the cfl of a ghost, like its lumped mass, comes from a truncated row and can exceed the global maximum;
+that made the unit-square run differ by 1e-4): the ghost-cfl control puts garbage there, which the step must
+ignore. (Scattering the limiter coefficients and the limited solution as well, as VOF needs, changed nothing here.)
 """
 import os
 import shutil
@@ -45,10 +47,13 @@ def _field(ranks, cwd, **overrides):
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 def test_vos3p_fct_on_two_ranks_is_the_serial_answer(tmp_path):
-    for d in ("1", "2", "3"):
+    for d in ("1", "2", "3", "4", "5"):
         (tmp_path / d).mkdir()
     serial = _field(1, tmp_path / "1")
     parallel = _field(2, tmp_path / "2")
-    assert numpy.abs(serial - parallel).max() < 1e-8
-    control = _field(2, tmp_path / "3", NOFIX=1)
-    assert numpy.abs(serial - control).max() > 1e-3
+    assert numpy.abs(serial - parallel).max() < 1e-10
+    assert numpy.abs(serial - _field(2, tmp_path / "3", NOFIX=1)).max() > 1e-3
+    ghosts = _field(2, tmp_path / "4", GHOSTCFL=1)
+    assert numpy.abs(serial - ghosts).max() < 1e-10
+    reads_ghosts = _field(2, tmp_path / "5", GHOSTCFL=1, OLDMAX=1)
+    assert numpy.abs(serial - reads_ghosts).max() > 1e-6

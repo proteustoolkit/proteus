@@ -5,6 +5,7 @@ Unstructured mesh (he=0.4) with a pinned slanted cut. Run under mpiexec by test_
 sorted by x, y: x, y, h, hu, hv). NOSCAT=1 turns off the owner-to-ghost scatters of the second differences, the
 limiter coefficients and the limited solution; OLDVOL=1 sets the domain size of the bound relaxation to the sum over
 the ranks of the subdomain volumes, which counts the overlap twice. Both are controls.
+CONSISTENT=1 uses the consistent mass matrix (a KSP solve per stage); TIGHT=1 converges those solves, see the test.
 """
 import os, shutil, sys, runpy
 import numpy as np
@@ -13,7 +14,7 @@ from proteus import Comm
 shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SWFlow", "circular_damBreak.py"),
             "circular_damBreak.py")
 open("__init__.py", "w").close()
-open("circular_damBreak.py", "a").write("\nmySWFlowProblem.swe_parameters['LUMPED_MASS_MATRIX'] = 1\n")
+open("circular_damBreak.py", "a").write("\nmySWFlowProblem.swe_parameters['LUMPED_MASS_MATRIX'] = %d\n" % (0 if os.environ.get("CONSISTENT") else 1))
 
 from proteus.mprans import SW2DCV
 if os.environ.get("NOSCAT"):
@@ -39,7 +40,36 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh
 
+if os.environ.get("GHOSTCFL"):
+    # garbage in the edge based cfl of the ghost dofs, which the time step must not read
+    class _Proxy(object):
+        def __init__(self, kernel, model):
+            self._kernel, self._model = kernel, model
+        def __getattr__(self, name):
+            return getattr(self._kernel, name)
+        def calculateEdgeBasedCFL(self, args):
+            result = self._kernel.calculateEdgeBasedCFL(args)
+            self._model.edge_based_cfl[self._model.mesh.nNodes_owned:] = 100.0
+            return result
+    _init = SW2DCV.LevelModel.initializeTimeIntegration if False else None
+    _initDataStructures = SW2DCV.LevelModel.initDataStructures
+    def initDataStructures(self):
+        _initDataStructures(self)
+        if not isinstance(self.sw2d, _Proxy):
+            self.sw2d = _Proxy(self.sw2d, self)
+    SW2DCV.LevelModel.initDataStructures = initDataStructures
+if os.environ.get("OLDMAX"):
+    SW2DCV.RKEV.ownedMaxCFL = lambda self: self.edge_based_cfl.max()
+
 from proteus import NumericalSolution as NS
+_init = NS.NS_base.__init__
+def init(self, so, pList, nList, *args, **kwargs):
+    if os.environ.get("TIGHT"):
+        # converge the mass matrix solves of the consistent mass matrix far enough for a comparison to 1e-8
+        for n in nList:
+            n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = 1.0e-13, 1.0e-15, 0.0, 0.0, 0.0
+    return _init(self, so, pList, nList, *args, **kwargs)
+NS.NS_base.__init__ = init
 _calc = NS.NS_base.calculateSolution
 def calc(self, *a, **k):
     r = _calc(self, *a, **k)

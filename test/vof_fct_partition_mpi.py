@@ -3,7 +3,8 @@
 
 Run by test_vof_partition_independence.py under mpiexec in an empty directory; leaves u.csv (owned nodes,
 sorted by x, y). Same blob and velocity as vof_partition_mpi.py, explicit lumped-mass RKEV, node partition with one
-overlap layer. NOFIX=1 turns off the owner-to-ghost scatters, as a control.
+overlap layer. NOFIX=1 turns off the owner-to-ghost scatters, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost
+dofs; OLDMAX=1 makes the time step read it again (a control).
 """
 import os
 
@@ -74,7 +75,7 @@ p.fluxBoundaryConditions = {0: 'outFlow'}
 
 n = defaults.Numerics_base()
 n.timeIntegration = VOF.RKEV
-n.stepController = StepControl.FixedStep
+n.stepController = StepControl.Min_dt_controller
 n.runCFL = 0.1
 n.timeOrder = 1
 n.nStagesTime = 1
@@ -105,6 +106,16 @@ so.tnList = [0.0] + [n.DT * i for i in range(10, 81, 10)]
 ns = NumericalSolution.NS_base(so, [p], [n], so.sList, opts)
 if os.environ.get("NOFIX"):
     VOF.LevelModel.scatterDOFArray = lambda self, a: None
+if os.environ.get("GHOSTCFL"):
+    # garbage in the cfl of the ghost dofs, which the time step must not read
+    _getResidual = VOF.LevelModel.getResidual
+    def getResidual(self, u, r):
+        out = _getResidual(self, u, r)
+        self.edge_based_cfl[self.mesh.nNodes_owned:] = 200.0
+        return out
+    VOF.LevelModel.getResidual = getResidual
+if os.environ.get("OLDMAX"):
+    VOF.RKEV.ownedMaxCFL = lambda self: self.cfl.max()
 ns.calculateSolution("vof_part")
 model = ns.modelList[0].levelModelList[-1]
 mesh = model.mesh

@@ -6,6 +6,9 @@ bounds and the limiter coefficients R, hLow/huLow and the limited solution of an
 neighbours whose graph rows are truncated. The first is now the trace of the lumped mass matrix; the others are
 computed on the owners and scattered, the limiting iterations being driven from Python. The controls run without
 the scatters and with the old domain size, and differ.
+
+The time step is chosen from the edge based cfl of the owned dofs only, since the cfl of a ghost dof comes from a
+truncated row and can exceed the global maximum; the ghost-cfl control puts garbage there, which the step must ignore.
 """
 import os
 import shutil
@@ -47,10 +50,19 @@ def _field(ranks, cwd, **overrides):
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 def test_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
-    for d in ("1", "2", "3", "4"):
+    for d in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
         (tmp_path / d).mkdir()
     serial = _field(1, tmp_path / "1")
     parallel = _field(2, tmp_path / "2")
     assert numpy.abs(serial - parallel).max() < 1e-10
     assert numpy.abs(serial - _field(2, tmp_path / "3", NOSCAT=1)).max() > 1e-9
     assert numpy.abs(serial - _field(2, tmp_path / "4", OLDVOL=1)).max() > 1e-6
+    # the time step reads the cfl of the dofs it owns only: garbage in the ghosts' must not matter
+    ghosts = _field(2, tmp_path / "5", GHOSTCFL=1)
+    assert numpy.abs(serial - ghosts).max() < 1e-10
+    reads_ghosts = _field(2, tmp_path / "6", GHOSTCFL=1, OLDMAX=1)
+    assert numpy.abs(serial - reads_ghosts).max() > 1e-6
+    # the consistent mass matrix: a linear solve per stage, whose tolerance decides how close the runs are
+    serial_c = _field(1, tmp_path / "7", CONSISTENT=1, TIGHT=1)
+    assert numpy.abs(serial_c - _field(2, tmp_path / "8", CONSISTENT=1, TIGHT=1)).max() < 1e-8
+    assert numpy.abs(serial_c - _field(2, tmp_path / "9", CONSISTENT=1)).max() > 1e-6

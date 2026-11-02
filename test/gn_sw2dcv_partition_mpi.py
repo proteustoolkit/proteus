@@ -36,6 +36,27 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh
 
+if os.environ.get("GHOSTCFL"):
+    # garbage in the edge based cfl of the ghost dofs, which the time step must not read
+    class _Proxy(object):
+        def __init__(self, kernel, model):
+            self._kernel, self._model = kernel, model
+        def __getattr__(self, name):
+            return getattr(self._kernel, name)
+        def calculateEdgeBasedCFL(self, args):
+            result = self._kernel.calculateEdgeBasedCFL(args)
+            self._model.edge_based_cfl[self._model.mesh.nNodes_owned:] = 100.0
+            return result
+    _init = SW2DCV.LevelModel.initializeTimeIntegration if False else None
+    _initDataStructures = SW2DCV.LevelModel.initDataStructures
+    def initDataStructures(self):
+        _initDataStructures(self)
+        if not isinstance(self.dsw_2d, _Proxy):
+            self.dsw_2d = _Proxy(self.dsw_2d, self)
+    SW2DCV.LevelModel.initDataStructures = initDataStructures
+if os.environ.get("OLDMAX"):
+    SW2DCV.RKEV.ownedMaxCFL = lambda self: self.edge_based_cfl.max()
+
 from proteus import NumericalSolution as NS
 _calc = NS.NS_base.calculateSolution
 def calc(self, *a, **k):

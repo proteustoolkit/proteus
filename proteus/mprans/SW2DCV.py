@@ -67,6 +67,17 @@ class RKEV(proteus.TimeIntegration.SSP):
             self.u_dof_last[ci] = transport.u[ci].dof.copy()
             self.u_dof_lstage[ci] = transport.u[ci].dof.copy()
 
+    def ownedMaxCFL(self):
+        """Maximum of the edge based cfl over the dofs this rank owns: the cfl of a ghost dof is built from a
+        truncated graph row, so it is not the cfl of the dof and may exceed the global maximum."""
+        t = self.transport
+        if t.comm.size() == 1:
+            return self.edge_based_cfl.max()
+        dofMap = t.u[0].femSpace.dofMap
+        rank = t.comm.rank()
+        nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        return self.edge_based_cfl[:nOwned].max()
+
     def choose_dt(self):
         maxCFL = 1.0e-6
         # COMPUTE edge_based_cfl
@@ -97,8 +108,9 @@ class RKEV(proteus.TimeIntegration.SSP):
         argsDict["debug"] = 0
         adjusted_maxCFL = self.transport.sw2d.calculateEdgeBasedCFL(argsDict)
 
-        maxCFL = max(maxCFL, max(adjusted_maxCFL,
-                                 globalMax(self.edge_based_cfl.max())))
+        # the cfl of a ghost dof comes from a truncated row (adjusted_maxCFL is the maximum over all
+        # local dofs, ghosts included), so only the owned dofs count
+        maxCFL = max(maxCFL, globalMax(self.ownedMaxCFL()))
         self.dt = self.runCFL/maxCFL
 
         if self.dtLast is None:
