@@ -1032,6 +1032,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["normal_ref"] = self.u[0].femSpace.elementMaps.boundaryNormals
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["nElements_owned"] = int(self.mesh.nElements_owned)
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["u_dof"] = self.u[0].dof
