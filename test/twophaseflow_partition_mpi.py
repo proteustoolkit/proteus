@@ -1,15 +1,17 @@
 #!/usr/bin/env python
-"""TwoPhaseFlow damBreak (CLSVOF + RANS3PF projection scheme, stored mesh, he=0.1) to t=0.1, for the partition test.
+"""A test/TwoPhaseFlow deck (DECK, with OPTS for its context options) to t=FT, for the partition tests.
 
-Run under mpiexec by test_dambreak_partition_independence.py in an empty directory; leaves u.csv there: one row per
-owned dof of every model component, sorted by (100 * model + component, x, y): key, x, y, value. TIGHT=1 converges
-the nonlinear and linear solves (atol 1e-12 / 1e-14); without it the deck's own tolerances (nl_atol_res ~1e-3) apply.
+Run under mpiexec by test_twophaseflow_partition_independence.py in an empty directory; copies the deck and the stored
+meshes next to it and leaves u.csv there: one row per owned dof of every model component, sorted by
+(100 * model + component, x, y): key, x, y, value, and models.csv: key, model name. ATOL=a sets every model's
+nonlinear atol to a and its linear atol to a/100 (relative tolerances off); without it the deck's own tolerances (nl_atol_res ~1e-3) apply.
 """
 import glob, os, runpy, shutil, sys
 import numpy as np
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TwoPhaseFlow")
-for f in [os.path.join(SRC, "damBreak.py")] + glob.glob(os.path.join(SRC, "meshDambreak*")):
+DECK = os.environ.get("DECK", "damBreak.py")
+for f in [os.path.join(SRC, DECK)] + glob.glob(os.path.join(SRC, "mesh*")):
     shutil.copy(f, ".")
 
 from proteus import Comm
@@ -17,9 +19,10 @@ from proteus import NumericalSolution as NS
 
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
-    if os.environ.get("TIGHT"):
+    if os.environ.get("ATOL"):
+        atol = float(os.environ["ATOL"])
         for n in nList:
-            n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = 1.0e-12, 1.0e-14, 0.0, 0.0, 0.0
+            n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = atol, 0.01 * atol, 0.0, 0.0, 0.0
     return _init(self, so, pList, nList, *args, **kwargs)
 NS.NS_base.__init__ = init
 
@@ -40,8 +43,15 @@ def calc(self, *a, **k):
     if comm.rank == 0:
         a = np.vstack(gathered)
         np.savetxt("u.csv", a[np.lexsort((a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,u")
+        with open("models.csv", "w") as f:
+            for mi, mod in enumerate(self.modelList):
+                lm = mod.levelModelList[-1]
+                for ci in range(lm.nc):
+                    f.write("%d,%s\n" % (100 * mi + ci, lm.name))
     return r
 NS.NS_base.calculateSolution = calc
 
-sys.argv = ['parun', '--TwoPhaseFlow', 'damBreak.py', '-l1', '-C', 'final_time=0.1 dt_output=0.1 he=0.1']
+FT = os.environ.get("FT", "0.1")
+sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l1', '-C',
+            'final_time=%s dt_output=%s %s' % (FT, FT, os.environ.get("OPTS", "he=0.1"))]
 runpy.run_path(shutil.which('parun'), run_name='__main__')
