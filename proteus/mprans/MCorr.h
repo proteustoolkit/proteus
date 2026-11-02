@@ -2046,12 +2046,23 @@ namespace proteus
         proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
         proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
         proteus::pyarray<double>& MassMatrix = args.array<double>("matrix");
-        Rpos.resize(numDOFs,0.0), Rneg.resize(numDOFs,0.0);
-        FluxCorrectionMatrix.resize(NNZ,0.0);
+        // phase 0 computes the limiter coefficients R of every dof, phase 1 applies them. The limiter of an
+        // owned dof reads R of its neighbours, whose graph rows are truncated when they are ghosts, so
+        // Python scatters R from the owners between the two phases.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& Rpos_dof = args.array<double>("Rpos_dof");
+        proteus::pyarray<double>& Rneg_dof = args.array<double>("Rneg_dof");
+        if (phase == 0)
+          {
+            // resize also zeroes, so phase 1 must not do it: it needs the matrix phase 0 filled
+            Rpos.resize(numDOFs,0.0), Rneg.resize(numDOFs,0.0);
+            FluxCorrectionMatrix.resize(NNZ,0.0);
+          }
         //////////////////
         // LOOP in DOFs //
         //////////////////
         int ij=0;
+        if (phase == 0)
         for (int i=0; i<numDOFs; i++)
           {
             //read some vectors
@@ -2088,12 +2099,21 @@ namespace proteus
             ///////////////////////
             Rpos[i] = ((Pposi==0) ? 1. : std::min(1.0,Qposi/Pposi));
             Rneg[i] = ((Pnegi==0) ? 1. : std::min(1.0,Qnegi/Pnegi));
+            Rpos_dof.data()[i] = Rpos[i];
+            Rneg_dof.data()[i] = Rneg[i];
           } // i DOFs
 
         //////////////////////
         // COMPUTE LIMITERS //
         //////////////////////
         ij=0;
+        if (phase == 1)
+          for (int i=0; i<numDOFs; i++)
+            {
+              Rpos[i] = Rpos_dof.data()[i];
+              Rneg[i] = Rneg_dof.data()[i];
+            }
+        if (phase == 1)
         for (int i=0; i<numDOFs; i++)
           {
             double ith_Limiter_times_FluxCorrectionMatrix = 0.;
