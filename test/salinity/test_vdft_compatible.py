@@ -54,6 +54,9 @@ def _run(so, pList, nList, name):
     so.name = name
     for p in pList:
         p.name = p.__name__
+        # the decks inherit genMesh from proteus.default_p, which other test modules set to False
+        # at collection (test/post_processing/import_modules/bdm_tests_3Dtemplate.py)
+        p.genMesh = True
     so.sList = [default_s for p in pList]
     ns = NumericalSolution.NS_base(so, pList, nList, so.sList, opts)
     ns.calculateSolution(name)
