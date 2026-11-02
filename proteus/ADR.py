@@ -3,6 +3,7 @@ An optimized Advection-Diffusion-Reaction module
 """
 import numpy as np
 import os
+import warnings
 from math import fabs
 import proteus
 from proteus import  cfemIntegrals, Quadrature
@@ -143,6 +144,9 @@ class Coefficients(TC_base):
                  immersedBoundary_fluxJumpVector=None,
                  immersedBoundary_solutionJump=None,
                  immersedBoundary_fluxJumpLift=True,
+                 triplyCut_pinMaskedDofs=True,
+                 triplyCut_edgeFluidSide=False,
+                 triplyCut_edgeBoundaryOnly=False,
                  analyticalSolution=None,
                  test=1.0):
         self.test = test
@@ -212,6 +216,28 @@ class Coefficients(TC_base):
         #   solution jump  [u]          = immersedBoundary_solutionJump(x,t)
         # All default to zero, i.e. a continuous interface with continuous flux.
         self.immersedBoundary_fluxJump=immersedBoundary_fluxJump
+        # Triply-cut cells (both embeddedBoundary and immersedBoundary on; Gamma_s meets Gamma_f inside
+        # the cell). Three choices, formerly the environment variables ADR_DISABLE_TC, ADR_TC_EDGE_FLUID
+        # and ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (False, True, True)
+        # together with immersedSCIFEM_switch=1.
+        #   triplyCut_pinMaskedDofs: pin the raw DOF of a solid-side node of a cut P1 cell to the exact
+        #     solution of its phase (embeddedBoundary_u_inner/_outer) through forceStrongDirichlet.
+        #   triplyCut_edgeFluidSide: take the one-sided Gamma_f edge correction from the fluid side
+        #     (flips its sign in residual and Jacobian).
+        #   triplyCut_edgeBoundaryOnly: keep that correction only on exterior edges; SCIFEM's two-sided
+        #     consistency term handles the interior ones.
+        # The old environment variables still work and override these arguments, with a warning.
+        self.triplyCut_pinMaskedDofs = bool(triplyCut_pinMaskedDofs)
+        self.triplyCut_edgeFluidSide = bool(triplyCut_edgeFluidSide)
+        self.triplyCut_edgeBoundaryOnly = bool(triplyCut_edgeBoundaryOnly)
+        for _env, _attr, _val in (("ADR_DISABLE_TC", "triplyCut_pinMaskedDofs", False),
+                                  ("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
+                                  ("ADR_TC_EDGE_BOUNDARY_ONLY", "triplyCut_edgeBoundaryOnly", True)):
+            # ADR_DISABLE_TC acted only when set to '1'; the other two acted when set at all
+            if (os.environ.get(_env) == '1') if _env == "ADR_DISABLE_TC" else (_env in os.environ):
+                warnings.warn("ADR: environment variable {0} is deprecated; pass {1}={2} to "
+                              "ADR.Coefficients instead".format(_env, _attr, _val), DeprecationWarning)
+                setattr(self, _attr, _val)
         self.immersedBoundary_fluxJumpVector=immersedBoundary_fluxJumpVector
         self.immersedBoundary_solutionJump=immersedBoundary_solutionJump
         # Flux-jump lift: the IFE basis is built for a homogeneous flux jump, and a prescribed
@@ -330,7 +356,7 @@ class Coefficients(TC_base):
         if (self.embeddedBoundary and self.immersedBoundary and femSpace.max_nDOF_element == 3
                 and self.embeddedBoundary_u_inner is not None
                 and self.embeddedBoundary_u_outer is not None
-                and os.environ.get('ADR_DISABLE_TC') != '1'):
+                and self.triplyCut_pinMaskedDofs):
             l2g = femSpace.dofMap.l2g
             _watch = int(os.environ['ADR_DEBUG_NODE']) if os.environ.get('ADR_DEBUG_NODE') else None
             for eN in range(nElements):
@@ -1019,6 +1045,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
         argsDict["immersedSCIFEM_penalty"] = self.coefficients.immersedSCIFEM_penalty
+        argsDict["triplyCut_edgeFluidSide"] = int(self.coefficients.triplyCut_edgeFluidSide)
+        argsDict["triplyCut_edgeBoundaryOnly"] = int(self.coefficients.triplyCut_edgeBoundaryOnly)
         argsDict["PG"] = self.coefficients.PG
         argsDict["immersedBoundary_sdf_nodes"] = self.coefficients.immersedBoundary_sdf_nodes
         argsDict["immersedBoundary_sdf_q"] = self.q['immersedBoundary_sdf']
@@ -1193,6 +1221,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
         argsDict["immersedSCIFEM_penalty"] = self.coefficients.immersedSCIFEM_penalty
+        argsDict["triplyCut_edgeFluidSide"] = int(self.coefficients.triplyCut_edgeFluidSide)
+        argsDict["triplyCut_edgeBoundaryOnly"] = int(self.coefficients.triplyCut_edgeBoundaryOnly)
         argsDict["PG"] = self.coefficients.PG
         argsDict["immersedBoundary_sdf_nodes"] = self.coefficients.immersedBoundary_sdf_nodes
         argsDict["immersedBoundary_sdf_q"] = self.q['immersedBoundary_sdf']

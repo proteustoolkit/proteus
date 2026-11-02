@@ -1438,13 +1438,15 @@ namespace proteus
 			double dbgDelta[8] = {0., 0., 0., 0., 0., 0., 0., 0.};
 			auto dbgRowVal = [&]() { return dbgRow >= 0 ? globalResidual.data()[offset_u + stride_u * dbgRow] : 0.0; };
 			const int tcDeadModeV = tcDeadMode();
-			const bool tcFluidMode = std::getenv("ADR_TC_EDGE_FLUID") != nullptr;
-			// ADR_TC_EDGE_BOUNDARY_ONLY=1 (use with SCIFEM on): keep the one-sided fluid-side correction only
-			// on root-adjacent edges that lie on the exterior boundary. Interior ones are then handled by
-			// SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge (no neighbour).
-			const bool tcBoundaryOnly = std::getenv("ADR_TC_EDGE_BOUNDARY_ONLY") != nullptr;
+			// Coefficients.triplyCut_edgeFluidSide: take the fluid-side one-sided edge correction on
+			// triply-cut cells (flips the sign of the correction in residual and Jacobian).
+			const bool tcFluidMode = args.scalar<int>("triplyCut_edgeFluidSide");
+			// Coefficients.triplyCut_edgeBoundaryOnly (use with SCIFEM on): keep the one-sided fluid-side
+			// correction only on root-adjacent edges that lie on the exterior boundary. Interior ones are then
+			// handled by SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge.
+			const bool tcBoundaryOnly = args.scalar<int>("triplyCut_edgeBoundaryOnly");
 			const double tcSgn = tcFluidMode ? -1.0 : 1.0;
-			// ADR_EXT_NITSCHE=1 (needs ADR_TC_EDGE_BOUNDARY_ONLY): on the exterior Gamma_f-cut edges add to the
+			// ADR_EXT_NITSCHE=1 (needs triplyCut_edgeBoundaryOnly): on the exterior Gamma_f-cut edges add to the
 			// one-sided consistency term the Nitsche adjoint term  -int mu grad(v).n (u+j_h-g)  and, with
 			// ADR_EXT_NITSCHE_PEN=gamma, the penalty  gamma*mu/h int (u+j_h-g) v,  on the fluid pieces of the edge.
 			// g is the Dirichlet data of each phase, ext_edge_u_inner/outer, at 4 Gauss points per exterior edge.
@@ -1911,7 +1913,7 @@ namespace proteus
 							cuA[ii] = u_ii + JA[ii];
 							cuB[ii] = u_ii + JB[ii];
 						}
-						// Default (TC_EDGE): the solid pieces {phi_s<0}. ADR_TC_EDGE_FLUID: the fluid pieces {phi_s>0}, opposite sign.
+						// Default (TC_EDGE): the solid pieces {phi_s<0}. triplyCut_edgeFluidSide: the fluid pieces {phi_s>0}, opposite sign.
 						const double sgn_s = tcFluidMode ? 1.0 : -1.0;
 						for (int pj = 0; pj < 3; pj++)
 						{
@@ -3462,13 +3464,15 @@ namespace proteus
 			// loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
 			//
 			const int tcDeadModeV = tcDeadMode();
-			const bool tcFluidMode = std::getenv("ADR_TC_EDGE_FLUID") != nullptr;
-			// ADR_TC_EDGE_BOUNDARY_ONLY=1 (use with SCIFEM on): keep the one-sided fluid-side correction only
-			// on root-adjacent edges that lie on the exterior boundary. Interior ones are then handled by
-			// SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge (no neighbour).
-			const bool tcBoundaryOnly = std::getenv("ADR_TC_EDGE_BOUNDARY_ONLY") != nullptr;
+			// Coefficients.triplyCut_edgeFluidSide: take the fluid-side one-sided edge correction on
+			// triply-cut cells (flips the sign of the correction in residual and Jacobian).
+			const bool tcFluidMode = args.scalar<int>("triplyCut_edgeFluidSide");
+			// Coefficients.triplyCut_edgeBoundaryOnly (use with SCIFEM on): keep the one-sided fluid-side
+			// correction only on root-adjacent edges that lie on the exterior boundary. Interior ones are then
+			// handled by SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge.
+			const bool tcBoundaryOnly = args.scalar<int>("triplyCut_edgeBoundaryOnly");
 			const double tcSgn = tcFluidMode ? -1.0 : 1.0;
-			// ADR_EXT_NITSCHE=1 (needs ADR_TC_EDGE_BOUNDARY_ONLY): on the exterior Gamma_f-cut edges add to the
+			// ADR_EXT_NITSCHE=1 (needs triplyCut_edgeBoundaryOnly): on the exterior Gamma_f-cut edges add to the
 			// one-sided consistency term the Nitsche adjoint term  -int mu grad(v).n (u+j_h-g)  and, with
 			// ADR_EXT_NITSCHE_PEN=gamma, the penalty  gamma*mu/h int (u+j_h-g) v,  on the fluid pieces of the edge.
 			// g is the Dirichlet data of each phase, ext_edge_u_inner/outer, at 4 Gauss points per exterior edge.
@@ -3786,7 +3790,7 @@ namespace proteus
 									{
 										// JA/JB need no Jacobian term: fixed data, not a function of u_dof. Does not
 										// account for the masked-node override (calculateJacobian has no
-										// triplyCut_maskedLocalNode); unused with ADR_DISABLE_TC=1.
+										// triplyCut_maskedLocalNode); unused with triplyCut_pinMaskedDofs=False.
 										const double uA_k = gf_f_tc.VA(kk), uB_k = gf_f_tc.VB(kk);
 										const double fA_k = mua * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
 										const double fB_k = mub * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
