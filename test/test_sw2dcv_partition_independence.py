@@ -63,6 +63,7 @@ def test_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
     reads_ghosts = _field(2, tmp_path / "6", GHOSTCFL=1, OLDMAX=1)
     assert numpy.abs(serial - reads_ghosts).max() > 1e-6
     # the consistent mass matrix: a linear solve per stage, whose tolerance decides how close the runs are
+    # (sw_n.py now converges the parallel solve to 1e-12; LOOSE puts the old 1e-7 / 1e-3 back for the control)
     serial_c = _field(1, tmp_path / "7", CONSISTENT=1, TIGHT=1)
     assert numpy.abs(serial_c - _field(2, tmp_path / "8", CONSISTENT=1, TIGHT=1)).max() < 1e-8
-    assert numpy.abs(serial_c - _field(2, tmp_path / "9", CONSISTENT=1)).max() > 1e-6
+    assert numpy.abs(serial_c - _field(2, tmp_path / "9", CONSISTENT=1, LOOSE=1)).max() > 1e-6

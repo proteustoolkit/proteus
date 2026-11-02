@@ -105,6 +105,12 @@ class RKEV(proteus.TimeIntegration.SSP):
         argsDict["dLow"] = self.transport.dLow
         argsDict["run_cfl"] = self.runCFL
         argsDict["edge_based_cfl"] = self.transport.edge_based_cfl
+        if self.transport.wall_dof is None:
+            self.transport.setWallDOFs()
+        argsDict["wall_dof"] = self.transport.wall_dof
+        argsDict["tailwater_dof"] = self.transport.tailwater_dof
+        argsDict["tailwater_depth_dof"] = self.transport.tailwater_depth_dof
+        argsDict["porosity_dof"] = self.transport.coefficients.porosity_dof
         argsDict["debug"] = 0
         adjusted_maxCFL = self.transport.sw2d.calculateEdgeBasedCFL(argsDict)
 
@@ -278,7 +284,74 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  LINEAR_FRICTION=0,
                  mannings=0.,
                  forceStrongConditions=True,
-                 constrainedDOFs=None):
+                 constrainedDOFs=None,
+                 INTEGRATE_BY_PARTS_WALLS=1,
+                 porosity=None,
+                 drag_alpha=None,
+                 drag_beta=None,
+                 wall_function=None,
+                 drag_law=None,
+                 BOUNDS_RELAXATION=1,
+                 BOUNDS_EXCLUDE_SELF=0,
+                 WALL_RIEMANN=0,
+                 tailwater=None,
+                 LOW_ORDER_ONLY=0,
+                 NODAL_H_BOUNDS=0,
+                 NO_STAR_STATES=0):
+        # Canopy model (each a scalar, a nodal array, or a function of [x, y]
+        # returning nodal values; None means phi = 1, alpha = beta = 0):
+        #   porosity phi: storage phi h, phi hu; flux phi h u; pressure
+        #     phi g h grad(h + Z). For an array of cylinders of diameter D and
+        #     m per unit area, phi = 1 - m pi D^2 / 4.
+        #   Darcy-Forchheimer drag -(alpha + beta |u|) h u per unit plan
+        #     area; for cylinders beta = C_D m D / 2.
+        self.porosity = porosity
+        self.drag_alpha = drag_alpha
+        self.drag_beta = drag_beta
+        self.porosity_dof = None
+        self.drag_alpha_dof = None
+        self.drag_beta_dof = None
+        # wall_function([x, y]) -> bool: which boundary nodes are no-flux
+        # walls (with INTEGRATE_BY_PARTS_WALLS). The other boundary nodes
+        # keep the natural boundary flux, i.e. they are open (outflow).
+        # None: all boundary nodes with reflecting_BCs, else nodes flagged 99.
+        self.wall_function = wall_function
+        # drag_law(state) -> nodal beta: a state-dependent Forchheimer
+        # coefficient, re-evaluated before every step from the nodal state
+        # {x, y, h, u, v, t, age, beta0, phi}, where age is the time since the
+        # node first became wet (0 before that) and beta0 the static
+        # drag_beta. None: beta stays drag_beta.
+        self.drag_law = drag_law
+        self.t_wet = None
+        # 1: relax the convex-limiting bounds by the local smoothness
+        # (second order at smooth extrema; permits O(h_e^2) wiggles);
+        # 0: strict bar-state bounds.
+        self.BOUNDS_RELAXATION = BOUNDS_RELAXATION
+        # 1: local bounds from the neighbours' bar states only (ubar_ii excluded)
+        self.BOUNDS_EXCLUDE_SELF = BOUNDS_EXCLUDE_SELF
+        # 1: wall rows use the Rusanov flux against the mirror state (wall_dof = 2),
+        # i.e. the wall pressure carries the impedance term h u_n (u_n + lambda)
+        self.WALL_RIEMANN = WALL_RIEMANN
+        # tailwater = {'where': f([x, y]) -> bool, 'stage': f(x, y, t) -> surface
+        # elevation (a number or an array)}: the exterior boundary nodes selected
+        # by 'where' (and not walls) get the Rusanov flux against a ghost state
+        # with depth max(stage - Z, 0) and the outgoing Riemann invariant
+        # u_n + 2 sqrt(g h) of the interior kept, so the stage is imposed where
+        # the characteristics say it matters and ignored for supercritical
+        # outflow. The stage is re-evaluated before every step. None: those
+        # nodes keep the natural outflow (ghost state = interior state).
+        self.tailwater = tailwater
+        # 1 (diagnostic): return the first-order (graph viscosity) update, no limited antidiffusion
+        self.LOW_ORDER_ONLY = LOW_ORDER_ONLY
+        self.NODAL_H_BOUNDS = NODAL_H_BOUNDS
+        self.NO_STAR_STATES = NO_STAR_STATES
+        self.wet_eps = 1.0e-4
+        # 1: walls (all boundaries with reflecting_BCs, or nodes flagged 99)
+        # integrate the advective terms by parts with zero advective flux
+        # through the wall; the pressure reaction comes from the
+        # non-conservative pressure term. 0: the older nodal projection of
+        # the momentum onto the wall tangent ("reflecting").
+        self.INTEGRATE_BY_PARTS_WALLS = INTEGRATE_BY_PARTS_WALLS
         self.forceStrongConditions = forceStrongConditions
         self.constrainedDOFs = constrainedDOFs
         self.bathymetry = bathymetry
@@ -378,6 +451,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.b.dof = self.bathymetry([x, y])
             mesh.nodeArray[:,2] = self.b.dof     #if bathy is a function no need to pass subdomain info here
         assert mesh.nodeArray.shape[1]==3
+        def nodal(f, default):
+            if f is None:
+                return np.full(x.shape, default, 'd')
+            if callable(f):
+                return np.asarray(f([x, y]), 'd') * np.ones(x.shape)
+            return np.asarray(f, 'd') * np.ones(x.shape)
+        self.porosity_dof = nodal(self.porosity, 1.0)
+        self.drag_alpha_dof = nodal(self.drag_alpha, 0.0)
+        self.drag_beta_dof = nodal(self.drag_beta, 0.0)
+        assert self.porosity_dof.min() > 0. and self.porosity_dof.max() <= 1., \
+            "porosity must lie in (0, 1]"
 
     def initializeElementQuadrature(self, t, cq):
         pass
@@ -411,6 +495,27 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.model.h_dof_old[:] = self.model.u[0].dof
         self.model.hu_dof_old[:] = self.model.u[1].dof
         self.model.hv_dof_old[:] = self.model.u[2].dof
+        if self.drag_law is not None:
+            self.updateDragLaw(t)
+        if self.tailwater is not None:
+            self.model.updateTailwater(t)
+
+    def updateDragLaw(self, t):
+        """re-evaluate the nodal Forchheimer coefficient from the current state"""
+        h = self.model.h_dof_old
+        if self.t_wet is None:
+            self.t_wet = np.full(h.shape, np.nan)
+            self.drag_beta0_dof = self.drag_beta_dof.copy()
+        newly = np.isnan(self.t_wet) & (h > self.wet_eps)
+        self.t_wet[newly] = t
+        age = np.where(np.isnan(self.t_wet), 0.0, t - self.t_wet)
+        hs = np.maximum(h, self.wet_eps)
+        X = self.model.mesh.nodeArray
+        state = {"x": X[:, 0], "y": X[:, 1], "h": h, "t": t, "age": age,
+                 "u": np.where(h > self.wet_eps, self.model.hu_dof_old / hs, 0.0),
+                 "v": np.where(h > self.wet_eps, self.model.hv_dof_old / hs, 0.0),
+                 "beta0": self.drag_beta0_dof, "phi": self.porosity_dof}
+        self.drag_beta_dof[:] = np.asarray(self.drag_law(state), 'd')
 
     def postStep(self, t, firstStep=False):
         pass
@@ -798,6 +903,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.boundaryIndex = None
         self.reflectingBoundaryConditions = False
         self.reflectingBoundaryIndex = None
+        self.wall_dof = None
 
         if 'reflecting_BCs' in dir(options) and options.reflecting_BCs == True:
             self.reflectingBoundaryConditions = True
@@ -936,6 +1042,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         hIndex = index[0::3]
         huIndex = index[1::3]
         hvIndex = index[2::3]
+        low_order = (self.hLow.copy(), self.huLow.copy(), self.hvLow.copy())
         # create limited solution
         limited_hnp1 = np.zeros(self.h_dof_old.shape)
         limited_hunp1 = np.zeros(self.h_dof_old.shape)
@@ -967,6 +1074,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["muH_minus_muL"] = self.muH_minus_muL
         argsDict["hEps"] = self.hEps
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
+        argsDict["NO_STAR_STATES"] = self.coefficients.NO_STAR_STATES
         argsDict["dLow"] = self.dLow
         argsDict["new_SourceTerm_hu"] = self.new_SourceTerm_hu
         argsDict["new_SourceTerm_hv"] = self.new_SourceTerm_hv
@@ -1008,6 +1116,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.scatterDOFArray(limited_hunp1)
         self.scatterDOFArray(limited_hvnp1)
 
+        if self.coefficients.LOW_ORDER_ONLY:
+            limited_hnp1[:], limited_hunp1[:], limited_hvnp1[:] = low_order
         # Pass the post processed hnp1 solution to global solution u
         self.timeIntegration.u[hIndex] = limited_hnp1
         self.timeIntegration.u[huIndex] = limited_hunp1
@@ -1143,8 +1253,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         # lumped mass matrix
         #
-        # assume a linear mass term
-        dm = np.ones(self.q[('u', 0)].shape, 'd')
+        # assume a linear mass term, weighted by the porosity (storage is
+        # phi h): dm = phi_h at the quadrature points
+        l2g = self.u[0].femSpace.dofMap.l2g
+        dm = np.einsum('eqj,ej->eq', self.q[('w', 0)],
+                       self.coefficients.porosity_dof[l2g])
         elementMassMatrix = np.zeros((self.mesh.nElements_global,
                                       self.nDOF_test_element[0],
                                       self.nDOF_trial_element[0]), 'd')
@@ -1282,8 +1395,52 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 self.u[2].dof[index] = -vt * self.normalx[index]
     #
 
+    def setWallDOFs(self):
+        """1 on the DOFs whose rows treat the boundary as a no-flux wall (2 with
+        WALL_RIEMANN: the wall flux is the Rusanov flux against the mirror state)."""
+        self.wall_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.tailwater_dof = np.zeros(self.u[0].dof.shape, 'd')
+        self.tailwater_depth_dof = np.zeros(self.u[0].dof.shape, 'd')
+        if not self.coefficients.INTEGRATE_BY_PARTS_WALLS:
+            return
+        wall_function = self.coefficients.wall_function
+        if self.reflectingBoundaryConditions or wall_function is not None:
+            ebN = self.mesh.exteriorElementBoundariesArray
+            nodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
+            if wall_function is not None:
+                X = self.mesh.nodeArray[nodes]
+                nodes = nodes[np.asarray(wall_function([X[:, 0], X[:, 1]]), bool)]
+            self.wall_dof[nodes] = 1.0
+        else:
+            self.wall_dof[self.mesh.nodeMaterialTypes == 99] = 1.0
+        if self.coefficients.WALL_RIEMANN:
+            self.wall_dof[self.wall_dof > 0.5] = 2.0
+        self.setTailwaterDOFs()
+
+    def setTailwaterDOFs(self):
+        """1 on the open boundary nodes that carry a tailwater stage."""
+        tw = self.coefficients.tailwater
+        if tw is None:
+            return
+        ebN = self.mesh.exteriorElementBoundariesArray
+        nodes = np.unique(self.mesh.elementBoundaryNodesArray[ebN].ravel())
+        X = self.mesh.nodeArray[nodes]
+        nodes = nodes[np.asarray(tw['where']([X[:, 0], X[:, 1]]), bool)]
+        self.tailwater_dof[nodes] = 1.0
+        self.wall_dof[nodes] = 0.0
+        self.updateTailwater(0.0)
+
+    def updateTailwater(self, t):
+        """depth of the ghost state at the tailwater nodes: max(stage - Z, 0)"""
+        tw = self.coefficients.tailwater
+        X = self.mesh.nodeArray
+        stage = np.asarray(tw['stage'](X[:, 0], X[:, 1], t), 'd') * np.ones(X.shape[0])
+        self.tailwater_depth_dof[:] = np.maximum(stage - self.coefficients.b.dof, 0.0)
+    #
+
     def initDataStructures(self):
         comm = Comm.get()
+        self.setWallDOFs()
         # old vectors
         self.h_dof_old = np.copy(self.u[0].dof)
         self.hu_dof_old = np.copy(self.u[1].dof)
@@ -1291,8 +1448,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # hEps
         self.eps = 1E-5
         self.hEps = self.eps * comm.globalMax(self.u[0].dof.max())
-        # size_of_domain, used in relaxation of bounds, is set where ML is known: mesh.volume of a
-        # subdomain includes its overlap, so summing it over the ranks counts the overlap twice
+        # size_of_domain (relaxation of the bounds) is set below, with the parallel vectors
         # normal vectors
         self.normalx = np.zeros(self.u[0].dof.shape, 'd')
         self.normaly = np.zeros(self.u[0].dof.shape, 'd')
@@ -1401,11 +1557,32 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                                 n=n,N=N,nghosts=nghosts,
                                                 subdomain2global=subdomain2global)
         self.par_ML.scatter_forward_insert()
-        # the trace of the lumped mass matrix is the domain volume
-        self.size_of_domain = comm.globalSum(self.ML[:n].sum())
-
-        self.urelax = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
-        self.drelax = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+        # Wall flags come from the subdomain's exterior boundary, which also
+        # contains the partition boundary: owned flags are right, ghost flags
+        # are not. Take the ghosts' flags from their owners.
+        self.par_wall_dof = LAT.ParVec_petsc4py(self.wall_dof,
+                                                bs=1,
+                                                n=n,N=N,nghosts=nghosts,
+                                                subdomain2global=subdomain2global)
+        self.par_wall_dof.scatter_forward_insert()
+        self.par_tailwater_dof = LAT.ParVec_petsc4py(self.tailwater_dof,
+                                                     bs=1,
+                                                     n=n,N=N,nghosts=nghosts,
+                                                     subdomain2global=subdomain2global)
+        self.par_tailwater_dof.scatter_forward_insert()
+        
+        # size_of_domain, used in the relaxation of the bounds, is the plan area of the whole
+        # domain: the sum of the owned elements' areas over the ranks (a subdomain's mesh.volume
+        # includes its overlap). Not the trace of the lumped mass matrix: with a canopy the mass
+        # matrix carries the porosity (storage phi h), so its trace is the pore volume.
+        area_e = np.sum(self.q['abs(det(J))'] * self.elementQuadratureWeights[('u', 0)], axis=1)
+        self.size_of_domain = comm.globalSum(area_e[:self.mesh.nElements_owned].sum())
+        if self.coefficients.BOUNDS_RELAXATION:
+            self.urelax[:] = 1.0 + pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+            self.drelax[:] = 1.0 - pow(np.sqrt(np.sqrt(self.ML / self.size_of_domain)),3)
+        else:
+            self.urelax[:] = 1.0
+            self.drelax[:] = 1.0
         self.par_urelax.scatter_forward_insert()
         self.par_drelax.scatter_forward_insert()
         #
@@ -1436,8 +1613,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         off = colind != rows
         r, c = rows[off], colind[off]
         n = len(rowptr) - 1
-        self.delta_Sqd_h[:] = np.bincount(r, weights=h[r] - h[c], minlength=n)
-        self.delta_Sqd_kin[:] = np.bincount(r, weights=kin[r] - kin[c], minlength=n)
+        if self.coefficients.BOUNDS_RELAXATION:
+            self.delta_Sqd_h[:] = np.bincount(r, weights=h[r] - h[c], minlength=n)
+            self.delta_Sqd_kin[:] = np.bincount(r, weights=kin[r] - kin[c], minlength=n)
+        else:
+            # strict bar-state bounds: no relaxation by the local smoothness
+            self.delta_Sqd_h[:] = 0.0
+            self.delta_Sqd_kin[:] = 0.0
         self.scatterDOFArray(self.delta_Sqd_h)
         self.scatterDOFArray(self.delta_Sqd_kin)
 
@@ -1463,11 +1645,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         r.fill(0.0)
 
         # REFLECTING BOUNDARY CONDITIONS ON ALL BOUNDARIES #
-        if self.reflectingBoundaryConditions and self.boundaryIndex is not None:
+        # (only for the older nodal projection; integrated-by-parts walls
+        #  need nothing here)
+        legacy_walls = not self.coefficients.INTEGRATE_BY_PARTS_WALLS
+        if legacy_walls and self.reflectingBoundaryConditions and self.boundaryIndex is not None:
             self.updateAllReflectingBoundaryConditions()
 
         # REFLECTING BOUNDARY CONDITIONS ON PARTIAL BOUNDARIES  #
-        if not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
+        if legacy_walls and not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
             self.updatePartialReflectingBoundaryConditions()
         #
 
@@ -1602,10 +1787,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["quantDOFs"] = self.quantDOFs
         argsDict["SECOND_CALL_CALCULATE_RESIDUAL"] = self.secondCallCalculateResidual
         argsDict["COMPUTE_NORMALS"] = self.COMPUTE_NORMALS
+        argsDict["wall_dof"] = self.wall_dof
+        argsDict["tailwater_dof"] = self.tailwater_dof
+        argsDict["tailwater_depth_dof"] = self.tailwater_depth_dof
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
+        argsDict["drag_alpha_dof"] = self.coefficients.drag_alpha_dof
+        argsDict["drag_beta_dof"] = self.coefficients.drag_beta_dof
         argsDict["normalx"] = self.normalx
         argsDict["normaly"] = self.normaly
         argsDict["dLow"] = self.dLow
         argsDict["lstage"] = self.timeIntegration.lstage
+        argsDict["BOUNDS_EXCLUDE_SELF"] = self.coefficients.BOUNDS_EXCLUDE_SELF
+        argsDict["NODAL_H_BOUNDS"] = self.coefficients.NODAL_H_BOUNDS
+        argsDict["NO_STAR_STATES"] = self.coefficients.NO_STAR_STATES
         argsDict["new_SourceTerm_hu"] = self.new_SourceTerm_hu
         argsDict["new_SourceTerm_hv"] = self.new_SourceTerm_hv
         argsDict["global_entropy_residual"] = self.global_entropy_residual
@@ -1651,7 +1845,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
 
         # for reflecting conditions on all boundaries
-        if self.reflectingBoundaryConditions and self.boundaryIndex is not None:
+        legacy_walls = not self.coefficients.INTEGRATE_BY_PARTS_WALLS
+        if legacy_walls and self.reflectingBoundaryConditions and self.boundaryIndex is not None:
             for dummy, index in enumerate(self.boundaryIndex):
                 r[self.offset[1]+self.stride[1]*index]=0.
                 r[self.offset[2]+self.stride[2]*index]=0.
@@ -1659,7 +1854,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
 
         # for reflecting conditions on partial boundaries
-        if not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
+        if legacy_walls and not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
             for dummy, index in enumerate(self.reflectingBoundaryIndex):
                 r[self.offset[1]+self.stride[1]*index]=0.
                 r[self.offset[2]+self.stride[2]*index]=0.
@@ -1750,6 +1945,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_hv_hv"] = self.csrRowIndeces[(2, 2)]
         argsDict["csrColumnOffsets_hv_hv"] = self.csrColumnOffsets[(2, 2)]
         argsDict["globalJacobian"] = jacobian.getCSRrepresentation()[2]
+        argsDict["porosity_dof"] = self.coefficients.porosity_dof
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
@@ -1784,7 +1980,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.calculateJacobian(argsDict)
 
         # for reflecting conditions on ALL boundaries
-        if self.reflectingBoundaryConditions and self.boundaryIndex is not None:
+        legacy_walls = not self.coefficients.INTEGRATE_BY_PARTS_WALLS
+        if legacy_walls and self.reflectingBoundaryConditions and self.boundaryIndex is not None:
             for dummy, index in enumerate(self.boundaryIndex):
                 global_dofN = self.offset[1] + self.stride[1] * index
                 for i in range(self.rowptr[global_dofN], self.rowptr[global_dofN + 1]):
@@ -1806,7 +2003,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
 
         # for reflecting conditions partial boundaries
-        if not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
+        if legacy_walls and not self.reflectingBoundaryConditions and self.reflectingBoundaryIndex is not None:
             for dummy, index in enumerate(self.reflectingBoundaryIndex):
                 global_dofN = self.offset[1] + self.stride[1] * index
                 for i in range(self.rowptr[global_dofN], self.rowptr[global_dofN + 1]):

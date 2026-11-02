@@ -86,5 +86,12 @@ nl_atol_res = 1.0e-5
 nl_rtol_res = 0.0
 l_atol_res = 1.0e-7
 l_rtol_res = 0.0
+if comm.size() > 1:
+    # the consistent-mass solve is direct (LU) in serial; with the iterative
+    # parallel solver 1e-7 left O(1e-5) differences in the high-order solution
+    # (lumped masses are O(1e-3)). The P1 mass matrix is well conditioned, so
+    # a tight tolerance costs a few extra iterations.
+    l_atol_res = 1.0e-12
+    linTolFac = 1.0e-10  # the linear solver's relative tolerance (default 1e-3)
 tolFac = 0.0
 maxLineSearches = 0

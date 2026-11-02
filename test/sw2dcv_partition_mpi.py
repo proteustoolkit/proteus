@@ -5,7 +5,8 @@ Unstructured mesh (he=0.4) with a pinned slanted cut. Run under mpiexec by test_
 sorted by x, y: x, y, h, hu, hv). NOSCAT=1 turns off the owner-to-ghost scatters of the second differences, the
 limiter coefficients and the limited solution; OLDVOL=1 sets the domain size of the bound relaxation to the sum over
 the ranks of the subdomain volumes, which counts the overlap twice. Both are controls.
-CONSISTENT=1 uses the consistent mass matrix (a KSP solve per stage); TIGHT=1 converges those solves, see the test.
+CONSISTENT=1 uses the consistent mass matrix (a KSP solve per stage); TIGHT=1 converges those solves and LOOSE=1
+puts back the loose parallel tolerances sw_n.py had before 7e79a746 (l_atol_res 1e-7, linTolFac 1e-3), see the test.
 """
 import os, shutil, sys, runpy
 import numpy as np
@@ -68,6 +69,10 @@ def init(self, so, pList, nList, *args, **kwargs):
         # converge the mass matrix solves of the consistent mass matrix far enough for a comparison to 1e-8
         for n in nList:
             n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = 1.0e-13, 1.0e-15, 0.0, 0.0, 0.0
+    if os.environ.get("LOOSE"):
+        # the parallel tolerances sw_n.py used before the SWE branch tightened them (7e79a746)
+        for n in nList:
+            n.l_atol_res, n.linTolFac = 1.0e-7, 1.0e-3
     return _init(self, so, pList, nList, *args, **kwargs)
 NS.NS_base.__init__ = init
 _calc = NS.NS_base.calculateSolution
