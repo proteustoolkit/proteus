@@ -974,6 +974,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
         argsDict["immersedBoundary_fluxJumpVector_q"] = self.q['immersedBoundary_fluxJumpVector']
         argsDict["immersedBoundary_fluxJump_element"] = self.coefficients.immersedBoundary_fluxJump_element
+        argsDict["immersedBoundary_fluxJumpLift"] = int(self.coefficients.immersedBoundary_fluxJumpLift)
         argsDict["immersedBoundary_solutionJump_nodes"] = self.coefficients.immersedBoundary_solutionJump_nodes
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["mua"] = self.coefficients.mua
