@@ -272,6 +272,15 @@ class RKEV(TimeIntegration.SSP):
                 if flag == 'timeOrder':
                     self.resetOrder(self.timeOrder)
                     
+class CompatibleBackwardEuler(TimeIntegration.BackwardEuler):
+    """Backward Euler for STABILIZATION_TYPE='Compatible'. The transport takes one step per flow
+    step, so it proposes no step of its own: the split-operator controller's minimum is the flow's."""
+
+    def choose_dt(self):
+        self.dt = 1.0e300
+        self.t = self.tLast + self.dt
+
+
 class Coefficients(TC_base):
     from proteus.ctransportCoefficients import VOFCoefficientsEvaluate
     from proteus.ctransportCoefficients import VolumeAveragedVOFCoefficientsEvaluate
@@ -422,7 +431,8 @@ class Coefficients(TC_base):
                                "EntropyViscosity":2,
                                "SmoothnessIndicator":3,
                                "Kuzmin":4,
-                               "ImplicitEV":5}
+                               "ImplicitEV":5,
+                               "Compatible":6}
         entropy_types = {'POWER':0 , 
                          'LOG':1}
         try:
@@ -570,6 +580,34 @@ class Coefficients(TC_base):
             self.flowCoefficients = modelList[self.V_model].coefficients
         else:
             self.flowCoefficients = None
+        if self.STABILIZATION_TYPE == 6:
+            # Compatible coupling: the flow model exports its realized exchanges every step
+            # and takes rho_T(c) at the nodes from this model (syncCompatibleDensity).
+            assert self.V_model is not None and hasattr(self.flowCoefficients, 'exportTransportFluxes'), \
+                "STABILIZATION_TYPE='Compatible' needs V_model to be a Richards model"
+            assert self.flowCoefficients.STABILIZATION_TYPE > 0, \
+                "STABILIZATION_TYPE='Compatible' needs an edge-based Richards model (STABILIZATION_TYPE > 0)"
+            self.flowCoefficients.exportTransportFluxes = True
+            self.nodal_rho = np.full(self.model.u[0].dof.shape, self.rho_f, 'd')
+
+    def syncCompatibleDensity(self):
+        """rho_T(c) = rho_f (1 + eps c) from the current DOFs: at the nodes (nodal_rho, the flow's
+        rho_T,i) and at the element and boundary quadrature points (q_rho, ebqe_rho)."""
+        model = self.model
+        c = model.u[0].dof
+        eps = (self.rho_s - self.rho_f) / self.rho_f
+        self.nodal_rho[:] = self.rho_f * (1.0 + eps * c)
+        fs = model.u[0].femSpace
+        l2g = fs.dofMap.l2g
+        self.q_rho[:] = self.rho_f * (1.0 + eps * np.einsum('ej,kj->ek', c[l2g], fs.psi))
+        mesh = model.mesh
+        ebN = mesh.exteriorElementBoundariesArray
+        eN = mesh.elementBoundaryElementsArray[ebN, 0]
+        ebN_local = mesh.elementBoundaryLocalElementBoundariesArray[ebN, 0]
+        psi_trace = np.asarray(fs.psi_trace).reshape((mesh.nElementBoundaries_element,
+                                                      self.ebqe_rho.shape[1],
+                                                      l2g.shape[1]))
+        self.ebqe_rho[:] = self.rho_f * (1.0 + eps * np.einsum('ej,ekj->ek', c[l2g[eN]], psi_trace[ebN_local]))
         
 
     def preStep(self, t, firstStep=False):
@@ -1206,11 +1244,24 @@ class LevelModel(OneLevelTransport):
         # ExplicitLumpedMassMatrix).  Type 5 (ImplicitEV) is the IMPLICIT
         # edge-based scheme: backward-Euler + Newton, so it is exempt from the
         # SSP/Explicit-solver/LUMPED_MASS_MATRIX constraints below.
-        if self.coefficients.STABILIZATION_TYPE > 1 and self.coefficients.STABILIZATION_TYPE != 5:
+        if self.coefficients.STABILIZATION_TYPE > 1 and self.coefficients.STABILIZATION_TYPE not in (5, 6):
             assert self.timeIntegration.isSSP == True, "If STABILIZATION_TYPE>1, use RKEV timeIntegration within TADR model"
             cond = 'levelNonlinearSolver' in dir(options) and (options.levelNonlinearSolver ==
                                                                ExplicitLumpedMassMatrix or options.levelNonlinearSolver == ExplicitConsistentMassMatrixForVOF)
             assert cond, "If STABILIZATION_TYPE>1, use levelNonlinearSolver=ExplicitLumpedMassMatrix or ExplicitConsistentMassMatrixForVOF"
+        if self.coefficients.STABILIZATION_TYPE == 6:
+            assert isinstance(self.timeIntegration, CompatibleBackwardEuler), \
+                "STABILIZATION_TYPE='Compatible' takes the flow's steps: use timeIntegration = TADR.CompatibleBackwardEuler"
+            assert 'levelNonlinearSolver' not in dir(options) or \
+                options.levelNonlinearSolver not in (ExplicitLumpedMassMatrix, ExplicitConsistentMassMatrixForVOF), \
+                "STABILIZATION_TYPE='Compatible' is implicit: use levelNonlinearSolver = Newton"
+            # Concentrations on the Dirichlet boundary are imposed strongly
+            self.forceStrongConditions = True
+            self.dirichletConditionsForceDOF = DOFBoundaryConditions(self.u[0].femSpace, dofBoundaryConditionsSetterDict[0],
+                                                                     weakDirichletConditions=False)
+            self.compatibleBudget = []
+            self.carriedStorage = {}  # M^{n+1} keyed by t^{n+1}
+            self._compatStepKey = None
         if self.coefficients.STABILIZATION_TYPE == 5:
             assert getattr(self.timeIntegration, 'isSSP', False) == False, \
                 "If STABILIZATION_TYPE==5 (ImplicitEV), use an implicit (non-SSP) timeIntegration, e.g. BackwardEuler"
@@ -1223,7 +1274,7 @@ class LevelModel(OneLevelTransport):
                     "leave the implicit system unsolved."
         if 'levelNonlinearSolver' in dir(options) and options.levelNonlinearSolver == ExplicitLumpedMassMatrix:
             assert self.coefficients.LUMPED_MASS_MATRIX, "If levelNonlinearSolver=ExplicitLumpedMassMatrix, use LUMPED_MASS_MATRIX=True"
-        if self.coefficients.LUMPED_MASS_MATRIX == True and self.coefficients.STABILIZATION_TYPE != 5:
+        if self.coefficients.LUMPED_MASS_MATRIX == True and self.coefficients.STABILIZATION_TYPE not in (5, 6):
             cond = 'levelNonlinearSolver' in dir(options) and options.levelNonlinearSolver == ExplicitLumpedMassMatrix
             assert cond, "Use levelNonlinearSolver=ExplicitLumpedMassMatrix when the mass matrix is lumped"
         if self.coefficients.FCT is True:
@@ -1237,7 +1288,7 @@ class LevelModel(OneLevelTransport):
             assert isinstance(self.timeIntegration, TimeIntegration.BackwardEuler_cfl), "If STABILIZATION_TYPE=1, use BackwardEuler_cfl"
             assert options.levelNonlinearSolver == TwoStageNewton, "If STABILIZATION_TYPE=1, use levelNonlinearSolver=TwoStageNewton"
         assert self.coefficients.ENTROPY_TYPE in [0,1], "Set ENTROPY_TYPE={0,1}"
-        assert self.coefficients.STABILIZATION_TYPE in [-1,0,1,2,3,4,5], "Set STABILIZATION_TYPE={-1,0,1,2,3,4,5}"
+        assert self.coefficients.STABILIZATION_TYPE in [-1,0,1,2,3,4,5,6], "Set STABILIZATION_TYPE={-1,0,1,2,3,4,5,6}"
         if self.coefficients.STABILIZATION_TYPE==4:
             assert self.coefficients.FCT==True, "If STABILIZATION_TYPE=4, use FCT=True"
             
@@ -1321,6 +1372,8 @@ class LevelModel(OneLevelTransport):
         par.scatter_forward_insert()
 
     def FCTStep(self):
+        if self.coefficients.STABILIZATION_TYPE == 6:
+            return self.FCTStep_compatible()
         # Explicit solvers call FCTStep() unconditionally.
         # If FCT is disabled, advance with low-order solution (uLow).
         if not self.coefficients.FCT:
@@ -1543,6 +1596,8 @@ class LevelModel(OneLevelTransport):
         """
         Calculate the element residuals and add in to the global residual
         """
+        if self.coefficients.STABILIZATION_TYPE == 6:
+            return self.getResidual_compatible(u, r)
 
         if self.MC_global is None:
             self.getMassMatrix()
@@ -1821,6 +1876,8 @@ class LevelModel(OneLevelTransport):
 
 
     def getJacobian(self, jacobian):
+        if self.coefficients.STABILIZATION_TYPE == 6:
+            return self.getJacobian_compatible(jacobian)
         cfemIntegrals.zeroJacobian_CSR(self.nNonzerosInJacobian,
                                        jacobian)
         argsDict = cArgumentsDict.ArgumentsDict()
@@ -2004,7 +2061,253 @@ class LevelModel(OneLevelTransport):
     def calculateSolutionAtQuadrature(self):
         pass
 
+    def prepareCompatibleStep(self):
+        """Per-step data of STABILIZATION_TYPE='Compatible' from the flow model's export.
+
+        Fhat_ij = E_ij, the carried storage M^n -> M^{n+1} = M^n + (m^{n+1} - m^n) (M^0 = m^0),
+        B_i = M_L,i (M^{n+1}_i - M^n_i)/dt - sum_j Fhat_ij, and the dispersion velocity
+        v_h = q_h / rho^F with q_h reconstructed from the spatial exchanges only.
+        """
+        ti = self.timeIntegration
+        key = (ti.tLast, ti.t)
+        if self._compatStepKey == key:
+            return self._compat
+        flow = self.coefficients.vModel
+        ex = flow.transportExport
+        tol = 1.0e-12 * max(1.0, abs(ti.t))
+        assert ex is not None and abs(ex['t0'] - ti.tLast) <= tol and abs(ex['t1'] - ti.t) <= tol, \
+            "STABILIZATION_TYPE='Compatible' takes exactly one transport step per flow step " \
+            "(flow step [%s, %s], transport step [%s, %s])" % (None if ex is None else ex['t0'],
+                                                              None if ex is None else ex['t1'], ti.tLast, ti.t)
+        if self._compatStepKey is None:
+            if self.comm.size() > 1:
+                raise NotImplementedError("STABILIZATION_TYPE='Compatible' is serial for now: the edge exchanges, "
+                                          "the dispersion matrix and the limiter are not ghost-synchronized")
+            assert (np.array_equal(ex['rowptr'], self.rowptr) and np.array_equal(ex['colind'], self.colind)), \
+                "STABILIZATION_TYPE='Compatible' needs the flow and transport models on the same DOFs and sparsity"
+            assert self.nFreeDOF_global[0] == self.u[0].dof.shape[0], \
+                "STABILIZATION_TYPE='Compatible' imposes Dirichlet data strongly; use a weak numerical flux " \
+                "(e.g. TADR.NumericalFlux) so every DOF is free"
+            self._exportRows = np.repeat(np.arange(len(self.rowptr) - 1), np.diff(self.rowptr))
+            nnz = len(self.colind)
+            self._edgeWeight = np.zeros(nnz, 'd')
+            self._edgeCount = np.zeros(nnz, 'd')
+            self._dDispersion = np.zeros(nnz, 'd')
+            self._FluxCorrectionMatrix = np.zeros(nnz, 'd')
+            self._limitedFluxMatrix = np.zeros(nnz, 'd')
+            self._Rpos = np.zeros(self.u[0].dof.shape, 'd')
+            self._Rneg = np.zeros(self.u[0].dof.shape, 'd')
+            self._element_q = np.zeros((self.mesh.nElements_global, self.nSpace_global), 'd')
+            self._q_velocity_dispersion = np.zeros(self.q[('u', 0)].shape + (self.nSpace_global,), 'd')
+            self._cConverged = np.zeros(self.u[0].dof.shape, 'd')
+        dt = ti.dt
+        Mn = None
+        for tk, Mk in self.carriedStorage.items():
+            if abs(tk - ti.tLast) <= 1.0e-12 * max(1.0, abs(ti.tLast)):
+                Mn = Mk
+        if Mn is None:
+            Mn = ex['mOld'].copy()  # M^0 = m^0
+        Mnp1 = Mn + (ex['mNew'] - ex['mOld'])
+        assert Mnp1.min() > 0.0, "STABILIZATION_TYPE='Compatible': nonpositive carried storage %g" % Mnp1.min()
+        Fhat = ex['E']
+        rowSum = np.zeros(Mn.shape)
+        np.add.at(rowSum, self._exportRows, Fhat)
+        B = self.ML * (Mnp1 - Mn) / dt - rowSum
+        # strong Dirichlet data at t^{n+1}
+        bc_mask = np.ones(self.u[0].dof.shape, 'd')
+        cD = np.zeros(self.u[0].dof.shape, 'd')
+        for dofN, g in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items():
+            bc_mask[dofN] = 0.0
+            cD[dofN] = g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], ti.t)
+        # Inflow through a node without a concentration condition carries the local concentration,
+        # i.e. no prescribed c_in there; Binflow/cin hold the nodes that have one (none at present:
+        # the concentration boundary contains the inflow boundary and is imposed strongly).
+        Binflow = np.zeros(Mn.shape)
+        cin = np.zeros(Mn.shape)
+        # dispersion velocity from the spatial exchanges
+        argsDict = cArgumentsDict.ArgumentsDict()
+        argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
+        argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
+        argsDict["mesh_dof"] = self.mesh.nodeArray
+        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["dV_ref"] = self.elementQuadratureWeights[('u', 0)]
+        argsDict["u_grad_trial_ref"] = self.u[0].femSpace.grad_psi
+        argsDict["csrRowIndeces_CellLoops"] = self.csrRowIndeces[(0, 0)]
+        argsDict["csrColumnOffsets_CellLoops"] = self.csrColumnOffsets[(0, 0)]
+        argsDict["Espatial"] = ex['Espatial']
+        argsDict["edgeWeight"] = self._edgeWeight
+        argsDict["edgeCount"] = self._edgeCount
+        argsDict["element_q"] = self._element_q
+        self.adr.reconstructFlux_compatible(argsDict)
+        rho_F = flow.q['rho']
+        self._q_velocity_dispersion[:] = self._element_q[:, None, :] / rho_F[:, :, None]
+        inflowFree = float((np.maximum(B, 0.0) * bc_mask).sum())
+        self._compat = {'Mn': Mn, 'Mnp1': Mnp1, 'Fhat': Fhat, 'B': B, 'Binflow': Binflow, 'cin': cin,
+                        'bc_mask': bc_mask, 'cD': cD, 'dt': dt, 'export': ex, 'inflowFree': inflowFree}
+        self._compatStepKey = key
+        return self._compat
+
+    def _compatibleArgs(self, r, computeJacobian, jacobianValues):
+        d = self.prepareCompatibleStep()
+        argsDict = cArgumentsDict.ArgumentsDict()
+        argsDict["dt"] = d['dt']
+        argsDict["numDOFs"] = len(self.rowptr) - 1
+        argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
+        argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
+        argsDict["mesh_dof"] = self.mesh.nodeArray
+        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["dV_ref"] = self.elementQuadratureWeights[('u', 0)]
+        argsDict["u_trial_ref"] = self.u[0].femSpace.psi
+        argsDict["u_grad_trial_ref"] = self.u[0].femSpace.grad_psi
+        argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
+        argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
+        argsDict["a_rowptr"] = self.coefficients.sdInfo[(0, 0)][0]
+        argsDict["a_colind"] = self.coefficients.sdInfo[(0, 0)][1]
+        argsDict["alpha_L"] = float(self.coefficients.alpha_L)
+        argsDict["alpha_T"] = float(self.coefficients.alpha_T)
+        argsDict["Dm"] = float(self.coefficients.Dm)
+        argsDict["rho_f"] = self.coefficients.rho_f
+        argsDict["rho_s"] = self.coefficients.rho_s
+        argsDict["q_porosity"] = self.coefficients.vModel.q[('theta', 0)]
+        argsDict["q_velocity_dispersion"] = self._q_velocity_dispersion
+        argsDict["u_dof"] = self.u[0].dof
+        argsDict["u_dof_old"] = self.u_dof_old
+        argsDict["csrRowIndeces_DofLoops"] = self.rowptr
+        argsDict["csrColumnOffsets_DofLoops"] = self.colind
+        argsDict["csrRowIndeces_CellLoops"] = self.csrRowIndeces[(0, 0)]
+        argsDict["csrColumnOffsets_CellLoops"] = self.csrColumnOffsets[(0, 0)]
+        argsDict["ML"] = self.ML
+        argsDict["Fhat"] = d['Fhat']
+        argsDict["Mn"] = d['Mn']
+        argsDict["B"] = d['Binflow']
+        argsDict["cin"] = d['cin']
+        argsDict["bc_mask"] = d['bc_mask']
+        argsDict["cD"] = d['cD']
+        argsDict["dDispersion"] = self._dDispersion
+        argsDict["globalResidual"] = r
+        argsDict["computeJacobian"] = int(computeJacobian)
+        argsDict["globalJacobian"] = jacobianValues
+        return argsDict
+
+    def getResidual_compatible(self, u, r):
+        if self.MC_global is None:
+            self.getMassMatrix()
+            self.initVectors()
+        r.fill(0.0)
+        self.timeIntegration.calculateCoefs()
+        self.timeIntegration.calculateU(u)
+        self.setUnknowns(self.timeIntegration.u)
+        if self.coefficients.vModel.transportExport is None:
+            # NumericalSolution evaluates every residual once before the first step; there is no
+            # flow step to be compatible with yet
+            return
+        self.adr.calculateResidual_compatible(self._compatibleArgs(r, False, self.nzval))
+        if not self.auxiliaryCallCalculateResidual:
+            self._cConverged[:] = self.u[0].dof
+            self._compatResidual = r.copy()
+        logEvent("Global residual", level=9, data=r)
+        if self.globalResidualDummy is None:
+            self.globalResidualDummy = np.zeros(r.shape, 'd')
+
+    def getJacobian_compatible(self, jacobian):
+        cfemIntegrals.zeroJacobian_CSR(self.nNonzerosInJacobian, jacobian)
+        r = np.zeros(self.u[0].dof.shape, 'd')
+        self.adr.calculateResidual_compatible(self._compatibleArgs(r, True, jacobian.getCSRrepresentation()[2]))
+        return jacobian
+
+    def FCTStep_compatible(self):
+        """Zalesak limiting of S = M c toward the high-order target (Algorithm 3); called by Newton
+        after the low-order solve has converged, with c^L in u[0].dof."""
+        d = self.prepareCompatibleStep()
+        cL = self.u[0].dof.copy()
+        c_new = np.zeros_like(cL)
+        rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
+        argsDict = cArgumentsDict.ArgumentsDict()
+        argsDict["dt"] = d['dt']
+        argsDict["numDOFs"] = len(self.rowptr) - 1
+        argsDict["csrRowIndeces_DofLoops"] = self.rowptr
+        argsDict["csrColumnOffsets_DofLoops"] = self.colind
+        argsDict["ML"] = self.ML
+        argsDict["MC"] = MassMatrix
+        argsDict["Mn"] = d['Mn']
+        argsDict["Mnp1"] = d['Mnp1']
+        argsDict["cn"] = self.u_dof_old
+        argsDict["cL"] = cL
+        argsDict["Fhat"] = d['Fhat']
+        argsDict["dDispersion"] = self._dDispersion
+        argsDict["bc_mask"] = d['bc_mask']
+        argsDict["Rpos"] = self._Rpos
+        argsDict["Rneg"] = self._Rneg
+        argsDict["FluxCorrectionMatrix"] = self._FluxCorrectionMatrix
+        argsDict["limitedFluxMatrix"] = self._limitedFluxMatrix
+        argsDict["c_new"] = c_new
+        self.adr.FCTStep_compatible(argsDict)
+        d['cL'] = cL
+        d['c1'] = c_new.copy()
+        d['fctApplied'] = True
+        self.u[0].dof[:] = c_new
+        self.timeIntegration.u[:] = c_new
+
+    def compatibleStepBudget(self):
+        """Fluid and solute budgets of the step just taken (STABILIZATION_TYPE='Compatible').
+
+        fluid:  sum_i M_L,i (m^{n+1}_i - m^n_i) - dt sum_i (sum_j E~_ij + b_i) = dt sum_i r_i, the
+                flow solver residual (free rows), from the flow model's export.
+        solute: sum_free M_L,i (S^{n+1}_i - S^n_i) minus dt sum_free B^c_i, minus the exchange
+                with Dirichlet nodes, dt sum F^L_ij(c^L) + alpha_ij f_ij (i free, j Dirichlet);
+                dt times the sum of the transport residual at c^L, up to round-off.
+        """
+        d = self._compat
+        ex = d['export']
+        dt = d['dt']
+        free = d['bc_mask'] == 1.0
+        cn = self.u_dof_old
+        cL = d.get('cL', self._cConverged)
+        c1 = d.get('c1', self._cConverged)
+        Mn, Mnp1, F = d['Mn'], d['Mnp1'], d['Fhat']
+        rows, cols = self._exportRows, self.colind
+        dD = self._dDispersion
+        nu = np.maximum(0.0, 0.5 * np.abs(F) + dD)
+        FL = 0.5 * F * (cL[rows] + cL[cols]) - dD * (cL[cols] - cL[rows]) + nu * (cL[cols] - cL[rows])
+        FL[rows == cols] = 0.0
+        toDirichlet = free[rows] & ~free[cols]
+        Bc = d['Binflow'] * d['cin'] + (d['B'] - d['Binflow']) * cL
+        dS = float((self.ML * (Mnp1 * c1 - Mn * cn))[free].sum())
+        exchange = dt * float(Bc[free].sum()) + dt * float(FL[toDirichlet].sum())
+        if d.get('fctApplied', False):
+            exchange += float(self._limitedFluxMatrix[toDirichlet].sum())
+        solute = dS - exchange
+        fluid = dt * float(ex['fluidResidual'].sum())
+        rec = {'t': self.timeIntegration.t, 'dt': dt,
+               'fluid_budget_error': fluid,
+               'fluid_mass': float((self.ML * Mnp1).sum()),
+               'flow_residual_l1': float(np.abs(ex['fluidResidual']).sum()),
+               'solute_budget_error': solute,
+               'solute_mass': float((self.ML * Mnp1 * c1).sum()),
+               'transport_residual_l1': float(np.abs(self._compatResidual[free]).sum()),
+               'carried_minus_flow_mass': float(np.abs(Mnp1 - ex['mNew']).max()),
+               'inflow_without_concentration': d['inflowFree'],
+               'c_min': float(c1.min()), 'c_max': float(c1.max())}
+        self.compatibleBudget.append(rec)
+        logEvent("TADR compatible t=%12.5e: fluid budget %12.5e (flow |r|_1 dt %12.5e), solute budget %12.5e "
+                 "(transport |r|_1 dt %12.5e), c in [%g, %g]"
+                 % (rec['t'], fluid, dt * rec['flow_residual_l1'], solute, dt * rec['transport_residual_l1'],
+                    rec['c_min'], rec['c_max']), level=2)
+        return rec
+
     def calculateAuxiliaryQuantitiesAfterStep(self):
+        if self.coefficients.STABILIZATION_TYPE == 6:
+            self.compatibleStepBudget()
+            t1 = self.timeIntegration.t
+            self.carriedStorage = {tk: Mk for tk, Mk in self.carriedStorage.items() if tk < t1}
+            if len(self.carriedStorage) > 2:
+                for tk in sorted(self.carriedStorage)[:-2]:
+                    del self.carriedStorage[tk]
+            self.carriedStorage[t1] = self._compat['Mnp1'].copy()
+            self.coefficients.syncCompatibleDensity()
+            return
         # STAB=5 (ImplicitEV) is solved implicitly by Newton, so the explicit
         # solver never calls FCTStep().  When FCT is on, apply it here (this
         # hook is called by SplitOperator after the model's solve): the
