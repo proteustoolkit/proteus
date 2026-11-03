@@ -1415,6 +1415,9 @@ namespace proteus
 			xt::pyarray<double> &xB_ref = args.array<double>("xB_ref");
 			xt::pyarray<int> &elementBoundariesArray = args.array<int>("elementBoundariesArray");
 			const int nElementBoundaries_owned = args.scalar<int>("nElementBoundaries_owned");
+			// Owned elements are numbered first on each rank; the L2 error sums them only (the
+			// overlap elements are some other rank's owned ones and are summed there).
+			const int nElements_owned = args.scalar<int>("nElements_owned");
 			xt::pyarray<double> &elementBoundaryDiameter = args.array<double>("elementBoundaryDiameter");
 			xt::pyarray<double> &nodeDiametersArray = args.array<double>("nodeDiametersArray");
 			xt::pyarray<double> &L2_error = args.array<double>("L2_error");
@@ -1563,8 +1566,12 @@ namespace proteus
 					for (int ebN_element = 0; ebN_element < nDOF_mesh_trial_element; ebN_element++)
 					{
 						const int ebN = elementBoundariesArray.data()[eN * nDOF_mesh_trial_element + ebN_element];
-						// internal and actually a cut edge
-						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 && (ebN < nElementBoundaries_owned))
+						// Every interior face of a Gamma_s-cut element, owned or not. The residual is assembled
+						// with full overlap (each rank sums all of its local elements into the rows it owns
+						// and drops the rest), so a face term has to be summed on every rank that has both
+						// of its elements; skipping the faces another rank owns lost their contribution to
+						// this rank's owned rows (2 ranks: 7 wrong rows, solution off by up to 3e-3).
+						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1)
 							cutfem_boundaries.insert(ebN);
 					}
 				}
@@ -1725,6 +1732,7 @@ namespace proteus
 				else if (icase_f == 1)
 				{
 				}
+				double L2_elem = 0.0;
 				calculateElementResidual(icase_f,
 										 demoted_f,
 										 mesh_trial_ref,
@@ -1809,7 +1817,7 @@ namespace proteus
 										 JA,
 										 JB,
 										 fluxLiftJ,
-										 L2_error.data()[0],
+										 L2_elem,
 										 Linfty_error.data()[0],
 												 mua,
 											 mub,
@@ -1817,6 +1825,8 @@ namespace proteus
 											 q_u_exact_outer,
 											 PG,
 											 pgElem);
+				if (eN < nElements_owned)
+					L2_error.data()[0] += L2_elem;
 				//
 				// load element into global residual and save element residual
 				//
