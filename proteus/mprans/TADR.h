@@ -581,6 +581,11 @@ inline
       const int phase = args.scalar<int>("phase");
       proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
       proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
+      // The projected nodal porosity of a ghost dof sums only the elements this rank has, which do not cover its
+      // support, and the edge loops of an owned dof read it at the neighbours (m_dof[j], theta_dof_proj[j]).
+      // Phase -1 stops after the projection and writes it to theta_dof; Python scatters it from the owners and
+      // the later phases take those values (the owned ones are the numbers this rank computed).
+      proteus::pyarray<double>& theta_dof = args.array<double>("theta_dof");
       
       double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
       const double eps_rho = (rho_s - rho_f)/rho_f;
@@ -648,6 +653,17 @@ inline
               const double un_i = u_dof_old.data()[i];
               rho_dof_proj[i] = rho_f*(1.0 + eps_rho*un_i);
               m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*un_i;
+            }
+          if (phase == -1)
+            {
+              for (int i=0; i<numDOFs; i++)
+                theta_dof.data()[i] = theta_dof_proj[i];
+              return;
+            }
+          for (int i=0; i<numDOFs; i++)
+            {
+              theta_dof_proj[i] = theta_dof.data()[i];
+              m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*u_dof_old.data()[i];
             }
           // compute entropy and init global_entropy_residual and boundary_integral
           psi.resize(numDOFs,0.0);
@@ -2665,6 +2681,17 @@ inline
       if (ML_proj[i] > 1.0e-14) { theta_dof[i] /= ML_proj[i]; rho_dof[i] /= ML_proj[i]; }
       else { theta_dof[i] = 1.0; rho_dof[i] = rho_f; }
     }
+    // The projection of a ghost dof sums only the elements this rank has, and the limiter of an owned dof reads
+    // theta_j. Phase -1 writes the projection to theta_dof_out and returns; Python scatters it from the owners and
+    // phases 0 and 1 take those values.
+    if (phase == -1)
+      {
+        for (int i=0; i<numDOFs; i++)
+          theta_dof_out.data()[i] = theta_dof[i];
+        return;
+      }
+    for (int i=0; i<numDOFs; i++)
+      theta_dof[i] = theta_dof_out.data()[i];
     if (phase == 0)
       {
         // resize also zeroes, so phase 1 must not do it: it needs the matrix phase 0 filled

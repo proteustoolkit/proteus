@@ -1451,6 +1451,9 @@ class LevelModel(OneLevelTransport):
         Rneg = np.ones(self.u[0].dof.shape)
         argsDict["Rpos_dof"] = Rpos
         argsDict["Rneg_dof"] = Rneg
+        argsDict["phase"] = -1
+        self.adr.FCTStep(argsDict)
+        self.scatterDOFArray(theta_dof_out_arr)
         argsDict["phase"] = 0
         self.adr.FCTStep(argsDict)
         self.scatterDOFArray(Rpos)
@@ -1802,6 +1805,15 @@ class LevelModel(OneLevelTransport):
 
         #argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
+        theta_dof = np.zeros(self.u[0].dof.shape, 'd')
+        argsDict["theta_dof"] = theta_dof
+        if self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5):
+            # the projected nodal porosity of a ghost dof is partial; take the owners' (phase -1)
+            argsDict["psi_dof"] = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["phase"] = -1
+            self.adr.calculateResidual(argsDict)
+            self.scatterDOFArray(theta_dof)
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4):
             # edge based stabilization: psi and the normalized entropy residual of a ghost dof come from a
             # truncated graph row and the dissipation of an owned dof reads them. Compute them (phase 0),

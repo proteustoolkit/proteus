@@ -6,7 +6,8 @@ Run under mpiexec by test_tadr_partition_independence.py in an empty directory, 
 of the mass matrix solves; leaves u.csv there (owned nodes, sorted by x, y). The mesh is unstructured and the partition
 is pinned to a cut x + 0.37 y >= 0.62 through the disk. LUMPED=1 uses the lumped mass matrix. NOSCAT=1 turns off every
 owner-to-ghost scatter, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost dofs; OLDMAX=1 makes
-the time step read it again (a control).
+the time step read it again (a control). POROUS=1 makes the porosity vary in space; NOTHETASCAT=1 keeps the partial
+nodal porosity at the ghosts (a control).
 """
 import os, shutil, sys, runpy
 import numpy as np
@@ -34,6 +35,51 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
 MT.Mesh.partitionMesh = partitionMesh
 
 from proteus.mprans import TADR
+if os.environ.get("POROUS"):
+    # a porosity that varies in space, so the nodal projection of it differs from dof to dof
+    def _theta(x):
+        return 0.6 + 0.3 * np.sin(4.0 * x[..., 0]) * np.cos(3.0 * x[..., 1])
+    _init = TADR.LevelModel.__init__
+    def __init__(self, *args, **kwargs):
+        _init(self, *args, **kwargs)
+        c = self.coefficients
+        c.q_porosity = _theta(self.q['x'])
+        c.q_porosity_old = c.q_porosity.copy()
+        c.ebqe_porosity = _theta(self.ebqe['x'])
+    TADR.LevelModel.__init__ = __init__
+if os.environ.get("NOTHETASCAT"):
+    # control: keep the partial nodal porosity at the ghosts. In getResidual and FCTStep the scatter of it is the
+    # first scatter after the first kernel call (the phase -1 call), so skip that one.
+    class _Kernel(object):
+        def __init__(self, kernel, model):
+            self._kernel, self._model = kernel, model
+        def __getattr__(self, name):
+            return getattr(self._kernel, name)
+        def calculateResidual(self, args):
+            self._model._kernelCalls += 1
+            return self._kernel.calculateResidual(args)
+        def FCTStep(self, args):
+            self._model._kernelCalls += 1
+            return self._kernel.FCTStep(args)
+    _scatter = TADR.LevelModel.scatterDOFArray
+    def scatterDOFArray(self, a):
+        if getattr(self, "_kernelCalls", 0) == 1 and not self._skipped:
+            self._skipped = True
+            return
+        return _scatter(self, a)
+    TADR.LevelModel.scatterDOFArray = scatterDOFArray
+    def _counting(method):
+        def wrapped(self, *args):
+            if not isinstance(self.adr, _Kernel):
+                self.adr = _Kernel(self.adr, self)
+            self._kernelCalls, self._skipped = 0, False
+            try:
+                return method(self, *args)
+            finally:
+                self._kernelCalls = 0
+        return wrapped
+    TADR.LevelModel.getResidual = _counting(TADR.LevelModel.getResidual)
+    TADR.LevelModel.FCTStep = _counting(TADR.LevelModel.FCTStep)
 if os.environ.get("NOSCAT"):
     TADR.LevelModel.scatterDOFArray = lambda self, a: None
 if os.environ.get("GHOSTCFL"):
