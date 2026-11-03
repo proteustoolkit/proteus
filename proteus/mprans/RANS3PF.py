@@ -945,6 +945,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     _state_model_arrays = ("entropyResidualPerNode", "u_dof_old", "v_dof_old", "w_dof_old",
                            "u_dof_old_old", "v_dof_old_old", "w_dof_old_old")
     _state_q_arrays = (('velocity', 0), ('velocityOld', 0))
+    #: the boundary velocity the other models read (VOF/CLSVOF's ebqe_v); a failed solve leaves it changed
+    _state_ebqe_arrays = (('velocity', 0),)
 
     def state(self):
         m = getattr(self, "model", None)
@@ -956,6 +958,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 st[name] = getattr(m, name).copy()
         for key in self._state_q_arrays:
             st["q_%s_%d" % key] = m.q[key].copy()
+        for key in self._state_ebqe_arrays:
+            st["ebqe_%s_%d" % key] = m.ebqe[key].copy()
         return st
 
     def set_state(self, state):
@@ -967,6 +971,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 getattr(m, name)[:] = state[name]
         for key in self._state_q_arrays:
             m.q[key][:] = state["q_%s_%d" % key]
+        for key in self._state_ebqe_arrays:
+            if "ebqe_%s_%d" % key in state:
+                m.ebqe[key][:] = state["ebqe_%s_%d" % key]
 
     def preStep(self, t, firstStep=False):
         if firstStep:
