@@ -54,6 +54,9 @@ domainUS.boundaryTags = domainR.boundaryTags
 domain = domainR
 if opts.unstructured:
     domain = domainUS    
+# The ghost-penalty and SCIFEM face terms need two layers of overlap in parallel (see ADR.LevelModel).
+from proteus import MeshTools
+MeshTools.getMeshOptions(domain).nLayersOfOverlapForParallel = 2
 a0=1.0
 if opts.test == 2.0:
     a0 = 10.0

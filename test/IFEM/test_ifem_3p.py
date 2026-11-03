@@ -25,6 +25,9 @@ To regenerate the saved values after an intentional change, from the repository 
     IFEM_SAVE_COMPARISON=1 pytest test/IFEM/test_ifem_3p.py
 """
 import os
+import shutil
+import subprocess
+import sys
 import warnings
 
 import numpy as np
@@ -133,3 +136,81 @@ def test_triply_cut_environment_variables_still_work(monkeypatch, env, value, at
     with pytest.warns(DeprecationWarning, match=attr):
         c = _coefficients()
     assert getattr(c, attr) == expected
+
+
+# --- the same cases on two ranks -----------------------------------------------------------
+
+MPI_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ifem_3p_partition_mpi.py")
+
+
+def _mpiexec():
+    beside = os.path.join(os.path.dirname(sys.executable), "mpiexec")
+    return beside if os.path.exists(beside) else shutil.which("mpiexec")
+
+
+MPIEXEC = _mpiexec()
+
+
+def _direct_solver():
+    """A PETSc package that factors a distributed matrix, or None."""
+    try:
+        import petsc4py
+        petsc4py.init()
+        from petsc4py import PETSc
+    except ImportError:
+        return None
+    for pkg in ("mumps", "superlu_dist"):
+        if PETSc.Sys.hasExternalPackage(pkg):
+            return pkg
+    return None
+
+
+DIRECT_SOLVER = _direct_solver()
+
+
+def _run_ranks(ranks, ctx, cwd, **extra_env):
+    env = dict(os.environ, OMP_NUM_THREADS="1",
+               PETSC_OPTIONS=("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+                              "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER)))
+    env.setdefault("FI_PROVIDER", "tcp")
+    env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
+    env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [q for q in sys.path if q] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env.update({k: str(v) for k, v in extra_env.items()})
+    return subprocess.run([MPIEXEC, "-n", str(ranks), sys.executable, MPI_HELPER, ctx],
+                          capture_output=True, text=True, timeout=600, env=env, cwd=str(cwd))
+
+
+PARALLEL_CASES = ["table1_p1", "table1_p2", "table2_p2", "table4_p2"]
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+@pytest.mark.parametrize("cid", PARALLEL_CASES)
+def test_ifem_3p_two_ranks_match_serial(cid, tmp_path):
+    """Two ranks give the serial pins.
+
+    Three defects made them differ: the ghost-penalty faces were taken on owned faces only
+    (full-overlap assembly needs every local face), the face terms need two layers of overlap
+    (one dropped the faces whose far element sat on the other rank), and for P2 the element
+    mapping read vertex coordinates and node diameters through node numbers where the kernel
+    holds them by dof (NaN residual). Each moved these errors by 1e-3 to 1e-1 relative.
+    """
+    name, order = cid.rsplit("_p", 1)
+    out = _run_ranks(2, "{0} pOrder={1}".format(CASES[name], order), tmp_path)
+    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    line = [l for l in out.stdout.splitlines() if l.startswith("RESULT")][0]
+    result = dict(item.split("=") for item in line.split()[1:])
+    expected = np.fromfile(os.path.join(COMPARISON_DIR, "ifem3p_" + cid + ".csv"), sep=",")
+    np.testing.assert_allclose([float(result["L2"]), float(result["Linfty"])], expected,
+                               rtol=RTOL, atol=ATOL, err_msg=cid + " on 2 ranks")
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_ifem_3p_one_layer_of_overlap_is_refused(tmp_path):
+    """With one layer of overlap the face terms are silently wrong, so ADR refuses to run."""
+    out = _run_ranks(2, CASES["table1"] + " pOrder=1", tmp_path, NLAYERS=1)
+    assert out.returncode != 0
+    assert "two layers of mesh overlap" in out.stdout + out.stderr
