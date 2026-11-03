@@ -104,7 +104,10 @@ coefficients = Richards.Coefficients(nd,
                                      density=dimensionless_density,
                                      beta=0.0001,
                                      diagonal_conductivity=True,
-                                     STABILIZATION_TYPE=0,
+                                     STABILIZATION_TYPE=2,  # edge based: the compatible transport uses its exchanges
+                                     # 2 cm air entry: n = 1.2 (clay) and 1.15 (wall) make k_r and theta singular at psi = 0,
+                                     # which stalls the edge-based Newton at the river face
+                                     VG_AIR_ENTRY=0.02,
                                      ENTROPY_TYPE=1,
                                      LUMPED_MASS_MATRIX= False ,
                                      FCT=False ,#True,
