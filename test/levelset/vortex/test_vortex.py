@@ -2,7 +2,6 @@
 """
 Test module for level set transport
 """
-from importlib import reload
 from proteus import NumericalSolution
 import os
 import numpy as np
@@ -48,7 +47,6 @@ class TestVortex3D(object):
             
     def test_vortex3D(self,opts,use_strong_constraints=False):
         from proteus import default_s
-        reload(default_s)
         opts.gatherArchive=True
         sList=[]
         if ls_vortex_3d_so.sList == []:

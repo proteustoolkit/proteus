@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import os
 import sys
-from importlib import reload
 from proteus import NumericalSolution, Profiling, default_s
 from proteus import runtime
 import unittest
@@ -40,7 +39,6 @@ class TestMoveMeshMonitor(unittest.TestCase):
         runtime.start()
         opts = runtime.RunOptions()
         from proteus import default_so
-        reload(default_so)
         from . import movemesh_monitor_so
         pList = []
         nList = []
