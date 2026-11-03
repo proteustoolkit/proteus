@@ -460,3 +460,35 @@ SUBDOMAIN_INTERFACE = ('nElements_global nNodes_global nNodes_element nNodes_ele
                        'elementBoundaryLocalElementBoundariesArray interiorElementBoundariesArray '
                        'exteriorElementBoundariesArray edgeNodesArray nodeStarArray nodeStarOffsets '
                        'elementMaterialTypes elementBoundaryMaterialTypes nodeMaterialTypes').split()
+
+
+def _regularMesh(kind):
+    from proteus import MeshTools
+    if kind == 'quad':
+        m = MeshTools.QuadrilateralMesh()
+        m.generateQuadrilateralMeshFromRectangularGrid(7, 5, 1.0, 0.7)
+    else:
+        m = MeshTools.HexahedralMesh()
+        m.generateHexahedralMeshFromRectangularGrid(5, 4, 3, 1.0, 0.7, 1.3)
+    return m
+
+
+@pytest.mark.parametrize('size', [1, 3, 4])
+@pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
+def test_ownership_rules_in_process(kind, size):
+    """elementOwnersFromNodeOwners, elementBoundaryOwnersFromNodeOwners and
+    edgeOwnersFromNodeOwners, called directly: the rules
+    test_partitionNodes_ownership_rules checks on MPI output, here for every
+    element kind, including the quadrilateral and hexahedron branches of the
+    element boundary rule that the stored simplex meshes do not reach."""
+    from proteus import cpartitioning
+    m = _readMesh(kind) if kind in ('tri', 'tet') else _regularMesh(kind)
+    owners = _nodeOwners('scatter', m.nNodes_global, size)
+    elementOwner, boundaryOwner, edgeOwner, old2new = cpartitioning.ownersFromNodeOwners(m.cmesh, owners, size)
+    assert np.array_equal(elementOwner, owners[np.asarray(m.elementNodesArray)].min(axis=1))
+    assert np.array_equal(boundaryOwner, owners[np.asarray(m.elementBoundaryNodesArray)].min(axis=1))
+    edges = np.asarray(m.edgeNodesArray)
+    lower = np.where(old2new[edges[:, 0]] < old2new[edges[:, 1]], edges[:, 0], edges[:, 1])
+    assert np.array_equal(edgeOwner, owners[lower])
+    if size > 1:
+        assert len(set(boundaryOwner.tolist())) > 1

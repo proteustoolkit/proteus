@@ -707,6 +707,134 @@ int partitionElementsOriginal(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, in
   return 0;
 }
 
+/* The ownership rules of partitionNodes, which follow from the owner of every
+   node. Every rank computes them over the whole mesh, so they are the same on
+   every rank and need no communication. Plain C++. An entity no rank reaches
+   is given the owner size. */
+
+//An element belongs to the lowest rank that owns one of its nodes.
+std::vector<int> elementOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size)
+{
+  std::vector<int> elementOwner(mesh.nElements_global,size);
+  for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
+    for (int eN_star_offset = mesh.nodeElementOffsets[nN_global_old];
+         eN_star_offset < mesh.nodeElementOffsets[nN_global_old+1]; eN_star_offset++)
+      lowerOwner(elementOwner,mesh.nodeElementsArray[eN_star_offset],nodeOwner[nN_global_old]);
+  return elementOwner;
+}
+
+//An element boundary belongs to the lowest rank that owns one of its nodes,
+//reached through the elements in the node's star.
+std::vector<int> elementBoundaryOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size)
+{
+  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
+  if (mesh.nNodes_element == 8)
+    {
+
+      int lface[6][4] = {{0,1,2,3},
+                         {0,1,5,4},
+                         {1,2,6,5},
+                         {2,3,7,6},
+                         {3,0,4,7},
+                         {4,5,6,7}};
+
+      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
+        {
+          const int nN_rank = nodeOwner[nN_global_old];
+          //now get elements in node star
+          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
+               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
+            {
+              int eN_star_old = mesh.nodeElementsArray[offset_old];
+
+              //the element boundaries of the element that contain the node
+              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
+                {
+                  bool foundNode = false;
+                  for (int nNl=0; nNl<mesh.nNodes_elementBoundary ;nNl++)
+                    {
+                      int nN_global_old_across = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + lface[ebN][nNl]];
+                      if (nN_global_old_across == nN_global_old) foundNode = true;
+                    }
+                  if (foundNode)
+                    lowerOwner(elementBoundaryOwner,
+                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
+                               nN_rank);
+                }
+
+            }
+        }
+
+    }
+  else if (mesh.nNodes_element == 4 && mesh.nNodes_elementBoundary == 2)
+    {
+      //quadrilateral (a tetrahedron also has four nodes and four boundaries,
+      //but its boundaries have three nodes): edge j joins local nodes j and j+1. The simplex rule below
+      //(every face but the one across from the node) takes an edge to contain the
+      //node when it does not, which gave an edge to a rank that held neither of
+      //its end points -- and so not both of its cells, leaving its row of a
+      //quadratic space incomplete there.
+      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
+        {
+          const int nN_rank = nodeOwner[nN_global_old];
+          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
+               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
+            {
+              int eN_star_old = mesh.nodeElementsArray[offset_old];
+              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
+                {
+                  const int n0 = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + ebN];
+                  const int n1 = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + (ebN+1)%4];
+                  if (n0 == nN_global_old || n1 == nN_global_old)
+                    lowerOwner(elementBoundaryOwner,
+                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
+                               nN_rank);
+                }
+            }
+        }
+    }
+  else
+    {
+      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
+        {
+          const int nN_rank = nodeOwner[nN_global_old];
+          //now get elements in node star
+          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
+               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
+            {
+              int eN_star_old = mesh.nodeElementsArray[offset_old];
+
+              //loop through element boundaries on each element, want but want to skip
+              //the element boundary across from the owned node
+              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
+                {
+                  int nN_global_old_across = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+ebN];
+                  if (nN_global_old_across != nN_global_old)
+                    lowerOwner(elementBoundaryOwner,
+                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
+                               nN_rank);
+                }
+            }
+        }
+    }
+  return elementBoundaryOwner;
+}
+
+//An edge belongs to the owner of its end with the lower new number.
+std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
+                                          const std::vector<int>& nodeNumbering_global_old2new)
+{
+  std::vector<int> edgeOwner(mesh.nEdges_global);
+  for (int ig = 0; ig < mesh.nEdges_global; ig++)
+    {
+      const int nN0_global_old = mesh.edgeNodesArray[2*ig];
+      const int nN1_global_old = mesh.edgeNodesArray[2*ig+1];
+      edgeOwner[ig] = nodeOwner[nodeNumbering_global_old2new[nN0_global_old] < nodeNumbering_global_old2new[nN1_global_old] ?
+                                nN0_global_old : nN1_global_old];
+    }
+  return edgeOwner;
+}
+
 int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_overlap,
                    const int* nodeOwners, const int* nodeWeights)
 {
@@ -896,11 +1024,7 @@ int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
   //   marking the unmarked elements in its owned nodes' stars; the same
   //   traversal over every node, keeping the lowest rank, gives the same owners
   //   with no communication.
-  std::vector<int> elementOwner(mesh.nElements_global,size);
-  for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
-    for (int eN_star_offset = mesh.nodeElementOffsets[nN_global_old];
-         eN_star_offset < mesh.nodeElementOffsets[nN_global_old+1]; eN_star_offset++)
-      lowerOwner(elementOwner,mesh.nodeElementsArray[eN_star_offset],nodeOwner[nN_global_old]);
+  std::vector<int> elementOwner = elementOwnersFromNodeOwners(mesh,nodeOwner,size);
   if (!everyEntityOwned(elementOwner,size,"element"))
     return 1;
   //store owned element numbers (in old numbering)
@@ -940,96 +1064,7 @@ int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
   //of those elements selected below, which can lie on the "outside" of the
   //owned nodes' stars. As for elements, this is the rank-ordered mask chain's
   //rule computed over every node at once.
-  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
-  if (mesh.nNodes_element == 8)
-    {
-
-      int lface[6][4] = {{0,1,2,3},
-                         {0,1,5,4},
-                         {1,2,6,5},
-                         {2,3,7,6},
-                         {3,0,4,7},
-                         {4,5,6,7}};
-
-      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
-        {
-          const int nN_rank = nodeOwner[nN_global_old];
-          //now get elements in node star
-          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
-               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
-            {
-              int eN_star_old = mesh.nodeElementsArray[offset_old];
-
-              //the element boundaries of the element that contain the node
-              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
-                {
-                  bool foundNode = false;
-                  for (int nNl=0; nNl<mesh.nNodes_elementBoundary ;nNl++)
-                    {
-                      int nN_global_old_across = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + lface[ebN][nNl]];
-                      if (nN_global_old_across == nN_global_old) foundNode = true;
-                    }
-                  if (foundNode)
-                    lowerOwner(elementBoundaryOwner,
-                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
-                               nN_rank);
-                }
-
-            }
-        }
-
-    }
-  else if (mesh.nNodes_element == 4 && mesh.nNodes_elementBoundary == 2)
-    {
-      //quadrilateral (a tetrahedron also has four nodes and four boundaries,
-      //but its boundaries have three nodes): edge j joins local nodes j and j+1. The simplex rule below
-      //(every face but the one across from the node) takes an edge to contain the
-      //node when it does not, which gave an edge to a rank that held neither of
-      //its end points -- and so not both of its cells, leaving its row of a
-      //quadratic space incomplete there.
-      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
-        {
-          const int nN_rank = nodeOwner[nN_global_old];
-          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
-               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
-            {
-              int eN_star_old = mesh.nodeElementsArray[offset_old];
-              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
-                {
-                  const int n0 = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + ebN];
-                  const int n1 = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element + (ebN+1)%4];
-                  if (n0 == nN_global_old || n1 == nN_global_old)
-                    lowerOwner(elementBoundaryOwner,
-                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
-                               nN_rank);
-                }
-            }
-        }
-    }
-  else
-    {
-      for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
-        {
-          const int nN_rank = nodeOwner[nN_global_old];
-          //now get elements in node star
-          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
-               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
-            {
-              int eN_star_old = mesh.nodeElementsArray[offset_old];
-
-              //loop through element boundaries on each element, want but want to skip
-              //the element boundary across from the owned node
-              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
-                {
-                  int nN_global_old_across = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+ebN];
-                  if (nN_global_old_across != nN_global_old)
-                    lowerOwner(elementBoundaryOwner,
-                               mesh.elementBoundariesArray[eN_star_old*mesh.nElementBoundaries_element+ebN],
-                               nN_rank);
-                }
-            }
-        }
-    }
+  std::vector<int> elementBoundaryOwner = elementBoundaryOwnersFromNodeOwners(mesh,nodeOwner,size);
   if (!everyEntityOwned(elementBoundaryOwner,size,"element boundary"))
     return 1;
   //Now as with elements and nodes build a global face numbering
@@ -1055,14 +1090,7 @@ int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
   if (timer) timer->mark("element_boundaries");
   //4c,5c. Build global edge numbering as well ownership is determined by who owns the left (0) node
   //    of the edge: the one with the lower new number
-  std::vector<int> edgeOwner(mesh.nEdges_global);
-  for (int ig = 0; ig < mesh.nEdges_global; ig++)
-    {
-      const int nN0_global_old = mesh.edgeNodesArray[2*ig];
-      const int nN1_global_old = mesh.edgeNodesArray[2*ig+1];
-      edgeOwner[ig] = nodeOwner[nodeNumbering_global_old2new[nN0_global_old] < nodeNumbering_global_old2new[nN1_global_old] ?
-                                nN0_global_old : nN1_global_old];
-    }
+  std::vector<int> edgeOwner = edgeOwnersFromNodeOwners(mesh,nodeOwner,nodeNumbering_global_old2new);
   valarray<int> nEdges_subdomain_new, edgeOffsets_new;
   std::vector<int> edgeNumbering_old2new_global, edgeNumbering_global_new2old;
   numberByOwner(edgeOwner,size,nEdges_subdomain_new,edgeOffsets_new,

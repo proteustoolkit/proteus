@@ -36,6 +36,9 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionElements,
                                    c_partitionNodes,
                                    c_partitionNodesLocal,
+                                   c_elementOwnersFromNodeOwners,
+                                   c_elementBoundaryOwnersFromNodeOwners,
+                                   c_edgeOwnersFromNodeOwners,
                                    c_partitionNodesFromTetgenFiles,
                                    c_partitionNodesFromTriangleFiles,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
@@ -165,6 +168,24 @@ def partitionNodesLocal(int rank, int size, int nLayersOfOverlap, cmeshTools.CMe
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, size+1),
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
+
+def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):
+    """partitionNodes' ownership rules on cmesh, given the owner of every node:
+    the owners of the elements, element boundaries and edges, and the node
+    old-to-new numbering the edge rule uses. No MPI. An entity no rank reaches
+    has the owner size."""
+    _requireGlobalMesh(cmesh, "ownersFromNodeOwners")
+    owners = np.ascontiguousarray(nodeOwners, dtype=np.intc)
+    assert owners.shape[0] == cmesh.mesh.nNodes_global, (owners.shape[0], cmesh.mesh.nNodes_global)
+    cdef vector[int] cowners = owners
+    #each rank's owned nodes contiguous, in their old order (numberByOwner)
+    old2new = np.empty(owners.shape[0], dtype=np.intc)
+    old2new[np.argsort(owners, kind='stable')] = np.arange(owners.shape[0], dtype=np.intc)
+    cdef vector[int] cold2new = old2new
+    return (np.array(c_elementOwnersFromNodeOwners(cmesh.mesh, cowners, size), dtype=np.intc),
+            np.array(c_elementBoundaryOwnersFromNodeOwners(cmesh.mesh, cowners, size), dtype=np.intc),
+            np.array(c_edgeOwnersFromNodeOwners(cmesh.mesh, cowners, cold2new), dtype=np.intc),
+            old2new)
 
 CARTESIAN_KINDS = {'quad': 0, 'hex': 1, 'tri': 2, 'tet': 3}
 

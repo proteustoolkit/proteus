@@ -258,6 +258,15 @@ namespace proteus
   extern int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
                                  const std::vector<int>& nodeOwner, StageTimer* timer=NULL);
 
+  /* partitionNodesLocal's ownership rules, given the owner of every node:
+     an element and an element boundary belong to the lowest rank owning one of
+     their nodes, an edge to the owner of its end with the lower new number.
+     Entities no rank reaches get the owner size. */
+  extern std::vector<int> elementOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
+  extern std::vector<int> elementBoundaryOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
+  extern std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
+                                                   const std::vector<int>& nodeNumbering_global_old2new);
+
   extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
