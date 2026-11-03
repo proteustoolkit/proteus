@@ -8453,21 +8453,10 @@ def msh2simplex(fileprefix, nd):
     logEvent('msh2simplex: finished converting .msh to simplex files')
 
 def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
-    try:
-        meshOptions = getMeshOptions(physics.domain)
-        assert(not (meshOptions.genMesh == True and
-                    meshOptions.nn == None and 
-                    meshOptions.nnx  == None and
-                    meshOptions.nny == None and
-                    meshOptions.nnz == None and
-                    meshOptions.triangleOptions == None and
-                    meshOptions.use_plex == False))
-        mlMesh = _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
-    except:
-        meshOptions = numerics
-        meshOptions.genMesh = physics.genMesh
-        mlMesh = _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
-    return mlMesh
+    # Choose the options, then mesh once: retrying with the numerics module
+    # when meshing failed hid the first error behind whatever the retry did.
+    meshOptions = chooseMeshOptions(physics, numerics)
+    return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
 
 def chooseMeshOptions(physics, numerics):
     """The options :func:`generateMesh` meshes with.
