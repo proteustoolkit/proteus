@@ -255,6 +255,19 @@ namespace proteus
   /* The local part of partitionNodes: rank's part of the partition given the
      owner of every node. No MPI, so any rank's subdomain can be computed in one
      process. See partitioning.cpp. */
+  /* The default partition of n entities: contiguous near-equal chunks in input
+     order, as offsets (size+1). Plain C++. */
+  extern std::valarray<int> defaultChunkOffsets(int n, int size);
+
+  /* Rows begin..end-1 of the node graph (each node's sorted star) in CSR form:
+     a rank's slice of what the graph partitioner partitions. Plain C++. */
+  extern void nodeGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+
+  /* MPI and PETSc: every node's owner from MatPartitioning, gathered on every
+     rank. Collective. */
+  extern std::vector<int> graphNodeOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                          const std::valarray<int>& nodeOffsets_old, const int* nodeWeights);
+
   extern int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
                                  const std::vector<int>& nodeOwner, StageTimer* timer=NULL);
 

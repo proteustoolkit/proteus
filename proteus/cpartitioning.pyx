@@ -36,6 +36,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionElements,
                                    c_partitionNodes,
                                    c_partitionNodesLocal,
+                                   c_nodeGraphRows,
                                    c_elementOwnersFromNodeOwners,
                                    c_elementBoundaryOwnersFromNodeOwners,
                                    c_edgeOwnersFromNodeOwners,
@@ -168,6 +169,16 @@ def partitionNodesLocal(int rank, int size, int nLayersOfOverlap, cmeshTools.CMe
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, size+1),
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
+
+def nodeGraphRows(cmeshTools.CMesh cmesh, int begin, int end):
+    """Rows begin..end-1 of the node graph partitionNodes hands the graph
+    partitioner, in CSR form (offsets, neighbors): each node's star, sorted."""
+    _requireGlobalMesh(cmesh, "nodeGraphRows")
+    assert 0 <= begin <= end <= cmesh.mesh.nNodes_global, (begin, end)
+    cdef vector[int] offsets
+    cdef vector[int] neighbors
+    c_nodeGraphRows(cmesh.mesh, begin, end, offsets, neighbors)
+    return np.array(offsets, dtype=np.intc), np.array(neighbors, dtype=np.intc)
 
 def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):
     """partitionNodes' ownership rules on cmesh, given the owner of every node:

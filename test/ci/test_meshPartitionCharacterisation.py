@@ -492,3 +492,22 @@ def test_ownership_rules_in_process(kind, size):
     assert np.array_equal(edgeOwner, owners[lower])
     if size > 1:
         assert len(set(boundaryOwner.tolist())) > 1
+
+
+@pytest.mark.parametrize('size', [1, 2, 4])
+@pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
+def test_graph_partitioner_input_in_process(kind, size):
+    """What graphNodeOwners hands MatPartitioning on each rank: the rows of the
+    node graph for its default chunk, each node's star sorted. With
+    -mat_partitioning_type current the digests cannot see this input (the
+    partition ignores it), so it is checked here against the mesh's node star."""
+    from proteus import cpartitioning
+    m = _readMesh(kind) if kind in ('tri', 'tet') else _regularMesh(kind)
+    n = m.nNodes_global
+    starts = np.cumsum([0] + [n // size + (n % size > r) for r in range(size)])
+    starOffsets, star = np.asarray(m.nodeStarOffsets), np.asarray(m.nodeStarArray)
+    for r in range(size):
+        offsets, neighbors = cpartitioning.nodeGraphRows(m.cmesh, int(starts[r]), int(starts[r + 1]))
+        rows = [np.sort(star[starOffsets[a]:starOffsets[a + 1]]) for a in range(starts[r], starts[r + 1])]
+        assert np.array_equal(offsets, np.cumsum([0] + [len(x) for x in rows]))
+        assert np.array_equal(neighbors, np.concatenate(rows) if rows else np.empty(0, int))

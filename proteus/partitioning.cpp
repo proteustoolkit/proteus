@@ -835,6 +835,96 @@ std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<in
   return edgeOwner;
 }
 
+/* The default partition of n entities among size ranks: contiguous chunks of
+   near-equal size, in input order (the first n%size ranks get one more). */
+std::valarray<int> defaultChunkOffsets(int n, int size)
+{
+  std::valarray<int> offsets(size+1);
+  offsets[0] = 0;
+  for (int sdN=0; sdN < size; sdN++)
+    offsets[sdN+1] = offsets[sdN] + n/size + (n%size > sdN);
+  return offsets;
+}
+
+/* Rows begin..end-1 of the node graph the graph partitioner is given: each
+   node's star (its edge neighbours), sorted, in CSR form. */
+void nodeGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors)
+{
+  offsets.assign(1,0);
+  neighbors.clear();
+  for (int nN_global = begin; nN_global < end; nN_global++)
+    {
+      for (int offset_global = mesh.nodeStarOffsets[nN_global];
+           offset_global < mesh.nodeStarOffsets[nN_global+1]; offset_global++)
+        neighbors.push_back(mesh.nodeStarArray[offset_global]);
+      offsets.push_back(int(neighbors.size()));
+      std::sort(neighbors.begin()+offsets[offsets.size()-2],neighbors.end());
+    }
+}
+
+/* MPI: the owner of every node from the graph partitioner. Each rank hands
+   MatPartitioning its chunk of the default partition (nodeOffsets_old) as
+   rows of the node graph, with the nodes' weights if given, and the answer is
+   gathered so every rank holds every owner. Collective. */
+std::vector<int> graphNodeOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                 const std::valarray<int>& nodeOffsets_old, const int* nodeWeights)
+{
+  using namespace std;
+  int ierr,rank;
+  MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
+  //Determine nodal connectivity on local processor, (local node star array)
+  int nNodes_subdomain = (nodeOffsets_old[rank+1] - nodeOffsets_old[rank]);
+  std::vector<int> rowOffsets, rowNeighbors;
+  nodeGraphRows(mesh,nodeOffsets_old[rank],nodeOffsets_old[rank+1],rowOffsets,rowNeighbors);
+  //MatCreateMPIAdj takes ownership of PetscMalloc'd arrays
+  PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain;
+  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain+1),&nodeNeighborsOffsets_subdomain);
+  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain*mesh.max_nNodeNeighbors_node),&nodeNeighbors_subdomain);
+  for (int nN = 0; nN < nNodes_subdomain+1; nN++)
+    nodeNeighborsOffsets_subdomain[nN] = rowOffsets[nN];
+  for (size_t k = 0; k < rowNeighbors.size(); k++)
+    nodeNeighbors_subdomain[k] = rowNeighbors[k];
+  //Generate new nodal partition using PETSc interface
+  IS nodePartitioningIS_new;
+  Mat petscAdjacency;
+  //   MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+  //              nNodes_subdomain, mesh.nNodes_global,
+  //              &nodeNeighborsOffsets_subdomain[0], &nodeNeighbors_subdomain[0],
+  //              &weights_subdomain[0],//PETSC_NULL,//ignore weighting for now
+  //              &petscAdjacency);
+  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+                         nNodes_subdomain,
+                         mesh.nNodes_global,
+                         nodeNeighborsOffsets_subdomain,
+                         nodeNeighbors_subdomain,
+                         PETSC_NULL,//weights_subdomain,
+                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  MatPartitioning petscPartition;
+  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
+  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
+  MatPartitioningSetFromOptions(petscPartition);
+  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
+  if (nodeWeights != NULL)
+    {
+      /* The caller says what each node costs -- for the coarsest level of a hierarchy, the
+         work of everything below it that will inherit its owner -- so the cut balances
+         that instead of the node count. The array is this rank's slice of the default
+         chunks, and PETSc takes ownership of it. */
+      PetscInt *vertex_weights;
+      ierr = PetscMalloc(sizeof(PetscInt)*nNodes_subdomain,&vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+      for (int nN = 0; nN < nNodes_subdomain; nN++)
+        vertex_weights[nN] = nodeWeights[nodeOffsets_old[rank]+nN];
+      ierr = MatPartitioningSetVertexWeights(petscPartition,vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+    }
+
+  //get petsc index set that has the new subdomain number for each node
+  MatPartitioningApply(petscPartition,&nodePartitioningIS_new);
+  MatPartitioningDestroy(&petscPartition); //gets petscAdjacency too I believe
+  std::vector<int> nodeOwner = gatherPartition(PROTEUS_COMM_WORLD,nodePartitioningIS_new,nodeOffsets_old);
+  ISDestroy(&nodePartitioningIS_new);
+  return nodeOwner;
+}
+
 int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_overlap,
                    const int* nodeOwners, const int* nodeWeights)
 {
@@ -873,14 +963,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
   //compute offsets to build processor (local) to global ordering for nodes
   //in default partitioning
   // printf("rank %d partitionNodes nNodes_global %d\n", rank, mesh.nNodes_global);
-  valarray<int> nodeOffsets_old(size+1);
-  nodeOffsets_old[0] = 0;
-  for (int sdN=0; sdN < size; sdN++)
-    {
-      nodeOffsets_old[sdN+1] = nodeOffsets_old[sdN] +
-        int(mesh.nNodes_global)/size + (int(mesh.nNodes_global)%size > sdN);
-        // printf("rank %d sdN %d nNodes_global %d nodeOffsets_old[%d] = %d\n", rank, sdN, mesh.nNodes_global, sdN+1, nodeOffsets_old[sdN+1]);
-    }
+  valarray<int> nodeOffsets_old = defaultChunkOffsets(mesh.nNodes_global,size);
   //
   //2.-3. The owner of every node: prescribed, or from the graph partitioner
   //
@@ -896,61 +979,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
       nodeOwner = prescribedOwners(PROTEUS_COMM_WORLD,nodeOwners,mesh.nNodes_global,size,"partitionNodes","node");
     }
   else
-    {
-  //Determine nodal connectivity on local processor, (local node star array)
-  int nNodes_subdomain = (nodeOffsets_old[rank+1] - nodeOffsets_old[rank]);
-  PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain;
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain+1),&nodeNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain*mesh.max_nNodeNeighbors_node),&nodeNeighbors_subdomain);
-  nodeNeighborsOffsets_subdomain[0] = 0;
-  for (int nN = 0,offset=0; nN < nNodes_subdomain; nN++)
-    {
-      int nN_global = nodeOffsets_old[rank] + nN;
-      for (int offset_global = mesh.nodeStarOffsets[nN_global];
-           offset_global < mesh.nodeStarOffsets[nN_global+1]; offset_global++)
-        nodeNeighbors_subdomain[offset++] = mesh.nodeStarArray[offset_global];
-      nodeNeighborsOffsets_subdomain[nN+1]=offset;
-      sort(&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]],&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN+1]]);
-    }
-  //Generate new nodal partition using PETSc interface
-  IS nodePartitioningIS_new;
-  Mat petscAdjacency;
-  //   MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-  //              nNodes_subdomain, mesh.nNodes_global,
-  //              &nodeNeighborsOffsets_subdomain[0], &nodeNeighbors_subdomain[0],
-  //              &weights_subdomain[0],//PETSC_NULL,//ignore weighting for now
-  //              &petscAdjacency);
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nNodes_subdomain,
-                         mesh.nNodes_global,
-                         nodeNeighborsOffsets_subdomain,
-                         nodeNeighbors_subdomain,
-                         PETSC_NULL,//weights_subdomain,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  MatPartitioning petscPartition;
-  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
-  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
-  MatPartitioningSetFromOptions(petscPartition);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-  if (nodeWeights != NULL)
-    {
-      /* The caller says what each node costs -- for the coarsest level of a hierarchy, the
-         work of everything below it that will inherit its owner -- so the cut balances
-         that instead of the node count. The array is this rank's slice of the default
-         chunks, and PETSc takes ownership of it. */
-      PetscInt *vertex_weights;
-      ierr = PetscMalloc(sizeof(PetscInt)*nNodes_subdomain,&vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-      for (int nN = 0; nN < nNodes_subdomain; nN++)
-        vertex_weights[nN] = nodeWeights[nodeOffsets_old[rank]+nN];
-      ierr = MatPartitioningSetVertexWeights(petscPartition,vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    }
-
-  //get petsc index set that has the new subdomain number for each node
-  MatPartitioningApply(petscPartition,&nodePartitioningIS_new);
-  MatPartitioningDestroy(&petscPartition); //gets petscAdjacency too I believe
-  nodeOwner = gatherPartition(PROTEUS_COMM_WORLD,nodePartitioningIS_new,nodeOffsets_old);
-  ISDestroy(&nodePartitioningIS_new);
-    }
+    nodeOwner = graphNodeOwners(PROTEUS_COMM_WORLD,mesh,nodeOffsets_old,nodeWeights);
 
   timer.mark("node_owners");
   //4.-8. Everything else follows from the owners without communication
