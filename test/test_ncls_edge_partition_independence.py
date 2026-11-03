@@ -62,5 +62,7 @@ def test_ncls_edge_based_on_two_ranks_is_the_serial_answer(tmp_path, stabilizati
     serial = _field(1, tmp_path / "1", STAB=stabilization, TFINAL=final_time)
     parallel = _field(2, tmp_path / "2", STAB=stabilization, TFINAL=final_time)
     assert numpy.abs(serial - parallel).max() < tolerance
+    # one ghosted vector per model, not one per array scattered
+    assert int(open(os.path.join(str(tmp_path / "2"), "dofvecs.txt")).read()) <= 1
     control = _field(2, tmp_path / "3", NOSCAT=1, STAB=stabilization, TFINAL=final_time)
     assert numpy.abs(serial - control).max() > 1e-4
