@@ -8630,6 +8630,25 @@ def _runMesher(cmd):
                            % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
     return result.stdout
 
+def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
+    """:func:`writeMeshFiles` on rank 0 when ``needed`` there; a failure raises on every rank.
+
+    The other ranks go on to read rank 0's files, so an exception on rank 0
+    alone would leave them waiting for it forever.
+    """
+    failure = None
+    if comm.isMaster() and needed:
+        try:
+            writeMeshFiles(domain, meshOptions)
+        except Exception as error:
+            failure = error
+    message = comm.comm.tompi4py().bcast(
+        None if failure is None else "%s: %s" % (type(failure).__name__, failure), root=0)
+    if failure is not None:
+        raise failure
+    if message is not None:
+        raise RuntimeError("mesh generation failed on rank 0: " + message)
+
 def writeMeshFiles(domain, meshOptions):
     """Run the mesh generator for a PSLG or PLC domain.
 
@@ -9071,14 +9090,13 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
         # run mesher
         if domainMeshOptions.use_gmsh is True:
             fileprefix = domain.geofile
-            if comm.isMaster() and (not (os.path.exists(fileprefix+".ele") and
-                                         os.path.exists(fileprefix+".node") and
-                                         os.path.exists(fileprefix+".edge"))):
-                writeMeshFiles(domain, meshOptions)
+            _writeMeshFilesOnMaster(comm, domain, meshOptions,
+                                    comm.isMaster() and (not (os.path.exists(fileprefix+".ele") and
+                                                              os.path.exists(fileprefix+".node") and
+                                                              os.path.exists(fileprefix+".edge"))))
         else:
             fileprefix = domain.polyfile
-            if comm.isMaster() and meshOptions.genMesh:
-                writeMeshFiles(domain, meshOptions)
+            _writeMeshFilesOnMaster(comm, domain, meshOptions, comm.isMaster() and meshOptions.genMesh)
         comm.barrier()
         assert fileprefix is not None, 'did not find mesh file name'
         # convert mesh to proteus format
@@ -9105,11 +9123,11 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             fileprefix = domain.geofile
         else:
             fileprefix = domain.polyfile
-        if comm.rank() == 0 and (meshOptions.genMesh or (
-                not (os.path.exists(fileprefix+".ele") and
-                     os.path.exists(fileprefix+".node") and
-                     os.path.exists(fileprefix+".face")))):
-            writeMeshFiles(domain, meshOptions)
+        _writeMeshFilesOnMaster(comm, domain, meshOptions,
+                                comm.rank() == 0 and (meshOptions.genMesh or (
+                                    not (os.path.exists(fileprefix+".ele") and
+                                         os.path.exists(fileprefix+".node") and
+                                         os.path.exists(fileprefix+".face")))))
         comm.barrier()
         logEvent("Initializing mesh and MultilevelMesh")
         nbase = 1

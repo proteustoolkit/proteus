@@ -122,3 +122,41 @@ def test_a_missing_mesh_generator_is_an_error(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))       # no triangle here
     with pytest.raises(RuntimeError, match="mesh generator failed with exit status 127"):
         MeshTools.writeMeshFiles(domain, options)
+
+
+RANK0_MESHER_FAILS = '''
+import sys
+from proteus import Comm, Domain, MeshTools
+Comm.init()
+def failing(domain, meshOptions):
+    raise RuntimeError("the mesher failed on rank 0")
+MeshTools.writeMeshFiles = failing
+domain = Domain.PlanarStraightLineGraphDomain(
+    vertices=[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    segments=[[0, 1], [1, 2], [2, 3], [3, 0]], name="box")
+options = MeshTools.MeshOptions(nd=2)
+options.setTriangleOptions("VApq30Dena0.1")
+try:
+    MeshTools._generateMesh(domain, options)
+except RuntimeError as error:
+    print("rank %d raised: %s" % (Comm.get().rank(), error), flush=True)
+    sys.exit(3)
+'''
+
+
+def test_a_mesher_failure_on_rank_0_raises_on_every_rank(tmp_path):
+    """The other ranks wait for rank 0's mesh files; they must not wait forever."""
+    import shutil
+    import subprocess
+    import sys
+    mpiexec = shutil.which("mpiexec")
+    if mpiexec is None:
+        pytest.skip("no mpiexec")
+    script = tmp_path / "rank0_fails.py"
+    script.write_text(RANK0_MESHER_FAILS)
+    env = dict(os.environ, FI_PROVIDER="tcp")
+    out = subprocess.run([mpiexec, "-n", "2", sys.executable, str(script)], cwd=tmp_path,
+                         env=env, capture_output=True, text=True, timeout=300)
+    assert "rank 0 raised: the mesher failed on rank 0" in out.stdout, out.stdout + out.stderr
+    assert "rank 1 raised: mesh generation failed on rank 0: RuntimeError: the mesher failed" \
+        in out.stdout, out.stdout + out.stderr
