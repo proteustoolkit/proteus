@@ -485,11 +485,6 @@ namespace proteus
 											 proteus::pyarray<int> &elementBoundaryElementsArray,
 											 proteus::pyarray<int> &elementBoundaryLocalElementBoundariesArray,
 											 proteus::pyarray<double> &element_u,
-											// Triply-cut correction: -1 if not applicable to this element (see
-											// ADR.py Coefficients.initializeSDF and the comment on
-											// triplyCut_overrideValue in calculateResidual).
-											int triplyCut_maskedLocalNode_eN,
-											double triplyCut_overrideValue_eN,
 											 int eN,
 											 const bool embeddedBoundary,
 											 const double embeddedBoundary_penalty,
@@ -658,17 +653,10 @@ namespace proteus
 					}	
 					
 					
-					// Triply-cut: use the analytic boundary value for the masked node, not its
-					// meaningless raw DOF (see ADR.py Coefficients.initializeSDF); no-op elsewhere.
-					double element_u_ua[nDOF_trial_element];
-					for (int i_tc = 0; i_tc < nDOF_trial_element; i_tc++)
-						element_u_ua[i_tc] = element_u.data()[i_tc];
-					if (triplyCut_maskedLocalNode_eN >= 0)
-						element_u_ua[triplyCut_maskedLocalNode_eN] = triplyCut_overrideValue_eN;
-					ck.valFromElementDOF(element_u_ua, va, ua);
-					ck.gradFromElementDOF(element_u_ua, va_grad_trial, grad_ua);
-					ck.valFromElementDOF(element_u_ua, vb, ub);
-					ck.gradFromElementDOF(element_u_ua, vb_grad_trial, grad_ub);
+					ck.valFromElementDOF(element_u.data(), va, ua);
+					ck.gradFromElementDOF(element_u.data(), va_grad_trial, grad_ua);
+					ck.valFromElementDOF(element_u.data(), vb, ub);
+					ck.gradFromElementDOF(element_u.data(), vb_grad_trial, grad_ub);
 					ck.valFromElementDOF(JA, va, uja);
 					ck.gradFromElementDOF(JA, va_grad_trial, grad_uja);
 					ck.valFromElementDOF(JB, vb, ujb);
@@ -791,10 +779,8 @@ namespace proteus
 							// Robin needs no jump-corrected gradient (no flux term of its own),
 							// but the jump-corrected VALUE still matters: u_infinity was derived
 							// from the exact ua/ub, not from ua+uja's jump-free counterpart.
-							// Deliberately NOT embeddedBoundary_u_inner_q/_outer_q -- those are
-							// also read directly (in ADR.py's initializeSDF) to pin masked
-							// triply-cut DOFs to the true solution, unrelated to Gamma_s's BC
-							// type; reusing them here would silently repoint that pinning too.
+							// Deliberately NOT embeddedBoundary_u_inner_q/_outer_q: those are the
+							// Dirichlet data on Gamma_s, unrelated to the Robin target.
 							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_inner,
 								embeddedBoundary_robin_uInfinity_inner_q.data()[eN_k], ua + uja, r_s_a, dr_s_a, D_s_a);
 							updateEmbeddedBoundaryRobinTerms(embeddedBoundary_robin_h_outer,
@@ -1162,15 +1148,6 @@ namespace proteus
 			int nElements_global = args.scalar<int>("nElements_global");
 			proteus::pyarray<int> &u_l2g = args.array<int>("u_l2g");
 			proteus::pyarray<double> &u_dof = args.array<double>("u_dof");
-			// Triply-cut correction (see ADR.py Coefficients.initializeSDF): for a P1 element
-			// where exactly one local node is solid-interior AND the fluid-fluid interface also
-			// cuts it, that node's raw DOF value is physically meaningless (u_ex is not defined
-			// inside the solid) and corrupts BOTH reconstructed IFEM branches through the coupled
-			// continuity/flux rows in ifemBasisCoefficients_wrapper.h. triplyCut_overrideValue is
-			// the analytically-continued embeddedBoundary_u_inner/_outer formula evaluated at that
-			// node's own coordinates instead. -1 in triplyCut_maskedLocalNode means "not applicable".
-			proteus::pyarray<int> &triplyCut_maskedLocalNode = args.array<int>("triplyCut_maskedLocalNode");
-			proteus::pyarray<double> &triplyCut_overrideValue = args.array<double>("triplyCut_overrideValue");
 			proteus::pyarray<int> &sd_rowptr = args.array<int>("sd_rowptr");
 			proteus::pyarray<int> &sd_colind = args.array<int>("sd_colind");
 			proteus::pyarray<double> &q_a = args.array<double>("q_a");
@@ -1535,8 +1512,6 @@ namespace proteus
 										 elementBoundaryElementsArray,
 										 elementBoundaryLocalElementBoundariesArray,
 										 element_u,
-										triplyCut_maskedLocalNode.data()[eN],
-										triplyCut_overrideValue.data()[eN],
 										 eN,
 										 embeddedBoundary,
 										 embeddedBoundary_penalty,
@@ -1620,12 +1595,7 @@ namespace proteus
 						double cuA[nDOF_trial_element], cuB[nDOF_trial_element];
 						for (int ii = 0; ii < nD; ii++)
 						{
-							// Triply-cut: reuse the same analytic override the ordinary bulk
-							// assembly uses (see ADR.py Coefficients.initializeSDF) instead of a
-							// masked node's meaningless raw DOF.
-							const double u_ii = (triplyCut_maskedLocalNode.data()[eN] == ii)
-													? triplyCut_overrideValue.data()[eN]
-													: u_dof.data()[u_l2g.data()[eN * nD + ii]];
+							const double u_ii = u_dof.data()[u_l2g.data()[eN * nD + ii]];
 							cuA[ii] = u_ii + JA[ii];
 							cuB[ii] = u_ii + JB[ii];
 						}
@@ -1881,12 +1851,6 @@ namespace proteus
 								double gp_eu[nDOF_trial_element], gp_gua[nSpace] = {0., 0.}, gp_gub[nSpace] = {0., 0.};
 								for (int i = 0; i < nDOF_trial_element; i++)
 									gp_eu[i] = u_dof.data()[u_l2g.data()[eN_nDOF_trial_element + i]];
-								// Triply-cut: substitute the analytic boundary value for the masked node's
-								// otherwise-meaningless raw DOF, matching element_u_ua's own override (~line
-								// 691-695); no-op elsewhere.
-								const int gp_masked = triplyCut_maskedLocalNode.data()[eN];
-								if (gp_masked >= 0)
-									gp_eu[gp_masked] = triplyCut_overrideValue.data()[eN];
 								ck.gradFromElementDOF(gp_eu, gp_va_grad, gp_gua);
 								ck.gradFromElementDOF(gp_eu, gp_vb_grad, gp_gub);
 								// Add the jump-lift gradient (grad_uja/grad_ujb): the ghost penalty must
@@ -3344,9 +3308,7 @@ namespace proteus
 									const double vA = gf_f_tc.VA(jj), vB = gf_f_tc.VB(jj);
 									for (int kk = 0; kk < nD; kk++)
 									{
-										// JA/JB need no Jacobian term: fixed data, not a function of u_dof. Does not
-										// account for the masked-node override (calculateJacobian has no
-										// triplyCut_maskedLocalNode); unused with triplyCut_pinMaskedDofs=False.
+										// JA/JB need no Jacobian term: fixed data, not a function of u_dof.
 										const double fA_k = mua * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
 										const double fB_k = mub * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
 										const int eN_jj_kk = eN_jj * nDOF_trial_element + kk;

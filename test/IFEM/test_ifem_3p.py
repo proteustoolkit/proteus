@@ -17,8 +17,8 @@ settings (paper=True in the driver; qOrder 6 for p=1, 8 for p=2):
     table4      test=3.0, Robin on Gamma_s, refinement=1     (Table 4)
     exact       test=1.0, piecewise-linear solution, refinement=1
 
-plus table1 with paper=False, which keeps the earlier driver defaults (masked-DOF pinning on,
-no SCIFEM terms) under test.
+plus table1 with paper=False, which keeps the earlier driver defaults (no SCIFEM terms, the
+one-sided edge correction on every Gamma_f-cut edge) under test.
 
 To regenerate the saved values after an intentional change, from the repository root:
 
@@ -121,12 +121,10 @@ def _coefficients():
 def test_triply_cut_options_default():
     """Without arguments the triply-cut choices are the pre-option behaviour."""
     c = _coefficients()
-    assert (c.triplyCut_pinMaskedDofs, c.triplyCut_edgeFluidSide, c.triplyCut_edgeBoundaryOnly) \
-        == (True, False, False)
+    assert (c.triplyCut_edgeFluidSide, c.triplyCut_edgeBoundaryOnly) == (False, False)
 
 
 @pytest.mark.parametrize("env,value,attr,expected", [
-    ("ADR_DISABLE_TC", "1", "triplyCut_pinMaskedDofs", False),
     ("ADR_TC_EDGE_FLUID", "1", "triplyCut_edgeFluidSide", True),
     ("ADR_TC_EDGE_BOUNDARY_ONLY", "1", "triplyCut_edgeBoundaryOnly", True),
 ])

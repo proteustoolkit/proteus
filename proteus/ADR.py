@@ -144,7 +144,6 @@ class Coefficients(TC_base):
                  immersedBoundary_fluxJumpVector=None,
                  immersedBoundary_solutionJump=None,
                  immersedBoundary_fluxJumpLift=True,
-                 triplyCut_pinMaskedDofs=True,
                  triplyCut_edgeFluidSide=False,
                  triplyCut_edgeBoundaryOnly=False,
                  analyticalSolution=None,
@@ -173,12 +172,8 @@ class Coefficients(TC_base):
         # needs no consistency/symmetry/penalty construction, only a single reaction-like term
         # (see updateEmbeddedBoundaryRobinTerms in ADR.h).
         #
-        # u_infinity gets its OWN fields (embeddedBoundary_robin_uInfinity*), deliberately not
-        # reusing embeddedBoundary_u/_u_inner/_u_outer: those are also read directly, by name,
-        # in initializeSDF below to pin a masked triply-cut node's raw DOF to the TRUE exact
-        # solution there -- a mechanism with nothing to do with Gamma_s's boundary condition
-        # type. Reusing them for u_infinity would silently repoint that unrelated pinning at
-        # the wrong value whenever Robin is on.
+        # u_infinity gets its own fields (embeddedBoundary_robin_uInfinity*), separate from the
+        # Dirichlet data embeddedBoundary_u/_u_inner/_u_outer.
         #
         # h itself is taken as a phase constant (the physically standard treatment of a
         # convective coefficient), not a spatially varying field: embeddedBoundary_robin_h_inner
@@ -193,8 +188,7 @@ class Coefficients(TC_base):
             if embeddedBoundary_robin_h_inner is not None else embeddedBoundary_robin_h)
         self.embeddedBoundary_robin_h_outer = (embeddedBoundary_robin_h_outer
             if embeddedBoundary_robin_h_outer is not None else embeddedBoundary_robin_h)
-        # No single "generic" uInfinity: unlike embeddedBoundary_u (whose masked-DOF role
-        # forces a value everywhere), a Robin target is only ever consumed per-phase -- via
+        # No single "generic" uInfinity: a Robin target is only ever consumed per-phase -- via
         # D_s_a/D_s_b on a triply-cut element, via icase_f's sign otherwise -- exactly like
         # h_inner/h_outer above, so there is nothing for a combined field to do.
         self.embeddedBoundary_robin_uInfinity_inner = embeddedBoundary_robin_uInfinity_inner
@@ -217,24 +211,19 @@ class Coefficients(TC_base):
         # All default to zero, i.e. a continuous interface with continuous flux.
         self.immersedBoundary_fluxJump=immersedBoundary_fluxJump
         # Triply-cut cells (both embeddedBoundary and immersedBoundary on; Gamma_s meets Gamma_f inside
-        # the cell). Three choices, formerly the environment variables ADR_DISABLE_TC, ADR_TC_EDGE_FLUID
-        # and ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (False, True, True)
-        # together with immersedSCIFEM_switch=1.
-        #   triplyCut_pinMaskedDofs: pin the raw DOF of a solid-side node of a cut P1 cell to the exact
-        #     solution of its phase (embeddedBoundary_u_inner/_outer) through forceStrongDirichlet.
+        # the cell). Two choices, formerly the environment variables ADR_TC_EDGE_FLUID and
+        # ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (True, True) together
+        # with immersedSCIFEM_switch=1.
         #   triplyCut_edgeFluidSide: take the one-sided Gamma_f edge correction from the fluid side
         #     (flips its sign in residual and Jacobian).
         #   triplyCut_edgeBoundaryOnly: keep that correction only on exterior edges; SCIFEM's two-sided
         #     consistency term handles the interior ones.
         # The old environment variables still work and override these arguments, with a warning.
-        self.triplyCut_pinMaskedDofs = bool(triplyCut_pinMaskedDofs)
         self.triplyCut_edgeFluidSide = bool(triplyCut_edgeFluidSide)
         self.triplyCut_edgeBoundaryOnly = bool(triplyCut_edgeBoundaryOnly)
-        for _env, _attr, _val in (("ADR_DISABLE_TC", "triplyCut_pinMaskedDofs", False),
-                                  ("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
+        for _env, _attr, _val in (("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
                                   ("ADR_TC_EDGE_BOUNDARY_ONLY", "triplyCut_edgeBoundaryOnly", True)):
-            # ADR_DISABLE_TC acted only when set to '1'; the other two acted when set at all
-            if (os.environ.get(_env) == '1') if _env == "ADR_DISABLE_TC" else (_env in os.environ):
+            if _env in os.environ:
                 warnings.warn("ADR: environment variable {0} is deprecated; pass {1}={2} to "
                               "ADR.Coefficients instead".format(_env, _attr, _val), DeprecationWarning)
                 setattr(self, _attr, _val)
@@ -343,40 +332,6 @@ class Coefficients(TC_base):
                     n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
                     J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
                 self.immersedBoundary_fluxJump_element[eN] = J
-        # Triply-cut (P1 only): a masked node's raw DOF is physically undefined (u_ex isn't
-        # defined inside the solid), but gf_f's two-sided basis reads it directly regardless.
-        # Fix: substitute the analytic embeddedBoundary_u_inner/_outer value at that node's
-        # coordinates. triplyCut_maskedLocalNode/overrideValue record one masked node per
-        # element for the historical residual-only patch in ADR.h; the real fix, for one or
-        # two masked nodes, is triplyCut_globalDofOverrides, pinned via forceStrongDirichlet.
-        nElements = femSpace.mesh.elementNodesArray.shape[0]
-        self.triplyCut_maskedLocalNode = -np.ones((nElements,),'i')
-        self.triplyCut_overrideValue = np.zeros((nElements,),'d')
-        self.triplyCut_globalDofOverrides = {}
-        if (self.embeddedBoundary and self.immersedBoundary and femSpace.max_nDOF_element == 3
-                and self.embeddedBoundary_u_inner is not None
-                and self.embeddedBoundary_u_outer is not None
-                and self.triplyCut_pinMaskedDofs):
-            l2g = femSpace.dofMap.l2g
-            for eN in range(nElements):
-                local_g = l2g[eN,:3]
-                local_phi_s = self.embeddedBoundary_sdf_nodes[local_g]
-                masked = np.where(local_phi_s < 0.0)[0]
-                _allowed = (1,) if os.environ.get('ADR_TC_G1_ONLY') == '1' else (1, 2)
-                if len(masked) not in _allowed:
-                    continue  # fully solid, fully fluid, or (never for P1) all 3 masked
-                self.triplyCut_maskedLocalNode[eN] = int(masked[0])
-                for m in masked:
-                    m = int(m)
-                    gN = int(local_g[m])
-                    xN = nodeArray[gN]
-                    if self.immersedBoundary_sdf_nodes[gN] < 0.0:
-                        override = self.embeddedBoundary_u_inner(t=0.0,x=xN)
-                    else:
-                        override = self.embeddedBoundary_u_outer(t=0.0,x=xN)
-                    if m == self.triplyCut_maskedLocalNode[eN]:
-                        self.triplyCut_overrideValue[eN] = override
-                    self.triplyCut_globalDofOverrides[gN] = override
     def initializeElementQuadrature(self,t,cq):
         nd = self.nd
         for ci in range(self.nc):
@@ -868,17 +823,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #cek/ido todo replace python loops in modules with optimized code if possible/necessary
         self.forceStrongConditions=coefficients.forceStrongDirichlet
         self.dirichletConditionsForceDOF = DOFBoundaryConditions(self.u[0].femSpace,dofBoundaryConditionsSetterDict[0],weakDirichletConditions=False)
-        # Triply-cut: pin masked global DOFs via strong-Dirichlet, not just the residual-side
-        # ADR.h patch (which alone left the Jacobian inconsistent and broke Newton). Covers
-        # every masked node (one or two per element), deduplicated by global DOF.
-        if getattr(coefficients, 'triplyCut_globalDofOverrides', None) and self.forceStrongConditions:
-            _nForced = 0
-            for dofN, v in coefficients.triplyCut_globalDofOverrides.items():
-                if dofN in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict:
-                    continue  # already forced by an exterior boundary condition (Section 7's coincidence)
-                self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict[dofN] = (lambda x, t, _v=v: _v)
-                self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN] = self.mesh.nodeArray[dofN]
-                _nForced += 1
         compKernelFlag = 0
         self.adr = cADR_base(self.nSpace_global,
                                self.nQuadraturePoints_element,
@@ -969,8 +913,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["u_dof"] = self.u[0].dof
-        argsDict["triplyCut_maskedLocalNode"] = self.coefficients.triplyCut_maskedLocalNode
-        argsDict["triplyCut_overrideValue"] = self.coefficients.triplyCut_overrideValue
         argsDict["sd_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         argsDict["sd_colind"] = self.coefficients.sdInfo[(0,0)][1]
         argsDict["q_a"] = self.q[('a',0,0)]
@@ -1058,8 +1000,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # everywhere -- every bulk/Nitsche/immersed term in every such element is
         # multiplied by one of those, so an inactive DOF's own value is never read by
         # anything the solve actually uses. Leave it alone instead of zeroing it: a
-        # DOF that also carries an exterior Dirichlet condition (or, once masked,
-        # a forced continuation value) should keep that value, not get stomped back
+        # DOF that also carries an exterior Dirichlet condition should keep that value, not get stomped back
         # to 0 after this call already used it correctly to build the residual above.
         r*=self.isActiveDOF
         log("2 error = {0}".format(self.L2_error**0.5),level=3)
