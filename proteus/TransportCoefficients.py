@@ -252,6 +252,31 @@ class TC_base(object):
         Give the TC object an opportunity to modify itself before the time step.
         """
         return {}
+    def deferWrite(self, f, text):
+        """Write text to the open file f once the system step is accepted.
+
+        postStep runs when a model finishes its part of a system step, before the step as a whole is known to
+        succeed; a history row written there for an attempt that later fails and is retried would stay in the file.
+        NumericalSolution calls systemStepAccepted() when the step is taken and systemStepDiscarded() before a retry.
+        """
+        self.__dict__.setdefault('_deferredWrites', []).append((f, text))
+
+    def systemStepAccepted(self):
+        """Write the rows deferWrite queued for the step just taken, and flush their files."""
+        rows = self.__dict__.pop('_deferredWrites', None)
+        if rows:
+            files = []
+            for f, text in rows:
+                f.write(text)
+                if not any(f is g for g in files):
+                    files.append(f)
+            for f in files:
+                f.flush()
+
+    def systemStepDiscarded(self):
+        """Drop the rows deferWrite queued for an attempt that failed."""
+        self.__dict__.pop('_deferredWrites', None)
+
     def postStep(self,t,firstStep=False):
         """
         Give the TC object an opportunity to modify itself after the time step.

@@ -187,6 +187,32 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         copyInstructions = {}
         return copyInstructions
 
+    #: what postStep leaves for the next step: the previous solution and velocity, the lagged norm factor and the
+    #: interface locator copied for output. A failed system step that is retried after this model's postStep ran
+    #: must start from the values before it (NumericalSolution.restoreSystemStepState).
+    _state_model_arrays = ("u_dof_old", "quantDOFs")
+
+    def state(self):
+        m = getattr(self, "model", None)
+        if m is None or not hasattr(m, "u_dof_old") or not hasattr(self, "q_v_old"):
+            return None
+        st = {name: getattr(m, name).copy() for name in self._state_model_arrays if hasattr(m, name)}
+        st["q_v_old"] = self.q_v_old.copy()
+        nf = m.norm_factor_lagged
+        st["norm_factor_lagged"] = float(nf) if np.ndim(nf) == 0 else np.array(nf, copy=True)
+        return st
+
+    def set_state(self, state):
+        m = self.model
+        for name in self._state_model_arrays:
+            if name in state and hasattr(m, name):
+                getattr(m, name)[:] = state[name]
+        if "q_v_old" in state:
+            self.q_v_old[:] = state["q_v_old"]
+        if "norm_factor_lagged" in state:
+            nf = state["norm_factor_lagged"]
+            m.norm_factor_lagged = float(nf) if np.ndim(nf) == 0 else np.array(nf, copy=True)
+
     def postStep(self,t,firstStep=False):
         self.model.quantDOFs[:] = self.model.interface_locator
         # SAVE OLD SOLUTION #
