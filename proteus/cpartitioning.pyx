@@ -56,11 +56,23 @@ cdef object _indexArray(mesh.proteus_index_t* p, mesh.proteus_index_t n):
         return np.empty(0, dtype=INDEX_DTYPE)
     return np.asarray(<mesh.proteus_index_t[:n]> p)
 
+cdef _requireGlobalMesh(cmeshTools.CMesh cmesh, object caller):
+    """A global mesh with nothing in it is not a partitioning problem but a mesh
+    that was never built: the Triangle and TetGen readers report a file they
+    cannot open and return an empty mesh, which happens when the mesher did not
+    run (an environment whose bin/ is not on PATH has no ``triangle``). Say so
+    here instead of failing on the first owner of no nodes (IndexError)."""
+    if cmesh.mesh.nNodes_global == 0 or cmesh.mesh.nElements_global == 0:
+        raise ValueError("%s: the global mesh is empty (%d nodes, %d elements). Was it generated? "
+                         "A mesh read from files the mesher never wrote is empty."
+                         % (caller, cmesh.mesh.nNodes_global, cmesh.mesh.nElements_global))
+
 def partitionElements(Comm comm, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmeshTools.CMesh subdomain_cmesh,
                       object elementOwners=None):
     """Partition by elements. elementOwners, if given, is an int array with the
     rank that owns each element (in the mesh's current numbering) and replaces
     the graph partitioner -- see MultilevelMesh.partitionLevels."""
+    _requireGlobalMesh(cmesh, "partitionElements")
     #only the graph partitioner needs the PETSc C library, which petsc4py would
     #have initialized; given the owners this partitions without PETSc
     if elementOwners is None:
@@ -92,6 +104,7 @@ def partitionNodes(Comm comm, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmes
     """Partition by nodes. nodeOwners, if given, is an int array with the rank
     that owns each node (in the mesh's current numbering) and replaces the
     graph partitioner -- see MultilevelMesh.partitionLevels."""
+    _requireGlobalMesh(cmesh, "partitionNodes")
     #only the graph partitioner needs the PETSc C library, which petsc4py would
     #have initialized; given the owners this partitions without PETSc
     if nodeOwners is None:
