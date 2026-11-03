@@ -68,12 +68,20 @@ namespace proteus
     std::valarray<double> Rpos, Rneg;
     std::valarray<double> FluxCorrectionMatrix;
     std::valarray<double> TransportMatrix, DiffusionMatrix, TransposeTransportMatrix;
+    // USE_EDGE_VELOCITY: A_ij = int w_j (rho v).grad(w_i) and its transpose A_ji,
+    // assembled from the flow model's edge velocity; edgeFlux = A - A^T
+    std::valarray<double> AdvectionMatrix, TransposeAdvectionMatrix;
     std::valarray<double> psi, eta, global_entropy_residual, boundary_integral;
     std::valarray<double> m_dof, theta_dof_proj, rho_dof_proj, ML_mass_proj;
     // SCHEME B: boundary flux of the FLUID mass, the counterpart of
     // boundary_integral (which carries the solute).  Advective only -- physical
     // dispersion moves solute relative to the fluid, it does not move fluid.
     std::valarray<double> boundary_integral_fluid;
+    // FLOW-MODEL FLUXES: per node, the boundary concentration that inflowing
+    // water carries -- the dS-weighted average of this model's Dirichlet value
+    // over the node's Dirichlet faces (cin_den = 0: no Dirichlet face, the water
+    // enters with the node's own c).
+    std::valarray<double> cin_num, cin_den;
     std::valarray<double> maxVel,maxEntRes;
     virtual ~TADR_base(){}
     virtual void calculateResidual(arguments_dict& args)=0;
@@ -491,6 +499,11 @@ inline
       xt::pyarray<double>& q_porosity_old = args.array<double>("q_porosity_old");
       xt::pyarray<double>& q_rho = args.array<double>("q_rho");
       xt::pyarray<double>& q_rho_old = args.array<double>("q_rho_old");
+      // OUT: viscosity ratio mu/mu_0 at the quadrature points, for the flow model,
+      // exported the same way as q_rho.  omega_max maps u to the solute mass
+      // fraction omega = omega_max*u; 0 gives mu/mu_0 = 1 exactly.
+      xt::pyarray<double>& q_mu = args.array<double>("q_mu");
+      const double omega_max = args.scalar<double>("omega_max");
 
       xt::pyarray<double>& q_r = args.array<double>("q_r");
       const double alpha_L = args.scalar<double>("alpha_L");
@@ -529,7 +542,8 @@ inline
       xt::pyarray<double>& ebqe_bc_diffusiveFlux_u_ext = args.array<double>("ebqe_bc_diffusiveFlux_u_ext");
       xt::pyarray<double>& ebqe_porosity = args.array<double>("ebqe_porosity");
       xt::pyarray<double>& ebqe_rho = args.array<double>("ebqe_rho");
-      
+      xt::pyarray<double>& ebqe_mu = args.array<double>("ebqe_mu");
+
       double epsFact = args.scalar<double>("epsFact");
       xt::pyarray<double>& ebqe_u = args.array<double>("ebqe_u");
       xt::pyarray<double>& ebqe_flux = args.array<double>("ebqe_flux");
@@ -617,6 +631,30 @@ inline
       // OUT (ImplicitEV only): rho(c_i) at the current iterate, for the flow
       // model's nodal density.  invert() overwrites it with rho of the limited c.
       xt::pyarray<double>& rho_nodal = args.array<double>("rho_nodal");
+      // FLOW-MODEL FLUXES (ImplicitEV, USE_EDGE_FLUX=1): the water the flow model
+      // actually moved in this step, as rates.  edgeFlux[ij] is the mass flux into
+      // row i from column j (antisymmetric), nodalBoundaryFlux[i] the rest of
+      // node i's storage change (boundary exchange + the flow model's Newton
+      // residual).  They REPLACE this model's own advection operator, so the fluid
+      // balance the cancelled form assumes is the flow model's, exactly.
+      xt::pyarray<double>& edgeFlux = args.array<double>("edgeFlux");
+      xt::pyarray<double>& nodalBoundaryFlux = args.array<double>("nodalBoundaryFlux");
+      const int USE_EDGE_FLUX = args.scalar<int>("USE_EDGE_FLUX");
+      // EDGE VELOCITY (USE_EDGE_FLUX=1 only): edgeFlux is not read but WRITTEN here,
+      // F_ij = A_ij - A_ji with A_ij = int w_j (rho v).grad(w_i), v the flow model's
+      // edge velocity (q_v) and rho = q_rho_flow, the density that velocity was
+      // divided by.  sum_j A_ji = 0, so sum_j F_ij = int rho v.grad(w_i), which the
+      // flow model built to equal its realized edge-flux row sum.  The symmetric
+      // part of A is fluid storage, supplied by the carried M instead.
+      // nodalBoundaryFlux is written too: B_i = ML_i (M_low_i - M_dof_i)/dt - sum_j F_ij.
+      const int USE_EDGE_VELOCITY = args.scalar<int>("USE_EDGE_VELOCITY");
+      xt::pyarray<double>& q_rho_flow = args.array<double>("q_rho_flow");
+      // IN (USE_EDGE_FLUX only): nodal source of the CANCELLED form [mass/(volume
+      // time)], added to row i as ML_i*nodalSource_i (lumped).  For a conservative
+      // solute source f_s this is f_s - c*f_w: the flow model's water source f_w
+      // reaches this model through B_i with the node's own c and cancels.  Zero
+      // unless the deck passes Coefficients(mms_source=...).
+      xt::pyarray<double>& nodalSource = args.array<double>("nodalSource");
       // Richards' NODAL theta(psi^n).  Zero => no flow model.  Under ImplicitEV
       // it no longer recovers rho from M_dof: M_dof is Richards' old-time mass
       // theta(psi^n)*rho(c^{n-1}) (the mass its previous step produced), not
@@ -701,6 +739,8 @@ inline
           TransportMatrix.resize(NNZ,0.0);
           DiffusionMatrix.resize(NNZ,0.0);
           TransposeTransportMatrix.resize(NNZ,0.0);
+          AdvectionMatrix.resize(USE_EDGE_VELOCITY ? NNZ : 0, 0.0);
+          TransposeAdvectionMatrix.resize(USE_EDGE_VELOCITY ? NNZ : 0, 0.0);
           m_dof.resize(numDOFs,0.0);
           theta_dof_proj.resize(numDOFs,0.0);
           rho_dof_proj.resize(numDOFs,0.0);
@@ -802,6 +842,10 @@ inline
           boundary_integral.resize(numDOFs,0.0);
           boundary_integral_fluid.resize(numDOFs,0.0);
           boundary_integral_fluid = 0.0;
+          cin_num.resize(numDOFs,0.0);
+          cin_num = 0.0;
+          cin_den.resize(numDOFs,0.0);
+          cin_den = 0.0;
           for (int i=0; i<numDOFs; i++)
             {
               // NODAL ENTROPY //
@@ -839,6 +883,8 @@ inline
           double  elementTransport[nDOF_test_element][nDOF_trial_element];
           double  elementDiffusion[nDOF_test_element][nDOF_trial_element];
           double  elementTransposeTransport[nDOF_test_element][nDOF_trial_element];
+          double  elementAdvection[nDOF_test_element][nDOF_trial_element];
+          double  elementTransposeAdvection[nDOF_test_element][nDOF_trial_element];
           for (int i=0;i<nDOF_test_element;i++)
             {
               elementResidual_u[i]=0.0;
@@ -856,6 +902,8 @@ inline
                       elementTransport[i][j]=0.0;
                       elementDiffusion[i][j]=0.0;
                       elementTransposeTransport[i][j]=0.0;
+                      elementAdvection[i][j]=0.0;
+                      elementTransposeAdvection[i][j]=0.0;
                     }
                 }
             }
@@ -972,6 +1020,10 @@ inline
                                    a,
                                    da);
               q_rho.data()[eN_k] = rho_out;
+              // mu/mu_0 = 1 + 1.85 w - 4.1 w^2 + 44.5 w^3, Eq. (9) of Guevara
+              // Morel and Graf (2023) after Holzbecher (1998), w = omega_max*u
+              const double omega_k = omega_max*u;
+              q_mu.data()[eN_k] = 1.0 + omega_k*(1.85 + omega_k*(-4.1 + omega_k*44.5));
 
               evaluateCoefficients(a_rowptr.data(),
 				                           a_colind.data(),
@@ -1239,10 +1291,47 @@ inline
                       double a_w[nnz];
                       for (int ii=0; ii<a_rowptr.data()[nSpace]; ii++)
                         a_w[ii] = (implicit_ev ? a[ii] : an[ii])/dwdu_k;
+                      // FLOW-MODEL FLUXES: advection comes from the flow model's
+                      // edge fluxes in the edge loop, so the element matrix is
+                      // the DISPERSION alone, acting on c with a = theta*rho*D
+                      // (no w, no dw/du rescaling) -- and it never touches the
+                      // fluid, which only the flow model's fluxes move.
+                      const bool edge_flux = implicit_ev && USE_EDGE_FLUX;
                       for(int j=0;j<nDOF_trial_element;j++)
                         {
                           int j_nSpace = j*nSpace;
                           int i_nSpace = i*nSpace;
+                          if (edge_flux)
+                            {
+                              const double Dij = ck.SimpleDiffusionJacobian_weak(a_rowptr.data(),
+                                                                                 a_colind.data(),
+                                                                                 a,
+                                                                                 &u_grad_trial[j_nSpace],
+                                                                                 &u_grad_test_dV[i_nSpace]);
+                              elementTransport[i][j] += Dij;
+                              elementTransposeTransport[i][j] += Dij;
+                              elementDiffusion[i][j] += ck.NumericalDiffusionJacobian(physicalDiffusion/dwdu_k,
+                                                                                      &u_grad_trial[j_nSpace],
+                                                                                      &u_grad_test_dV[i_nSpace]);
+                              if (USE_EDGE_VELOCITY)
+                                {
+                                  // mass flux of the flow model's edge velocity at
+                                  // this quadrature point; AdvectionJacobian_weak
+                                  // returns -w (q.grad(w_test)) dV, hence the -=
+                                  double q_flow[nSpace];
+                                  for (int I=0;I<nSpace;I++)
+                                    q_flow[I] = q_rho_flow.data()[eN_k]*adv_df[I];
+                                  elementAdvection[i][j] -=
+                                    ck.AdvectionJacobian_weak(q_flow,
+                                                              u_trial_ref.data()[k*nDOF_trial_element+j],
+                                                              &u_grad_test_dV[i_nSpace]);
+                                  elementTransposeAdvection[i][j] -=
+                                    ck.AdvectionJacobian_weak(q_flow,
+                                                              u_trial_ref.data()[k*nDOF_trial_element+i],
+                                                              &u_grad_test_dV[j_nSpace]);
+                                }
+                              continue;
+                            }
                           elementTransport[i][j] +=
                             ck.AdvectionJacobian_weak(adv_df,
                                                       u_trial_ref.data()[k*nDOF_trial_element+j],
@@ -1320,6 +1409,13 @@ inline
                       TransposeTransportMatrix[csrRowIndeces_CellLoops.data()[eN_i] +
                                                csrColumnOffsets_CellLoops.data()[eN_i_j]]
                         += elementTransposeTransport[i][j];
+                      if (USE_EDGE_VELOCITY)
+                        {
+                          AdvectionMatrix[csrRowIndeces_CellLoops.data()[eN_i] +
+                                          csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementAdvection[i][j];
+                          TransposeAdvectionMatrix[csrRowIndeces_CellLoops.data()[eN_i] +
+                                                   csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementTransposeAdvection[i][j];
+                        }
                     }//j
                 }//edge-based
             }//i
@@ -1504,6 +1600,9 @@ inline
                                    a_ext,
                                    da_ext);
               ebqe_rho.data()[ebNE_kb] = rho_out_ext;
+              // Eq. (9), as for q_mu
+              const double omega_ext = omega_max*u_ext;
+              ebqe_mu.data()[ebNE_kb] = 1.0 + omega_ext*(1.85 + omega_ext*(-4.1 + omega_ext*44.5));
               
               evaluateCoefficients(a_rowptr.data(),
 				                           a_colind.data(),
@@ -1691,7 +1790,31 @@ inline
                       STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                     elementResidual_fluid[i] +=
                       ck.ExteriorElementBoundaryFlux(flux_fluid_ext, u_test_dS[i]);
-                  if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                  if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV && USE_EDGE_FLUX)
+                      {
+                    // FLOW-MODEL FLUXES: the advective boundary exchange is the
+                    // flow model's nodalBoundaryFlux (edge loop), so only the
+                    // DISPERSIVE flux and its adjoint stay here, both on c.
+                    elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(flux_diff_ext,u_test_dS[i])+
+                                            ck.ExteriorElementBoundaryDiffusionAdjoint(isDOFBoundary_u.data()[ebNE_kb],
+                                                                                            isDiffusiveFluxBoundary_u.data()[ebNE_kb],
+                                                                                            eb_adjoint_sigma,
+                                                                                            u_ext,
+                                                                                            bc_u_ext,
+                                                                                            normal,
+                                                                                            a_rowptr.data(),
+                                                                                            a_colind.data(),
+                                                                                            a_ext,
+                                                                                            &u_grad_test_dS[i*nSpace]);
+                    // the concentration inflowing water carries at this node
+                    if (isDOFBoundary_u.data()[ebNE_kb] == 1)
+                      {
+                        const int gi_b = u_l2g.data()[eN*nDOF_test_element+i];
+                        cin_num[gi_b] += bc_u_ext*u_test_dS[i];
+                        cin_den[gi_b] += u_test_dS[i];
+                      }
+                      }
+                  else if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                       {
                     // ImplicitEV also transports the group variable, so its
                     // boundary_integral must be the adjoint of the w-operator
@@ -2386,6 +2509,44 @@ inline
                   // below use this ONE density, which is what the cancellation
                   // needs.
                   const double rhoj    = rho_dof_proj[j];
+                  if (USE_EDGE_FLUX)
+                    {
+                      // FLOW-MODEL FLUXES: K_ij = A_ij + D_ij with A_ij = -F_ij/2,
+                      // F the flow model's mass flux into i from j (F_ji = -F_ij,
+                      // so A_ji = +F_ij/2), and D the dispersion on c assembled in
+                      // the element loop.  F is already a mass flux, so there is
+                      // no rho_j factor.  The same graph viscosity then gives
+                      // gamma_ij = max(F_ij,0) + (dispersion part): upwinding on
+                      // the flow model's own fluxes.
+                      if (i != j)
+                        {
+                          const double cj      = u_dof.data()[j];
+                          const double Fij     = USE_EDGE_VELOCITY
+                            ? AdvectionMatrix[ij] - TransposeAdvectionMatrix[ij]
+                            : edgeFlux.data()[ij];
+                          // calculateJacobian reads the flux the residual applied
+                          if (USE_EDGE_VELOCITY)
+                            edgeFlux.data()[ij] = Fij;
+                          const double Kij     = -0.5*Fij + TransportMatrix[ij] + DiffusionMatrix[ij];
+                          const double Kji     =  0.5*Fij + TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
+                          const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
+                          const double gamma   = dLow_ij - Kij;     // >= 0 by construction
+                          ith_upwind_flux_term_mass += -gamma*(cj - ci);
+                          ith_flux_term_fluid       -= Fij;
+                          dLow.data()[ij] = dLow_ij;
+                          dt_times_dH_minus_dL.data()[ij] = dt*(0.0 - dLow_ij);
+                        }
+                      else
+                        {
+                          dLow.data()[ij] = 0.0;
+                          dt_times_dH_minus_dL.data()[ij] = 0.0;
+                          // A_ii - A_ii
+                          if (USE_EDGE_VELOCITY)
+                            edgeFlux.data()[ij] = 0.0;
+                        }
+                      ij += 1;
+                      continue;
+                    }
                   // Fluid flux, assembled EXACTLY as the explicit branch does it:
                   // K over every j (diagonal included), dLow only off-diagonal.
                   ith_flux_term_fluid += (TransportMatrix[ij] + DiffusionMatrix[ij])*rhoj;
@@ -2421,6 +2582,29 @@ inline
               // rho(c^{n+1}_i), the nodal density Richards uses next step.
               rho_nodal.data()[i] = rho_w_i;
 
+              if (USE_EDGE_FLUX)
+                {
+                  // The flow model's boundary exchange.  Outflow (B < 0) leaves
+                  // with c_i and cancels against the fluid equation; inflow
+                  // brings the boundary concentration, a convex pull toward it.
+                  // With the edge velocity, B_i is what the assembled F leaves of
+                  // the carried mass change (ith_flux_term_fluid = -sum_j F_ij).
+                  if (USE_EDGE_VELOCITY)
+                    nodalBoundaryFlux.data()[i] = MLi*(M_low.data()[i] - M_dof.data()[i])/dt
+                                                  + ith_flux_term_fluid;
+                  const double B_i  = nodalBoundaryFlux.data()[i];
+                  const double c_in = (cin_den[i] > 0.0) ? cin_num[i]/cin_den[i] : ci;
+                  globalResidual.data()[i] = MLi*Mn_i*(ci - un_i)/dt
+                                           + ith_upwind_flux_term_mass
+                                           + boundary_integral[i]
+                                           - fmax(B_i, 0.0)*(c_in - ci)
+                                           - MLi*R_diss_i
+                                           - MLi*nodalSource.data()[i];
+                  // the flow model's fluid flux, so the continuity defect against
+                  // the carried M^{n+1} is round-off by construction
+                  fluidResidual.data()[i] = ith_flux_term_fluid - B_i;
+                  continue;
+                }
               globalResidual.data()[i] = MLi*Mn_i*(ci - un_i)/dt
                                        + ith_upwind_flux_term_mass
                                        + boundary_integral[i]
@@ -2450,6 +2634,9 @@ inline
     const double rho_s = args.scalar<double>("rho_s");
     STABILIZATION STABILIZATION_TYPE = static_cast<STABILIZATION>(args.scalar<int>("STABILIZATION_TYPE"));
     const bool implicitM = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
+    // ImplicitEV with the flow model's fluxes carries M^{n+1} in M_low; without
+    // them it has no new-time mass and uses M^n.  Must match FCTStep.
+    const bool newM_is_old = implicitM && !args.scalar<int>("USE_EDGE_FLUX");
     // The scheme-B branches limited S = M*c, so the inverse is a division by the
     // SAME new-time mass -- no EOS round-trip.  Must match FCTStep's useM set.
     if (implicitM or
@@ -2457,7 +2644,7 @@ inline
         STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
         STABILIZATION_TYPE == STABILIZATION::Kuzmin)
       for (int i=0; i<numDOFs; i++)
-        uOut.data()[i] = mIn.data()[i]/fmax((implicitM ? M_dof_fct : M_low_fct).data()[i], 1.0e-14);
+        uOut.data()[i] = mIn.data()[i]/fmax((newM_is_old ? M_dof_fct : M_low_fct).data()[i], 1.0e-14);
     else
       for (int i=0; i<numDOFs; i++)
         uOut.data()[i] = inversevaluateCoefficients(mIn.data()[i], nodal_porosity.data()[i], rho_f, rho_s);
@@ -2590,6 +2777,11 @@ inline
           // Proteus Newton evaluates F(u) then J(u) at the same iterate, so they
           // are current.
           xt::pyarray<double>& M_dof = args.array<double>("M_dof");
+          // FLOW-MODEL FLUXES, see calculateResidual; cin_num/cin_den are the
+          // members the preceding residual call filled.
+          xt::pyarray<double>& edgeFlux = args.array<double>("edgeFlux");
+          xt::pyarray<double>& nodalBoundaryFlux = args.array<double>("nodalBoundaryFlux");
+          const int USE_EDGE_FLUX = args.scalar<int>("USE_EDGE_FLUX");
           const double drho_du = rho_s - rho_f;
           // SCHEME B Jacobian, matching the cancelled residual term for term:
           //   R_i = ML M^n_i (c_i - c^n_i)/dt
@@ -2625,10 +2817,12 @@ inline
                   int j = csrColumnOffsets_DofLoops.data()[offset];
                   if (i != j)
                     {
-                      // rho(c^n_j) at the node, matching the residual's flux coefficient
-                      const double rhoj    = rho_dof_proj[j];
-                      const double Kij     = TransportMatrix[ij] + DiffusionMatrix[ij];
-                      const double Kji     = TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
+                      // rho(c^n_j) at the node, matching the residual's flux
+                      // coefficient; the flow-model fluxes are mass fluxes (rho 1)
+                      const double rhoj    = USE_EDGE_FLUX ? 1.0 : rho_dof_proj[j];
+                      const double Fij     = USE_EDGE_FLUX ? edgeFlux.data()[ij] : 0.0;
+                      const double Kij     = -0.5*Fij + TransportMatrix[ij] + DiffusionMatrix[ij];
+                      const double Kji     =  0.5*Fij + TransposeTransportMatrix[ij] + DiffusionMatrix[ij];
                       const double dLow_ij = fmax(0.0, fmax(Kij, Kji));
                       const double gamma   = dLow_ij - Kij;
                       globalJacobian.data()[ij] += -gamma*rhoj;
@@ -2638,9 +2832,14 @@ inline
                     diag_ij = ij;
                   ij += 1;
                 }
+              // inflow at a node with a boundary concentration: d/dc_i of
+              // -max(B_i,0)*(c_in - c_i); zero where c_in is c_i itself
+              const double dBoundary_dci = USE_EDGE_FLUX
+                ? ((cin_den[i] > 0.0) ? fmax(nodalBoundaryFlux.data()[i], 0.0) : 0.0)
+                : -boundary_integral_fluid[i];
               globalJacobian.data()[diag_ij] += MLi*Mn_i/dt
                                               + sum_gamma_rho
-                                              - boundary_integral_fluid[i]
+                                              + dBoundary_dci
                                               - MLi*dRdiss_dci;
             }//i
 
@@ -2726,6 +2925,14 @@ inline
                       {
                         int ebN_local_kb_j=ebN_local_kb*nDOF_trial_element+j;
                         double advJacobian_ext = 0.0, diffJacobian_ext = 0.0;
+                        if (USE_EDGE_FLUX)
+                          {
+                            // FLOW-MODEL FLUXES: only the dispersive flux is left
+                            // at the boundary, and it acts on c directly
+                            exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_ext,zero_da_ext_j,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
+                            fluxJacobian_u_u[i][j] += diffJacobian_ext*u_test_dS[i];
+                            continue;
+                          }
                         exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,v_w_ext_j,advJacobian_ext);
                         exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_w_ext_j,zero_da_ext_j,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
                         difffluxjacobian_ext = (advJacobian_ext*u_trial_trace_ref.data()[ebN_local_kb_j] + diffJacobian_ext)*dwdu_ext_j;
@@ -3271,12 +3478,18 @@ inline
     // The scheme-B branches advance S = M*c (m_dof[i] = M_i*u^n_i), so the limiter
     // must use that same mass; STAB 0/1 carry the EOS mass and keep it.  STAB 2/3/4
     // carry M themselves and divide the new-time states by M_low = M^{n+1}; STAB=5
-    // reads Richards' M^n and uses it at both time levels (the cancelled form).
+    // reads Richards' M^n and uses it at both time levels (the cancelled form),
+    // unless it advects with the flow model's fluxes, in which case it carries
+    // M^{n+1} in M_low as well.
     const bool useM = (STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
                        STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
                        STABILIZATION_TYPE == STABILIZATION::Kuzmin or
                        STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
     const bool implicitM = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV);
+    // ImplicitEV with the flow model's fluxes: M_low is the carried M^{n+1}, and
+    // the operator dLow acts on c itself (the fluxes are already mass fluxes).
+    const int USE_EDGE_FLUX = args.scalar<int>("USE_EDGE_FLUX");
+    const bool newM_is_old = implicitM && !USE_EDGE_FLUX;
     int ij=0;
     //loop over nodes (i)
     for (int i=0; i<numDOFs; i++)
@@ -3288,7 +3501,7 @@ inline
         double uLowi = uLow.data()[i];
         const double theta_i = theta_dof[i];
         const double Mi_old = fmax(M_dof_fct.data()[i], 1.0e-14);
-        const double Mi_new = implicitM ? Mi_old : fmax(M_low_fct.data()[i], 1.0e-14);
+        const double Mi_new = newM_is_old ? Mi_old : fmax(M_low_fct.data()[i], 1.0e-14);
         double mLowi  = useM ? Mi_new*uLowi : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
         double solHmi = useM ? Mi_new*solHi : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solHi)*solHi;
         double solnmi = useM ? Mi_old*solni : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni;
@@ -3301,7 +3514,8 @@ inline
         // ImplicitEV: M_dof is storage only (Richards' old-time mass), so
         // M/theta is not the density the residual applied dLow with; that is
         // rho(c^n) at the node, and soln IS c^n.
-        const double solnwi = implicitM ? rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni
+        const double solnwi = implicitM ? (USE_EDGE_FLUX ? solni
+                                                         : rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solni)*solni)
                                         : solnmi/theta_i;
         const double wLowi  = mLowi/theta_i;
         double mini=min_u_bc.data()[i], maxi=max_u_bc.data()[i]; // init min/max with value at BCs (NOTE: if no boundary then min=1E10, max=-1E10)
@@ -3325,12 +3539,13 @@ inline
             maxi = fmax(maxi,bound_j);
             const double theta_j = theta_dof[j];
             const double Mj_old = fmax(M_dof_fct.data()[j], 1.0e-14);
-            const double Mj_new = implicitM ? Mj_old : fmax(M_low_fct.data()[j], 1.0e-14);
+            const double Mj_new = newM_is_old ? Mj_old : fmax(M_low_fct.data()[j], 1.0e-14);
             double mLowj  = useM ? Mj_new*uLowj : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowj)*uLowj;
             double solHmj = useM ? Mj_new*solH.data()[j] : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solH.data()[j])*solH.data()[j];
             double solnmj = useM ? Mj_old*solnj : theta_j*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj;
             double uDotLowj = (mLowj - solnmj)/dt;
-            const double solnwj = implicitM ? rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj
+            const double solnwj = implicitM ? (USE_EDGE_FLUX ? solnj
+                                                             : rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*solnj)*solnj)
                                             : solnmj/theta_j;   // group variable, old time
             const double wLowj  = mLowj/theta_j;    // group variable, low order
             // i-th row of flux correction matrix
@@ -3359,8 +3574,15 @@ inline
                 // throttle, so the front stayed under-sharpened.  solnm carries the
                 // density nonlinearity m^s(c)=theta*rho_f*(c + eps c^2); the inverse
                 // c = 2r/(1+sqrt(1+4 eps r)) is applied in invert().
+                // With the flow model's edge fluxes, dLow acts on c itself and was
+                // applied implicitly to c^{n+1}, so its antidiffusion has to difference
+                // c^{n+1} = uLow, not c^n.  On c^n it is a forward-Euler correction of a
+                // backward-Euler step: unlimited it is unstable (coupled MMS, N=40: c
+                // overshoots to 0.93 against an exact maximum of 0.80), and limited it
+                // costs the max-norm rate (test/salinity/mms_coupled/MMS_PLAN.md).
+                const double dw_ij = USE_EDGE_FLUX ? (uLowj - uLowi) : (solnwj - solnwi);
                 FluxCorrectionMatrix[ij] = dt*MassMatrix.data()[ij]*(uDotLowi-uDotLowj)
-                                           + dt_times_dH_minus_dL.data()[ij]*(solnwj-solnwi);
+                                           + dt_times_dH_minus_dL.data()[ij]*dw_ij;
               }
             else
               {
@@ -3396,7 +3618,7 @@ inline
           }
         const double uLowi = uLow.data()[i];
         const double theta_i = theta_dof[i];
-        const double mLowi = useM ? fmax((implicitM ? M_dof_fct : M_low_fct).data()[i], 1.0e-14)*uLowi
+        const double mLowi = useM ? fmax((newM_is_old ? M_dof_fct : M_low_fct).data()[i], 1.0e-14)*uLowi
                                   : theta_i*rho_f*(1.0 + ((rho_s-rho_f)/rho_f)*uLowi)*uLowi;
         // bc_mask.data()[i] is 0 at Dirichlet DOFs (freeze at mLow) and 1 elsewhere.
         limited_solution.data()[i] = mLowi + bc_mask.data()[i] * (1./lumped_volume * ith_Limiter_times_FluxCorrectionMatrix);
