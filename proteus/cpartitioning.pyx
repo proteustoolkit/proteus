@@ -35,6 +35,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_cartesianSubdomainParents,
                                    c_partitionElements,
                                    c_partitionNodes,
+                                   c_partitionNodesLocal,
                                    c_partitionNodesFromTetgenFiles,
                                    c_partitionNodesFromTriangleFiles,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
@@ -136,6 +137,32 @@ def partitionNodes(Comm comm, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmes
         _indexArray(cmesh.mesh.elementBoundaryOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.elementBoundaryNumbering_subdomain2global, cmesh.mesh.subdomainp.nElementBoundaries_global),
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, comm.size+1),
+        _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
+    )
+
+def partitionNodesLocal(int rank, int size, int nLayersOfOverlap, cmeshTools.CMesh cmesh,
+                        cmeshTools.CMesh subdomain_cmesh, object nodeOwners):
+    """Rank rank's part of the partition of cmesh among size ranks, given the
+    owner of every node: what partitionNodes computes on that rank once the
+    owners are known, without MPI. One process can compute every rank's
+    subdomain this way (a fresh cmesh per rank: the maps are written to it).
+    Returns the arrays partitionNodes returns."""
+    _requireGlobalMesh(cmesh, "partitionNodesLocal")
+    owners = np.ascontiguousarray(nodeOwners, dtype=np.intc)
+    assert owners.shape[0] == cmesh.mesh.nNodes_global, (owners.shape[0], cmesh.mesh.nNodes_global)
+    assert owners.min() >= 0 and owners.max() < size, (owners.min(), owners.max(), size)
+    cdef vector[int] cowners = owners
+    cmesh.mesh.subdomainp = &subdomain_cmesh.mesh
+    if c_partitionNodesLocal(cmesh.mesh, rank, size, nLayersOfOverlap, cowners) != 0:
+        raise RuntimeError("partitionNodesLocal: an element or element boundary is reached by no rank")
+    return (
+        _indexArray(cmesh.mesh.elementOffsets_subdomain_owned, size+1),
+        _indexArray(cmesh.mesh.elementNumbering_subdomain2global, cmesh.mesh.subdomainp.nElements_global),
+        _indexArray(cmesh.mesh.nodeOffsets_subdomain_owned, size+1),
+        _indexArray(cmesh.mesh.nodeNumbering_subdomain2global, cmesh.mesh.subdomainp.nNodes_global),
+        _indexArray(cmesh.mesh.elementBoundaryOffsets_subdomain_owned, size+1),
+        _indexArray(cmesh.mesh.elementBoundaryNumbering_subdomain2global, cmesh.mesh.subdomainp.nElementBoundaries_global),
+        _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, size+1),
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
 

@@ -391,3 +391,72 @@ def test_quadratic_and_dg_numberings(run, serial, case, n):
             offsets = a['dg.dof_offsets_subdomain_owned']
             assert np.array_equal(offsets, ranks[0]['dg.dof_offsets_subdomain_owned'])
             assert offsets[-1] == len(S.elements) * (nd + 1)
+
+
+def _readMesh(mesh):
+    from proteus import MeshTools
+    filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    if mesh == 'tri':
+        m = MeshTools.TriangularMesh()
+        m.generateFromTriangleFiles(filebase=filebase, base=1)
+    else:
+        m = MeshTools.TetrahedralMesh()
+        m.generateFromTetgenFiles(filebase, 1)
+    return m
+
+
+def _nodeOwners(owners, nNodes, size):
+    """The owners meshPartition_mpi.py's run used: its scatter hash, or the
+    default contiguous chunks, which is what MatPartitioning 'current' keeps."""
+    i = np.arange(nNodes, dtype=np.int64)
+    if owners == 'scatter':
+        return (((i * 2654435761) >> 7) % size).astype('i')
+    starts = np.cumsum([0] + [nNodes // size + (nNodes % size > r) for r in range(size)])
+    return (np.searchsorted(starts[1:], i, side='right')).astype('i')
+
+
+@pytest.mark.parametrize('n', RANKS)
+@pytest.mark.parametrize('case', NODE_CASES, ids=['-'.join(map(str, c)) for c in NODE_CASES])
+def test_partitionNodesLocal_computes_every_rank_in_one_process(run, case, n):
+    """partitionNodes is its owners (the MPI part: prescribed, or gathered from
+    the graph partitioner) followed by partitionNodesLocal, which needs no MPI.
+    Called here in this one process for each rank of n in turn, with the owners
+    the MPI run used, it gives that rank's arrays bit for bit: the maps, the
+    permutations and the subdomain mesh. (The run's face flags were then marked
+    -1 on cut faces by MeshTools, which partitionNodesLocal does not do.)"""
+    from proteus import cmeshTools, cpartitioning
+    mesh, path, owners, overlap = case
+    _, ranks = run(*(case + (n,)))
+    for r in range(n):
+        m = _readMesh(mesh)
+        sub = cmeshTools.CMesh()
+        got = cpartitioning.partitionNodesLocal(r, n, overlap, m.cmesh, sub,
+                                                _nodeOwners(owners, m.nNodes_global, n))
+        want = ranks[r]
+        for name, a in zip(MAPS_RETURNED, got):
+            assert np.array_equal(a, want['map.' + name]), (r, name)
+        assert np.array_equal(cpartitioning.getNodeNumbering_global_old2new(m.cmesh),
+                              want['map.nodeNumbering_global_old2new']), r
+        for name, a in zip(SUBDOMAIN_INTERFACE, cmeshTools.buildPythonMeshInterface(sub)):
+            if a is None or np.asarray(a).dtype.kind not in 'iu':
+                continue
+            b = want['sub.' + name]
+            if name == 'elementBoundaryMaterialTypes':
+                b = np.where(b == RANK_INTERFACE, 0, b)
+            assert np.array_equal(np.asarray(a), b), (r, name)
+
+
+MAPS_RETURNED = ('elementOffsets_subdomain_owned', 'elementNumbering_subdomain2global',
+                 'nodeOffsets_subdomain_owned', 'nodeNumbering_subdomain2global',
+                 'elementBoundaryOffsets_subdomain_owned', 'elementBoundaryNumbering_subdomain2global',
+                 'edgeOffsets_subdomain_owned', 'edgeNumbering_subdomain2global')
+#the order of cmeshTools.buildPythonMeshInterface, as in meshPartition_mpi.py
+SUBDOMAIN_INTERFACE = ('nElements_global nNodes_global nNodes_element nNodes_elementBoundary '
+                       'nElementBoundaries_element nElementBoundaries_global '
+                       'nInteriorElementBoundaries_global nExteriorElementBoundaries_global '
+                       'max_nElements_node nEdges_global max_nNodeNeighbors_node elementNodesArray '
+                       'nodeElementsArray nodeElementOffsets elementNeighborsArray elementBoundariesArray '
+                       'elementBoundaryNodesArray elementBoundaryElementsArray '
+                       'elementBoundaryLocalElementBoundariesArray interiorElementBoundariesArray '
+                       'exteriorElementBoundariesArray edgeNodesArray nodeStarArray nodeStarOffsets '
+                       'elementMaterialTypes elementBoundaryMaterialTypes nodeMaterialTypes').split()

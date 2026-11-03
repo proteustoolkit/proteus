@@ -33,6 +33,11 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                            int nNodes_overlap,
                                                            const int* nodeOwners,
                                                            const int* nodeWeights);
+    extern int c_partitionNodesLocal "proteus::partitionNodesLocal" (mesh.Mesh& mesh,
+                                                                     int rank,
+                                                                     int size,
+                                                                     int nNodes_overlap,
+                                                                     const vector[int]& nodeOwner)
     extern int c_partitionNodesFromTetgenFiles "proteus::partitionNodesFromTetgenFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,

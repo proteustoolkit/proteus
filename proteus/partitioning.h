@@ -252,6 +252,12 @@ namespace proteus
   extern int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nNodes_overlap,
                             const int* nodeOwners=NULL, const int* nodeWeights=NULL);
 
+  /* The local part of partitionNodes: rank's part of the partition given the
+     owner of every node. No MPI, so any rank's subdomain can be computed in one
+     process. See partitioning.cpp. */
+  extern int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
+                                 const std::vector<int>& nodeOwner, StageTimer* timer=NULL);
+
   extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
