@@ -395,6 +395,7 @@ jobs:
           # Tracy_convergence and bio2d are untracked right now, so their
           # --ignore is a no-op until they are committed; pytest does not
           # error on an --ignore path that does not exist.
+          # test/run_like_ci.sh and pytest-ways.yml repeat these lists and the FSI deselection below; change all three.
           IGNORE_ARGS=(
             --ignore=../test/richards/bio2d
             --ignore=../test/richards/bio2d_FCT
