@@ -2899,12 +2899,24 @@ class VPP_POINT_EVAL_GWVD(VelocityPostProcessingAlgorithmBase):
     freedom from the LDG solution are known
 
     Currently only working for P=1 and P=2
+
+    It post-processes nothing: the velocity is the one the transport's LDG
+    (mixed-form) flux writes into q[('velocity',ci)] (sparse diffusion only),
+    and no face velocities are set. Without an LDG flux the velocity would be
+    zero, so other fluxes are refused. evaluateElementVelocityField needs
+    q[('velocity_dofs',ci)], which nothing in proteus sets (the 2011 code's
+    calculateVelocityQuadrature_MixedForm2_vdof_sd was never wrapped).
     """
     from .cpostprocessing import getElementLDGvelocityValuesLagrangeRep
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='point-eval-gwvd',
                                                      vectorTransport=vectorTransport,
                                                      vtComponents=vtComponents)
+        from .NumericalFlux import Diffusion_LDG
+        if not (isinstance(self.vt.numericalFlux,Diffusion_LDG) and self.vt.sd):
+            raise RuntimeError("conservativeFlux 'point-eval-gwvd' keeps the velocity an LDG numerical flux "
+                               "(Diffusion_LDG or a subclass, sparse diffusion) computes; with %s there is none"
+                               % type(self.vt.numericalFlux).__name__)
         #how is the local velocity represented, 1=P1 Lagrange, 2=P2 Lagrange
 
         self.testSpace=None
@@ -2929,6 +2941,9 @@ class VPP_POINT_EVAL_GWVD(VelocityPostProcessingAlgorithmBase):
            put python loops in c
         """
         assert len(x.shape) == 3, "wrong shape for x= %s " % x.shape
+        if ('velocity_dofs',ci) not in self.q:
+            raise RuntimeError("point-eval-gwvd evaluates [P^k]^d velocity degrees of freedom in q[('velocity_dofs',%d)], "
+                               "and nothing in proteus sets them" % ci)
         nE = x.shape[0]; nq = x.shape[1]; nd = self.vt.nSpace_global
         vx = numpy.zeros((nE,nq,nd),'d')
         #have to evaluate shape functions at new points. This is painful

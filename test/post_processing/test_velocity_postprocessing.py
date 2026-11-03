@@ -33,6 +33,9 @@ own until 2026-11-03: the C routine indexed the face and the shape functions wro
 face quadrature points as the number of shape functions, and with P2 it evaluated the linear representation with the
 quadratic basis. Its face fluxes missed the numerical flux by 0.5 (P1) and 1.3 (P2, 25 x 25 nodes).
 
+point-eval-gwvd keeps the velocity an LDG flux computes (VPP_SPACE=ldg); it is tested for that and for its refusals.
+The LDG solve itself is wrong on this problem, so its accuracy test is a strict xfail.
+
 Every run checks the linear solver's converged reason: a solve stopped at the iteration limit makes every variant
 differ from serial (CG/ASM does on the interior-penalty systems, which are solved directly here).
 """
@@ -277,3 +280,29 @@ def test_the_low_k_variant_in_parallel_is_the_serial_answer(tmp_path, ranks, ove
     assert _summary(tmp_path / "2")["max_block_face_flux"] == 0.0
     assert numpy.abs(parallel[:, 3]).max() < LOW_K
     assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 10 * LOW_K
+
+
+def test_point_eval_gwvd_keeps_the_ldg_velocity_and_sets_no_face_velocities(tmp_path):
+    """point-eval-gwvd post-processes nothing: the velocity is the LDG flux's mixed-form velocity, unchanged, and
+    the face velocities stay zero, so the elements do not balance through them (no variant to compare in parallel:
+    it does no communication)."""
+    rows = _run(1, tmp_path, "point-eval-gwvd", 1, space="ldg", VPP_EVALUATE=True)
+    summary = _summary(tmp_path)
+    assert summary["max_velocity_minus_ldg"] == 0.0
+    assert numpy.abs(rows[:, 4:7]).max() == 0.0
+    assert "nothing in proteus sets them" in summary["evaluate"]
+
+
+def test_point_eval_gwvd_needs_an_ldg_flux(tmp_path):
+    """With any other flux the transport writes no velocity, and point-eval-gwvd would hand on zeros."""
+    out = _run(1, tmp_path, "point-eval-gwvd", 1, space="dg", check=False)
+    assert out.returncode != 0
+    assert "LDG numerical flux" in out.stdout + out.stderr
+
+
+@pytest.mark.xfail(strict=True, reason="the LDG solve is wrong: u misses x^2 + y^2 by 13 (P1, 13 x 13), Newton "
+                                       "diverges from it, and identical runs differ in the fourth digit")
+def test_point_eval_gwvd_velocity_is_accurate(tmp_path):
+    """The LDG velocity should be within the RT0 error of -a grad u (0.063 here); measured 1.7e2."""
+    _run(1, tmp_path, "point-eval-gwvd", 1, space="ldg")
+    assert _summary(tmp_path)["l2_velocity_error"] < 0.2

@@ -129,6 +129,15 @@ if p.analyticalSolutionVelocity is not None:
     exact_flux = ((exact(ebq['x'][:nOwned]) * ebq['n'][:nOwned, :, :, :2]).sum(axis=-1)
                   * ebq[('dS_u', 0)][:nOwned]).sum(axis=-1)
     summary["max_face_flux_error"] = float(mpi.allreduce(np.abs(face_flux[:nOwned] - exact_flux).max(), op=MPI.MAX))
+if hasattr(model.numericalFlux, "qV"):  # an LDG flux: the transport's own velocity, before post-processing
+    summary["max_velocity_minus_ldg"] = float(mpi.allreduce(
+        np.abs(q[('velocity', 0)][:nOwned] - model.numericalFlux.qV[0][:nOwned]).max(), op=MPI.MAX))
+if os.environ.get("VPP_EVALUATE"):
+    try:
+        vpp.evaluateElementVelocityField(q['x'], 0)
+        summary["evaluate"] = "ok"
+    except Exception as e:
+        summary["evaluate"] = "%s: %s" % (type(e).__name__, e)
 if p.problem == "lowk":
     mid = ebq['x'][:nOwned, :, :, :2].mean(axis=2)                     # (nOwned, nFaces, 2) face midpoints
     on_block = (np.abs(mid - 1.0 / 3).min(axis=-1) < 1e-8) | (np.abs(mid - 2.0 / 3).min(axis=-1) < 1e-8)
