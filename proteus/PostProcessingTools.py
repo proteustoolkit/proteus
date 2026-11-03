@@ -1563,12 +1563,17 @@ class VPP_PWL_RT0_OPT(VPP_PWL_RT0):
         VPP_PWL_RT0.__init__(self,vectorTransport,vtComponents=vtComponents)
         #have to directly modify the type now to set to optimized
         self.postProcessingType = 'pwl-opt'
+        self.setupOptimizedAssembly()
+
+    def setupOptimizedAssembly(self):
+        """What the optimized variants add to the PWL setup: the weak-condition check, and the parallel vectors that
+        sum the owned-node star corrections on each face across ranks."""
         # The optimized variants take the boundary flux from the face velocity the model computed and never load a
         # boundary condition themselves, so every exterior face must carry the weak (Nitsche-type) boundary flux.
         if self.vt.numericalFlux is None or not self.vt.numericalFlux.useWeakDirichletConditions:
-            raise RuntimeError("conservativeFlux 'pwl-opt' and 'pwl-bdm-opt' need weak (Nitsche-type) Dirichlet "
-                               "conditions: the boundary flux must come from the model's face velocity; "
-                               "use 'pwl' or 'pwl-bdm' with strong Dirichlet conditions")
+            raise RuntimeError("conservativeFlux 'pwl-opt', 'pwl-bdm-opt' and 'pwl-bdm2-opt' need weak (Nitsche-type) "
+                               "Dirichlet conditions: the boundary flux must come from the model's face velocity; "
+                               "use 'pwl', 'pwl-bdm' or 'pwl-bdm2' with strong Dirichlet conditions")
 
         from .LinearAlgebraTools import ParVec_petsc4py as ParVec
 
@@ -1860,6 +1865,25 @@ class VPP_PWL_BDM_OPT(VPP_PWL_RT0_OPT):
 
         return vx
 
+
+
+class VPP_PWL_BDM2_OPT(VPP_PWL_BDM2):
+    r"""Local Larson-Niklasson method with the BDM2 representation, for optimized parallel codes.
+
+    The face fluxes come from the pwl-opt pipeline: star problems are solved for owned nodes only, the corrections are
+    summed on each face across ranks, and the boundary flux is the model's face velocity, so weak (Nitsche-type)
+    Dirichlet conditions are required. The element velocity is then the BDM2 projection of pwl-bdm2: the face
+    fluxes plus interior moments of the transport's pointwise velocity. Needs a C0 P2 solution, as pwl-bdm2 does.
+    """
+    def __init__(self,vectorTransport=None,vtComponents=[0]):
+        VPP_PWL_BDM2.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
+        self.postProcessingType = 'pwl-bdm2-opt'
+        self.setupOptimizedAssembly()
+
+    setupOptimizedAssembly = VPP_PWL_RT0_OPT.setupOptimizedAssembly
+    postprocess_component = VPP_PWL_RT0_OPT.postprocess_component
+    getConservationJacobianPWL = VPP_PWL_RT0_OPT.getConservationJacobianPWL
+    getConservationResidualPWL = VPP_PWL_RT0_OPT.getConservationResidualPWL
 
 
 class VPP_PWC_RT0(VelocityPostProcessingAlgorithmBase):
@@ -3301,6 +3325,7 @@ class AggregateVelocityPostProcessor(object):
                  'pwl-bdm2':VPP_PWL_BDM2,        # Initial changes to adding BDM2 projection capabilities
                  'pwl-opt':VPP_PWL_RT0_OPT,      #Larson Niklasson (local) piecewise linear correction, RT_0 velocity repres. optimized code
                  'pwl-bdm-opt':VPP_PWL_BDM_OPT,  #Larson Niklasson (local) piecewise linear correction, Brezzi Douglas Marini linear velocity repres. optimized code
+                 'pwl-bdm2-opt':VPP_PWL_BDM2_OPT,  #as pwl-bdm-opt, with the BDM2 (quadratic) velocity representation; weak Dirichlet conditions only
                  'sun-rt0':VPP_SUN_RT0,          #Sun and Wheeler global correction, RT_0 velocity repres.
                  'sun-gs-rt0':VPP_SUN_GS_RT0,    #Sun and Wheeler local Gauss-Seidel, RT_0 velocity repres.
                  'point-eval':VPP_POINT_EVAL,    #direct pointwise evaluation of fluxes

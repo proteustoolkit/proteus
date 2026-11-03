@@ -9,8 +9,8 @@ quadrature points.
 These properties are tested:
 
 * A conservative variant balances every element: the recomputed residual is round-off.
-* The optimized variants (pwl-opt, pwl-bdm-opt) need weak Dirichlet conditions, balance the elements whose face
-  velocities they compute, and give the serial answer on two ranks.
+* The optimized variants (pwl-opt, pwl-bdm-opt, and pwl-bdm2-opt with P2) need weak Dirichlet conditions, balance
+  the elements whose face velocities they compute, and give the serial answer on two and three ranks.
 * The local Larson-Niklasson variants (pwl, pwl-bdm, pwl-bdm2) give the serial answer on two ranks, at overlap 0
   and 1. Two things were wrong there, and overlap 2 hid both. Each face flux is corrected by the solutions of the
   local problems on the stars of its nodes, and a ghost node's star is cut by the partition; now the node's owner
@@ -82,23 +82,26 @@ def test_a_conservative_variant_balances_every_element(tmp_path, variant, order,
         assert numpy.abs(stored - recomputed).max() < tolerance
 
 
-@pytest.mark.parametrize("variant", ["pwl-opt", "pwl-bdm-opt"])
-def test_an_optimized_variant_needs_weak_dirichlet_conditions(tmp_path, variant):
+OPTIMIZED = [("pwl-opt", 1), ("pwl-bdm-opt", 1), ("pwl-bdm2-opt", 2)]  # pwl-bdm2-opt needs a P2 solution
+
+
+@pytest.mark.parametrize("variant,order", OPTIMIZED, ids=[v for v, _ in OPTIMIZED])
+def test_an_optimized_variant_needs_weak_dirichlet_conditions(tmp_path, variant, order):
     """The -opt variants take the boundary flux from the model's face velocity, so they refuse strong conditions."""
-    out = _run(1, tmp_path, variant, 1, check=False, VPP_STRONG=True)
+    out = _run(1, tmp_path, variant, order, check=False, VPP_STRONG=True)
     assert out.returncode != 0
     assert "weak (Nitsche-type)" in out.stdout + out.stderr
 
 
-@pytest.mark.parametrize("variant", ["pwl-opt", "pwl-bdm-opt"])
-def test_an_optimized_variant_balances_the_interior_elements(tmp_path, variant):
+@pytest.mark.parametrize("variant,order", OPTIMIZED, ids=[v for v, _ in OPTIMIZED])
+def test_an_optimized_variant_balances_the_interior_elements(tmp_path, variant, order):
     """With weak conditions the -opt variants balance every element whose face velocities they compute.
 
     They leave the boundary flux to the model. The mprans models (RANS2P, RANS3PF) put the weak boundary flux into
     the face velocity; this problem's classic Transport puts a one-sided value there, so the elements in the boundary
-    row miss by up to 0.5 while the 200 interior elements balance to round-off (4e-15 measured).
+    row miss by up to 0.5 while the 200 interior elements balance to round-off (4e-15 measured; 1e-14 with P2).
     """
-    rows = _run(1, tmp_path, variant, 1)
+    rows = _run(1, tmp_path, variant, order)
     h = 1.0 / 12  # the mesh spacing (13 x 13 nodes)
     cx, cy, residual = rows[:, 0], rows[:, 1], numpy.abs(rows[:, 3])
     boundary_row = (cx < h) | (cx > 1 - h) | (cy < h) | (cy > 1 - h)
@@ -122,12 +125,17 @@ def test_a_local_variant_on_two_ranks_is_the_serial_answer(tmp_path, variant, or
     assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 1e-10
 
 
+OPTIMIZED_PARALLEL = [("pwl-opt", 1, 2, 0), ("pwl-opt", 1, 2, 1), ("pwl-bdm-opt", 1, 2, 1),
+                      ("pwl-bdm2-opt", 2, 2, 1), ("pwl-bdm2-opt", 2, 3, 0)]
+
+
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
-@pytest.mark.parametrize("variant,overlap", [("pwl-opt", 0), ("pwl-opt", 1), ("pwl-bdm-opt", 1)])
-def test_an_optimized_variant_on_two_ranks_is_the_serial_answer(tmp_path, variant, overlap):
+@pytest.mark.parametrize("variant,order,ranks,overlap", OPTIMIZED_PARALLEL,
+                         ids=["%s-P%d-%dranks-overlap%d" % case for case in OPTIMIZED_PARALLEL])
+def test_an_optimized_variant_in_parallel_is_the_serial_answer(tmp_path, variant, order, ranks, overlap):
     """The -opt variants solve the stars of owned nodes and sum the face corrections across ranks (ParVec)."""
-    serial = _run(1, tmp_path / "1", variant, 1)
-    parallel = _run(2, tmp_path / "2", variant, 1, overlap)
+    serial = _run(1, tmp_path / "1", variant, order)
+    parallel = _run(ranks, tmp_path / "2", variant, order, overlap)
     assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12
     assert numpy.abs(serial[:, 3:] - parallel[:, 3:]).max() < 1e-10
 

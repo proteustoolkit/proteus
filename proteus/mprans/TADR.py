@@ -1362,14 +1362,20 @@ class LevelModel(OneLevelTransport):
         """Replace the ghost entries of a dof array by the owners' values (in place)."""
         if self.comm.size() == 1:
             return
-        par = self._dofVecs.get(id(a))
-        if par is None:
+        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
+        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
             dofMap = self.u[0].femSpace.dofMap
             rank = self.comm.rank()
             nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            par = self._dofVecs[id(a)] = ParVec_petsc4py(
-                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
         par.scatter_forward_insert()
+        a[:] = buf
 
     def FCTStep(self):
         if self.coefficients.STABILIZATION_TYPE == 6:
@@ -1445,6 +1451,9 @@ class LevelModel(OneLevelTransport):
         Rneg = np.ones(self.u[0].dof.shape)
         argsDict["Rpos_dof"] = Rpos
         argsDict["Rneg_dof"] = Rneg
+        argsDict["phase"] = -1
+        self.adr.FCTStep(argsDict)
+        self.scatterDOFArray(theta_dof_out_arr)
         argsDict["phase"] = 0
         self.adr.FCTStep(argsDict)
         self.scatterDOFArray(Rpos)
@@ -1796,6 +1805,15 @@ class LevelModel(OneLevelTransport):
 
         #argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
+        theta_dof = np.zeros(self.u[0].dof.shape, 'd')
+        argsDict["theta_dof"] = theta_dof
+        if self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5):
+            # the projected nodal porosity of a ghost dof is partial; take the owners' (phase -1)
+            argsDict["psi_dof"] = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
+            argsDict["phase"] = -1
+            self.adr.calculateResidual(argsDict)
+            self.scatterDOFArray(theta_dof)
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4):
             # edge based stabilization: psi and the normalized entropy residual of a ghost dof come from a
             # truncated graph row and the dissipation of an owned dof reads them. Compute them (phase 0),

@@ -77,3 +77,20 @@ def test_tadr_time_step_ignores_the_cfl_of_ghost_dofs(tmp_path):
     # garbage in the edge based cfl of the ghost dofs, which the time step must not read
     assert numpy.abs(serial - _field(2, tmp_path / "2", GHOSTCFL=1, **options)).max() < 1e-8
     assert numpy.abs(serial - _field(2, tmp_path / "3", GHOSTCFL=1, OLDMAX=1, **options)).max() > 1e-6
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("lumped,stabilization,final_time", [(1, 3, 0.08), (0, 4, 0.08)],
+                         ids=["lumped-smoothness", "consistent-kuzmin"])
+def test_tadr_with_a_varying_porosity_on_two_ranks_is_the_serial_answer(tmp_path, lumped, stabilization, final_time):
+    """The residual and the FCT limiter project the porosity to the dofs; a ghost's projection sums only the elements
+    the rank has, and the edge loops of an owned dof read it at the neighbours. Both kernels now take the owners'
+    values (a phase -1 call and a scatter). Measured: 1.4e-3 (lumped smoothness) and 9.7e-4 (Kuzmin) without, 1.6e-15
+    and 1.0e-14 with; the serial answer is unchanged to the bit."""
+    for d in ("1", "2", "3"):
+        (tmp_path / d).mkdir()
+    options = dict(POROUS=1, LUMPED=lumped or "", STAB=stabilization, TFINAL=final_time)
+    serial = _field(1, tmp_path / "1", **options)
+    assert numpy.abs(serial - _field(2, tmp_path / "2", **options)).max() < 1e-8
+    assert numpy.abs(serial - _field(2, tmp_path / "3", NOTHETASCAT=1, **options)).max() > 1e-4
+

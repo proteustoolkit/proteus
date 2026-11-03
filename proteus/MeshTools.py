@@ -940,11 +940,26 @@ class Mesh(object):
         sub.__dict__.pop('_elementBoundaryUserFlags', None)
         sub.rankInterfacesMarked = True
 
+    def _reduceSubdomainMeshSize(self,comm):
+        """Give the subdomain mesh the global h and hMin.
+
+        buildFromC computes them over the rank's own elements, and the models get the subdomain mesh, so every
+        epsFact*mesh.h (smoothed Heaviside widths, NCLS's sign() width and redistancing tolerance) was a different
+        number on each rank: 0.035294 on rank 1 against 0.035538 serial for the NCLS disk. A rank without elements
+        does not lower hMin.
+        """
+        from mpi4py import MPI
+        mpi = comm.comm.tompi4py()
+        sd = self.subdomainMesh
+        sd.h = mpi.allreduce(sd.h, op=MPI.MAX)
+        sd.hMin = mpi.allreduce(sd.hMin if sd.nElements_global > 0 else np.inf, op=MPI.MIN)
+
     def _finishPartitioning(self,comm):
         """What every partitioner does once the C++ has built the subdomain mesh
         and the maps: the Python view of the subdomain, the owned counts, and
         the node diameters on the ghosts."""
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+        self._reduceSubdomainMeshSize(comm)
         self.subdomainMesh.nElements_owned = self.elementOffsets_subdomain_owned[comm.rank()+1] - self.elementOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nNodes_owned = self.nodeOffsets_subdomain_owned[comm.rank()+1] - self.nodeOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nElementBoundaries_owned = self.elementBoundaryOffsets_subdomain_owned[comm.rank()+1] - self.elementBoundaryOffsets_subdomain_owned[comm.rank()]
@@ -1054,6 +1069,7 @@ class Mesh(object):
         #nodeNumbering_subdomain2global refers to.
         self.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(self.cmesh)
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+        self._reduceSubdomainMeshSize(comm)
         self.subdomainMesh.nElements_owned = self.elementOffsets_subdomain_owned[comm.rank()+1] - self.elementOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nNodes_owned = self.nodeOffsets_subdomain_owned[comm.rank()+1] - self.nodeOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nElementBoundaries_owned = self.elementBoundaryOffsets_subdomain_owned[comm.rank()+1] - self.elementBoundaryOffsets_subdomain_owned[comm.rank()]
@@ -1870,6 +1886,7 @@ class Mesh(object):
                                                           self.cmesh,
                                                           self.subdomainMesh.cmesh))
           self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+          self._reduceSubdomainMeshSize(comm)
           self.subdomainMesh.nElements_owned = (
               self.elementOffsets_subdomain_owned[comm.rank()+1] -
               self.elementOffsets_subdomain_owned[comm.rank()])

@@ -2,8 +2,8 @@
 """Solve vpp_poisson_2d on one or more ranks and write what the velocity post-processing produced.
 
 Run by test_velocity_postprocessing.py in an empty directory, serially or under mpiexec. The variant comes from
-VPP_VARIANT, the space from VPP_ORDER (1 or 2). On more than one rank the node partition is pinned to the cut
-x + 0.37 y >= 0.62, so serial and parallel runs are comparable element by element (VPP_FREE_PARTITION=1 leaves it to
+VPP_VARIANT, the space from VPP_ORDER (1 or 2). On more than one rank the node partition is pinned (two ranks: the cut x + 0.37 y >= 0.62;
+more: parallel stripes in x + 0.37 y), so serial and parallel runs are comparable element by element (VPP_FREE_PARTITION=1 leaves it to
 the partitioner). VPP_NO_STAR_EXCHANGE=1 and VPP_NO_CUT_FACE_EXCHANGE=1 turn off one of the two parallel exchanges
 of the PWL variants, as controls.
 
@@ -33,7 +33,12 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
     if (nodeOwners is None and Comm.get().size() > 1
             and parallelPartitioningType == MT.MeshParallelPartitioningTypes.node
             and not os.environ.get("VPP_FREE_PARTITION")):
-        nodeOwners = (self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1] >= 0.62).astype(np.intc)
+        size = Comm.get().size()
+        t = self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1]
+        if size == 2:
+            nodeOwners = (t >= 0.62).astype(np.intc)
+        else:  # parallel stripes across the square
+            nodeOwners = np.minimum(size - 1, np.floor(size * t / 1.37)).astype(np.intc)
     return _partition(self, nLayersOfOverlap=nLayersOfOverlap, parallelPartitioningType=parallelPartitioningType,
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 
