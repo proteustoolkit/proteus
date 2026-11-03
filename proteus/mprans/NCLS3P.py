@@ -13,6 +13,7 @@ from proteus.Profiling import logEvent as log
 from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
+from proteus.LinearAlgebraTools import ParVec_petsc4py
 from proteus.ShockCapturing import ShockCapturing_base
 from . import cNCLS3P
 from . import cArgumentsDict
@@ -762,6 +763,7 @@ class LevelModel(OneLevelTransport):
         self.cell_interface_locator = np.zeros(self.mesh.nElements_global,'d')
         self.interface_locator = np.zeros(self.u[0].dof.shape,'d')
         self.quantDOFs = np.zeros(self.u[0].dof.shape,'d')
+        self._dofVecs = {}
 
         # For Taylor Galerkin methods
         self.stage = 1
@@ -797,6 +799,23 @@ class LevelModel(OneLevelTransport):
         self.coefficients.ebqe_v[..., 1] = self.velocityField[1](ebqe_X, t)
         if (self.nSpace_global == 3):
             self.coefficients.ebqe_v[..., 2] = self.velocityField[2](ebqe_X, t)
+
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
+        par.scatter_forward_insert()
+        a[:] = buf
 
     def calculateElementResidual(self):
         if self.globalResidualDummy is not None:
@@ -908,7 +927,8 @@ class LevelModel(OneLevelTransport):
 
         #if self.coefficients.EXPLICIT_METHOD:
         #    self.taylorGalerkinStage = 2
-        
+        # a ghost node is marked only by the cut elements this rank has; RDLS freezes the marked nodes
+        self.scatterDOFArray(self.interface_locator)
         self.quantDOFs[:] = self.interface_locator
         
         if self.forceStrongConditions:
