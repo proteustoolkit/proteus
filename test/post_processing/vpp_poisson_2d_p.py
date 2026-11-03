@@ -14,7 +14,7 @@ from proteus.default_p import *
 import numpy
 
 problem = os.environ.get("VPP_PROBLEM", "smooth")
-lowK = 1.0e-8
+lowK = float(os.environ.get("VPP_LOW_K", "1.0e-8"))
 
 nd = 2
 L = (1.0, 1.0)

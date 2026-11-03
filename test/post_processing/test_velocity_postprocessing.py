@@ -23,6 +23,9 @@ These properties are tested:
 The global-correction variants (pwc, sun-rt0, sun-gs-rt0) solve one system per rank, so they are refused on more than
 one rank.
 
+The low-K variant (pwl-ib-fix-0) makes the faces into a low-conductivity region no-flux; it is tested on a block of
+conductivity 1e-8 (VPP_PROBLEM=lowk).
+
 The DG variants (dg: RT0, dg-bdm: BDM1) project the interior-penalty numerical flux of a DG P1 or P2 solution, which
 balances every element by construction; they need only the element and its faces, so with an element partition and one
 layer of overlap they give the serial answer on any number of ranks. dg-bdm stored face velocities that were not its
@@ -233,3 +236,44 @@ def test_a_dg_variant_converges_at_its_rate(tmp_path, variant, order, rate):
         errors.append(_summary(tmp_path / str(nn))["l2_velocity_error"])
     rates = numpy.log2(numpy.array(errors[:-1]) / numpy.array(errors[1:]))
     assert numpy.abs(rates - rate).max() < 0.1, (errors, rates)
+
+
+LOW_K = 1.0e-8  # the block's conductivity in vpp_poisson_2d_p (VPP_PROBLEM=lowk)
+
+
+def test_the_low_k_variant_gives_the_block_no_flux(tmp_path):
+    """pwl-ib-fix-0 flags faces where the conductivity jumps by more than 1e4 to below 1e-5 and makes them no-flux.
+
+    The exact flux through the block's 32 faces is of the order of its conductivity, 1e-8; pwl puts 0.037 through
+    them, pwl-ib-fix-0 none. The price is an element imbalance of the same order (0.38 times the conductivity,
+    measured at 1e-6, 1e-8 and 1e-10), since the flagged faces carry the Galerkin solution's small flux nowhere.
+    """
+    pwl = _run(1, tmp_path / "pwl", "pwl", 1, problem="lowk")
+    fixed = _run(1, tmp_path / "fix", "pwl-ib-fix-0", 1, problem="lowk")
+    assert _summary(tmp_path / "pwl")["n_block_faces"] == _summary(tmp_path / "fix")["n_block_faces"] == 32
+    assert _summary(tmp_path / "pwl")["max_block_face_flux"] > 1e-2
+    assert numpy.abs(pwl[:, 3]).max() < 1e-12
+    assert _summary(tmp_path / "fix")["max_block_face_flux"] == 0.0
+    assert numpy.abs(fixed[:, 3]).max() < LOW_K
+
+
+LOW_K_PARALLEL = [(2, 0), (4, 0), (2, 1), (4, 1)]
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("ranks,overlap", LOW_K_PARALLEL, ids=["%dranks-overlap%d" % case for case in LOW_K_PARALLEL])
+def test_the_low_k_variant_in_parallel_is_the_serial_answer(tmp_path, ranks, overlap):
+    """pwl-ib-fix-0 shares pwl's node stars and its two exchanges since 2026-11-03; it had its own copy of the stars
+    without them, and differed from serial by 0.30 (2 ranks) and 0.44 (4 ranks) at overlap 0, and 7e-3 and 1.1e-2 at
+    overlap 1, where the block faces cut by the partition also leaked (2.4e-2 at overlap 0).
+
+    The answer matches serial to the conductivity's order, not to round-off (measured 2.7e-8 to 5.0e-8, 4.5 times the
+    conductivity at 1e-6, 1e-8, 1e-10): its stars are solved unpinned, and a star the flagged faces split is a
+    singular system whose parts do not balance, so the solution depends on the order of the star's elements.
+    """
+    serial = _run(1, tmp_path / "1", "pwl-ib-fix-0", 1, problem="lowk")
+    parallel = _run(ranks, tmp_path / "2", "pwl-ib-fix-0", 1, overlap, problem="lowk")
+    assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12
+    assert _summary(tmp_path / "2")["max_block_face_flux"] == 0.0
+    assert numpy.abs(parallel[:, 3]).max() < LOW_K
+    assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 10 * LOW_K

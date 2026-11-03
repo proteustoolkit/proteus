@@ -2956,168 +2956,30 @@ class VPP_POINT_EVAL_GWVD(VelocityPostProcessingAlgorithmBase):
 
 #########################################################################
 #Begin trying "fixes" for material interface jumps
-class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
+class VPP_LOW_K_IB_PWL_RT0(VPP_PWL_RT0):
     """Local Larson-Niklasson method with RT_0 representation for element
     velocities This version tries to address flux through low
     permeability interfaces by manually setting boundaries with a
     'large' jump in permeability and one of these boundaries being
     'small' to no flux
 
+    It shares VPP_PWL_RT0's node stars and its two parallel exchanges (the
+    owner's star solution for a ghost node, the interior rank's velocity on a
+    cut face), without its flux-boundary node fix, and solves the stars with
+    the flagged interior faces as no-flux faces.
     """
 #    TODO:
 #      get tolerances from coefficients?
-#      remove python loops in building mesh infrastructure or get rid of dependence
-#        on these forms of node star info and use data structures in cmesh
     def __init__(self,vectorTransport=None,vtComponents=[0],jump_tol=1.0e4,min_tol=1.0e-5):
-        VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='pwl-ib-fix-0',
-                                                     vectorTransport=vectorTransport,
-                                                     vtComponents=vtComponents)
-        #how is the local velocity represented
-        #  2 -- RT0, local rep is \sum^d_{i=0}V^i\vec N_{T,i},
-        #           \vec N_{T,i} = \frac{1}{d|E|}(\vec x - p_i), i=0,...,d
-        self.localVelocityRepresentationFlag = 2
-        #
+        VPP_PWL_RT0.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents,omitFluxBoundaryNodes=False)
+        self.postProcessingType = 'pwl-ib-fix-0'
         self.jump_tol = jump_tol; self.min_tol = min_tol
-
-        #to handle some spaces being P^k k > 1
-        self.alpha = {}
-        self.solutionTestSpaceIsNotPWL = {}
-        self.elementResidual = {}
-        self.testSpace = None
-        #mesh information needed
-        #building mesh infrastructure
-        self.globalNode2globalElementList = [[] for nN in range(self.vt.mesh.nNodes_global)]
-        for eN in range(self.vt.mesh.nElements_global):
-            for nN in range(self.vt.mesh.nNodes_element):
-                nN_global = self.vt.mesh.elementNodesArray[eN,nN]
-                self.globalNode2globalElementList[nN_global].append(eN)
-        self.globalNodeGlobalElement2StarElement = []
-        self.nElements_node = numpy.zeros((self.vt.mesh.nNodes_global,),'i')
-        self.nodeStarElementsArray = numpy.ones((self.vt.mesh.nElements_global,
-                                                 self.vt.mesh.nNodes_element),'i')
-        self.nodeStarElementsArray[:]=-1
-        self.nodeStarElementNeighborsArray = numpy.zeros((self.vt.mesh.nElements_global,
-                                                            self.vt.mesh.nNodes_element,
-                                                            self.vt.mesh.nElementBoundaries_element),
-                                                           'i')
-        for I in range(self.vt.mesh.nNodes_global):
-            self.globalNode2globalElementList[I].sort()
-            self.nElements_node[I] = len(self.globalNode2globalElementList[I])
-            self.globalNodeGlobalElement2StarElement.append(dict([(eN_global,eN_node) for eN_node,eN_global in enumerate(self.globalNode2globalElementList[I])]))
-        for ebNI in range(self.vt.mesh.nInteriorElementBoundaries_global):
-            ebN = self.vt.mesh.interiorElementBoundariesArray[ebNI]
-            left_eN_global   = self.vt.mesh.elementBoundaryElementsArray[ebN,0]
-            right_eN_global  = self.vt.mesh.elementBoundaryElementsArray[ebN,1]
-            left_ebN_element  = self.vt.mesh.elementBoundaryLocalElementBoundariesArray[ebN,0]
-            right_ebN_element = self.vt.mesh.elementBoundaryLocalElementBoundariesArray[ebN,1]
-            for i in range(self.vt.mesh.nNodes_element):
-                left_I = self.vt.mesh.elementNodesArray[left_eN_global,i]
-                self.nodeStarElementsArray[left_eN_global,i] = self.globalNodeGlobalElement2StarElement[left_I][left_eN_global]
-                if i != left_ebN_element:
-                    self.nodeStarElementNeighborsArray[left_eN_global,i,left_ebN_element] = self.globalNodeGlobalElement2StarElement[left_I][right_eN_global]
-                #if
-                right_I=self.vt.mesh.elementNodesArray[right_eN_global,i]
-                self.nodeStarElementsArray[right_eN_global,i] = self.globalNodeGlobalElement2StarElement[right_I][right_eN_global]
-                if i != right_ebN_element:
-                    self.nodeStarElementNeighborsArray[right_eN_global,i,right_ebN_element] = self.globalNodeGlobalElement2StarElement[right_I][left_eN_global]
-
-            #i
-        #ebNi
-        for ebNE in range(self.vt.mesh.nExteriorElementBoundaries_global):
-            ebN = self.vt.mesh.exteriorElementBoundariesArray[ebNE]
-            eN_global   = self.vt.mesh.elementBoundaryElementsArray[ebN,0]
-            ebN_element  = self.vt.mesh.elementBoundaryLocalElementBoundariesArray[ebN,0]
-            for i in range(self.vt.mesh.nNodes_element):
-                I = self.vt.mesh.elementNodesArray[eN_global,i]
-                self.nodeStarElementsArray[eN_global,i] = self.globalNodeGlobalElement2StarElement[I][eN_global]
-            #i
-        #ebNE
-        self.nodeStarFactors = {}
-        for ci in self.vtComponents:
-            self.nodeStarFactors[ci] = cpostprocessing.NodeStarFactor(self.nElements_node,
-                                                                      self.nodeStarElementsArray,
-                                                                      self.nodeStarElementNeighborsArray)
-
-
-        #
-        self.nDOFs_element = {}
-        self.updateConservationJacobian = {}
-        for ci in self.vtComponents:
-            if not isinstance(self.vt.u[ci].femSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis):
-                self.solutionTestSpaceIsNotPWL[ci] = True
-                logEvent("pwl post-processing for finite element space"+str(self.vt.u[ci].femSpace))
-                #need to set up w and w*dS_f and weights to build residuals for linears out of R_{e,i}
-                if self.testSpace is None:
-                    self.testSpace = FemTools.C0_AffineLinearOnSimplexWithNodalBasis(self.vt.mesh,self.vt.nSpace_global)
-                assert isinstance(self.testSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis)
-                self.alpha[ci] = numpy.zeros((self.testSpace.referenceFiniteElement.localFunctionSpace.dim,
-                                          self.vt.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim),'d')
-                for j,w in enumerate(self.testSpace.referenceFiniteElement.localFunctionSpace.basis):
-                    for i,f in enumerate(self.vt.u[ci].femSpace.referenceFiniteElement.interpolationConditions.functionals):
-                        self.alpha[ci][j,i] = f(w)
-                self.elementResidual[ci] = numpy.zeros((self.vt.mesh.nElements_global,
-                                                        self.testSpace.referenceFiniteElement.localFunctionSpace.dim),
-                                                       'd')
-                self.qv[ci] = numpy.zeros(
-                    (self.vt.mesh.nElements_global,
-                     self.vt.nQuadraturePoints_element,
-                     self.testSpace.referenceFiniteElement.localFunctionSpace.dim),
-                    'd')
-                self.w[ci] = numpy.zeros(
-                    (self.vt.mesh.nElements_global,
-                     self.vt.mesh.nElementBoundaries_element,
-                     self.vt.nElementBoundaryQuadraturePoints_elementBoundary,
-                     self.testSpace.referenceFiniteElement.localFunctionSpace.dim),
-                    'd')
-                self.w_dS[ci] = numpy.zeros(
-                    (self.vt.mesh.nElements_global,
-                     self.vt.mesh.nElementBoundaries_element,
-                     self.vt.nElementBoundaryQuadraturePoints_elementBoundary,
-                     self.testSpace.referenceFiniteElement.localFunctionSpace.dim),
-                    'd')
-                self.testSpace.getBasisValues(self.vt.elementQuadraturePoints,
-                                              self.qv[ci])
-                self.testSpace.getBasisValuesTrace(self.vt.u[0].femSpace.elementMaps.permutations,
-                                                   self.vt.ebq['hat(x)'],
-                                                   self.w[ci])
-                cfemIntegrals.calculateWeightedShapeTrace(self.vt.elementBoundaryQuadratureWeights[('u',ci)],
-                                                          self.vt.ebq['sqrt(det(g))'],
-                                                          self.w[ci],
-                                                          self.w_dS[ci])
-            else:
-                #local element residuals
-                self.elementResidual[ci] = self.vt.elementResidual[ci]
-
-            #solution space not P^1
-            self.updateConservationJacobian[ci] = True
-
-            #RT0 specific information
-            self.nDOFs_element[ci] = self.vt.nSpace_global+1
-            self.q[('velocity_dofs',ci)] = numpy.zeros((self.vt.mesh.nElements_global,
-                                                        self.nDOFs_element[ci]),'d')
-
-            if ('velocity_l2g',self.vtComponents[0]) in self.q:
-                self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
-            else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
-        #ci
-        if self.testSpace is None:
-            #all the solution spaces must be C0P1
-            self.testSpace = self.vt.u[self.vtComponents[0]].femSpace
-
         ##now setup flux element boundaries including interior information
         self.fluxElementBoundaries_global = {}
-        #mwf debug
-        self.fluxElementBoundaries_global_tmp = {}
         for ci in self.vtComponents:
             self.fluxElementBoundaries_global[ci] = numpy.zeros((self.vt.mesh.nElementBoundaries_global,),'i')
             #copy over exterior information
-            for ebNE in range(self.vt.mesh.nExteriorElementBoundaries_global):
-                ebN = self.vt.mesh.exteriorElementBoundariesArray[ebNE]
-                self.fluxElementBoundaries_global[ci][ebN] = self.fluxElementBoundaries[ci][ebNE]
-            #
-            #mwf for debugging some things
-            self.fluxElementBoundaries_global_tmp[ci] = numpy.copy(self.fluxElementBoundaries_global[ci])
+            self.fluxElementBoundaries_global[ci][self.vt.mesh.exteriorElementBoundariesArray] = self.fluxElementBoundaries[ci]
             self.setInteriorFluxBoundaries(ci)
     #init
     def setInteriorFluxBoundaries(self,ci):
@@ -3141,12 +3003,9 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                 min_a_LR  = min(max_a_left,max_a_right)
                 jump_a = abs(max_a_left-max_a_right)
                 if min_a_LR > 0.0: jump_a /= min_a_LR
-                #mwf debug
-                #print "vpp-ib-fix-0 ebN=%s, max_a_left=%s max_a_right= %s " % (ebN,max_a_left,max_a_right)
                 if jump_a > self.jump_tol and min_a_LR < self.min_tol:
                     self.fluxElementBoundaries_global[ci][ebN] = 1
-                    #mwf debug
-                    print("vpp-ib-fix-0 setting ebN=%s ebN = 1, max_a_left=%s max_a_right= %s " % (ebN,max_a_left,max_a_right))
+                    logEvent("vpp-ib-fix-0 no-flux face ebN=%s, max_a_left=%s max_a_right= %s " % (ebN,max_a_left,max_a_right),level=3)
 
     def setInteriorFluxBoundaryValues(self,ci,ebq_global_velocity):
         """
@@ -3161,7 +3020,6 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
             if self.fluxElementBoundaries_global[ci][ebN] == 1:
                 ebq_global_velocity[ebN].fill(0.0)
 
-
     def postprocess_component(self,ci,verbose=0):
         """
         compute mass conservative velocity field following Larson and Niklasson assuming a :math:`P^k C_0`
@@ -3175,7 +3033,7 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
         #are not enforced directly in postprocessed flux
         #self.fluxElementBoundaries[ci] determines which boundaries have fluxes
         #enforced directly
-        if self.solutionTestSpaceIsNotPWL:
+        if self.solutionTestSpaceIsNotPWL.get(ci):
             useC=True
             if useC:
                 cpostprocessing.calculateElementResidualPWL(self.alpha[ci],self.vt.elementResidual[ci],self.elementResidual[ci])
@@ -3195,6 +3053,7 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
 
         cpostprocessing.calculateConservationFluxPWL_noNeumannFix(self.nElements_node,
                                                                   self.nodeStarFactors[ci])
+        self.sendStarSolutionsToGhosts(ci)
         #
         self.getConservationResidualPWL(ci,correctFlux=False)
 
@@ -3236,6 +3095,10 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                                             self.q[('conservationResidual',ci)],
                                                                             self.ebq_global[('velocity',ci)],
                                                                             self.ebq[('velocity',ci)])
+        #set interior boundaries
+        self.setInteriorFluxBoundaryValues(ci,self.vt.ebq_global[('velocity',ci)])
+        if not correctFlux:
+            self.takeCutFaceVelocitiesFromInteriorRanks(ci)
         #set boundary flux
         updateCoef = 0.0 #overwrite first
         #handle exterior boundaries
@@ -3245,8 +3108,6 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                                         self.vt.ebq_global[('totalFlux',ci)],
                                                                         updateCoef,
                                                                         self.vt.ebq_global[('velocity',ci)])
-        #set interior boundaries
-        self.setInteriorFluxBoundaryValues(ci,self.vt.ebq_global[('velocity',ci)])
 
         cfemIntegrals.copyGlobalElementBoundaryVelocityToElementBoundary(self.vt.mesh.interiorElementBoundariesArray,
                                                                          self.vt.mesh.exteriorElementBoundariesArray,
@@ -3267,6 +3128,7 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
         #go from boundary flux to local element boundary representation
         self.evaluateLocalVelocityRepresentation(ci)
     #
+    #
     def getConservationJacobianPWL(self,ci):
         """
         Build local systems for post-processing solve
@@ -3283,36 +3145,6 @@ class VPP_LOW_K_IB_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                                                                             self.w_dS[ci],
                                                                             self.vt.ebq_global['n'],
                                                                             self.nodeStarFactors[ci])
-
-    def evaluateLocalVelocityRepresentation(self,ci):
-        """
-        project to RT_0 velocity from element boundary fluxes
-        """
-        cpostprocessing.projectElementBoundaryVelocityToRT0fluxRep(self.vt.ebq[('dS_u',ci)],
-                                                                   self.vt.ebq['n'],
-                                                                   self.ebq[('velocity',ci)],
-                                                                   self.q[('velocity_dofs',ci)])
-        cpostprocessing.getElementRT0velocityValuesFluxRep(self.vt.mesh.nodeArray,
-                                                           self.vt.mesh.elementNodesArray,
-                                                           self.vt.q['abs(det(J))'],
-                                                           self.vt.q['x'],
-                                                           self.q[('velocity_dofs',ci)],
-                                                           self.q[('velocity',ci)])
-    def evaluateElementVelocityField(self,x,ci):
-        """
-        evaluate velocity field assuming velocity_dofs already calculated
-        for now assumes x shaped like nE x nq x 3
-        """
-        assert len(x.shape) == 3, "wrong shape for x= %s " % x.shape
-        nE = x.shape[0]; nq = x.shape[1]; nd = self.vt.nSpace_global
-        vx = numpy.zeros((nE,nq,nd),'d')
-        cpostprocessing.getElementRT0velocityValuesFluxRep(self.vt.mesh.nodeArray,
-                                                           self.vt.mesh.elementNodesArray,
-                                                           self.vt.q['abs(det(J))'],
-                                                           x,
-                                                           self.q[('velocity_dofs',ci)],
-                                                           vx)
-        return vx
 
 
 ####################################################
