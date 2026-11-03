@@ -232,6 +232,11 @@ namespace proteus
         proteus::pyarray<double>& uTilde_dof = args.array<double>("uTilde_dof");
         double dt = args.scalar<double>("dt");
         int PURE_BDF = args.scalar<int>("PURE_BDF");
+        // the entropy normalization is over the domain: accumulate it over owned elements and hand it out with each
+        // element's viscosities, so that in parallel the caller can reduce it over the ranks and recompute q_numDiff_u
+        int nElements_owned = args.scalar<int>("nElements_owned");
+        proteus::pyarray<double>& entropy_stats = args.array<double>("entropy_stats");
+        proteus::pyarray<double>& element_viscosity = args.array<double>("element_viscosity");
 	double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
 	double maxVel[nElements_global], maxEntRes[nElements_global];
         //cek should this be read in?
@@ -404,10 +409,13 @@ namespace proteus
 		    maxEntRes[eN] = fmax(maxEntRes[eN],fabs(entRes));
 		    
 		    // Quantities for normalization factor //
-		    meanEntropy += ENTROPY(u)*dV;
-		    meanOmega += dV;
-		    maxEntropy = fmax(maxEntropy,ENTROPY(u));
-		    minEntropy = fmin(minEntropy,ENTROPY(u));		    
+		    if (eN < nElements_owned)
+		      {
+			meanEntropy += ENTROPY(u)*dV;
+			meanOmega += dV;
+			maxEntropy = fmax(maxEntropy,ENTROPY(u));
+			minEntropy = fmin(minEntropy,ENTROPY(u));
+		      }
                   }
                 else
                   {
@@ -559,12 +567,18 @@ namespace proteus
           }//elements
 	if (EXPLICIT_METHOD==1)
 	  {
+	    entropy_stats[0] = meanEntropy;
+	    entropy_stats[1] = meanOmega;
+	    entropy_stats[2] = maxEntropy;
+	    entropy_stats[3] = minEntropy;
 	    meanEntropy /= meanOmega;
 	    double norm_factor = fmax(fabs(maxEntropy - meanEntropy), fabs(meanEntropy-minEntropy));
 	    for(int eN=0;eN<nElements_global;eN++)
 	      {
 		double hK=elementDiameter[eN]/degree_polynomial;
 		double linear_viscosity = cMax*hK*maxVel[eN];
+		element_viscosity[2*eN] = linear_viscosity;
+		element_viscosity[2*eN+1] = cE*hK*hK*maxEntRes[eN];
 		double entropy_viscosity = cE*hK*hK*maxEntRes[eN]/norm_factor;	  
 		for  (int k=0;k<nQuadraturePoints_element;k++)
 		  {

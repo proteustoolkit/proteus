@@ -1,4 +1,4 @@
-"""TwoPhaseFlow decks on 2 ranks give the serial answer, every model component and every owned dof.
+"""TwoPhaseFlow and so-file decks on 2 ranks give the serial answer, every model component and every owned dof.
 
 Measured on main f392a159 (macOS arm64, partition pinned with -mat_partitioning_type current), largest relative
 difference over a model's dofs, serial against 2 ranks:
@@ -23,6 +23,13 @@ last component of RANS2P/RANS3PF was compared and 3D dofs sharing x, y were matc
   damBreakLevelSet interface=1 (RANS2P + CLSVOF, t=0.5)    atol 1e-10: 2.4e-13
   marin (3D, CLSVOF + RANS3PF projection, he=0.5, t=0.1)   atol 1e-10: 2.4e-10
   moses (3D, surface tension, he=0.5, t=0.1)               atol 1e-10: 7.6e-12
+  surface_tension/rising_bubble_rans3p (2D, RANS3PF + VOF3P + NCLS3P + RDLS elliptic redistancing + MCorr3P,
+    its own so file, LU replaced by a PETSc direct solve)  atol 1e-10: 5.5e-14. Before: the 2-rank run failed (the
+                                                           deck pinned PresInc dof 0 with the top open, see its p
+                                                           file); with that fixed, 2.0 in MCorr3P (1.9e-2 velocity);
+                                                           with the NCLS interface locator and the RDLS normal
+                                                           reconstruction scattered, 1.1e-2; with the entropy
+                                                           viscosity normalized over the domain, 5.5e-14.
 
 The deck tolerances are the control for the comparison: the difference follows the tolerance, so a run that agrees at
 a tight one is a partition test. The pressure constant is a real serial/parallel difference, not round-off: in a
@@ -101,6 +108,9 @@ CASES = {
                                      MAXITS=1000), 1e-10),
     "marin": (dict(DECK="marin.py", OPTS="he=0.5", FT=0.1, ATOL=1e-10, MAXITS=200), 1e-8),
     "moses": (dict(DECK="moses.py", OPTS="he=0.5", FT=0.1, ATOL=1e-10, MAXITS=200), 1e-9),
+    "rising_bubble_rans3p": (dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                  OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", DIRECT=1, ATOL=1e-10,
+                                  MAXITS=200), 1e-10),
 }
 
 
