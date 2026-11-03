@@ -5411,6 +5411,49 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   return 0;
 }
 //todo add overlap for element based partitions
+/* The ownership rules of partitionElements, which follow from the owner of
+   every element. Every rank computes them over the whole (not yet renumbered)
+   mesh, so they need no communication. Plain C++. An entity no rank reaches
+   is given the owner size. */
+
+//A node belongs to the lowest rank that owns an element containing it.
+std::vector<int> nodeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> nodeOwner(mesh.nNodes_global,size);
+  for (int eN=0;eN<mesh.nElements_global;eN++)
+    for (int nN=0;nN<mesh.nNodes_element;nN++)
+      lowerOwner(nodeOwner,mesh.elementNodesArray[eN*mesh.nNodes_element+nN],elementOwner[eN]);
+  return nodeOwner;
+}
+
+//An element boundary belongs to the lowest rank that owns an element it bounds.
+std::vector<int> elementBoundaryOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
+  for (int eN=0;eN<mesh.nElements_global;eN++)
+    for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
+      lowerOwner(elementBoundaryOwner,mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN],elementOwner[eN]);
+  return elementBoundaryOwner;
+}
+
+//An edge belongs to the lowest rank that owns an element with both its nodes.
+std::vector<int> edgeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> edgeOwner(mesh.nEdges_global,size);
+  for (int ig = 0; ig < mesh.nEdges_global; ig++)
+    {
+      const int nN0_old = mesh.edgeNodesArray[2*ig], nN1_old = mesh.edgeNodesArray[2*ig+1];
+      for (int offset=mesh.nodeElementOffsets[nN0_old];offset<mesh.nodeElementOffsets[nN0_old+1];offset++)
+        {
+          const int eN = mesh.nodeElementsArray[offset];
+          for (int nN=0;nN<mesh.nNodes_element;nN++)
+            if (mesh.elementNodesArray[eN*mesh.nNodes_element+nN] == nN1_old)
+              lowerOwner(edgeOwner,ig,elementOwner[eN]);
+        }
+    }
+  return edgeOwner;
+}
+
 /* Rows begin..end-1 of the element graph the graph partitioner is given: each
    element's neighbours across its element boundaries, sorted, in CSR form. */
 void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors)
@@ -5614,10 +5657,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   //A node belongs to the lowest rank that owns an element containing it. The
   //rank-ordered mask chain that used to decide it marked the unmarked nodes of
   //each rank's owned elements; the minimum over all elements is the same rule.
-  std::vector<int> nodeOwner(mesh.nNodes_global,size);
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    for (int nN=0;nN<mesh.nNodes_element;nN++)
-      lowerOwner(nodeOwner,mesh.elementNodesArray[eN*mesh.nNodes_element+nN],elementOwner[eN]);
+  std::vector<int> nodeOwner = nodeOwnersFromElementOwners(mesh,elementOwner,size);
   if (!everyEntityOwned(nodeOwner,size,"node"))
     return 1;
   set<int> nodes_subdomain_owned;
@@ -5671,10 +5711,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   if (timer) timer->mark("nodes");
   //4b. repeat process to build global face numbering: a face belongs to the
   //lowest rank that owns an element it bounds
-  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-      lowerOwner(elementBoundaryOwner,mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN],elementOwner[eN]);
+  std::vector<int> elementBoundaryOwner = elementBoundaryOwnersFromElementOwners(mesh,elementOwner,size);
   if (!everyEntityOwned(elementBoundaryOwner,size,"element boundary"))
     return 1;
   //Now as with elements and nodes build a global face numbering
@@ -5770,18 +5807,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   // ownership is determined by the edges on owned elements: an edge belongs to
   // the lowest rank that owns an element with both its nodes, and those
   // elements are all in the node star of either one
-  std::vector<int> edgeOwner(mesh.nEdges_global,size);
-  for (int ig = 0; ig < mesh.nEdges_global; ig++)
-    {
-      const int nN0_old = mesh.edgeNodesArray[2*ig], nN1_old = mesh.edgeNodesArray[2*ig+1];
-      for (int offset=mesh.nodeElementOffsets[nN0_old];offset<mesh.nodeElementOffsets[nN0_old+1];offset++)
-        {
-          const int eN = mesh.nodeElementsArray[offset];
-          for (int nN=0;nN<mesh.nNodes_element;nN++)
-            if (mesh.elementNodesArray[eN*mesh.nNodes_element+nN] == nN1_old)
-              lowerOwner(edgeOwner,ig,elementOwner[eN]);
-        }
-    }
+  std::vector<int> edgeOwner = edgeOwnersFromElementOwners(mesh,elementOwner,size);
   if (!everyEntityOwned(edgeOwner,size,"edge"))
     return 1;
   valarray<int> nEdges_subdomain_new, edgeOffsets_new;

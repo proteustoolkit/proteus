@@ -563,3 +563,31 @@ def test_element_graph_partitioner_input_in_process(kind, size):
         rows = [np.sort(neighborsOf[e][neighborsOf[e] >= 0]) for e in range(starts[r], starts[r + 1])]
         assert np.array_equal(offsets, np.cumsum([0] + [len(x) for x in rows]))
         assert np.array_equal(neighbors, np.concatenate(rows) if rows else np.empty(0, int))
+
+
+@pytest.mark.parametrize('size', [1, 3, 4])
+@pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
+def test_element_ownership_rules_in_process(kind, size):
+    """nodeOwnersFromElementOwners, elementBoundaryOwnersFromElementOwners and
+    edgeOwnersFromElementOwners: a node, a face and an edge belong to the lowest
+    rank owning an element that contains them (all of the face's or edge's
+    nodes). Stated here independently, from the element-node incidence."""
+    from proteus import cpartitioning
+    m = _readMesh(kind) if kind in ('tri', 'tet') else _regularMesh(kind)
+    owners = _nodeOwners('scatter', m.nElements_global, size)
+    nodeOwner, boundaryOwner, edgeOwner = cpartitioning.ownersFromElementOwners(m.cmesh, owners, size)
+    elements = np.asarray(m.elementNodesArray)
+    want = np.full(m.nNodes_global, size)
+    np.minimum.at(want, elements.ravel(), np.repeat(owners, elements.shape[1]))
+    assert np.array_equal(nodeOwner, want)
+    elementsOf = [set() for _ in range(m.nNodes_global)]
+    for e, nodes in enumerate(elements):
+        for a in nodes:
+            elementsOf[a].add(e)
+    def lowest(nodes):
+        common = set.intersection(*(elementsOf[a] for a in nodes))
+        return min(owners[e] for e in common)
+    assert np.array_equal(boundaryOwner, [lowest(f) for f in np.asarray(m.elementBoundaryNodesArray)])
+    assert np.array_equal(edgeOwner, [lowest(e) for e in np.asarray(m.edgeNodesArray)])
+    if size > 1:
+        assert len(set(nodeOwner.tolist())) > 1

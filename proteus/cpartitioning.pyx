@@ -39,6 +39,9 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionNodesLocal,
                                    c_nodeGraphRows,
                                    c_elementGraphRows,
+                                   c_nodeOwnersFromElementOwners,
+                                   c_elementBoundaryOwnersFromElementOwners,
+                                   c_edgeOwnersFromElementOwners,
                                    c_elementOwnersFromNodeOwners,
                                    c_elementBoundaryOwnersFromNodeOwners,
                                    c_edgeOwnersFromNodeOwners,
@@ -236,6 +239,18 @@ def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):
             np.array(c_elementBoundaryOwnersFromNodeOwners(cmesh.mesh, cowners, size), dtype=np.intc),
             np.array(c_edgeOwnersFromNodeOwners(cmesh.mesh, cowners, cold2new), dtype=np.intc),
             old2new)
+
+def ownersFromElementOwners(cmeshTools.CMesh cmesh, object elementOwners, int size):
+    """partitionElements' ownership rules on cmesh, given the owner of every
+    element: the owners of the nodes, element boundaries and edges. No MPI. An
+    entity no rank reaches has the owner size."""
+    _requireGlobalMesh(cmesh, "ownersFromElementOwners")
+    owners = np.ascontiguousarray(elementOwners, dtype=np.intc)
+    assert owners.shape[0] == cmesh.mesh.nElements_global, (owners.shape[0], cmesh.mesh.nElements_global)
+    cdef vector[int] cowners = owners
+    return (np.array(c_nodeOwnersFromElementOwners(cmesh.mesh, cowners, size), dtype=np.intc),
+            np.array(c_elementBoundaryOwnersFromElementOwners(cmesh.mesh, cowners, size), dtype=np.intc),
+            np.array(c_edgeOwnersFromElementOwners(cmesh.mesh, cowners, size), dtype=np.intc))
 
 CARTESIAN_KINDS = {'quad': 0, 'hex': 1, 'tri': 2, 'tet': 3}
 

@@ -287,6 +287,14 @@ namespace proteus
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);
 
+  /* partitionElementsLocal's ownership rules, given the owner of every
+     element: a node, an element boundary and an edge belong to the lowest rank
+     owning an element that contains them (for an edge, both its nodes).
+     Entities no rank reaches get the owner size. */
+  extern std::vector<int> nodeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+  extern std::vector<int> elementBoundaryOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+  extern std::vector<int> edgeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+
   /* Rows begin..end-1 of the element graph (each element's neighbours across its
      boundaries, sorted) in CSR form. Plain C++. */
   extern void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
