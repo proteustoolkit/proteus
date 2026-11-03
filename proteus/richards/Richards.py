@@ -593,7 +593,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # TADR's first step the array is still zeros, so the first Richards step
         # keeps the projection; the test is a global min so every rank agrees.
         rho_nodal = getattr(self.densityModel, 'rho_nodal', None)
-        if (rho_nodal is not None and getattr(coeffs, 'STABILIZATION_TYPE', None) == 5
+        # ImplicitEV writes it always; the explicit edge-based types only when they
+        # advect with this model's edge fluxes, and otherwise leave it zero
+        if (rho_nodal is not None and getattr(coeffs, 'STABILIZATION_TYPE', None) in (2, 3, 4, 5)
                 and self.model.comm.globalMin(1.0 if np.all(rho_nodal > 0.0) else 0.0) > 0.0):
             self.model.rho_nodal[:] = rho_nodal
             self.model.ghostScatter(self.model.rho_nodal)
