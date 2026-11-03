@@ -321,6 +321,19 @@ print("proteus build: PUMI partitioners (%s): %s" % (
     ", ".join("%s=%s" % (k, {1: 'yes', 0: 'no', -1: 'unknown'}[v])
               for k, v in sorted(PROTEUS_PUMI_PARTITIONERS.items()))))
 
+# What is expected to vectorize (C30, ON_NODE_PERFORMANCE_BASELINE.md §6;
+# decided 2026-10-24). The extensions compile at sysconfig's -O2 with no
+# -march, plus PROTEUS_OPT from the environment for a site's choice. The
+# legacy element kernels in femIntegrals.c are scaffolding on the way to the
+# generated kernels (campaign C19) and are not expected to vectorize: their
+# flat index arithmetic and in-memory accumulators keep the compiler out at
+# any flag level (clang -Rpass: 150 of 369 loops at -O2, none of the passes
+# that dominate assembly; -O3 -mcpu=native changes the residual by 10% and the
+# Jacobian by nothing). The generated kernels are expected to, over the
+# quadrature points of an element, which needs local accumulators, restrict
+# (or references into fixed-size element arrays) and compile-time element
+# shape. Keep -O2 the default; do not tune the legacy passes for flags.
+
 EXTENSIONS_TO_BUILD = [
     Extension("MeshAdaptPUMI.MeshAdapt",
               sources = ['proteus/MeshAdaptPUMI/MeshAdapt.pyx', 'proteus/MeshAdaptPUMI/cMeshAdaptPUMI.cpp',
