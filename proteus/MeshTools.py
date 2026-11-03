@@ -9130,12 +9130,10 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                            nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                            parallelPartitioningType=meshOptions.parallelPartitioningType)
         if generatePartitionedMeshFromFiles:
-            logEvent("Generating partitioned mesh from Tetgen files")
-            if("f" not in meshOptions.triangleOptions or "ee" not in meshOptions.triangleOptions):
-                sys.exit("ERROR: Remake the mesh with the `f` flag and `ee` flags in triangleOptions.")
-            mlMesh.generatePartitionedMeshFromTetgenFiles(fileprefix, nbase,mesh,meshOptions.nLevels,
-                                                          nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                          parallelPartitioningType=meshOptions.parallelPartitioningType)
+            raise ValueError(
+                "generatePartitionedMeshFromFiles (-F) partitions a mesh read from tetgen files, "
+                "and a DMPlex domain has no tetgen files: run without -F, which builds the mesh "
+                "from the DMPlex and partitions it in memory")
         else:
             logEvent("Generating coarse global mesh from Plex")
             # mesh.generateFromTetgenFiles(fileprefix, nbase,parallel = comm.size() > 1)

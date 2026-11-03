@@ -65,3 +65,14 @@ def test_a_tetgen_mesh_domain_reads_its_meshfile(tmp_path, monkeypatch):
     assert mesh.nNodes_global == source.nNodes_global
     assert mesh.nElements_global == source.nElements_global
     np.testing.assert_array_equal(mesh.nodeArray, source.nodeArray)
+
+
+def test_a_dmplex_domain_under_F_says_it_has_no_files(tmp_path, monkeypatch):
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    monkeypatch.chdir(tmp_path)
+    # hexahedra: a simplex box needs a tetrahedral generator, which not every PETSc has
+    plex = PETSc.DMPlex().createBoxMesh([2, 2, 2], simplex=False, comm=PETSc.COMM_SELF)
+    domain = Domain.DMPlexDomain(plex)
+    options = MeshTools.MeshOptions(nd=3)
+    with pytest.raises(ValueError, match="DMPlex domain has no tetgen files"):
+        MeshTools._generateMesh(domain, options, generatePartitionedMeshFromFiles=True)
