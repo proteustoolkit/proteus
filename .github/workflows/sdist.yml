@@ -230,7 +230,13 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install build
-          python -m build --sdist
+          # --no-isolation: conda-forge's pip 26.2.2 build _1 (2026-11-02 16:39 UTC) drops the bundled cacert.pem
+          # and makes certifi.where() return sys.prefix/ssl/cacert.pem. python -m build installs the build
+          # requirements with `pip --python <isolated venv>`, which runs pip inside the venv, where that file does not
+          # exist: FileNotFoundError in truststore's load_verify_locations on every leg that resolves the new build
+          # (the legs that turn the file's pip =24.0 into a floor). The sdist needs no isolated env; the next step
+          # still installs it with default build isolation, through pip run from this env, which finds the bundle.
+          python -m build --sdist --no-isolation
 
       - name: Install sdist with default build isolation
         shell: bash -l {0}
