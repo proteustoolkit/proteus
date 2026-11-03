@@ -45,3 +45,23 @@ def test_mesh_options_without_a_size_still_fall_back_to_the_numerics_module(monk
     numerics = types.SimpleNamespace(nn=3)
     assert MeshTools.generateMesh(physics, numerics) == "mesh"
     assert seen == [numerics] and numerics.genMesh is True
+
+
+def _cube_tetgen_files(prefix):
+    mesh = MeshTools.TetrahedralMesh()
+    mesh.generateTetrahedralMeshFromRectangularGrid(3, 3, 3, 1.0, 1.0, 1.0)
+    mesh.writeTetgenFiles(prefix, 1)
+    return mesh
+
+
+def test_a_tetgen_mesh_domain_reads_its_meshfile(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = _cube_tetgen_files("cube")
+    domain = Domain.MeshTetgenDomain(fileprefix="cube")
+    options = MeshTools.MeshOptions(nd=3)
+    options.genMesh = False
+    mlMesh = MeshTools._generateMesh(domain, options)
+    mesh = mlMesh.meshList[0]
+    assert mesh.nNodes_global == source.nNodes_global
+    assert mesh.nElements_global == source.nElements_global
+    np.testing.assert_array_equal(mesh.nodeArray, source.nodeArray)

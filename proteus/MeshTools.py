@@ -8936,7 +8936,7 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                                           parallelPartitioningType=meshOptions.parallelPartitioningType)
         else:
             logEvent("Generating coarse global mesh from Tetgen files")
-            mesh.generateFromTetgenFiles(domain.polyfile, nbase,parallel = comm.size() > 1)
+            mesh.generateFromTetgenFiles(domain.meshfile, nbase,parallel = comm.size() > 1)
             logEvent("Generating partitioned %i-level mesh from coarse global Tetgen mesh" % (meshOptions.nLevels,))
             mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                                   nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
