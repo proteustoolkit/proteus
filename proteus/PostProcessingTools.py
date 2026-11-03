@@ -321,8 +321,11 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
     P1-nonconforming velocity postprocessing
 
     Flagged for likely removal (campaign C10a, decision deferred 2026-11-02): it applies only to a Crouzeix-Raviart
-    (P1 nonconforming) potential, no deck or test uses it, and two branches name misspelled objects
-    (``cpostprocesssing``, ``f_ci_wieght``) that would raise NameError if reached.
+    (P1 nonconforming) potential. Measured 2026-11-03 on vpp_poisson_2d: every element balances to 2.5e-16, the
+    velocity converges at first order (L2 0.115, 0.0594, 0.0303 on 7, 13, 25 nodes), and 2 and 4 ranks give the
+    serial answer to 9e-14 at overlap 0 and 1. test/single_phase_gw/test_single_phase_gw.py::test_ncp1 runs it; three
+    other in-tree decks name it (MiscibleDisplacement, poisson_2d, post_processing/import_modules), none in
+    air-water-vv or the manuscript decks.
     """
     from .cpostprocessing import postProcessRT0potentialFromP1nc,postProcessRT0potentialFromP1nc_sd
     from .cpostprocessing import postProcessRT0velocityFromP1nc,postProcessRT0velocityFromP1nc_sd
@@ -469,7 +472,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                                                                self.vt.ebq['n'],
                                                                self.elementBarycenters,
                                                                self.vt.elementQuadratureWeights[('a',ci,self.potentials[ci][0])],
-                                                               f_ci_wieght,#self.vt.elementQuadratureWeights[('f',ci)],
+                                                               f_ci_weight,#self.vt.elementQuadratureWeights[('f',ci)],
                                                                self.vt.q[('w*dV_r',ci)],
                                                                self.vt.q[('phi',self.potentials[ci][0])],
                                                                self.vt.q[('grad(phi)',self.potentials[ci][0])],
@@ -480,7 +483,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
 
         for cj in self.potentials[ci][1:-1]:
             if self.vt.sd:
-                cpostprocesssing.updateRT0velocityWithAveragedPotentialP1nc_sd(self.vt.coefficients.sdInfo[(ci,cj)][0],self.vt.coefficients.sdInfo[(ci,cj)][1],
+                cpostprocessing.updateRT0velocityWithAveragedPotentialP1nc_sd(self.vt.coefficients.sdInfo[(ci,cj)][0],self.vt.coefficients.sdInfo[(ci,cj)][1],
                                                                                self.vt.q['det(J)'],
                                                                                self.vt.elementQuadratureWeights[('a',ci,self.potentials[ci][0])],
                                                                                self.vt.q[('phi',ci)],
