@@ -993,6 +993,15 @@ class LevelModel(OneLevelTransport):
         dofMap = self.u[0].femSpace.dofMap
         rank = self.comm.rank()
         argsDict["numOwnedDOFs"] = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        # psi of a ghost dof comes from a truncated graph row and the dissipation of an owned dof reads it:
+        # compute psi (phase 0, before anything is added to r), scatter it from the owners, then the rest
+        if getattr(self, "_redistancing_psi_dof", None) is None:
+            self._redistancing_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+        argsDict["psi_dof"] = self._redistancing_psi_dof
+        argsDict["phase"] = 0
+        self.ncls.calculateRedistancingResidual(argsDict)
+        self.scatterDOFArray(self._redistancing_psi_dof)
+        argsDict["phase"] = 1
         L2_norm = np.sqrt(globalSum(self.ncls.calculateRedistancingResidual(argsDict) ** 2))
 
         if (self.coefficients.pure_redistancing == True):

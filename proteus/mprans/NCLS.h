@@ -1241,6 +1241,11 @@ namespace proteus
         // the L2 norm is over the dofs this rank owns, so that Python can sum it over the ranks: a norm that
         // differs from rank to rank sends them through different numbers of redistancing iterations
         int numOwnedDOFs = args.scalar<int>("numOwnedDOFs");
+        // The dissipation of an owned dof reads psi of its neighbours, which for a ghost across a rank cut comes
+        // from a truncated graph row. Phase 0 computes psi only (from u_dof_old) into psi_dof and returns; Python
+        // scatters it from the owners and calls again with phase 1, which takes the scattered values.
+        int phase = args.scalar<int>("phase");
+        proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
         double dt = args.scalar<double>("dt");
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
@@ -1280,6 +1285,42 @@ namespace proteus
         double L2_norm=0.;
         for (int i=0; i<numDOFs; i++)
           L2_norm_per_node[i] = 0.;
+
+        //////////////////////////////////
+        // COMPUTE SMOOTHNESS INDICATOR //
+        //////////////////////////////////
+        // Smoothness indicator is based on the solution.
+        // psi_i = psi_i(alpha_i); alpha_i = |sum(betaij*(uj-ui))|/sum(betaij*|uj-ui|)
+        psi.resize(numDOFs,0.0);
+        for (int i=0; i<numDOFs; i++)
+          {
+            double alphai;
+            double solni = u_dof_old.data()[i]; // solution at time tn for the ith DOF
+            // for smoothness indicator
+            double alpha_numi=0;
+            double alpha_deni=0;
+            for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              { //loop in j (sparsity pattern)
+                int j = csrColumnOffsets_DofLoops.data()[offset];
+                double solnj = u_dof_old.data()[j]; // solution at time tn for the jth DOF
+                alpha_numi += solnj-solni;
+                alpha_deni += fabs(solnj-solni);
+              }
+            alphai = (fabs(alpha_numi) == alpha_deni ? 1. : fabs(alpha_numi)/(alpha_deni+1E-15));
+            if (POWER_SMOOTHNESS_INDICATOR==0)
+              psi[i] = 1.0;
+            else
+              psi[i] = std::pow(alphai,POWER_SMOOTHNESS_INDICATOR); //NOTE: they use alpha^2 in the paper
+          }
+        // END OF COMPUTING SMOOTHNESS INDICATOR
+        if (phase == 0)
+          {
+            for (int i=0; i<numDOFs; i++)
+              psi_dof.data()[i] = psi[i];
+            return 0.0;
+          }
+        for (int i=0; i<numDOFs; i++)
+          psi[i] = psi_dof.data()[i];
 
         // Allocate space for the transport matrices
         TransportMatrix.resize(NNZ,0.0);
@@ -1400,37 +1441,10 @@ namespace proteus
               }//i
           }//elements
 
-        //////////////////////////////////
-        // COMPUTE SMOOTHNESS INDICATOR //
-        //////////////////////////////////
-        // Smoothness indicator is based on the solution.
-        // psi_i = psi_i(alpha_i); alpha_i = |sum(betaij*(uj-ui))|/sum(betaij*|uj-ui|)
-        psi.resize(numDOFs,0.0);
-        for (int i=0; i<numDOFs; i++)
-          {
-            double alphai;
-            double solni = u_dof_old.data()[i]; // solution at time tn for the ith DOF
-            // for smoothness indicator
-            double alpha_numi=0;
-            double alpha_deni=0;
-            for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
-              { //loop in j (sparsity pattern)
-                int j = csrColumnOffsets_DofLoops.data()[offset];
-                double solnj = u_dof_old.data()[j]; // solution at time tn for the jth DOF
-                alpha_numi += solnj-solni;
-                alpha_deni += fabs(solnj-solni);
-              }
-            alphai = (fabs(alpha_numi) == alpha_deni ? 1. : fabs(alpha_numi)/(alpha_deni+1E-15));
-            if (POWER_SMOOTHNESS_INDICATOR==0)
-              psi[i] = 1.0;
-            else
-              psi[i] = std::pow(alphai,POWER_SMOOTHNESS_INDICATOR); //NOTE: they use alpha^2 in the paper
-            // compute L2 norm
-            if (i < numOwnedDOFs)
-              L2_norm += std::pow(L2_norm_per_node[i],2);
-          }
+        for (int i=0; i<numOwnedDOFs; i++)
+          L2_norm += std::pow(L2_norm_per_node[i],2);
         L2_norm = std::sqrt(L2_norm);
-        // END OF COMPUTING SMOOTHNESS INDICATOR
+
 
         /////////////////////////////////////////////
         // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
