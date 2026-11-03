@@ -304,8 +304,14 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  cK=1.0,
                  # OUTPUT quantDOFs
                  outputQuantDOFs=False,
-                 forceStrongConditions = False):
+                 forceStrongConditions = False,
+                 # NODAL WATER SOURCE (entropy-viscosity kernel only): a callable
+                 # mms_source(x, t) -> [mass/(volume time)] at the mesh nodes x,
+                 # evaluated in preStep, e.g. the flow source of a manufactured
+                 # solution.  None leaves it zero.
+                 mms_source=None):
         self.VMS=VMS
+        self.mms_source = mms_source
         if density_model is None:
             density_model = DENSITY_MODEL
         self.density_model = density_model
@@ -542,6 +548,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                                self.densityModel, 'density (transport) model')
 
     def preStep(self, t, firstStep=False):
+        # NODAL WATER SOURCE, before the uncoupled early return so a standalone
+        # flow run gets it too.  P1, so DOF i is mesh node i.
+        if self.mms_source is not None:
+            self.model.nodalSource[:] = self.mms_source(self.model.mesh.nodeArray, t)
+            if not getattr(self, '_mms_source_logged', False):
+                # once: which time level preStep hands the source
+                self._mms_source_logged = True
+                ti = self.model.timeIntegration
+                logEvent("[MMS-SRC] Richards preStep t=%.9e timeIntegration.t=%.9e tLast=%.9e dt=%.9e"
+                         % (t, ti.t, getattr(ti, 'tLast', float('nan')), ti.dt))
         # every step of the implicit FCT starts with the Galerkin predictor
         if hasattr(self, 'model') and hasattr(self.model, 'fct_phase'):
             self.model.fct_phase = 'predictor'
@@ -564,6 +580,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.model.q['rho'][:] = q_rho
         if ebqe_rho is not None and hasattr(self.model, 'ebqe') and 'rho' in self.model.ebqe:
             self.model.ebqe['rho'][:] = ebqe_rho
+        q_mu = getattr(coeffs, 'q_mu', None)
+        ebqe_mu = getattr(coeffs, 'ebqe_mu', None)
+        if q_mu is not None:
+            self.model.q['mu'][:] = q_mu
+        if ebqe_mu is not None:
+            self.model.ebqe['mu'][:] = ebqe_mu
         # NODAL density for the edge loop, from TADR's nodal rho(c_i) at the end of
         # its step (ImplicitEV writes it) instead of an L2 projection of q_rho.
         # Lumped mass evaluates storage AT the node, so the value there is
@@ -1083,7 +1105,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.q[('da',0,0,0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,),'d')
         self.q[('grad(u_v)',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
         self.q[('velocity',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
-        self.q[('velocity_couple',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')      
+        self.q[('velocity_couple',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
+        # velocity rebuilt from the realized edge fluxes, see computeEdgeVelocity
+        self.q[('velocity_edge',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
         self.q[('m',0)] = self.q[('u',0)].copy()
         self.q[('theta',0)] = self.q[('u',0)].copy()
         self.q[('mt',0)] = self.q[('u',0)].copy()
@@ -1113,6 +1137,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.ebqe['rho'] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary),'d')
         self.q['rho'][:] = self.coefficients.rho
         self.ebqe['rho'][:] = self.coefficients.rho
+        # viscosity ratio mu/mu_0 from the transport model, copied in preStep like
+        # q['rho']; the conductivity at a quadrature point is K_s/mu
+        self.q['mu'] = np.ones((self.mesh.nElements_global,self.nQuadraturePoints_element),'d')
+        self.ebqe['mu'] = np.ones((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary),'d')
         
         
         self.points_elementBoundaryQuadrature= set()
@@ -1264,6 +1292,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #all inside calculateResidual_entropy_viscosity -- see the consBoundaryFlux
         #comment there.  It is kept here for the RICHARDS_BC_DBG probe.
         self.consBoundaryFlux = np.zeros(self.u[0].dof.shape, 'd')
+        #nodal water source, filled by Coefficients.preStep when the deck sets
+        #mms_source; zero otherwise
+        self.nodalSource = np.zeros(self.u[0].dof.shape, 'd')
         #per-node ROCK region, from elementMaterialTypes (the .ele region
         #attribute) via the first element containing each node.  NOT
         #mesh.nodeMaterialTypes: that array is the .node boundary-marker column
@@ -1661,7 +1692,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # pairwise iff F_ij = -F_ji.  The weak-Dirichlet block is unsymmetric (IIPG has no
         # transpose term), so with it folded into TransportMatrix the boundary edges do NOT
         # cancel and the limiter creates mass; RICHARDS_FCT_BND_DIFF keeps it out of F
-        # entirely, leaving only the symmetric d^G, and this should drop to round-off.
+        # entirely, and this should drop to round-off.
         # Rank-local, so ghosts pollute it: read it off a serial run.
         if os.environ.get("RICHARDS_FCT_DBG"):
             _d = float(np.sum(self.ML * (limited_solution - self.mLow)))
@@ -2013,12 +2044,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.limitedSpatialFluxMatrix = np.zeros(Cx.shape, 'd')
             self.limitedFlux = np.zeros(Cx.shape, 'd')
         # Boundary (weak-Dirichlet) block of the transport operator, kept OUT of
-        # TransportMatrix/TransportMatrixConsistent so the edge loop can give it its own
-        # symmetric graph viscosity d^G_ij = max(0, TB_ij, TB_ji) instead of pushing it
-        # through the interior fmax() clip.  d^G needs the transposed entry, so build the
-        # ij -> ji permutation of the CSR once here.  Structurally symmetric pattern, and
-        # colind is ascending within a row, so keys row*N+col are globally sorted and the
-        # transpose index is one searchsorted.
+        # TransportMatrix/TransportMatrixConsistent so the edge loop applies it identically
+        # to the low and high order flux instead of pushing it through the interior fmax()
+        # clip.  The ij -> ji permutation of the CSR, built once here, is read by
+        # calculateEdgeVelocity.  Structurally symmetric pattern, and colind is ascending
+        # within a row, so keys row*N+col are globally sorted and the transpose index is
+        # one searchsorted.
         self.TransportBoundary = np.zeros(Cx.shape, 'd')
         if getattr(self, 'csrTransposeIndices', None) is None or \
            len(self.csrTransposeIndices) != len(colind):
@@ -2028,13 +2059,13 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             keys = rows * N + cols
             self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype('i')
             # a structurally symmetric pattern round-trips; if it does not, fall back to
-            # the diagonal-free form max(0, TB_ij) rather than indexing out of the array
+            # the identity rather than indexing out of the array
             t = self.csrTransposeIndices
             ok = (t.min() >= 0 and t.max() < len(colind) and
                   np.array_equal(rows[t], cols) and np.array_equal(cols[t], rows))
             if not ok:
                 logEvent("Richards: CSR pattern is not structurally symmetric; "
-                         "boundary graph viscosity falls back to max(0,TB_ij)", level=1)
+                         "csrTransposeIndices falls back to the identity", level=1)
                 self.csrTransposeIndices = np.arange(len(colind), dtype='i')
         # PARALLEL (one-time): freeDOFMaterialTypes is built in __init__ from the
         # FIRST incident element in LOCAL element numbering, so on a node sitting
@@ -2142,6 +2173,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
 
         argsDict["q_rho"]= self.q['rho']
         argsDict["ebqe_rho"]= self.ebqe['rho']
+        argsDict["q_mu"]= self.q['mu']
+        argsDict["ebqe_mu"]= self.ebqe['mu']
         
         argsDict["gravity"] = self.coefficients.gravity
         argsDict["alpha"] = self.coefficients.vgm_alpha_types
@@ -2249,10 +2282,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["min_m_bc"] = self.min_m_bc
         argsDict["max_m_bc"] = self.max_m_bc
         argsDict["TransportBoundary"] = self.TransportBoundary
-        argsDict["csrTransposeIndices"] = self.csrTransposeIndices
-        # Step B alters the residual, so it is only sound when the FCT limiter is present to
-        # antidiffuse d^G back; with FCT off it is pure extra boundary diffusion.  Gating it
-        # here also keeps an FCT=False run byte-identical to the pre-Step-B code.
+        # Step B alters the residual (TB unclipped), and it only buys conservation of the
+        # limited correction, so it is tied to FCT.  Gating it here also keeps an FCT=False
+        # run byte-identical to the pre-Step-B code.
         argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT))
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
@@ -2273,6 +2305,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["anb_seepage_flux_n"]= self.anb_seepage_flux_n
         argsDict["consBoundaryFlux"] = self.consBoundaryFlux
         argsDict["edgeFluxLow"] = self.edgeFluxLow
+        argsDict["nodalSource"] = self.nodalSource
         argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
         ######################################################################################
         argsDict["pn"] = self.u[0].dof
@@ -2420,6 +2453,61 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                  "sum(B)=%+.6e (net boundary exchange)"
                  % (self.timeIntegration.t, self.timeIntegration.dt,
                     a_max/max(e_max, 1.0e-300), b_int, e_max, s_max, b_net))
+
+    def computeEdgeVelocity(self):
+        """Fill q[('velocity_edge',0)] with the velocity whose nodal fluxes are
+        this step's realized edge fluxes (Richards.h calculateEdgeVelocity),
+
+            int rho v.grad(w_i) dV = sum_j E_ij,  E_ij = edgeFluxLow_ij + limitedFlux_ij/dt.
+
+        Call once per step after the Newton solve and FCTStep: limitedFlux is
+        only final then, and it stays zero with FCT off.  Needs
+        STABILIZATION_TYPE 1 or 2, the only types whose residual fills
+        edgeFluxLow and whose FCT correction is limitedFlux.
+        """
+        assert self.coefficients.STABILIZATION_TYPE in (1, 2), \
+            "computeEdgeVelocity needs Richards STABILIZATION_TYPE 1 or 2"
+        rowptr, colind, _ = self.MC_global.getCSRrepresentation()
+        argsDict = cArgumentsDict.ArgumentsDict()
+        argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
+        argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
+        argsDict["mesh_dof"] = self.mesh.nodeArray
+        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["dV_ref"] = self.elementQuadratureWeights[('u',0)]
+        argsDict["u_grad_trial_ref"] = self.u[0].femSpace.grad_psi
+        argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["numDOFs"] = len(rowptr) - 1
+        argsDict["NNZ"] = self.nnz
+        argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
+        argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
+        argsDict["elementMaterialTypes"] = self.mesh.elementMaterialTypes
+        argsDict["KWs"] = self.coefficients.Ksw_types
+        argsDict["q_rho"] = self.q['rho']
+        argsDict["q_mu"] = self.q['mu']
+        argsDict["dt"] = self.timeIntegration.dt
+        argsDict["edgeFluxLow"] = self.edgeFluxLow
+        argsDict["limitedFlux"] = self.limitedFlux
+        argsDict["csrRowIndeces_DofLoops"] = rowptr
+        argsDict["csrColumnOffsets_DofLoops"] = colind
+        argsDict["csrTransposeIndices"] = self.csrTransposeIndices
+        argsDict["csrRowIndeces_CellLoops"] = self.csrRowIndeces[(0, 0)]
+        argsDict["csrColumnOffsets_CellLoops"] = self.csrColumnOffsets[(0, 0)]
+        argsDict["velocity_edge"] = self.q[('velocity_edge',0)]
+        self.richards.calculateEdgeVelocity(argsDict)
+        if _EDGE_DBG:
+            # the property the velocity is built for: on every owned row the
+            # nodal flux of rho*v equals the row sum of E
+            nFree = len(rowptr) - 1
+            Q = np.zeros(nFree)
+            np.add.at(Q, self.l2g[0]['freeGlobal'],
+                      np.einsum('ek,eks,ekas->ea', self.q['rho'],
+                                self.q[('velocity_edge',0)], self.q[('grad(w)*dV_f',0)]))
+            E = self.edgeFluxLow + self.limitedFlux/self.timeIntegration.dt
+            no = self.mesh.nNodes_owned
+            err = self.comm.globalMax(float(np.abs(Q - np.add.reduceat(E, rowptr[:-1]))[:no].max()))
+            e_max = self.comm.globalMax(float(np.abs(E).max()))
+            logEvent("[RICHARDS-EDGE-VEL] t=%.6e max|int rho v.grad w_i - sum_j E_ij|=%.3e "
+                     "max|E|=%.3e" % (self.timeIntegration.t, err, e_max))
 
     def _logBoundaryFluxSplit(self):
         """RICHARDS_BC_DBG=1: decompose the exterior boundary water flux.
@@ -2693,6 +2781,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
 
         argsDict["q_rho"]= self.q['rho']
         argsDict["ebqe_rho"]= self.ebqe['rho']
+        argsDict["q_mu"]= self.q['mu']
+        argsDict["ebqe_mu"]= self.ebqe['mu']
         
         argsDict["gravity"] = self.coefficients.gravity
         argsDict["alpha"] = self.coefficients.vgm_alpha_types

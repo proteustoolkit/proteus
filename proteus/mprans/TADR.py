@@ -27,6 +27,11 @@ from . import cArgumentsDict
 #: step; see LevelModel._logBoundarySoluteFlux.  Off by default: the reduction
 #: costs a handful of MPI allreduces per step.
 _TADR_BC_DBG = os.environ.get("TADR_BC_DBG", "0") not in ("0", "false", "False")
+#: RICHARDS_EDGE_VELOCITY=1: in flow-model-flux mode, advect with the velocity
+#: Richards rebuilds from its realized edge fluxes (Richards.computeEdgeVelocity)
+#: and assemble the edge fluxes from it at the quadrature points, instead of
+#: copying Richards' edge fluxes.  Off by default.
+_EDGE_VELOCITY = os.environ.get("RICHARDS_EDGE_VELOCITY", "0") not in ("0", "false", "False")
 
 
 class SubgridError(SGE_base):
@@ -384,6 +389,10 @@ class Coefficients(TC_base):
                  velocity_exponent=1.0,
                  rho_f=1.0,
                  rho_s=1.0,
+                 # Solute mass fraction at u = 1, for the viscosity law
+                 # mu/mu_0(omega = viscosity_omega_max*u) exported to the flow
+                 # model as q_mu/ebqe_mu.  0 is constant viscosity.
+                 viscosity_omega_max=0.0,
                  specified_velocity=True,
                  # Kinetic dissolution source: R_diss = k_d * S_n * S_w * (c_sat - c)
                  # k_d : volumetric mass-transfer rate coefficient [1/s].  Default 0
@@ -392,8 +401,15 @@ class Coefficients(TC_base):
                  # S_n : taken from vModel.u[1].dof if the flow model exposes a
                  #       gas saturation (mphase_co2); else treated as zero.
                  k_d=0.0,
-                 c_sat=1.0):
+                 c_sat=1.0,
+                 # NODAL SOURCE of the cancelled form (ImplicitEV with the flow
+                 # model's edge fluxes only): a callable mms_source(x, t) ->
+                 # [mass/(volume time)] at the mesh nodes x, evaluated in preStep.
+                 # For a conservative solute source f_s pass f_s - c*f_w, f_w the
+                 # flow model's water source.  None leaves it zero.
+                 mms_source=None):
         self.variableNames = ['u']
+        self.mms_source = mms_source
         self.LS_modelIndex = LS_model
         self.V_model = V_model
         self.RD_modelIndex = RD_model
@@ -469,6 +485,7 @@ class Coefficients(TC_base):
         self.velocity_exponent = velocity_exponent
         self.rho_f = rho_f
         self.rho_s = rho_s
+        self.viscosity_omega_max = viscosity_omega_max
         self.specified_velocity = specified_velocity
         self.k_d = k_d
         self.c_sat = c_sat
@@ -691,6 +708,25 @@ class Coefficients(TC_base):
         self.model.u_dof_old[:] = self.model.u[0].dof
         self.q_v_old[:] = self.q_v
         self.q_rho_old[:] = self.q_rho
+        # FLOW-MODEL FLUXES: seed the carried fluid mass once, at the start of the
+        # first real step.  The flow model has just taken that step, so its mn is
+        # exactly the old-time mass the step's fluxes start from.  From here on M
+        # is advanced only in postStep.
+        if getattr(self.model, '_use_edge_flux', 0) and not getattr(self.model, '_M_carried', False):
+            self.model.M_dof[:] = self.vModel.mn
+            self.model._M_carried = True
+        # NODAL SOURCE.  Only the edge-flux residual reads it, so refuse anything
+        # else rather than drop it silently.  P1, so DOF i is mesh node i.
+        if self.mms_source is not None:
+            assert getattr(self.model, '_use_edge_flux', 0), \
+                "TADR mms_source needs ImplicitEV advecting with the flow model's edge fluxes"
+            self.model.nodalSource[:] = self.mms_source(self.model.mesh.nodeArray, t)
+            if not getattr(self, '_mms_source_logged', False):
+                # once: which time level preStep hands the source
+                self._mms_source_logged = True
+                ti = self.model.timeIntegration
+                logEvent("[MMS-SRC] TADR preStep t=%.9e timeIntegration.t=%.9e tLast=%.9e dt=%.9e"
+                         % (t, ti.t, getattr(ti, 'tLast', float('nan')), ti.dt))
 
         # Restart flags for stages of taylor galerkin
         self.model.stage = 1
@@ -701,8 +737,14 @@ class Coefficients(TC_base):
             self.model.updateVelocityFieldAsFunction()
         elif (not self.model.coefficients.specified_velocity and
               self.V_model is not None):
-            # Refresh coupled velocity every step from Richards.
-            self.q_v[:] = self.vModel.q[('velocity_couple', 0)]
+            # Refresh coupled velocity every step from Richards.  The flow model
+            # has finished its Newton solve and FCTStep by now, so its edge
+            # velocity can be built from the final limitedFlux.
+            if getattr(self.model, '_use_edge_velocity', 0):
+                self.vModel.computeEdgeVelocity()
+                self.q_v[:] = self.vModel.q[('velocity_edge', 0)]
+            else:
+                self.q_v[:] = self.vModel.q[('velocity_couple', 0)]
             self.ebqe_v[:] = self.vModel.ebqe[('velocity_couple', 0)]
 
         if firstStep:
@@ -725,11 +767,37 @@ class Coefficients(TC_base):
         # nothing to adopt.  Report the conserved solute mass instead: that is
         # the quantity this trade puts at risk, and it is the number to watch.
         if self.STABILIZATION_TYPE == 5:
-            self.model._reportSoluteMass("postStep")
-            # The defect that says how much of the above is real.  Here, not in
-            # _reportSoluteMass: it needs Richards' M^{n+1}, and under
+            # The defect that says how much of the solute mass change is real.
+            # Here, not in _reportSoluteMass: it needs Richards' M^{n+1}, and under
             # Sequential_MinModelStep the flow model has finished its step by now.
+            # Before the carry below, because it needs M^n.
             self.model._reportContinuityDefect("postStep")
+            m = self.model
+            if m._use_edge_flux:
+                # Carry the fluid mass: M^{n+1} was advanced with the flow model's
+                # fluxes.  postStep runs only once the step is taken, and TADR is
+                # the last model in the sequence, so a retried step cannot get
+                # here twice.
+                m.M_dof[:] = m.M_low
+                # How far the carried M has drifted from the flow model's own mass
+                # (its FCT inversion loss: theta(psi(mLim))*rho < mLim).  Not an
+                # error in this model; reported so it stays visible.
+                vModel = self.vModel
+                m_flow = np.asarray(vModel.mAccepted if vModel.mAccepted is not None
+                                    else vModel.mLow)
+                no = m.mesh.nNodes_owned
+                ML = np.asarray(m.ML)[:no]
+                diff = m.M_dof[:no] - m_flow[:no]
+                drift = globalMax(float(np.abs(diff).max()))
+                scale = globalMax(float(np.abs(m_flow[:no]).max()))
+                d_net = globalSum(float((ML*diff).sum()))
+                d_abs = globalSum(float((ML*np.abs(diff)).sum()))
+                total = globalSum(float((ML*m_flow[:no]).sum()))
+                logEvent("[TADR-EDGE] t=%.6e carried M vs flow model: max|M - m_flow|/max|m_flow|=%.3e "
+                         "sum ML(M - m_flow)/sum ML m_flow=%+.3e sum ML|M - m_flow|/sum ML m_flow=%.3e"
+                         % (m.timeIntegration.t, drift/max(scale, 1.0e-300),
+                            d_net/max(total, 1.0e-300), d_abs/max(total, 1.0e-300)))
+            self.model._reportSoluteMass("postStep")
         # q_porosity aliases the coupled Richards theta field, so cache the
         # lagged copy here before Richards advances it on the next split step.
         self.q_porosity_old[:] = self.q_porosity
@@ -1455,6 +1523,10 @@ class LevelModel(OneLevelTransport):
             c.ebqe_porosity = np.full(self.ebqe[('u', 0)].shape, c.porosity, 'd')
         if not hasattr(c, 'ebqe_rho'):
             c.ebqe_rho = np.full(self.ebqe[('u', 0)].shape, c.rho_f, 'd')
+        if not hasattr(c, 'q_mu'):
+            c.q_mu = np.ones(self.q[('u', 0)].shape, 'd')
+        if not hasattr(c, 'ebqe_mu'):
+            c.ebqe_mu = np.ones(self.ebqe[('u', 0)].shape, 'd')
         if not hasattr(c, 'Sn_dof'):
             c.Sn_dof = np.zeros_like(self.u[0].dof)
 
@@ -1521,10 +1593,77 @@ class LevelModel(OneLevelTransport):
         are -gamma_ij*rho_j with gamma_ij >= 0 and rho_j = M_j/theta_j > 0), and
         it is Richards' job to keep theta*rho positive.
 
+        FLOW-MODEL FLUXES (ImplicitEV, when the flow model exports them): the
+        continuity defect above is removed at its source.  TADR advects with the
+        water the flow model actually moved in the step,
+            E_ij = dt*edgeFluxLow_ij + limitedFlux_ij     (into i from j),
+        and the rest of each node's storage change, B_i = ML_i*(m^{n+1} - mn)_i
+        - sum_j E_ij (boundary exchange + the flow model's Newton residual).  M is
+        then CARRIED: M^{n+1} = M^n + (sum_j E_ij + B_i)/ML = M^n + (m^{n+1} - mn),
+        so the fluid balance behind the cancelled form is the flow model's own
+        and the cancelled form is conservative as well as bounded.  M^n is seeded
+        once from mn and advanced in Coefficients.postStep.
+
         Returns 1 if the kernel must seed M from the EOS instead (no flow model
         -- test_tadr and any single-model deck), 0 if M was taken from the flow.
         """
-        mn_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mn', None)
+        vModel = getattr(self.coefficients, 'vModel', None)
+        # COLLECTIVE, once: every rank must take the same kernel branch.  Needs
+        # the flow model's export and the SAME CSR pattern, since edgeFlux is
+        # copied entry by entry.
+        if not getattr(self, '_edge_flux_checked', False):
+            self._edge_flux_checked = True
+            ok = 0
+            if (self.coefficients.STABILIZATION_TYPE == 5 and vModel is not None
+                    and np.shape(getattr(vModel, 'edgeFluxLow', None)) == np.shape(self.edgeFlux)):
+                r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
+                r_t, c_t, _ = self.MC_global.getCSRrepresentation()
+                ok = int(np.array_equal(r_f, r_t) and np.array_equal(c_f, c_t))
+            self._use_edge_flux = int(Comm.globalMin(ok))
+            # the edge velocity needs Richards' realized flux, which only
+            # STABILIZATION_TYPE 1 and 2 export (Richards.computeEdgeVelocity)
+            ok_v = int(_EDGE_VELOCITY and self._use_edge_flux
+                       and hasattr(vModel, 'computeEdgeVelocity')
+                       and vModel.coefficients.STABILIZATION_TYPE in (1, 2))
+            self._use_edge_velocity = int(Comm.globalMin(ok_v))
+            if self.coefficients.STABILIZATION_TYPE == 5:
+                logEvent("TADR ImplicitEV: advecting with the flow model's edge fluxes: %s"
+                         % ("YES" if self._use_edge_flux else
+                            "no (no export, or CSR pattern differs) -- option C"))
+                if _EDGE_VELOCITY:
+                    logEvent("TADR ImplicitEV: edge fluxes assembled from Richards' edge velocity: %s"
+                             % ("YES" if self._use_edge_velocity else
+                                "no (needs edge-flux mode and Richards STABILIZATION_TYPE 1 or 2)"))
+        if self._use_edge_flux:
+            mn = np.asarray(vModel.mn)
+            m_new = np.asarray(vModel.mAccepted if vModel.mAccepted is not None else vModel.mLow)
+            # M^n is seeded in Coefficients.preStep, NOT here: the first residual
+            # call comes from attachModels, before the flow model has stepped, when
+            # its mn is not yet any step's old-time mass (a 3.4% offset on UHD).
+            dt = self.timeIntegration.dt
+            rowptr, colind, _ = self.MC_global.getCSRrepresentation()
+            dM = m_new - mn
+            # with the edge velocity the kernel assembles edgeFlux from q_v and
+            # writes nodalBoundaryFlux from M_low itself
+            if not self._use_edge_velocity:
+                self.edgeFlux[:] = (vModel.timeIntegration.dt*vModel.edgeFluxLow
+                                    + vModel.limitedFlux)/dt
+                self.nodalBoundaryFlux[:] = (self.ML*dM/dt
+                                             - np.add.reduceat(self.edgeFlux, rowptr[:-1]))
+            self.M_low[:] = self.M_dof + dM
+            # the flow model's limited mass is incomplete on ghost rows; the owners
+            # hold it right, so forward-insert through the ghosted u vector
+            # u[0].par_dof wraps u[0].dof itself (as in Richards.ghostScatter)
+            par = getattr(self.u[0], 'par_dof', None)
+            if par is not None:
+                saved = self.u[0].dof.copy()
+                self.u[0].dof[:] = self.M_low
+                par.scatter_forward_insert()
+                self.M_low[:] = self.u[0].dof
+                self.u[0].dof[:] = saved
+            self.theta_nodal[:] = vModel.thetaW_dof
+            return 0
+        mn_flow = getattr(vModel, 'mn', None)
         # COLLECTIVE.  This test picks init_M_dof, which selects a different
         # BRANCH IN THE KERNEL (seed M from the EOS vs take Richards' M), so
         # every rank has to reach the same answer.  Evaluated rank-locally -- as
@@ -1647,6 +1786,10 @@ class LevelModel(OneLevelTransport):
         M_new = getattr(vModel, 'mAccepted', None)
         if M_new is None:
             M_new = getattr(vModel, 'mLow', None)
+        # Advecting with the flow model's fluxes, TADR CARRIES M^{n+1} (M_low):
+        # the fluid balance behind the cancelled form is the one of THAT mass.
+        if self._use_edge_flux:
+            M_new = self.M_low
         if M_new is None or np.shape(M_new) != np.shape(self.M_dof):
             return None
         dt = self.timeIntegration.dt
@@ -1732,7 +1875,9 @@ class LevelModel(OneLevelTransport):
         straight from Richards would be enough and the per-edge flux export
         (Stage 6) is unnecessary; if it is O(1), that export is mandatory.
         """
-        if not np.any(self.M_low):
+        # ImplicitEV carries M (if at all) in Coefficients.postStep, AFTER the
+        # continuity probe has read M^n; FCTStep, which calls this, runs before.
+        if self.coefficients.STABILIZATION_TYPE == 5 or not np.any(self.M_low):
             return
         mLow_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mLow', None)
         if (mLow_flow is not None
@@ -1817,7 +1962,8 @@ class LevelModel(OneLevelTransport):
         argsDict["u_test_ref_fct"] = u_test_ref_arr
         argsDict["theta_dof_out"] = theta_dof_out_arr
         argsDict["M_dof_fct"] = self.M_dof   # M^n
-        argsDict["M_low_fct"] = self.M_low   # M^{n+1}, explicit branches only
+        argsDict["M_low_fct"] = self.M_low   # M^{n+1}, explicit branches + edge-flux ImplicitEV
+        argsDict["USE_EDGE_FLUX"] = self._use_edge_flux
         argsDict["theta_nodal"] = self.theta_nodal
         argsDict["nElements_global_fct"] = self.mesh.nElements_global
         argsDict["nQuadraturePoints_element_fct"] = self.nQuadraturePoints_element
@@ -1999,8 +2145,24 @@ class LevelModel(OneLevelTransport):
         #    equation solved implicitly too, and the sub-cycler that did that
         #    cost 100+ MPI collectives per step on Elder.  See that method for
         #    what the trade buys and what it costs.
+        #  * ImplicitEV WITH the flow model's edge fluxes (_use_edge_flux): M is
+        #    CARRIED again, advanced with the water the flow model actually moved,
+        #    so no fluid equation is solved here and the fluid balance is the flow
+        #    model's exactly.
         self.M_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.M_low = np.zeros(self.u[0].dof.shape, 'd')
+        # FLOW-MODEL FLUXES, rates: edgeFlux[ij] = mass flux into row i from column
+        # j (CSR, same pattern as the flow model), nodalBoundaryFlux[i] = the rest
+        # of node i's storage change.  Filled by _refreshFluidMassFromFlow.
+        self.edgeFlux = np.zeros(MC.shape, 'd')
+        self.nodalBoundaryFlux = np.zeros(self.u[0].dof.shape, 'd')
+        # nodal source of the cancelled form, filled by Coefficients.preStep when
+        # the deck sets mms_source; zero otherwise
+        self.nodalSource = np.zeros(self.u[0].dof.shape, 'd')
+        self._use_edge_flux = 0
+        # edge-flux mode with the fluxes assembled in the kernel from Richards'
+        # edge velocity; decided with _use_edge_flux
+        self._use_edge_velocity = 0
         # Fluid-equation flux for the continuity-defect probe; see
         # _reportContinuityDefect.  Written by the ImplicitEV branch only.
         self.fluidResidual = np.zeros(self.u[0].dof.shape, 'd')
@@ -2213,6 +2375,8 @@ class LevelModel(OneLevelTransport):
         argsDict["q_porosity_old"] = self.coefficients.q_porosity_old
         argsDict["q_rho"] = self.coefficients.q_rho
         argsDict["q_rho_old"] = self.coefficients.q_rho_old
+        argsDict["q_mu"] = self.coefficients.q_mu
+        argsDict["omega_max"] = self.coefficients.viscosity_omega_max
         ###########################################
         argsDict["q_a"] = self.q[('a',0,0)]
         argsDict["q_r"] = self.q[('r',0)]
@@ -2248,7 +2412,8 @@ class LevelModel(OneLevelTransport):
         argsDict["ebqe_bc_diffusiveFlux_u_ext"] = self.ebqe[('diffusiveFlux_bc', 0, 0)]
         argsDict["ebqe_porosity"] = self.coefficients.ebqe_porosity
         argsDict["ebqe_rho"] = self.coefficients.ebqe_rho
-        
+        argsDict["ebqe_mu"] = self.coefficients.ebqe_mu
+
 
 
         #argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -2283,6 +2448,18 @@ class LevelModel(OneLevelTransport):
         argsDict["init_M_dof"] = init_M_in_kernel
         argsDict["fluidResidual"] = self.fluidResidual
         argsDict["rho_nodal"] = self.rho_nodal
+        argsDict["edgeFlux"] = self.edgeFlux
+        argsDict["nodalBoundaryFlux"] = self.nodalBoundaryFlux
+        argsDict["nodalSource"] = self.nodalSource
+        argsDict["USE_EDGE_FLUX"] = self._use_edge_flux
+        argsDict["USE_EDGE_VELOCITY"] = self._use_edge_velocity
+        # the density Richards divided the edge velocity by.  Not TADR's q_rho:
+        # the kernel rewrites that at every residual call (rho of the current c
+        # iterate), while this one is fixed for the step, so rho*v is exactly the
+        # mass flux Richards rebuilt.
+        vModel = getattr(self.coefficients, 'vModel', None)
+        argsDict["q_rho_flow"] = (vModel.q['rho'] if self._use_edge_velocity
+                                  else self.coefficients.q_rho)
         argsDict["theta_nodal"] = self.theta_nodal
         argsDict["dt_times_dH_minus_dL"] = self.dt_times_dC_minus_dL
         argsDict["min_u_bc"] = self.min_u_bc
@@ -2597,8 +2774,12 @@ class LevelModel(OneLevelTransport):
         argsDict["ML"] = self.ML
         argsDict["dLow"] = self.dLow
         # SCHEME B: the ImplicitEV Jacobian differentiates the cancelled form,
-        # whose coefficients are gamma_ij*rho^n_j with rho^n = M_dof/theta.
+        # whose coefficients are gamma_ij*rho^n_j with rho^n = rho(c^n) at the
+        # node -- or gamma_ij from the flow model's edge fluxes.
         argsDict["M_dof"] = self.M_dof
+        argsDict["edgeFlux"] = self.edgeFlux
+        argsDict["nodalBoundaryFlux"] = self.nodalBoundaryFlux
+        argsDict["USE_EDGE_FLUX"] = self._use_edge_flux
         argsDict["csrRowIndeces_DofLoops"] = self.rowptr
         argsDict["csrColumnOffsets_DofLoops"] = self.colind
         argsDict["forceStrongConditions"] = int(self.forceStrongConditions)
@@ -3013,6 +3194,11 @@ class LevelModel(OneLevelTransport):
                                self.u[0].femSpace.psi_trace[_ebN_local],
                                self.u[0].dof[_l2g[_eN]])
             self.coefficients.ebqe_rho[:] = _rho_f*(1.0 + _eps_rho*_u_ext)
+            # mu/mu_0 is pointwise in u too: Eq. (9), as in the residual kernel
+            _w_q = self.coefficients.viscosity_omega_max*_u_q
+            self.coefficients.q_mu[:] = 1.0 + _w_q*(1.85 + _w_q*(-4.1 + _w_q*44.5))
+            _w_ext = self.coefficients.viscosity_omega_max*_u_ext
+            self.coefficients.ebqe_mu[:] = 1.0 + _w_ext*(1.85 + _w_ext*(-4.1 + _w_ext*44.5))
             logEvent("TADR FCT: refreshed q_rho/ebqe_rho from the LIMITED u "
                      "(q_rho min=%.6e max=%.6e)"
                      % (float(self.coefficients.q_rho.min()),
