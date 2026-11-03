@@ -8617,6 +8617,19 @@ def meshFiles(domain, meshOptions):
                 "optional": [prefix + e for e in (".neigh", ".edge")]}
     return None
 
+def _runMesher(cmd):
+    """Run a mesh generator through the shell and return its output.
+
+    A generator that is missing (exit 127 from the shell) or refuses its input
+    raises here, with its output, instead of leaving no mesh files for a reader
+    to fail on later.
+    """
+    result = run(cmd, shell=True, capture_output=True, encoding='utf-8')
+    if result.returncode != 0:
+        raise RuntimeError("mesh generator failed with exit status %d: %s\n%s%s"
+                           % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
+    return result.stdout
+
 def writeMeshFiles(domain, meshOptions):
     """Run the mesh generator for a PSLG or PLC domain.
 
@@ -8633,7 +8646,7 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Running gmsh to generate 2D mesh for "+name, level=1)
                 gmsh_cmd = "time gmsh {0:s} -v 10 -2 -o {1:s} -format msh2".format(fileprefix+".geo", fileprefix+".msh")
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
-                run(gmsh_cmd, shell=True)
+                run(gmsh_cmd, shell=True, check=True)
                 logEvent("Done running gmsh; converting to triangle")
             else:
                 logEvent("Using "+fileprefix+".msh to convert to triangle")
@@ -8644,7 +8657,7 @@ def writeMeshFiles(domain, meshOptions):
             logEvent("Calling Triangle to generate 2D mesh for "+name)
             tricmd = "triangle -{0} -e {1}.poly".format(meshOptions.triangleOptions, fileprefix)
             logEvent("Calling triangle on rank 0 with command %s" % (tricmd,))
-            logEvent(run(tricmd, shell=True,capture_output=True, encoding='utf-8').stdout)
+            logEvent(_runMesher(tricmd))
             logEvent("Done running triangle")
             run("mv {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
             run("mv {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)
@@ -8659,12 +8672,12 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Running gmsh to generate 3D mesh for "+name, level=1)
                 gmsh_cmd = "time gmsh {0:s} -v 10 -3 -o {1:s} -format msh2".format(fileprefix+'.geo', domain.geofile+'.msh')
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
-                run(gmsh_cmd, shell=True)
+                run(gmsh_cmd, shell=True, check=True)
                 logEvent("Done running gmsh; converting to tetgen")
             else:
                 logEvent("Using "+domain.geofile+".msh to convert to tetgen")
             msh2simplex(fileprefix=fileprefix, nd=3)
-            logEvent(run("tetgen -Vfeen {0:s}.ele".format(fileprefix), shell=True,capture_output=True,text=True).stdout)
+            logEvent(_runMesher("tetgen -Vfeen {0:s}.ele".format(fileprefix)))
         else:
             logEvent("Running tetgen to generate 3D mesh for "+name, level=1)
             run("rm -f {0:s}.ele".format(fileprefix), shell=True)
@@ -8674,7 +8687,7 @@ def writeMeshFiles(domain, meshOptions):
             run("rm -f {0:s}.edge".format(fileprefix), shell=True)
             tetcmd = "tetgen -{0} {1}.poly".format(meshOptions.triangleOptions, fileprefix)
             logEvent("Calling tetgen on rank 0 with command %s" % (tetcmd,))
-            logEvent(run(tetcmd, shell=True,capture_output=True, encoding='utf-8').stdout)
+            logEvent(_runMesher(tetcmd))
             logEvent("Done running tetgen")
         run("mv {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
         run("mv {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)

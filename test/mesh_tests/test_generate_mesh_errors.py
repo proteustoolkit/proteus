@@ -97,3 +97,28 @@ def test_a_dmplex_domain_gives_the_mesh_it_was_built_from(tmp_path, monkeypatch)
     for count in ("nElementBoundaries_global", "nExteriorElementBoundaries_global",
                   "nEdges_global"):
         assert getattr(mesh, count) == getattr(source, count), count
+
+
+@pytest.mark.parametrize("Mesh, reader, files", [
+    (MeshTools.TriangularMesh, "generateFromTriangleFiles", "triangle"),
+    (MeshTools.TetrahedralMesh, "generateFromTetgenFiles", "tetgen"),
+])
+def test_a_missing_mesh_file_is_an_error_not_an_empty_mesh(tmp_path, monkeypatch, Mesh, reader, files):
+    """The readers returned a mesh with no nodes; the partitioner then failed far from the cause."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(IOError, match="could not read a %s mesh from nothere.node" % files):
+        getattr(Mesh(), reader)("nothere", 1)
+
+
+def test_a_missing_mesh_generator_is_an_error(tmp_path, monkeypatch):
+    """writeMeshFiles ignored the shell's exit status, so a triangle not on PATH left no files."""
+    monkeypatch.chdir(tmp_path)
+    domain = Domain.PlanarStraightLineGraphDomain(
+        vertices=[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        segments=[[0, 1], [1, 2], [2, 3], [3, 0]], name="box")
+    domain.writePoly("box")
+    options = MeshTools.MeshOptions(nd=2)
+    options.setTriangleOptions("VApq30Dena0.1")
+    monkeypatch.setenv("PATH", str(tmp_path))       # no triangle here
+    with pytest.raises(RuntimeError, match="mesh generator failed with exit status 127"):
+        MeshTools.writeMeshFiles(domain, options)
