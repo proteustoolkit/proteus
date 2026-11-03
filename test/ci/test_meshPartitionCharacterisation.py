@@ -545,3 +545,21 @@ def test_partitionElementsLocal_computes_every_rank_in_one_process(run, case, n)
             if name == 'elementBoundaryMaterialTypes':
                 b = np.where(b == RANK_INTERFACE, 0, b)
             assert np.array_equal(np.asarray(a), b), (r, name)
+
+
+@pytest.mark.parametrize('size', [1, 2, 4])
+@pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
+def test_element_graph_partitioner_input_in_process(kind, size):
+    """What graphElementOwners hands MatPartitioning on each rank: its default
+    chunk of the element graph, each element's neighbours across its element
+    boundaries (none across the domain boundary), sorted."""
+    from proteus import cpartitioning
+    m = _readMesh(kind) if kind in ('tri', 'tet') else _regularMesh(kind)
+    n = m.nElements_global
+    starts = np.cumsum([0] + [n // size + (n % size > r) for r in range(size)])
+    neighborsOf = np.asarray(m.elementNeighborsArray)
+    for r in range(size):
+        offsets, neighbors = cpartitioning.elementGraphRows(m.cmesh, int(starts[r]), int(starts[r + 1]))
+        rows = [np.sort(neighborsOf[e][neighborsOf[e] >= 0]) for e in range(starts[r], starts[r + 1])]
+        assert np.array_equal(offsets, np.cumsum([0] + [len(x) for x in rows]))
+        assert np.array_equal(neighbors, np.concatenate(rows) if rows else np.empty(0, int))

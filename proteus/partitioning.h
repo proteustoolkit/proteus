@@ -287,6 +287,15 @@ namespace proteus
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);
 
+  /* Rows begin..end-1 of the element graph (each element's neighbours across its
+     boundaries, sorted) in CSR form. Plain C++. */
+  extern void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+
+  /* MPI and PETSc: every element's owner from MatPartitioning, gathered on every
+     rank. Collective. */
+  extern std::vector<int> graphElementOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                             const std::valarray<int>& elementOffsets_old);
+
   /* The local part of partitionElements: rank's part of the partition given the
      owner of every element. No MPI. Renumbers the global mesh in place, as
      partitionElements does. See partitioning.cpp. */

@@ -38,6 +38,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionNodes,
                                    c_partitionNodesLocal,
                                    c_nodeGraphRows,
+                                   c_elementGraphRows,
                                    c_elementOwnersFromNodeOwners,
                                    c_elementBoundaryOwnersFromNodeOwners,
                                    c_edgeOwnersFromNodeOwners,
@@ -205,6 +206,17 @@ def nodeGraphRows(cmeshTools.CMesh cmesh, int begin, int end):
     cdef vector[int] offsets
     cdef vector[int] neighbors
     c_nodeGraphRows(cmesh.mesh, begin, end, offsets, neighbors)
+    return np.array(offsets, dtype=np.intc), np.array(neighbors, dtype=np.intc)
+
+def elementGraphRows(cmeshTools.CMesh cmesh, int begin, int end):
+    """Rows begin..end-1 of the element graph partitionElements hands the graph
+    partitioner, in CSR form (offsets, neighbors): each element's neighbours
+    across its element boundaries, sorted."""
+    _requireGlobalMesh(cmesh, "elementGraphRows")
+    assert 0 <= begin <= end <= cmesh.mesh.nElements_global, (begin, end)
+    cdef vector[int] offsets
+    cdef vector[int] neighbors
+    c_elementGraphRows(cmesh.mesh, begin, end, offsets, neighbors)
     return np.array(offsets, dtype=np.intc), np.array(neighbors, dtype=np.intc)
 
 def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):

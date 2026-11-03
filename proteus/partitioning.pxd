@@ -40,6 +40,8 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                      const vector[int]& nodeOwner)
     extern void c_nodeGraphRows "proteus::nodeGraphRows" (const mesh.Mesh& mesh, int begin, int end,
                                                           vector[int]& offsets, vector[int]& neighbors)
+    extern void c_elementGraphRows "proteus::elementGraphRows" (const mesh.Mesh& mesh, int begin, int end,
+                                                                vector[int]& offsets, vector[int]& neighbors)
     extern vector[int] c_elementOwnersFromNodeOwners "proteus::elementOwnersFromNodeOwners" (const mesh.Mesh& mesh,
                                                                                              const vector[int]& nodeOwner,
                                                                                              int size)

@@ -5411,6 +5411,72 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   return 0;
 }
 //todo add overlap for element based partitions
+/* Rows begin..end-1 of the element graph the graph partitioner is given: each
+   element's neighbours across its element boundaries, sorted, in CSR form. */
+void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors)
+{
+  offsets.assign(1,0);
+  neighbors.clear();
+  for (int eN_global = begin; eN_global < end; eN_global++)
+    {
+      for (int ebN=0; ebN< mesh.nElementBoundaries_element;ebN++)
+        {
+          int eN_neighbor_global = mesh.elementNeighborsArray[eN_global*mesh.nElementBoundaries_element + ebN];
+          if (eN_neighbor_global >= 0 )
+            neighbors.push_back(eN_neighbor_global);
+        }
+      offsets.push_back(int(neighbors.size()));
+      std::sort(neighbors.begin()+offsets[offsets.size()-2],neighbors.end());
+    }
+}
+
+/* MPI: the owner of every element from the graph partitioner, each rank
+   handing MatPartitioning its default chunk of the element graph; the answer is
+   gathered so every rank holds every owner. Collective. */
+std::vector<int> graphElementOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                    const std::valarray<int>& elementOffsets_old)
+{
+  using namespace std;
+  int ierr,rank;
+  MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
+  //2. Extract subdomain element adjacency information could read
+  //only the required portion from a file
+  int nElements_subdomain = (elementOffsets_old[rank+1] - elementOffsets_old[rank]);
+  std::vector<int> rowOffsets, rowNeighbors;
+  elementGraphRows(mesh,elementOffsets_old[rank],elementOffsets_old[rank+1],rowOffsets,rowNeighbors);
+  //MatCreateMPIAdj takes ownership of PetscMalloc'd arrays
+  PetscInt *elementNeighborsOffsets_subdomain,*elementNeighbors_subdomain;
+  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain+1),&elementNeighborsOffsets_subdomain);
+  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&elementNeighbors_subdomain);
+  for (int eN = 0; eN < nElements_subdomain+1; eN++)
+    elementNeighborsOffsets_subdomain[eN] = rowOffsets[eN];
+  for (size_t k = 0; k < rowNeighbors.size(); k++)
+    elementNeighbors_subdomain[k] = rowNeighbors[k];
+  //3. Generate the  new partitiong using PETSc, this is done in parallel using parmetis
+  Mat petscAdjacency;
+  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+                         nElements_subdomain,
+                         mesh.nElements_global,
+                         elementNeighborsOffsets_subdomain,
+                         elementNeighbors_subdomain,
+                         PETSC_NULL,
+                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  IS elementPartitioningIS_new;
+  MatPartitioning petscPartition;
+  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
+  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
+  MatPartitioningSetFromOptions(petscPartition);
+  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
+
+  //get a petsc index set that has the new submdomain number for each element
+  MatPartitioningApply(petscPartition,&elementPartitioningIS_new);
+  MatPartitioningDestroy(&petscPartition);
+  MatDestroy(&petscAdjacency);
+  std::vector<int> elementOwner = gatherPartition(PROTEUS_COMM_WORLD,elementPartitioningIS_new,elementOffsets_old);
+  ISDestroy(&elementPartitioningIS_new);
+  return elementOwner;
+}
+
 int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                       const int* elementOwners)
 {
@@ -5453,12 +5519,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   //
   //get offsets so we can calculate the processor to global mapping
   //for elements in the old (default) partitioning
-  valarray<int> elementOffsets_old(size+1);
-  elementOffsets_old[0] = 0;
-  for(int sdN=0;sdN<size;sdN++)
-    elementOffsets_old[sdN+1] = elementOffsets_old[sdN] +
-      int(mesh.nElements_global)/size +
-      (int(mesh.nElements_global)%size > sdN);
+  valarray<int> elementOffsets_old = defaultChunkOffsets(mesh.nElements_global,size);
 
   //2.-3. The owner of every element: prescribed, or from the graph partitioner
   std::vector<int> elementOwner;
@@ -5471,51 +5532,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       elementOwner = prescribedOwners(PROTEUS_COMM_WORLD,elementOwners,mesh.nElements_global,size,"partitionElements","element");
     }
   else
-    {
-  //2. Extract subdomain element adjacency information could read
-  //only the required portion from a file
-  int nElements_subdomain = (elementOffsets_old[rank+1] - elementOffsets_old[rank]);
-  PetscInt *elementNeighborsOffsets_subdomain,*elementNeighbors_subdomain;
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain+1),&elementNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&elementNeighbors_subdomain);
-  //this wastes a little space
-  elementNeighborsOffsets_subdomain[0] = 0;
-  for (int eN=0,offset=0; eN < nElements_subdomain; eN++)
-    {
-      int eN_global = elementOffsets_old[rank] + eN;
-      int offsetStart=offset;
-      for (int ebN=0; ebN< mesh.nElementBoundaries_element;ebN++)
-        {
-          int eN_neighbor_global = mesh.elementNeighborsArray[eN_global*mesh.nElementBoundaries_element + ebN];
-          if (eN_neighbor_global >= 0 )
-            elementNeighbors_subdomain[offset++] = eN_neighbor_global;
-        }
-      elementNeighborsOffsets_subdomain[eN+1]=offset;
-      sort(&elementNeighbors_subdomain[offsetStart],&elementNeighbors_subdomain[offset]);
-    }
-  //3. Generate the  new partitiong using PETSc, this is done in parallel using parmetis
-  Mat petscAdjacency;
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nElements_subdomain,
-                         mesh.nElements_global,
-                         elementNeighborsOffsets_subdomain,
-                         elementNeighbors_subdomain,
-                         PETSC_NULL,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  IS elementPartitioningIS_new;
-  MatPartitioning petscPartition;
-  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
-  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
-  MatPartitioningSetFromOptions(petscPartition);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-
-  //get a petsc index set that has the new submdomain number for each element
-  MatPartitioningApply(petscPartition,&elementPartitioningIS_new);
-  MatPartitioningDestroy(&petscPartition);
-  MatDestroy(&petscAdjacency);
-  elementOwner = gatherPartition(PROTEUS_COMM_WORLD,elementPartitioningIS_new,elementOffsets_old);
-  ISDestroy(&elementPartitioningIS_new);
-    }
+    elementOwner = graphElementOwners(PROTEUS_COMM_WORLD,mesh,elementOffsets_old);
   timer.mark("element_owners");
   //4.-6. Everything else follows from the owners without communication
   if (partitionElementsLocal(mesh, rank, size, nElements_overlap, elementOwner, &timer) != 0)
