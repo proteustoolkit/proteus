@@ -287,6 +287,12 @@ namespace proteus
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);
 
+  /* The local part of partitionElements: rank's part of the partition given the
+     owner of every element. No MPI. Renumbers the global mesh in place, as
+     partitionElements does. See partitioning.cpp. */
+  extern int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap,
+                                    const std::vector<int>& elementOwner, StageTimer* timer=NULL);
+
   extern int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
                                                        const int *elementOffsets_subdomain_owned,
                                                        const int *nodeOffsets_subdomain_owned,

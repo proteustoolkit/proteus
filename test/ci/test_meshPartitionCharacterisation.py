@@ -512,3 +512,36 @@ def test_graph_partitioner_input_in_process(kind, size):
         rows = [np.sort(star[starOffsets[a]:starOffsets[a + 1]]) for a in range(starts[r], starts[r + 1])]
         assert np.array_equal(offsets, np.cumsum([0] + [len(x) for x in rows]))
         assert np.array_equal(neighbors, np.concatenate(rows) if rows else np.empty(0, int))
+
+
+ELEMENT_CASES = [c for c in CASES if c[1] == 'element']
+
+
+@pytest.mark.parametrize('n', RANKS)
+@pytest.mark.parametrize('case', ELEMENT_CASES, ids=['-'.join(map(str, c)) for c in ELEMENT_CASES])
+def test_partitionElementsLocal_computes_every_rank_in_one_process(run, case, n):
+    """As test_partitionNodesLocal_computes_every_rank_in_one_process, for
+    partitionElements: its owners (prescribed, or the graph partitioner's,
+    gathered) followed by partitionElementsLocal, which needs no MPI and is
+    called here for each rank in turn on a freshly read mesh (it renumbers the
+    global mesh in place)."""
+    from proteus import cmeshTools, cpartitioning
+    mesh, path, owners, overlap = case
+    _, ranks = run(*(case + (n,)))
+    for r in range(n):
+        m = _readMesh(mesh)
+        sub = cmeshTools.CMesh()
+        got = cpartitioning.partitionElementsLocal(r, n, overlap, m.cmesh, sub,
+                                                   _nodeOwners(owners, m.nElements_global, n))
+        want = ranks[r]
+        for name, a in zip(MAPS_RETURNED, got):
+            assert np.array_equal(a, want['map.' + name]), (r, name)
+        assert np.array_equal(cpartitioning.getElementNumbering_global_old2new(m.cmesh),
+                              want['map.elementNumbering_global_old2new']), r
+        for name, a in zip(SUBDOMAIN_INTERFACE, cmeshTools.buildPythonMeshInterface(sub)):
+            if a is None or np.asarray(a).dtype.kind not in 'iu':
+                continue
+            b = want['sub.' + name]
+            if name == 'elementBoundaryMaterialTypes':
+                b = np.where(b == RANK_INTERFACE, 0, b)
+            assert np.array_equal(np.asarray(a), b), (r, name)

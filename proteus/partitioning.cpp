@@ -5517,6 +5517,25 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   ISDestroy(&elementPartitioningIS_new);
     }
   timer.mark("element_owners");
+  //4.-6. Everything else follows from the owners without communication
+  if (partitionElementsLocal(mesh, rank, size, nElements_overlap, elementOwner, &timer) != 0)
+    MPI_Abort(PROTEUS_COMM_WORLD,1);
+  timer.report();
+  return 0;
+}
+
+/* Steps 4-6 of partitionElements: given the owner of every element, which
+   every rank holds, this rank's part of the partition. Plain C++ -- no MPI,
+   no PETSc, no files -- so one process can compute any rank's subdomain. Like
+   partitionElements it renumbers the global mesh in place (each rank's owned
+   entities contiguous) and writes the subdomain mesh, the offsets, the
+   subdomain-to-global maps and the element permutation to mesh. Returns
+   nonzero, having said why on stderr, if a node, element boundary or edge is
+   reached by no rank. */
+int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap,
+                           const std::vector<int>& elementOwner, StageTimer* timer)
+{
+  using namespace std;
   //number the elements: each rank's owned elements contiguous, in their old order
   valarray<int> nElements_subdomain_new, elementOffsets_new;
   std::vector<int> elementNumbering_global_old2new, elementNumbering_global_new2old;
@@ -5531,7 +5550,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   for (int eN=0;eN<mesh.nElements_global;eN++)
     mesh.elementNumbering_global_old2new[eN] = elementNumbering_global_old2new[eN];
 
-  timer.mark("element_numbering");
+  if (timer) timer->mark("element_numbering");
   //Sort element based arrays, maybe I don't need to do this, maybe
   //I just need to start writing into the subdomain mesh here and
   //preserve subdomain2old and subdomain2global mappings
@@ -5582,7 +5601,8 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   for (int eN=0;eN<mesh.nElements_global;eN++)
     for (int nN=0;nN<mesh.nNodes_element;nN++)
       lowerOwner(nodeOwner,mesh.elementNodesArray[eN*mesh.nNodes_element+nN],elementOwner[eN]);
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,nodeOwner,size,"node");
+  if (!everyEntityOwned(nodeOwner,size,"node"))
+    return 1;
   set<int> nodes_subdomain_owned;
   for (int nN=0;nN<mesh.nNodes_global;nN++)
     if (nodeOwner[nN] == rank)
@@ -5631,14 +5651,15 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       nodeMaterialTypes_new[nN_new] = mesh.nodeMaterialTypes[nN];
     }
 
-  timer.mark("nodes");
+  if (timer) timer->mark("nodes");
   //4b. repeat process to build global face numbering: a face belongs to the
   //lowest rank that owns an element it bounds
   std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
   for (int eN=0;eN<mesh.nElements_global;eN++)
     for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
       lowerOwner(elementBoundaryOwner,mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN],elementOwner[eN]);
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,elementBoundaryOwner,size,"element boundary");
+  if (!everyEntityOwned(elementBoundaryOwner,size,"element boundary"))
+    return 1;
   //Now as with elements and nodes build a global face numbering
   //resetting the face based information is a little different since much of this is currently built below based
   //on the element and node information
@@ -5727,7 +5748,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   //     eleout.close();
   //     partout.close();
 
-  timer.mark("element_boundaries");
+  if (timer) timer->mark("element_boundaries");
   //4c. Build global edge numbering as well
   // ownership is determined by the edges on owned elements: an edge belongs to
   // the lowest rank that owns an element with both its nodes, and those
@@ -5744,7 +5765,8 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
               lowerOwner(edgeOwner,ig,elementOwner[eN]);
         }
     }
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,edgeOwner,size,"edge");
+  if (!everyEntityOwned(edgeOwner,size,"edge"))
+    return 1;
   valarray<int> nEdges_subdomain_new, edgeOffsets_new;
   std::vector<int> edgeNumbering_old2new_global, edgeNumbering_global_new2old;
   numberByOwner(edgeOwner,size,nEdges_subdomain_new,edgeOffsets_new,
@@ -5767,7 +5789,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       nodesEdgeMap_global_new[et] = ig;
     }
 
-  timer.mark("edges");
+  if (timer) timer->mark("edges");
   //5. At this point we have new, renumbered and sorted the global element, and node based information, and
   //we have it all on each processor so we can add overlap
   set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
@@ -5956,7 +5978,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
             }
         }
     }
-  timer.mark("overlap");
+  if (timer) timer->mark("overlap");
   //
   //6. Now build subdomain mesh
   //
@@ -6230,8 +6252,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
     }
 
 
-  timer.mark("subdomain_mesh");
-  timer.report();
+  if (timer) timer->mark("subdomain_mesh");
   return 0;
 }
 
