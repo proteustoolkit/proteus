@@ -18,6 +18,8 @@ Round 4 (same measure; before is main 9fca0b95):
                         Pres failure                 1.1e-5    after: 2.7e-13   RANS3PF's ebqe_velocity_last, which
                         PresInc's postStep sets, was not in RANS3PF's state()
   damBreakLevelSet interface=1 (RANS2P + CLSVOF), CLSVOF failure 1.1e-3   after: 0.0   CLSVOF's interface locator
+  SWFlow circular_damBreak, SW2DCV failing in a middle SSP stage: crashed (stage counter past the order)   after: 0.0
+                        the integrator's stage counter, stage values, the transport's *_dof_old and dLow are its state()
 (The 16% first reported was mostly the different step sequence: the same steps without a failure differ from the
 default run by 15-17% in velocity at t=0.05; fillingTank is that sensitive to dt.)
 """
@@ -66,6 +68,10 @@ CASES = {
                                           MAXITS=200, FAILMODEL="pressure0", FAILAT=4),
     "damBreakLevelSet-rans2p-clsvof": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 interface=1", FT=0.1, ATOL=1e-10,
                                            MAXITS=1000, FAILMODEL="clsvof", FAILAT=6),
+    "circular_damBreak-sw2dcv": dict(DIR="SWFlow", SO="--SWEs circular_damBreak.py",
+                                     OPTS="sw_model=0 final_time=0.1 dt_output=0.1", FAILMODEL="sw", FAILAT=6),
+    "circular_damBreak-gn_sw2dcv": dict(DIR="SWFlow", SO="--SWEs circular_damBreak.py",
+                                        OPTS="sw_model=1 final_time=0.1 dt_output=0.1", FAILMODEL="GN", FAILSTEP=4),
 }
 
 
