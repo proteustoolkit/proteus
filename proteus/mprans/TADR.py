@@ -177,6 +177,18 @@ class RKEV(TimeIntegration.SSP):
         self.lstage += 1
         assert self.timeOrder in [1, 2, 3]
         assert self.lstage > 0 and self.lstage <= self.timeOrder
+        # FLOW-MODEL FLUXES: c = m/M with M the flow model's fluid mass, so the
+        # DOF combinations are of the MASSES M*c, with the same weights, not of c:
+        # blending c while M changes underneath is not conservative.  The step's
+        # fluxes are fixed over the stages, so each forward-Euler stage adds the
+        # same dM to the mass it starts from (M_dof -> M_low = M_dof + dM), and the
+        # mass blends telescope to the flow model's M^{n+1} = M^n + dM:
+        #   SSP22: 1/2 M^n + 1/2 (M^n + 2dM)
+        #   SSP33: 3/4 M^n + 1/4 (M^n + 2dM) = M^n + dM/2;  1/3 M^n + 2/3 (M^n + 3dM/2)
+        # Positive weights, so each blend is a convex combination of bounded
+        # states.  The last stage leaves M_dof = M^n and M_low = M^{n+1} for the
+        # continuity probe and the carry in Coefficients.postStep.
+        edgeFlux = getattr(self.transport, '_use_edge_flux', 0)
         if self.timeOrder == 3:
             if self.lstage == 1:
                 logEvent("First stage of SSP33 method", level=4)
@@ -185,6 +197,10 @@ class RKEV(TimeIntegration.SSP):
                     self.m_last[ci][:] = self.transport.q[('u',ci)]
                     # DOFs
                     self.transport.u_dof_old[:] = self.transport.u[ci].dof
+                if edgeFlux:
+                    # fluid mass
+                    self.M_dof_last = self.transport.M_dof.copy()
+                    self.transport.M_dof[:] = self.transport.M_low
             elif self.lstage == 2:
                 logEvent("Second stage of SSP33 method", level=4)
                 for ci in range(self.nc):
@@ -192,8 +208,15 @@ class RKEV(TimeIntegration.SSP):
                     self.m_last[ci][:] = 1./4*self.transport.q[('u',ci)]
                     self.m_last[ci][:] += 3./4*self.m_old[ci]
                     # DOFs
-                    self.transport.u_dof_old[:] = 1./4*self.transport.u[ci].dof
-                    self.transport.u_dof_old[:] += 3./4* self.u_dof_last[ci]                
+                    if edgeFlux:
+                        M_stage = self.transport.M_low
+                        M_mix = 1./4*M_stage + 3./4*self.M_dof_last
+                        self.transport.u_dof_old[:] = (1./4*M_stage*self.transport.u[ci].dof
+                                                       + 3./4*self.M_dof_last*self.u_dof_last[ci])/M_mix
+                        self.transport.M_dof[:] = M_mix
+                    else:
+                        self.transport.u_dof_old[:] = 1./4*self.transport.u[ci].dof
+                        self.transport.u_dof_old[:] += 3./4* self.u_dof_last[ci]
             elif self.lstage == 3:
                 logEvent("Third stage of SSP33 method", level=4)
                 for ci in range(self.nc):
@@ -201,10 +224,18 @@ class RKEV(TimeIntegration.SSP):
                     self.m_last[ci][:] = 2./3*self.transport.q[('u',ci)]
                     self.m_last[ci][:] += 1./3*self.m_old[ci]
                     # DOFs
-                    self.transport.u[0].dof[:] = 2./3*self.transport.u[ci].dof
-                    self.transport.u[0].dof[:] += 1./3* self.u_dof_last[ci]
+                    if edgeFlux:
+                        M_stage = self.transport.M_low
+                        M_new = 2./3*M_stage + 1./3*self.M_dof_last
+                        self.transport.u[0].dof[:] = (2./3*M_stage*self.transport.u[ci].dof
+                                                      + 1./3*self.M_dof_last*self.u_dof_last[ci])/M_new
+                        self.transport.M_dof[:] = self.M_dof_last
+                        self.transport.M_low[:] = M_new
+                    else:
+                        self.transport.u[0].dof[:] = 2./3*self.transport.u[ci].dof
+                        self.transport.u[0].dof[:] += 1./3* self.u_dof_last[ci]
                     # update u_dof_old
-                    self.transport.u_dof_old[:] = self.u_dof_last[ci]                    
+                    self.transport.u_dof_old[:] = self.u_dof_last[ci]
         elif self.timeOrder == 2:
             if self.lstage == 1:
                 logEvent("First stage of SSP22 method", level=4)
@@ -213,6 +244,10 @@ class RKEV(TimeIntegration.SSP):
                     self.m_last[ci][:] = self.transport.q[('u',ci)]
                     # DOFs
                     self.transport.u_dof_old[:] = self.transport.u[ci].dof
+                if edgeFlux:
+                    # fluid mass
+                    self.M_dof_last = self.transport.M_dof.copy()
+                    self.transport.M_dof[:] = self.transport.M_low
             elif self.lstage == 2:
                 logEvent("Second stage of SSP22 method", level=4)
                 for ci in range(self.nc):
@@ -220,10 +255,18 @@ class RKEV(TimeIntegration.SSP):
                     self.m_last[ci][:] = 1./2*self.transport.q[('u',ci)]
                     self.m_last[ci][:] += 1./2*self.m_old[ci]
                     # DOFs
-                    self.transport.u[0].dof[:]  = 1./2*self.transport.u[ci].dof
-                    self.transport.u[0].dof[:] += 1./2*self.u_dof_last[ci]
+                    if edgeFlux:
+                        M_stage = self.transport.M_low
+                        M_new = 1./2*M_stage + 1./2*self.M_dof_last
+                        self.transport.u[0].dof[:] = (1./2*M_stage*self.transport.u[ci].dof
+                                                      + 1./2*self.M_dof_last*self.u_dof_last[ci])/M_new
+                        self.transport.M_dof[:] = self.M_dof_last
+                        self.transport.M_low[:] = M_new
+                    else:
+                        self.transport.u[0].dof[:]  = 1./2*self.transport.u[ci].dof
+                        self.transport.u[0].dof[:] += 1./2*self.u_dof_last[ci]
                     # update u_dof_old
-                    self.transport.u_dof_old[:] = self.u_dof_last[ci]                    
+                    self.transport.u_dof_old[:] = self.u_dof_last[ci]
         else:
             assert self.timeOrder == 1
             for ci in range(self.nc):
@@ -719,7 +762,7 @@ class Coefficients(TC_base):
         # else rather than drop it silently.  P1, so DOF i is mesh node i.
         if self.mms_source is not None:
             assert getattr(self.model, '_use_edge_flux', 0), \
-                "TADR mms_source needs ImplicitEV advecting with the flow model's edge fluxes"
+                "TADR mms_source needs an edge-based STABILIZATION_TYPE advecting with the flow model's edge fluxes"
             self.model.nodalSource[:] = self.mms_source(self.model.mesh.nodeArray, t)
             if not getattr(self, '_mms_source_logged', False):
                 # once: which time level preStep hands the source
@@ -766,7 +809,7 @@ class Coefficients(TC_base):
         # it re-reads M from Richards at the top of every residual, so there is
         # nothing to adopt.  Report the conserved solute mass instead: that is
         # the quantity this trade puts at risk, and it is the number to watch.
-        if self.STABILIZATION_TYPE == 5:
+        if self.STABILIZATION_TYPE == 5 or getattr(self.model, '_use_edge_flux', 0):
             # The defect that says how much of the solute mass change is real.
             # Here, not in _reportSoluteMass: it needs Richards' M^{n+1}, and under
             # Sequential_MinModelStep the flow model has finished its step by now.
@@ -779,11 +822,16 @@ class Coefficients(TC_base):
                 # the last model in the sequence, so a retried step cannot get
                 # here twice.
                 m.M_dof[:] = m.M_low
+                if self.STABILIZATION_TYPE != 5:
+                    # ImplicitEV leaves rho(c^{n+1}) at the nodes from its residual
+                    # and invert(); the explicit stages do not, so set it from the
+                    # step's final c for the flow model's next step
+                    m.rho_nodal[:] = self.rho_f*(1.0 + ((self.rho_s - self.rho_f)/self.rho_f)*m.u[0].dof)
                 # How far the carried M has drifted from the flow model's own mass
                 # (its FCT inversion loss: theta(psi(mLim))*rho < mLim).  Not an
                 # error in this model; reported so it stays visible.
                 vModel = self.vModel
-                m_flow = np.asarray(vModel.mAccepted if vModel.mAccepted is not None
+                m_flow = np.asarray(vModel.mAccepted if getattr(vModel, "fctCorrectionApplied", False)
                                     else vModel.mLow)
                 no = m.mesh.nNodes_owned
                 ML = np.asarray(m.ML)[:no]
@@ -1614,7 +1662,8 @@ class LevelModel(OneLevelTransport):
         if not getattr(self, '_edge_flux_checked', False):
             self._edge_flux_checked = True
             ok = 0
-            if (self.coefficients.STABILIZATION_TYPE == 5 and vModel is not None
+            # every edge-based branch: ImplicitEV and the explicit 2/3/4
+            if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
                     and np.shape(getattr(vModel, 'edgeFluxLow', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
                 r_t, c_t, _ = self.MC_global.getCSRrepresentation()
@@ -1626,20 +1675,34 @@ class LevelModel(OneLevelTransport):
                        and hasattr(vModel, 'computeEdgeVelocity')
                        and vModel.coefficients.STABILIZATION_TYPE in (1, 2))
             self._use_edge_velocity = int(Comm.globalMin(ok_v))
-            if self.coefficients.STABILIZATION_TYPE == 5:
-                logEvent("TADR ImplicitEV: advecting with the flow model's edge fluxes: %s"
-                         % ("YES" if self._use_edge_flux else
-                            "no (no export, or CSR pattern differs) -- option C"))
+            if self._use_edge_flux and self.coefficients.STABILIZATION_TYPE != 5:
+                # the explicit edge-flux stage writes only the low-order state and
+                # the dH - dL coefficients; FCT rebuilds the high-order state from
+                # those, which is exact only with a lumped mass matrix
+                assert self.coefficients.LUMPED_MASS_MATRIX, \
+                    "TADR STABILIZATION_TYPE 2/3/4 with the flow model's edge fluxes needs LUMPED_MASS_MATRIX=True"
+            if self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5):
+                logEvent("TADR STABILIZATION_TYPE %d: advecting with the flow model's edge fluxes: %s"
+                         % (self.coefficients.STABILIZATION_TYPE,
+                            "YES" if self._use_edge_flux else
+                            "no (no export, or CSR pattern differs)"))
                 if _EDGE_VELOCITY:
-                    logEvent("TADR ImplicitEV: edge fluxes assembled from Richards' edge velocity: %s"
-                             % ("YES" if self._use_edge_velocity else
+                    logEvent("TADR STABILIZATION_TYPE %d: edge fluxes assembled from Richards' edge velocity: %s"
+                             % (self.coefficients.STABILIZATION_TYPE,
+                                "YES" if self._use_edge_velocity else
                                 "no (needs edge-flux mode and Richards STABILIZATION_TYPE 1 or 2)"))
         if self._use_edge_flux:
             mn = np.asarray(vModel.mn)
-            m_new = np.asarray(vModel.mAccepted if vModel.mAccepted is not None else vModel.mLow)
+            m_new = np.asarray(vModel.mAccepted if getattr(vModel, 'fctCorrectionApplied', False) else vModel.mLow)
             # M^n is seeded in Coefficients.preStep, NOT here: the first residual
             # call comes from attachModels, before the flow model has stepped, when
             # its mn is not yet any step's old-time mass (a 3.4% offset on UHD).
+            if not getattr(self, '_M_carried', False):
+                # attachModels' call, before Coefficients.preStep seeds M: stand in
+                # the flow model's mn, or the explicit branches' edge CFL, which
+                # divides by M_low, starts the run at dt ~ 1e-13 (Henry: 8e-14,
+                # then ~50 steps doubling back up to the CFL dt)
+                self.M_dof[:] = mn
             dt = self.timeIntegration.dt
             rowptr, colind, _ = self.MC_global.getCSRrepresentation()
             dM = m_new - mn
@@ -1784,7 +1847,7 @@ class LevelModel(OneLevelTransport):
         # unlimited predictor) IS the accepted mass.  Preferring mAccepted makes this
         # probe valid in both modes.
         M_new = getattr(vModel, 'mAccepted', None)
-        if M_new is None:
+        if M_new is None or not getattr(vModel, 'fctCorrectionApplied', False):
             M_new = getattr(vModel, 'mLow', None)
         # Advecting with the flow model's fluxes, TADR CARRIES M^{n+1} (M_low):
         # the fluid balance behind the cancelled form is the one of THAT mass.
@@ -1877,7 +1940,10 @@ class LevelModel(OneLevelTransport):
         """
         # ImplicitEV carries M (if at all) in Coefficients.postStep, AFTER the
         # continuity probe has read M^n; FCTStep, which calls this, runs before.
-        if self.coefficients.STABILIZATION_TYPE == 5 or not np.any(self.M_low):
+        # With the flow model's fluxes the explicit branches carry it there too
+        # (and RKEV.updateStage between stages): M is the flow model's, not this.
+        if (self.coefficients.STABILIZATION_TYPE == 5 or self._use_edge_flux
+                or not np.any(self.M_low)):
             return
         mLow_flow = getattr(getattr(self.coefficients, 'vModel', None), 'mLow', None)
         if (mLow_flow is not None
@@ -1888,6 +1954,30 @@ class LevelModel(OneLevelTransport):
             logEvent("[TADR-CONT] max|M_tadr - m_richards|/scale = %.6e "
                      "(flow/transport continuity defect; rank-local)" % defect)
         self.M_dof[:] = self.M_low
+
+    def ghostScatter(self, *arrays):
+        """Forward-insert (owner -> ghost copy) each DOF array.  No-op in serial.
+
+        With one layer of overlap only the OWNED DOFs have their full element star
+        on this rank, so anything built by a loop over elements or rows -- uLow on
+        the explicit paths, the Zalesak ratios -- is incomplete at a ghost DOF, and
+        FCTStep reads those arrays at the column j of an owned row i.  The owner
+        always holds the complete value, so an insert scatter repairs every ghost.
+        Shuttled through u[0].dof, the one ghosted vector this model owns (as in
+        Richards.ghostScatter).
+        """
+        par = getattr(self.u[0], 'par_dof', None)
+        if par is None:
+            return
+        ndof = self.u[0].dof.shape[0]
+        saved = self.u[0].dof.copy()
+        for a in arrays:
+            if a is None or a.shape[0] != ndof:
+                continue
+            self.u[0].dof[:] = a
+            par.scatter_forward_insert()
+            a[:] = self.u[0].dof
+        self.u[0].dof[:] = saved
 
     def FCTStep(self):
         if self.coefficients.STABILIZATION_TYPE == 6:
@@ -1911,9 +2001,19 @@ class LevelModel(OneLevelTransport):
             )
             # Keep model DOFs in sync with the low-order update.
             self.u[0].dof[:] = self.uLow
+            # uLow is incomplete at ghost rows; the next stage's residual reads
+            # u[0].dof at ghost columns, so give the ghosts the owners' values
+            par = getattr(self.u[0], 'par_dof', None)
+            if par is not None:
+                par.scatter_forward_insert()
             self._adoptFluidMass()   # SCHEME B
             return
 
+        # Ghost-sync everything the limiter reads at a column before it reads it:
+        # uLow (written per row by the explicit kernels, so incomplete at a ghost),
+        # the high-order state and the fluid masses.  u_dof_old is synced by the
+        # residual.
+        self.ghostScatter(self.uLow, self.timeIntegration.u, self.M_dof, self.M_low)
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
         limited_mass = np.zeros(self.u[0].dof.shape)
@@ -2007,6 +2107,12 @@ class LevelModel(OneLevelTransport):
                                                                self.timeIntegration.u,
                                                                limited_solution)
         self.u[0].dof[:] = limited_solution
+        # the limited rows are incomplete at ghosts too, and the ImplicitEV hook
+        # rebuilds q_rho for the flow model from u[0].dof straight after this, on
+        # overlap elements that feed owned rows; give the ghosts the owners' values
+        par = getattr(self.u[0], 'par_dof', None)
+        if par is not None:
+            par.scatter_forward_insert()
         self._adoptFluidMass()   # SCHEME B
 
     def updateVelocityFieldAsFunction(self):
@@ -2127,6 +2233,10 @@ class LevelModel(OneLevelTransport):
         self.dt_times_dC_minus_dL = np.zeros(MC.shape, 'd')
         self.uLow = np.zeros(self.u[0].dof.shape, 'd')
         self.dLow = np.zeros(MC.shape, 'd')
+        # Zalesak's ratios, owned here so FCTStep can ghost-scatter them between
+        # the kernel's two passes
+        self.Rpos = np.zeros(self.u[0].dof.shape, 'd')
+        self.Rneg = np.zeros(self.u[0].dof.shape, 'd')
         # SCHEME B: the FLUID mass M = theta*rho is a state variable paired with
         # the solute mass, and the concentration is the ratio u = m/M -- a convex
         # combination for ANY velocity, including the divergent one that
@@ -2289,7 +2399,8 @@ class LevelModel(OneLevelTransport):
         # rho_f = rho_s = 1, so it is exact there).
         # ------------------------------------------------------------------
         init_M_in_kernel = 0
-        if self.coefficients.STABILIZATION_TYPE == 5 or not self._M_dof_initialized:
+        if (self.coefficients.STABILIZATION_TYPE == 5 or self._use_edge_flux
+                or not self._M_dof_initialized):
             init_M_in_kernel = self._refreshFluidMassFromFlow()
 
         # Reset some vectors for FCT
