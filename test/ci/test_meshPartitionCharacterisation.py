@@ -54,7 +54,8 @@ RANKS = [1, 2, 4]
 #mesh, path, owners, overlap
 CASES = [(m,) + c for m in ('tri', 'tet') for c in
          [('node', 'scatter', 1), ('node', 'graph', 1), ('node', 'scatter', 2),
-          ('element', 'scatter', 1), ('files', 'graph', 1)]]
+          ('element', 'scatter', 1), ('element', 'graph', 1), ('element', 'scatter', 2),
+          ('files', 'graph', 1)]]
 ENTRY = {'node': 'partitionNodes', 'element': 'partitionElements',
          'files': {'tri': 'partitionNodesFromTriangleFiles', 'tet': 'partitionNodesFromTetgenFiles'}}
 RANK_INTERFACE = -1
@@ -194,7 +195,7 @@ def test_digest_is_pinned(run, case, n):
     got, ranks = run(*(case + (n,)))
     entry = ENTRY[path] if path != 'files' else ENTRY[path][mesh]
     #a serial node partition is given every node's owner (0) instead of running the graph partitioner
-    given = int(owners == 'scatter' or (path == 'node' and n == 1))
+    given = int(owners == 'scatter' or (path in ('node', 'element') and n == 1))
     assert got['calls'] == '%s:%d' % (entry, given), got
     key = '%s %s %s %d %d' % (mesh, path, owners, overlap, n)
     d = digest(ranks)
