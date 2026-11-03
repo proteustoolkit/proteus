@@ -23,6 +23,10 @@
 #     process); OMPI_MCA_pml=ob1 for Open MPI; one BLAS/OpenMP thread per process.
 #  4. A scratch working directory (tests write files under fixed names) and --import-mode=importlib, as CI.
 #
+# With --inplace (proteus from this checkout, not installed) test_import_hygiene also checks 7 files that are in the
+# checkout but not in an installed package (proteus/tests/richards, a TwoPhaseFlow documentation example), so the run
+# has CI's tests plus those 7.
+#
 # CI is still the oracle: this reproduces its invocation, not its machine.
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -57,9 +61,13 @@ try:
 except Exception as exc:
     print("proteus:  NOT IMPORTABLE: %r" % (exc,)); sys.exit(1)
 try:
-    raw = md.distribution("ymf").read_text("direct_url.json")
-    vcs = (json.loads(raw) if raw else {}).get("vcs_info") or {}
-    print("ymf:      %s %s" % (md.version("ymf"), vcs.get("commit_id", "(not a git install)")))
+    import os, subprocess, ymf
+    here = os.path.dirname(ymf.__file__)
+    commit = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if not commit:      # an installed ymf: the commit pip recorded
+        raw = md.distribution("ymf").read_text("direct_url.json")
+        commit = ((json.loads(raw) if raw else {}).get("vcs_info") or {}).get("commit_id", "(not a git install)")
+    print("ymf:      %s at %s" % (ymf.__file__, commit))
 except Exception as exc:
     print("ymf:      unknown (%r)" % (exc,))
 try:
