@@ -948,6 +948,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
   proteus::pyarray<double> &Rpos                      = args.array<double>("Rpos");
   proteus::pyarray<double> &Rneg                      = args.array<double>("Rneg");
   proteus::pyarray<double> &FluxCorrectionMatrix      = args.array<double>("FluxCorrectionMatrix");
+  // realized corrections alpha_ij f_ij (row i, times bc_mask_i) and their spatial part
+  // alpha_ij dt (f^H - f^L)_ij, i.e. without the consistent-mass term; read by the transport coupling
+  proteus::pyarray<double> &limitedFluxMatrix         = args.array<double>("limitedFluxMatrix");
+  proteus::pyarray<double> &limitedSpatialFluxMatrix  = args.array<double>("limitedSpatialFluxMatrix");
   // flags
   int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
   int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
@@ -1063,7 +1067,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     for (int offset = csrRowIndeces_DofLoops.at(i);  offset < csrRowIndeces_DofLoops.at(i + 1); offset++)
     {
       int j = csrColumnOffsets_DofLoops.at(offset);
-      alpha_fA = ((FluxCorrectionMatrix.at(ij) > 0.0) ? fmin(Rpos.at(i), Rneg.at(j)) : fmin(Rneg.at(i), Rpos.at(j))) * FluxCorrectionMatrix.at(ij);
+      const double alpha_ij = (FluxCorrectionMatrix.at(ij) > 0.0) ? fmin(Rpos.at(i), Rneg.at(j)) : fmin(Rneg.at(i), Rpos.at(j));
+      alpha_fA = alpha_ij * FluxCorrectionMatrix.at(ij);
+      limitedFluxMatrix.at(ij)        = alpha_fA * bc_mask.at(i);
+      limitedSpatialFluxMatrix.at(ij) = alpha_ij * dt_times_fH_minus_fL.at(ij) * bc_mask.at(i);
       alpha_dot = fmin(1.0, beta_ij * fabs(alpha_fA) / MC.at(ij) / fmax(1.0e-8, fabs(mDot.at(i) - mDot.at(j))));
 
       if (MONOLITHIC == 0) {
@@ -1121,6 +1128,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &FluxCorrectionMatrix      = args.array<double>("FluxCorrectionMatrix");
     proteus::pyarray<double> &fluxCorrection            = args.array<double>("fluxCorrection");
     proteus::pyarray<double> &limited_solution          = args.array<double>("limited_solution"); // s^{n,FCT}
+    proteus::pyarray<double> &limitedFluxMatrix         = args.array<double>("limitedFluxMatrix");
+    proteus::pyarray<double> &limitedSpatialFluxMatrix  = args.array<double>("limitedSpatialFluxMatrix");
     const bool have_rho_dof = (rho_dof_member.size() == static_cast<std::size_t>(numDOFs));
 
     if (fct_pass == 0 || fct_pass == 1) {
@@ -1176,8 +1185,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double sum = 0.0;
         for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
           const int    j = csrColumnOffsets_DofLoops.data()[offset];
-          const double f = FluxCorrectionMatrix.data()[ij];
-          sum += ((f > 0.0) ? fmin(Rpos.data()[i], Rneg.data()[j]) : fmin(Rneg.data()[i], Rpos.data()[j])) * f;
+          const double f       = FluxCorrectionMatrix.data()[ij];
+          const double L_ij    = (f > 0.0) ? fmin(Rpos.data()[i], Rneg.data()[j]) : fmin(Rneg.data()[i], Rpos.data()[j]);
+          const double alpha_ij = (j == i) ? 0.0 : L_ij * fmin(alpha_nv.data()[i], alpha_nv.data()[j]);
+          sum += L_ij * f;
+          limitedFluxMatrix.data()[ij]        = bc_mask.data()[i] * L_ij * f;
+          limitedSpatialFluxMatrix.data()[ij] = bc_mask.data()[i] * alpha_ij * dt_times_fH_minus_fL.data()[ij];
           ij += 1;
         }
         limited_solution.data()[i] = mn.data()[i] + bc_mask.data()[i] * sum / ML.data()[i];
@@ -1466,6 +1479,16 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<int>    &csrRowIndeces_u_u                          = args.array<int>("csrRowIndeces_u_u");
     proteus::pyarray<int>    &csrColumnOffsets_u_u                       = args.array<int>("csrColumnOffsets_u_u");
     proteus::pyarray<int>    &csrColumnOffsets_eb_u_u                    = args.array<int>("csrColumnOffsets_eb_u_u");
+    // Compatible flow -> transport coupling (TADR STABILIZATION_TYPE=Compatible):
+    //   USE_NODAL_RHO    -> rho_dof = rho_dof_in, the transport's nodal rho_T(c_i), instead of the
+    //                       lumped projection of q_rho (which is not the nodal value at boundaries)
+    //   edgeFluxLow_ij   <- the low-order edge flux of row i (what the residual sums over j)
+    //   boundaryFluxDOF_i<- the boundary integral of row i, positive into the domain
+    const int            USE_NODAL_RHO    = args.scalar<int>("USE_NODAL_RHO");
+    proteus::pyarray<double> &rho_dof_in       = args.array<double>("rho_dof_in");
+    proteus::pyarray<double> &edgeFluxLow      = args.array<double>("edgeFluxLow");
+    proteus::pyarray<double> &boundaryFluxDOF  = args.array<double>("boundaryFluxDOF");
+    std::fill(boundaryFluxDOF.begin(), boundaryFluxDOF.end(), 0.0);
     // double Rpos[numDOFs], Rneg[numDOFs];
      std::vector<double> Rpos(numDOFs, 0.0), Rneg(numDOFs, 0.0);
      std::vector<double> TransportMatrix(NNZ, 0.0),
@@ -1524,6 +1547,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       if (ML_rho[i] > 0.0) rho_dof[i] /= ML_rho[i];
       else rho_dof[i] = rho;
     }
+    if (USE_NODAL_RHO)
+      for (int i = 0; i < numDOFs; ++i) rho_dof[i] = rho_dof_in.data()[i];
     // Cache the projected, salinity-coupled density for use in invert() so
     // the m -> u inversion is consistent with the forward residual.
     rho_dof_member = rho_dof;
@@ -1914,6 +1939,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       for (int i = 0; i < nDOF_test_element; i++) {
           int eN_i = eN * nDOF_test_element + i;
           globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u[i];
+          boundaryFluxDOF.data()[r_l2g.data()[eN_i]] -= elementResidual_u[i];
       }//i
     } //ebNE
     /////////////////////////////////////////////////////////////////
@@ -2047,6 +2073,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
         int j = csrColumnOffsets_DofLoops.data()[offset];
         if (i == j) ii = ij;
+        const double ith_flux_term_before = ith_flux_term;
         const double rho_j = rho_dof[j];
         const int mat_j = freeDOFMaterialTypes.data()[j];
         const double rho_edge = 0.5 * (rho_i + rho_j);
@@ -2118,6 +2145,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         }
         dt_times_fH_minus_fL.data()[ij] = dt * fA;
         //dt_times_fH_minus_fL.data()[ij] = dt * fA_CN;
+        edgeFluxLow.data()[ij] = ith_flux_term - ith_flux_term_before;
         ij += 1;
       }
       cflux[i] = ith_consistent_flux_term;

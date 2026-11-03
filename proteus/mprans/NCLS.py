@@ -885,14 +885,20 @@ class LevelModel(OneLevelTransport):
         """Replace the ghost entries of a dof array by the owners' values (in place)."""
         if self.comm.size() == 1:
             return
-        par = self._dofVecs.get(id(a))
-        if par is None:
+        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
+        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
             dofMap = self.u[0].femSpace.dofMap
             rank = self.comm.rank()
             nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            par = self._dofVecs[id(a)] = ParVec_petsc4py(
-                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
         par.scatter_forward_insert()
+        a[:] = buf
 
     def calculateCoefficients(self):
         pass
@@ -987,6 +993,15 @@ class LevelModel(OneLevelTransport):
         dofMap = self.u[0].femSpace.dofMap
         rank = self.comm.rank()
         argsDict["numOwnedDOFs"] = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+        # psi of a ghost dof comes from a truncated graph row and the dissipation of an owned dof reads it:
+        # compute psi (phase 0, before anything is added to r), scatter it from the owners, then the rest
+        if getattr(self, "_redistancing_psi_dof", None) is None:
+            self._redistancing_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
+        argsDict["psi_dof"] = self._redistancing_psi_dof
+        argsDict["phase"] = 0
+        self.ncls.calculateRedistancingResidual(argsDict)
+        self.scatterDOFArray(self._redistancing_psi_dof)
+        argsDict["phase"] = 1
         L2_norm = np.sqrt(globalSum(self.ncls.calculateRedistancingResidual(argsDict) ** 2))
 
         if (self.coefficients.pure_redistancing == True):

@@ -798,7 +798,24 @@ cdef class NodeStarFactor:
         for I in range(self.nsf.N):
             for i in range(self.nsf.subdomain_dim[I]):
                 self.nsf.subdomain_U[I][i] = val
-    
+
+    def getSubdomainU(self, int I):
+        """A copy of the solution of node I's star problem, one value per element of the star."""
+        assert 0 <= I < self.nsf.N
+        cdef int i
+        cdef np.ndarray[np.double_t, ndim=1] U = np.empty(self.nsf.subdomain_dim[I], dtype=np.double)
+        for i in range(self.nsf.subdomain_dim[I]):
+            U[i] = self.nsf.subdomain_U[I][i]
+        return U
+
+    def setSubdomainU(self, int I, np.ndarray[np.double_t, ndim=1] U):
+        """Overwrite the solution of node I's star problem."""
+        assert 0 <= I < self.nsf.N
+        assert U.shape[0] == self.nsf.subdomain_dim[I]
+        cdef int i
+        for i in range(self.nsf.subdomain_dim[I]):
+            self.nsf.subdomain_U[I][i] = U[i]
+
     def copyData(self,
                  NodeStarFactor other):
         pp.nodeStar_copy(other.nsf.N, 

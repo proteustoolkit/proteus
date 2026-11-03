@@ -1636,6 +1636,7 @@ class OneLevelTransport(NonlinearEquation):
                 self.numericalFlux.setFromOptions(options)
         else:
             self.numericalFlux = None
+        self._refuseDiscontinuousSpaceWithoutFaceNeighbours()
         #set penalty terms
         #cek todo move into numerical flux initialization
         if 'penalty' in self.ebq_global:
@@ -1666,6 +1667,39 @@ class OneLevelTransport(NonlinearEquation):
         self.nzval_mass = None
         self.nzval_space = None
     #end __init__
+
+    def _refuseDiscontinuousSpaceWithoutFaceNeighbours(self):
+        """Raise when a discontinuous space coupled by a numerical flux sits on a partition missing face neighbours.
+
+        A DG face term couples an element to its face neighbour. If a face of an owned element is a rank interface
+        (the partitioner flags the faces it cuts -1), the neighbour is not on the rank and the face is assembled as
+        domain boundary, so the answer depends on the partition: 16x16 DG Poisson, 1.04e-3 serial, 6.3e-2 on 2 ranks
+        with an element partition and no overlap, 1.3e-1 with a node partition and one layer. An element partition
+        with one layer has none. Every rank takes part in the sum and every rank raises.
+        """
+        comm = Comm.get()
+        nf = self.numericalFlux
+        if comm.size() == 1 or nf is None or not getattr(nf, 'hasInterior', True):
+            return
+        if isinstance(nf, NumericalFlux.NoFlux):
+            return              # zero interior flux: the elements are not coupled through their faces
+        if not any(isinstance(u.femSpace.dofMap, (DiscontinuousGalerkinDOFMap, p0DOFMap)) for u in self.u.values()):
+            return
+        mesh = self.mesh
+        marked = int(bool(mesh.__dict__.get('rankInterfacesMarked')))
+        if comm.globalSum(marked) < comm.size():
+            return              # a partitioner that does not mark its cuts: nothing to conclude
+        exterior = np.asarray(mesh.exteriorElementBoundariesArray)
+        cut = exterior[MeshTools.rankInterfaceExteriorMask(mesh)]
+        owned = np.asarray(mesh.elementBoundaryElementsArray)[cut, 0] < mesh.nElements_owned
+        missing = int(comm.globalSum(int(np.count_nonzero(owned))))
+        if missing > 0:
+            raise RuntimeError(
+                "%s: %d faces of owned elements are rank interfaces, so the discontinuous space coupled by %s would "
+                "treat them as domain boundary and the solution would depend on the partition. Use an element "
+                "partition with one layer of overlap (parallelPartitioningType = MeshParallelPartitioningTypes.element, "
+                "nLayersOfOverlapForParallel = 1, in the n module and in the domain's MeshOptions)."
+                % (self.name, missing, nf.__class__.__name__))
 
     def setupFieldStrides(self, interleaved=True):
         """

@@ -125,6 +125,9 @@ TI TimeIntegration VBDF state
 TI mprans.GN_SW2DCV RKEV unmeasured
 TI mprans.NCLS RKEV rebuilt
 TI mprans.SW2DCV RKEV unmeasured
+# CompatibleBackwardEuler: the compatible transport's carried storage M lives on TADR.LevelModel
+# (carriedStorage); a hot start reseeds it with the flow's m^n
+TI mprans.TADR CompatibleBackwardEuler unmeasured
 TI mprans.TADR RKEV unmeasured
 TI mprans.VOF RKEV rebuilt
 TI mprans.VOF3P RKEV unmeasured

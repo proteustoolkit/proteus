@@ -381,13 +381,13 @@ class StrongDirichlet(NF_base):
         self.setFluxBoundaryConditions()
         self.hasInterior=StrongDirichlet.hasInterior
     def setFluxBoundaryConditions(self):
-        pass
+        # the p module's fluxBoundaryConditions; StrongDirichletFactory overrides this
+        self.fluxBoundaryConditions = dict(getattr(self.vt,'fluxBoundaryConditions',None) or {})
     def calculateExteriorNumericalFlux(self,inflowFlag,q,ebqe):
-        import pdb
-#        pdb.set_trace()
+        # a component without an entry has no outflow term ('noFlow')
         for ci,cjDict in self.vt.coefficients.advection.items():
-            if (self.fluxBoundaryConditions[ci] == 'outFlow' or
-                self.fluxBoundaryConditions[ci] == 'mixedFlow'):
+            if (self.fluxBoundaryConditions.get(ci) == 'outFlow' or
+                self.fluxBoundaryConditions.get(ci) == 'mixedFlow'):
                 for cj in cjDict:
                     cnumericalFlux.calculateExteriorNumericalAdvectiveFlux_NoBC(self.mesh.exteriorElementBoundariesArray,
                                                                                 self.mesh.elementBoundaryElementsArray,
@@ -401,8 +401,8 @@ class StrongDirichlet(NF_base):
                     self.zeroAdvectiveFluxOnRankInterfaces(ebqe,ci,cj)
     def updateExteriorNumericalFluxJacobian(self,l2g,inflowFlag,q,ebqe,dphi,fluxJacobian_exterior,fluxJacobian_eb,fluxJacobian_hj):
         for ci,cjDict in self.vt.coefficients.advection.items():
-            if ((self.fluxBoundaryConditions[ci] == 'outFlow' or
-                 self.fluxBoundaryConditions[ci] == 'mixedFlow') and
+            if ((self.fluxBoundaryConditions.get(ci) == 'outFlow' or
+                 self.fluxBoundaryConditions.get(ci) == 'mixedFlow') and
                 self.vt.timeIntegration.advectionIsImplicit[ci]):
                 for cj in cjDict:
                     # not an ordering assumption on calculateExteriorNumericalFlux

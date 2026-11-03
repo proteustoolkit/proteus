@@ -470,6 +470,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.outputQuantDOFs = outputQuantDOFs
         #For seepage anb
         self.model = None 
+        # Compatible flow -> transport coupling. Switched on by a TADR model with
+        # STABILIZATION_TYPE='Compatible' (TADR.Coefficients.attachModels): the edge-based
+        # residual then takes the transport's nodal density, and every accepted step exports
+        # its realized exchanges (LevelModel.transportExport).
+        self.exportTransportFluxes = False
 
         TC_base.__init__(self,
                          nc,
@@ -497,6 +502,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # every step of the implicit FCT starts with the Galerkin predictor
         if hasattr(self, 'model') and hasattr(self.model, 'fct_phase'):
             self.model.fct_phase = 'predictor'
+        if self.exportTransportFluxes:
+            self.model.fctCorrectionApplied = False
         # Refresh coupled density every step from the transport (TADR) model,
         # mirroring how TADR refreshes velocity / aliases moisture content.
         if self.density_model is None or not hasattr(self, 'densityModel'):
@@ -504,6 +511,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         coeffs = getattr(self.densityModel, 'coefficients', None)
         if coeffs is None:
             return {}
+        if self.exportTransportFluxes:
+            # rho_T(c^n) at the nodes and quadrature points, from the transport DOFs
+            coeffs.syncCompatibleDensity()
+            self.model.rho_dof_in[:] = coeffs.nodal_rho
         q_rho = getattr(coeffs, 'q_rho', None)
         ebqe_rho = getattr(coeffs, 'ebqe_rho', None)
         if q_rho is not None and hasattr(self.model, 'q') and 'rho' in self.model.q:
@@ -1104,6 +1115,16 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.lscheme_active = False  # set by Newton in NONLINEAR_SOLVER='hybrid'
         self.alpha_nv = None
         self.m_fct = None
+        # Compatible transport coupling (Coefficients.exportTransportFluxes); see transportExport.
+        nDOF = self.u[0].dof.shape[0]
+        self.rho_dof_in = np.ones((nDOF,), 'd') * self.coefficients.rho
+        self.boundaryFluxDOF = np.zeros((nDOF,), 'd')
+        self.edgeFluxLow = None
+        self.limitedFluxMatrix = None
+        self.limitedSpatialFluxMatrix = None
+        self.fctCorrectionApplied = False
+        self.mAccepted = np.zeros((nDOF,), 'd')
+        self.transportExport = None
         # Aux quantity at DOFs to be filled by optimized code (MQL)
         self.quantDOFs = np.zeros(self.u[0].dof.shape, 'd')
         self.mLow = np.zeros(self.u[0].dof.shape, 'd')
@@ -1425,6 +1446,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["FluxCorrectionMatrix"] = self.FluxCorrectionMatrix
         argsDict["fluxCorrection"] = self.fluxCorrection
         argsDict["limited_solution"] = self.m_fct
+        argsDict["limitedFluxMatrix"] = self.limitedFluxMatrix
+        argsDict["limitedSpatialFluxMatrix"] = self.limitedSpatialFluxMatrix
         if getattr(self.u[0], 'par_dof', None) is None:
             argsDict["fct_pass"] = 0
             self.richards.ImplicitFCTStep(argsDict)
@@ -1440,6 +1463,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.richards.ImplicitFCTStep(argsDict)
         self.fct_phase = 'final'
         self.fct_resolve = True
+        # the final solve is low order plus fluxCorrection, so m(p^{n+1}) is the accepted mass
+        self.fctCorrectionApplied = True
 
     def FCTStep(self):
         if self.coefficients.FCT_TYPE == 'implicit':
@@ -1479,6 +1504,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["Rpos"] = self.Rpos
         argsDict["Rneg"] = self.Rneg
         argsDict["FluxCorrectionMatrix"] = self.FluxCorrectionMatrix
+        argsDict["limitedFluxMatrix"] = self.limitedFluxMatrix
+        argsDict["limitedSpatialFluxMatrix"] = self.limitedSpatialFluxMatrix
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
         argsDict["MONOLITHIC"] =0#cek hack self.coefficients.MONOLITHIC
         argsDict["anb_seepage_flux_n"]= self.anb_seepage_flux_n
@@ -1537,6 +1564,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                         self.timeIntegration.dt), level=1)
         if rejected:
             self.u[0].dof[:] = uHigh
+        else:
+            # the corrected mass is the accepted m^{n+1}, whatever invert() made of it
+            self.fctCorrectionApplied = True
+            self.mAccepted[:] = mLim
         # invert() wrote every local row, ghosts included, and the ghost rows were
         # limited off an incomplete stencil.  Hand the owners' values back before
         # anything reads u again: the caller (NonlinearSolvers.Newton.solve, which
@@ -1804,6 +1835,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.Rpos = np.zeros(nFree, 'd')
         self.Rneg = np.zeros(nFree, 'd')
         self.FluxCorrectionMatrix = np.zeros(Cx.shape, 'd')
+        # the realized FCT corrections must survive the implicit FCT's final solve, so they are
+        # allocated once rather than with the work arrays above
+        if self.limitedFluxMatrix is None or self.limitedFluxMatrix.shape != Cx.shape:
+            self.edgeFluxLow = np.zeros(Cx.shape, 'd')
+            self.limitedFluxMatrix = np.zeros(Cx.shape, 'd')
+            self.limitedSpatialFluxMatrix = np.zeros(Cx.shape, 'd')
         # PARALLEL (one-time): freeDOFMaterialTypes is built in __init__ from the
         # FIRST incident element in LOCAL element numbering, so on a node sitting
         # on a soil interface two ranks can pick different rocks.  mat_j selects
@@ -1980,6 +2017,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["Cx"] = len(Cx)  # num of non-zero entries in the sparsity pattern
         argsDict["csrRowIndeces_DofLoops"] = rowptr  # Row indices for Sparsity Pattern (convenient for DOF loops)
         argsDict["csrColumnOffsets_DofLoops"] = colind  # Column indices for Sparsity Pattern (convenient for DOF loops)
+        self._dofLoopsCSR = (rowptr, colind)
         argsDict["csrRowIndeces_CellLoops"] = self.csrRowIndeces[(0, 0)]  # row indices (convenient for element loops)
         argsDict["csrColumnOffsets_CellLoops"] = self.csrColumnOffsets[(0, 0)]  # column indices (convenient for element loops)
         argsDict["csrColumnOffsets_eb_CellLoops"] = self.csrColumnOffsets_eb[(0, 0)]  # indices for boundary terms
@@ -2038,6 +2076,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_u_u"] = self.csrRowIndeces[(0,0)]
         argsDict["csrColumnOffsets_u_u"] = self.csrColumnOffsets[(0,0)]
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0,0)]
+        argsDict["USE_NODAL_RHO"] = int(self.coefficients.exportTransportFluxes)
+        argsDict["rho_dof_in"] = self.rho_dof_in
+        argsDict["edgeFluxLow"] = self.edgeFluxLow
+        argsDict["boundaryFluxDOF"] = self.boundaryFluxDOF
         #argsDict["q_grad_psi"] = self.q[('velocity', 0)] 
         #argsDict["anb_seepage_flux_n"] = self.coefficients.anb_seepage_flux_n
         
@@ -2417,7 +2459,76 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def calculateSolutionAtQuadrature(self):
         pass
     def calculateAuxiliaryQuantitiesAfterStep(self):
-        pass
+        if self.coefficients.exportTransportFluxes:
+            self.exportTransportFluxes()
+
+    def exportTransportFluxes(self):
+        """Realized fluid exchanges of the step just accepted, for the compatible transport.
+
+        With E~_ij the row-i edge flux the residual used (low order, plus alpha_ij f_ij / dt
+        when the FCT correction was applied) and b_i the boundary integral (into the domain),
+        the accepted step satisfies, up to the solver residual r_i,
+
+            M_L,i (m_i^{n+1} - m_i^n) / dt = sum_j E~_ij + b_i - r_i.
+
+        E~ is antisymmetric except on faces with a weak Dirichlet condition, whose penalty and
+        adjoint terms enter the stiffness matrix unsymmetrically, so the export splits it into
+        E_ij = (E~_ij - E~_ji)/2, which the transport uses, and the symmetric remainder, which
+        the transport sees as boundary exchange through B_i = M_L,i dm_i/dt - sum_j E_ij.
+        Espatial is E without the consistent-mass part of the correction; the transport
+        reconstructs its dispersion velocity from it.
+
+        m^n is the old-time mass this step balanced, rho_T(c^n) theta(p^n). The transport adds
+        exactly this increment to its carried storage, so the two balances agree. (Taking m^n
+        from the previous step's m^{n+1} instead turns every concentration change into a fluid
+        source M_L (rho_T(c^n) - rho_T(c^{n-1})) theta / dt: at a strongly imposed concentration
+        node in the first steps of the levee case, dt = 1e-8 d, the flow Newton cannot absorb it.)
+        """
+        rowptr, colind = self._dofLoopsCSR
+        nFree = len(rowptr) - 1
+        dt = self.timeIntegration.dt
+        if not hasattr(self, '_transposeIndex'):
+            rows = np.repeat(np.arange(nFree), np.diff(rowptr))
+            keys = rows.astype(np.int64) * nFree + colind
+            self._transposeIndex = np.searchsorted(keys, colind.astype(np.int64) * nFree + rows)
+            assert np.array_equal(keys[self._transposeIndex], colind.astype(np.int64) * nFree + rows), \
+                "Richards: the sparsity pattern must be structurally symmetric"
+            self._exportRows = rows
+        T = self._transposeIndex
+        Eraw = self.edgeFluxLow.copy()
+        Esp_raw = self.edgeFluxLow.copy()
+        if self.fctCorrectionApplied:
+            Eraw += self.limitedFluxMatrix / dt
+            Esp_raw += self.limitedSpatialFluxMatrix / dt
+            if self.coefficients.FCT_TYPE == 'implicit':
+                m_new = self.mLow[:nFree].copy()
+            else:
+                m_new = self.mAccepted[:nFree].copy()
+        else:
+            m_new = self.mLow[:nFree].copy()
+        m_old = self.mn[:nFree].copy()
+        E = 0.5 * (Eraw - Eraw[T])
+        Esp = 0.5 * (Esp_raw - Esp_raw[T])
+        rowSum = np.zeros(nFree)
+        np.add.at(rowSum, self._exportRows, Eraw)
+        fluidResidual = self.ML[:nFree] * (m_new - m_old) / dt - rowSum - self.boundaryFluxDOF[:nFree]
+        fluidResidual *= self.bc_mask[:nFree]
+        self.transportExport = {'t0': self.timeIntegration.tLast,
+                                't1': self.timeIntegration.t,
+                                'dt': dt,
+                                'mOld': m_old,
+                                'mNew': m_new,
+                                'E': E,
+                                'Espatial': Esp,
+                                'boundaryFlux': self.boundaryFluxDOF[:nFree].copy(),
+                                'fluidResidual': fluidResidual,
+                                'rowptr': rowptr,
+                                'colind': colind}
+        t1 = self.timeIntegration.t
+        logEvent("Richards compatible export t=%12.5e: fluid budget dt*sum(r) = %12.5e, dt*max|r| = %12.5e"
+                 % (t1, dt * self.comm.globalSum(float(fluidResidual.sum())),
+                    dt * self.comm.globalMax(float(np.abs(fluidResidual).max()))),
+                 level=2)
     #def postStep(self, t, firstStep=False):
     #    with open('seepage_flux_nnnnk', "a") as f:
     #        f.write("\n Time"+ ",\t" +"Seepage\n")

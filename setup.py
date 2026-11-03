@@ -1176,16 +1176,38 @@ def setup_given_extensions(extensions):
 def setup_extensions_in_sequential():
     setup_given_extensions(EXTENSIONS_TO_BUILD)
 
-def setup_extensions_in_parallel():
+def _setup_one_extension(extensions):
+    """Pool task for setup_extensions_in_parallel: build one extension and
+    report how it went instead of raising. distutils ends a failed compile
+    with SystemExit, which is a BaseException, so it escapes the pool's own
+    exception handling and kills the worker; a dead worker never posts its
+    result and Pool.join() then waits forever (34 idle processes for 30
+    minutes on a 1.9.x build with missing headers, 2026-11-02)."""
+    try:
+        setup_given_extensions(extensions)
+        return extensions[0].name, None
+    except BaseException as e:
+        return extensions[0].name, '%s: %s' % (type(e).__name__, e)
+
+def setup_extensions_in_parallel(nprocs):
     import multiprocessing, logging
     mp = multiprocessing.get_context('fork')
     logger = mp.log_to_stderr()
     logger.setLevel(logging.INFO)
-    pool = mp.Pool(processes=int(os.getenv('N')))
     EXTENSIONS=[[e] for e in EXTENSIONS_TO_BUILD]
-    pool.imap(setup_given_extensions, EXTENSIONS)
-    pool.close()
-    pool.join()
+    failed = []
+    # Read every result: a failure has to end the build with a non-zero
+    # exit, not be dropped (imap's results were never read before, so any
+    # failure that did not hang was lost and the build exited 0).
+    with mp.Pool(processes=nprocs) as pool:
+        for name, error in pool.imap_unordered(_setup_one_extension, EXTENSIONS):
+            if error is not None:
+                failed.append((name, error))
+                sys.stderr.write('proteus setup.py: building %s failed: %s\n' % (name, error))
+    if failed:
+        sys.stderr.write('proteus setup.py: %d of %d extensions failed to build: %s\n'
+                         % (len(failed), len(EXTENSIONS), ', '.join(sorted(n for n, _ in failed))))
+        sys.exit(1)
 
 import logging, multiprocessing
 logging.basicConfig(force=True,level=logging.INFO)
@@ -1193,10 +1215,14 @@ mp = multiprocessing.get_context('fork')
 logger = mp.log_to_stderr()
 logger.setLevel(logging.INFO)
 
-if "build_ext" in sys.argv:
-    try:
-        setup_extensions_in_parallel()
-    except:
-        setup_extensions_in_sequential()
+# N=<processes> builds one extension per process; without it (or with a
+# value that is not a positive integer) the build is sequential over the
+# extensions, with setuptools' own threads inside build_ext.
+try:
+    _nprocs = int(os.environ.get('N', ''))
+except ValueError:
+    _nprocs = 0
+if "build_ext" in sys.argv and _nprocs > 0:
+    setup_extensions_in_parallel(_nprocs)
 else:
     setup_extensions_in_sequential()
