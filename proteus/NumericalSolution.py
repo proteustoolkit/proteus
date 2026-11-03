@@ -615,6 +615,7 @@ class NS_base(object):  # (HasTraits):
                         self.restrictFromFineMesh(m)
                     self.postStep(m)
                     self.systemStepController.modelStepTaken(m,self.tnList[0])
+                    self.endSystemStep(accepted=True)
                     logEvent("Spin-Up Step Taken, Model step t=%12.5e, dt=%12.5e for model %s" % (m.stepController.t_model,
                                                                                              m.stepController.dt_model,
                                                                                              m.name))
@@ -924,6 +925,7 @@ class NS_base(object):  # (HasTraits):
                                                                                               model.stepController.dt_model,
                                                                                               model.name))
                         self.systemStepController.sequenceTaken()
+                        self.endSystemStep(accepted=True)
                         for index,model in enumerate(self.modelList):
                             self.viewSolution(model,index)
                         if self.archiveFlag == ArchiveFlags.EVERY_MODEL_STEP:
@@ -937,6 +939,7 @@ class NS_base(object):  # (HasTraits):
                     self.postStep(model)
                     self.systemStepController.modelStepTaken(model,self.t_stepSequence)
                     self.systemStepController.sequenceTaken()
+                    self.endSystemStep(accepted=True)
                     self.systemStepController.updateTimeHistory()
                     #you're dead if retrySequence didn't work
                     logEvent("Step Failed, Model step t=%12.5e, dt=%12.5e for model %s" % (model.stepController.t_model,
@@ -1335,8 +1338,9 @@ class NS_base(object):  # (HasTraits):
             ar.create_dataset_async("%s_p%d" % (name, ar.rank), value)
 
     def saveSystemStepState(self):
-        """Keep what each model starts this system step with, for a retry: the dofs of every level model and the
-        state() of its lagged objects (SOLVER_STATE_OWNERS), the same contract a hot start restores."""
+        """Keep what each model starts this system step with, for a retry: the dofs of every level model, the
+        state() of its lagged objects (SOLVER_STATE_OWNERS, the contract a hot start restores) and the fields other
+        models read from it (COUPLED_FIELD_NAMES)."""
         self._systemStepState = []
         for m in self.modelList:
             levels = []
@@ -1346,24 +1350,57 @@ class NS_base(object):  # (HasTraits):
                     obj = getattr(lm, owner, None)
                     if obj is not None and hasattr(obj, "state"):
                         owners[owner] = copy.deepcopy(obj.state())
-                levels.append(([lm.u[ci].dof.copy() for ci in range(lm.coefficients.nc)], owners))
+                levels.append(([lm.u[ci].dof.copy() for ci in range(lm.coefficients.nc)], owners,
+                               {k: v.copy() for k, v in self._coupledFields(lm)}))
             self._systemStepState.append(levels)
+
+    #: the quadrature-point and face fields that one model reads from another (RANS2P reads VOF's and NCLS's
+    #: ('u', 0) and ('grad(u)', 0), the transport models read the flow model's ('velocity', 0), ...); they are
+    #: refreshed only by their own model's next residual, so a retry restores them with the dofs
+    COUPLED_FIELD_NAMES = ('u', 'grad(u)', 'H(u)', 'm', 'velocity')
+
+    def _coupledFields(self, lm):
+        stores = [(name, getattr(lm, name, None)) for name in ('q', 'ebq', 'ebqe')]
+        nf = getattr(lm, 'numericalFlux', None)
+        if nf is not None:
+            stores.append(('numericalFlux.ebqe', getattr(nf, 'ebqe', None)))
+        for name, store in stores:
+            if not isinstance(store, dict):
+                continue
+            for key, v in store.items():
+                if (isinstance(key, tuple) and len(key) == 2 and key[0] in self.COUPLED_FIELD_NAMES
+                        and isinstance(v, numpy.ndarray)):
+                    yield (name, key), v
 
     def restoreSystemStepState(self):
         """Put every model back to the state saveSystemStepState kept, before a failed system step is retried.
 
         Without it the retry started from the failed attempt: its dofs were the initial guess (CLSVOF builds its
-        normals at t_n from that guess), the dof history was shifted a second time, and a model that had finished
-        in the failed attempt kept the lags its postStep had moved forward."""
+        normals at t_n from that guess), the dof history was shifted a second time, a model that had finished
+        in the failed attempt kept the lags its postStep had moved forward, and the next model read the failed
+        attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's)."""
         for m, levels in zip(self.modelList, self._systemStepState):
-            for level, (lm, (dofs, owners)) in enumerate(zip(m.levelModelList, levels)):
+            for level, (lm, (dofs, owners, fields)) in enumerate(zip(m.levelModelList, levels)):
                 for ci in range(lm.coefficients.nc):
                     lm.u[ci].dof[:] = dofs[ci]
+                for k, v in self._coupledFields(lm):
+                    if k in fields:
+                        v[:] = fields[k]
                 lm.setFreeDOF(m.uList[level])
                 for owner, st in owners.items():
                     if st is not None:
                         getattr(lm, owner).set_state(copy.deepcopy(st))
+        self.endSystemStep(accepted=False)
         logEvent("restored the models to the start of the system step for the retry", level=3)
+
+    def endSystemStep(self, accepted):
+        """Tell every model's coefficients whether the attempt is taken: the history rows their postStep queued
+        (TC_base.deferWrite) are written for an accepted step and dropped for one that is retried."""
+        for m in self.modelList:
+            for lm in m.levelModelList:
+                hook = getattr(lm.coefficients, "systemStepAccepted" if accepted else "systemStepDiscarded", None)
+                if hook is not None:
+                    hook()
 
     def restoreSolverState(self, model, index, tCount):
         """Hot start: put back what archiveSolverState wrote at ``tCount``,

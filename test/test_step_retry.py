@@ -6,11 +6,12 @@ history was shifted a second time, and a model that had finished in the failed a
 moved forward (CLSVOF's previous solution and velocity, RANS3PF's boundary velocity). NumericalSolution now restores
 every model to the start of the system step (dofs and the state() of its lagged objects) before the retry.
 
-fillingTank, t=0.05, one forced failure at the 10th solve of the named model; largest relative difference against a
-failure-free run that lands on the same accepted times (measured, macOS arm64):
-                      before (velocity)   after
-  CLSVOF fails        4.7e-3              1.6e-13
-  PresInc fails       (see the PR)        1.6e-13
+One forced failure of the named model; largest relative difference, over every model, against a failure-free run
+that lands on the same accepted times (measured, macOS arm64; velocity before):
+  fillingTank         CLSVOF 5.7e-3, RANS3PF 1.3e-1, PresInc 1.3e-1, Pres 4.5e-1   after: 5.6e-13
+  damBreakLevelSet    VOF, NCLS, RDLS or MCorr 6.1e-2 (RANS2P 2.6e-15)             after: 3.8e-13
+The retry also read the failed attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's), and RANS2P
+and RANS3PF wrote a history row for the failed attempt; both are covered here.
 (The 16% first reported was mostly the different step sequence: the same steps without a failure differ from the
 default run by 15-17% in velocity at t=0.05; fillingTank is that sensitive to dt.)
 """
@@ -47,14 +48,29 @@ def _worst(a, b):
     return worst
 
 
-@pytest.mark.parametrize("model", ["clsvof", "pressureIncrement"])
-def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, model):
-    forced, accepted = _run(tmp_path / "forced", FAILMODEL=model, FAILAT=10)
-    replay, _ = _run(tmp_path / "replay", REPLAY=accepted)
+CASES = {
+    "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10),
+    "fillingTank-pressureIncrement": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="pressureIncrement", FAILAT=10),
+    "damBreakLevelSet-vof": dict(DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT=5),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, case):
+    options = CASES[case]
+    forced, accepted = _run(tmp_path / "forced", **options)
+    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **{k: v for k, v in options.items() if k in ("DECK", "ATOL")})
     assert _worst(forced, replay) < 1e-10
+    # the failed attempt leaves no row in the histories RANS2P/RANS3PF write
+    times = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "timeHistory.txt"))
+    numpy.testing.assert_array_equal(times, numpy.loadtxt(accepted))
+    forces = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "forceHistory_p.txt"))
+    assert forces.shape[0] % len(times) == 0
 
 
-def test_without_the_restore_the_retry_differs(tmp_path):
-    forced, accepted = _run(tmp_path / "forced", FAILMODEL="clsvof", FAILAT=10, NORESTORE=1)
-    replay, _ = _run(tmp_path / "replay", REPLAY=accepted)
+@pytest.mark.parametrize("case", ["fillingTank-clsvof", "damBreakLevelSet-vof"])
+def test_without_the_restore_the_retry_differs(tmp_path, case):
+    options = CASES[case]
+    forced, accepted = _run(tmp_path / "forced", NORESTORE=1, **options)
+    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **{k: v for k, v in options.items() if k in ("DECK", "ATOL")})
     assert _worst(forced, replay) > 1e-5

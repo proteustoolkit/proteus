@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-"""TwoPhaseFlow fillingTank (CLSVOF + RANS3PF projection scheme, he=0.1) to t=0.05, for test_step_retry.py.
+"""A test/TwoPhaseFlow deck (DECK: fillingTank.py, CLSVOF + RANS3PF projection scheme, or damBreakLevelSet.py,
+RANS2P + VOF + NCLS + RDLS + MCorr) at he=0.1 to t=0.05, for test_step_retry.py.
 
 Run serially in an empty directory; leaves u.csv (every model's dofs, sorted by (100 * model + component, x, y): key, x,
-y, value) and accepted.txt (the accepted system times). Every model's nonlinear atol is 1e-9 (linear 1e-11).
+y, value), accepted.txt (the accepted system times) and the deck's own history files. ATOL=a sets every model's
+nonlinear atol to a (linear a/100); without it the deck's tolerances apply.
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
 step is cut and retried. REPLAY=<file> makes the system step land on the times in the file instead of choosing them,
 which gives the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry (control).
@@ -11,7 +13,8 @@ import glob, os, runpy, shutil, sys
 import numpy as np
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TwoPhaseFlow")
-for f in [os.path.join(SRC, "fillingTank.py")] + glob.glob(os.path.join(SRC, "meshFilling*")):
+DECK = os.environ.get("DECK", "fillingTank.py")
+for f in [os.path.join(SRC, DECK)] + glob.glob(os.path.join(SRC, "mesh*")):
     shutil.copy(f, ".")
 
 from proteus import NonlinearSolvers, SplitOperator
@@ -19,8 +22,10 @@ from proteus import NumericalSolution as NS
 
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
-    for n in nList:
-        n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = 1.0e-9, 1.0e-11, 0.0, 0.0, 0.0
+    if os.environ.get("ATOL"):
+        atol = float(os.environ["ATOL"])
+        for n in nList:
+            n.nl_atol_res, n.l_atol_res, n.l_rtol_res, n.linTolFac, n.tolFac = atol, 0.01 * atol, 0.0, 0.0, 0.0
     return _init(self, so, pList, nList, *args, **kwargs)
 NS.NS_base.__init__ = init
 
@@ -87,5 +92,5 @@ def calc(self, *a, **k):
     return r
 NS.NS_base.calculateSolution = calc
 
-sys.argv = ['parun', '--TwoPhaseFlow', 'fillingTank.py', '-l1', '-C', 'final_time=0.05 dt_output=0.05 he=0.1']
+sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l1', '-C', 'final_time=0.05 dt_output=0.05 he=0.1']
 runpy.run_path(shutil.which('parun'), run_name='__main__')

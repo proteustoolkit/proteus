@@ -945,8 +945,6 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     _state_model_arrays = ("entropyResidualPerNode", "u_dof_old", "v_dof_old", "w_dof_old",
                            "u_dof_old_old", "v_dof_old_old", "w_dof_old_old")
     _state_q_arrays = (('velocity', 0), ('velocityOld', 0))
-    #: the boundary velocity the other models read (VOF/CLSVOF's ebqe_v); a failed solve leaves it changed
-    _state_ebqe_arrays = (('velocity', 0),)
 
     def state(self):
         m = getattr(self, "model", None)
@@ -958,8 +956,6 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 st[name] = getattr(m, name).copy()
         for key in self._state_q_arrays:
             st["q_%s_%d" % key] = m.q[key].copy()
-        for key in self._state_ebqe_arrays:
-            st["ebqe_%s_%d" % key] = m.ebqe[key].copy()
         return st
 
     def set_state(self, state):
@@ -971,9 +967,6 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 getattr(m, name)[:] = state[name]
         for key in self._state_q_arrays:
             m.q[key][:] = state["q_%s_%d" % key]
-        for key in self._state_ebqe_arrays:
-            if "ebqe_%s_%d" % key in state:
-                m.ebqe[key][:] = state["ebqe_%s_%d" % key]
 
     def preStep(self, t, firstStep=False):
         if firstStep:
@@ -1126,27 +1119,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                         if self.model.isActiveDOF[dof] < 0.5:
                             self.model.u[ci].dof[ci_g_dof] = vel_at_xyz[ci]
         if self.model.comm.isMaster():
-            self.timeHistory.write("%21.16e\n" % (t,))
-            self.timeHistory.flush()
-            self.wettedAreaHistory.write("%21.16e\n" % (self.wettedAreas[-1],))
-            self.wettedAreaHistory.flush()
-            self.forceHistory_p.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))
-            self.forceHistory_p.flush()
-            self.forceHistory_v.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[-1, :]))
-            self.forceHistory_v.flush()
-            self.momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[-1, :]))
-            self.momentHistory.flush()
+            self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
+            self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[-1],))
+            self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))
+            self.deferWrite(self.forceHistory_v, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[-1, :]))
+            self.deferWrite(self.momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[-1, :]))
             if self.nParticles:
-                self.particle_surfaceAreaHistory.write("%21.16e\n" % tuple(self.particle_surfaceArea[:]))
-                self.particle_surfaceAreaHistory.flush()
-                self.particle_forceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
-                self.particle_forceHistory.flush()
-                self.particle_pforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
-                self.particle_pforceHistory.flush()
-                self.particle_vforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
-                self.particle_vforceHistory.flush()
-                self.particle_momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
-                self.particle_momentHistory.flush()
+                self.deferWrite(self.particle_surfaceAreaHistory, "%21.16e\n" % tuple(self.particle_surfaceArea[:]))
+                self.deferWrite(self.particle_forceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
+                self.deferWrite(self.particle_pforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
+                self.deferWrite(self.particle_vforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
+                self.deferWrite(self.particle_momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
 
     def archiveFields(self, lm):
         """Archive the solid-phase signed distance alongside the solution.

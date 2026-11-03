@@ -943,6 +943,28 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # print "Forces_v"
         # print self.netForces_v[:,:]
 
+    #: what postStep leaves for the next step that the solution does not determine: dt of the last step, the
+    #: active elements, and the internal particle solver's state (the ball_* arrays it advances in postStep)
+    def state(self):
+        m = getattr(self, "model", None)
+        if m is None or not hasattr(m, "isActiveElement_last"):
+            return None
+        st = {"dt_last": float(getattr(m, "dt_last", 0.0)), "isActiveElement_last": m.isActiveElement_last.copy()}
+        for name, v in vars(self).items():
+            if name.startswith("ball_") and isinstance(v, np.ndarray) and v.dtype.kind == "f":
+                st["coef_" + name] = v.copy()
+        return st
+
+    def set_state(self, state):
+        m = self.model
+        if "dt_last" in state:
+            m.dt_last = state["dt_last"]
+        if "isActiveElement_last" in state:
+            m.isActiveElement_last[:] = state["isActiveElement_last"]
+        for name, v in state.items():
+            if name.startswith("coef_ball_"):
+                getattr(self, name[len("coef_"):])[:] = v
+
     def postStep(self, t, firstStep=False):
         self.model.dt_last = self.model.timeIntegration.dt
         self.model.q['dV_last'][:] = self.model.q['dV']
@@ -954,26 +976,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             #          repr(self.netForces_p[:,:]) +
             #          "\nForces_v\n" +
             #          repr(self.netForces_v[:,:]))
-            self.timeHistory.write("%21.16e\n" % (t,))
-            self.timeHistory.flush()
+            self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
             for bN in range(self.wettedAreas.shape[0]):
-                self.wettedAreaHistory.write("%21.16e\n" % (self.wettedAreas[bN],))
-                self.forceHistory_p.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[bN, :]))
-                self.forceHistory_v.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[bN, :]))
-                self.momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[bN, :]))
-            self.wettedAreaHistory.flush()
-            self.forceHistory_p.flush()
-            self.forceHistory_v.flush()
-            self.momentHistory.flush()
+                self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[bN],))
+                self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[bN, :]))
+                self.deferWrite(self.forceHistory_v, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[bN, :]))
+                self.deferWrite(self.momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[bN, :]))
             if self.nParticles > 0:
-                self.particle_forceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
-                self.particle_forceHistory.flush()
-                self.particle_vforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
-                self.particle_vforceHistory.flush()
-                self.particle_pforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
-                self.particle_pforceHistory.flush()
-                self.particle_momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
-                self.particle_momentHistory.flush()
+                self.deferWrite(self.particle_forceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
+                self.deferWrite(self.particle_vforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
+                self.deferWrite(self.particle_pforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
+                self.deferWrite(self.particle_momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
 
         if self.nParticles > 0 and self.use_ball_as_particle and self.useInternalParticleSolver:
             argsDict = cArgumentsDict.ArgumentsDict()
