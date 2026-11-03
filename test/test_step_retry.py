@@ -17,6 +17,7 @@ Round 4 (same measure; before is main 9fca0b95):
                         were rebuilt from the dofs; RDLS's are not its dofs at the start of a step
                         Pres failure                 1.1e-5    after: 2.7e-13   RANS3PF's ebqe_velocity_last, which
                         PresInc's postStep sets, was not in RANS3PF's state()
+  damBreakLevelSet interface=1 (RANS2P + CLSVOF), CLSVOF failure 1.1e-3   after: 0.0   CLSVOF's interface locator
 (The 16% first reported was mostly the different step sequence: the same steps without a failure differ from the
 default run by 15-17% in velocity at t=0.05; fillingTank is that sensitive to dt.)
 """
@@ -63,6 +64,8 @@ CASES = {
     "rising_bubble_rans3p-pressure": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
                                           OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
                                           MAXITS=200, FAILMODEL="pressure0", FAILAT=4),
+    "damBreakLevelSet-rans2p-clsvof": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 interface=1", FT=0.1, ATOL=1e-10,
+                                           MAXITS=1000, FAILMODEL="clsvof", FAILAT=6),
 }
 
 
