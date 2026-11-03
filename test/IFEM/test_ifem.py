@@ -73,11 +73,6 @@ KNOWN_ISSUES = {
         "KNOWN DEFECT: P1 reproduces this piecewise-linear solution exactly "
         "(1.08e-14) but P2, whose space contains P1's, gives 6.37e-03 unless "
         "SCIFEM is enabled."),
-    "test4.1_p2": (
-        "KNOWN DEFECT: P1 is exact (1.47e-13) but P2 is not (1.07e-02), and the "
-        "residual evaluated at the exact solution is 3.19e-02 on 12 cut-element "
-        "dofs, so the P2 formulation is inconsistent there rather than merely "
-        "inaccurate."),
     "test12.0_p2": (
         "Converges erratically at fine meshes, reaching rate 0.77 at refinement "
         "5 and rate -2.22 at refinement 6 with SCIFEM on."),

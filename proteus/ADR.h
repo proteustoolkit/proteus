@@ -94,6 +94,10 @@ namespace proteus
 		// (see .notes/EQUIVALENT_POLYNOMIALS.md's "track independent flags, not one" rule).
 		std::vector<double> comp_DFm_cache, comp_DFa_cache;
 		std::vector<char> comp_DF_valid;
+		// Amplitude of the flux-jump lift J*psi on each cell, as used in this residual evaluation:
+		// the per-cell J_f from ADR.py minus the flux jump the solution-jump lift j_h already
+		// carries (nonzero only when J_s varies on the cell). Read by the element and face terms.
+		std::vector<double> fluxLiftAmp;
 		int ifemGeometryGeneration = 0;
 		cADR() : nDOF_test_X_trial_element(nDOF_test_element * nDOF_trial_element), ck()
 		{
@@ -104,6 +108,7 @@ namespace proteus
 				return;
 			gf_f_cache.assign(nElements_global, GfType());
 			gf_s_cache.assign(nElements_global, GfType());
+			fluxLiftAmp.assign(nElements_global, 0.0);
 			gf_s_interior_gen.assign(nElements_global, -1);
 			gf_f_interior_gen.assign(nElements_global, -1);
 			gf_f_boundary_gen.assign(nElements_global, -1);
@@ -1219,9 +1224,12 @@ namespace proteus
 			xt::pyarray<double> &q_u_exact_inner = args.array<double>("q_u_exact_inner");
 			xt::pyarray<double> &q_u_exact_outer = args.array<double>("q_u_exact_outer");
 			const bool recomputeIFEMGeometry = args.scalar<int>("recomputeIFEMGeometry");
+			const bool fluxJumpLift = args.scalar<int>("immersedBoundary_fluxJumpLift");
 			ensureIFEMCacheSized(nElements_global); // also (re)asserts useExact = true on (re)allocation
 			if (recomputeIFEMGeometry)
 				ifemGeometryGeneration++;
+			for (int eN = 0; eN < nElements_global; eN++)
+				fluxLiftAmp[eN] = immersedBoundary_fluxJump_element.data()[eN];
 			ifem_boundaries.clear();
 			ifem_boundary_elements.clear();
 			cutfem_boundaries.clear();
@@ -1397,7 +1405,7 @@ namespace proteus
 				std::fill(JA, JA + nDOF_trial_element, 0.0);
 				std::fill(JB, JB + nDOF_trial_element, 0.0);
 				// Prescribed flux jump of this cell for the flux-jump lift (0 if the lift is off).
-				const double fluxLiftJ = (icase_f == 0) ? immersedBoundary_fluxJump_element.data()[eN] : 0.0;
+				double fluxLiftJ = (icase_f == 0) ? immersedBoundary_fluxJump_element.data()[eN] : 0.0;
 				if (icase_f == 0)
 				{
 					// only works for simplices
@@ -1457,6 +1465,73 @@ namespace proteus
 						}
 				}
 				double L2_elem = 0.0;
+				// j_h carries the flux jump [mu dj_h/dn] = sum_i (mub JB_i grad phi_i^b - mua JA_i grad phi_i^a).n,
+				// which vanishes when J_s is the same at every node of the cell (partition of unity) but
+				// not when J_s varies. The flux-jump lift supplies only the rest, J_f - [mu dj_h/dn], so
+				// that the trial function has the prescribed flux jump either way. n is the normal of the
+				// cell's Gamma_f chord from phi_f < 0 to phi_f > 0, as for J_f in ADR.py. Cells with a
+				// constant J_s skip this, so they are computed exactly as before. Only cells that ADR.py
+				// gives a lift (both signs at the vertices, none exactly zero) are corrected: on a cell
+				// that Gamma_f only touches or crosses through a vertex there is no lift to correct.
+				bool liftCell = false;
+				{
+					int nneg = 0, npos = 0, nzero = 0;
+					for (int i = 0; i < 3; i++)
+					{
+						if (element_phi_f[i] < 0.0) nneg++;
+						else if (element_phi_f[i] > 0.0) npos++;
+						else nzero++;
+					}
+					liftCell = (nneg > 0 && npos > 0 && nzero == 0);
+				}
+				if (icase_f == 0 && fluxJumpLift && liftCell && nSpace == 2)
+				{
+					bool jumpVaries = false;
+					const double jump0 = immersedBoundary_solutionJump_nodes.data()[u_l2g.data()[eN * nDOF_trial_element]];
+					for (int i = 1; i < nDOF_trial_element; i++)
+						if (immersedBoundary_solutionJump_nodes.data()[u_l2g.data()[eN * nDOF_trial_element + i]] != jump0)
+							jumpVaries = true;
+					if (jumpVaries)
+					{
+						const double ex0 = element_nodes[3] - element_nodes[0], ey0 = element_nodes[4] - element_nodes[1];
+						const double ex1 = element_nodes[6] - element_nodes[0], ey1 = element_nodes[7] - element_nodes[1];
+						const double dp0 = element_phi_f[1] - element_phi_f[0], dp1 = element_phi_f[2] - element_phi_f[0];
+						const double det = ex0 * ey1 - ex1 * ey0;
+						double nf[2] = {(dp0 * ey1 - dp1 * ey0) / det, (ex0 * dp1 - ex1 * dp0) / det};
+						const double nnorm = std::sqrt(nf[0] * nf[0] + nf[1] * nf[1]);
+						nf[0] /= nnorm;
+						nf[1] /= nnorm;
+						GfType &gfj = gf_f_cache[eN];
+						auto jhFluxJump = [&](int k) {
+							gfj.set_quad(k);
+							double s = 0.0;
+							for (int i = 0; i < nDOF_trial_element; i++)
+								s += mub * JB[i] * (gfj.VB_x(i) * nf[0] + gfj.VB_y(i) * nf[1]) -
+									 mua * JA[i] * (gfj.VA_x(i) * nf[0] + gfj.VA_y(i) * nf[1]);
+							return s;
+						};
+						double Fj = 0.0;
+						if (nDOF_trial_element == 3)
+							Fj = jhFluxJump(0); // P1: the branch gradients are constant on the cell
+						else
+						{
+							// P2: average along Gamma_f, weighted by the Dirac fit
+							double wsum = 0.0, fsum = 0.0, usum = 0.0;
+							for (int k = 0; k < nQuadraturePoints_element; k++)
+							{
+								const double Fk = jhFluxJump(k);
+								const double wk = gfj.D(0., 0.) * dV_ref.data()[k];
+								wsum += wk;
+								fsum += wk * Fk;
+								usum += Fk;
+							}
+							Fj = (std::fabs(wsum) > 1.0e-14) ? fsum / wsum : usum / nQuadraturePoints_element;
+						}
+						fluxLiftJ -= Fj;
+					}
+				}
+				if (icase_f == 0)
+					fluxLiftAmp[eN] = fluxLiftJ;
 				calculateElementResidual(icase_f,
 										 demoted_f,
 										 mesh_trial_ref,
@@ -1863,7 +1938,7 @@ namespace proteus
 								ck.gradFromElementDOF(gp_JB, gp_vb_grad, gp_gjb);
 								if (gp_icase == 0) // flux-jump lift; set_boundary_quad(ebN_local_kb) is current
 								{
-									const double J = immersedBoundary_fluxJump_element.data()[eN];
+									const double J = fluxLiftAmp[eN];
 									gp_gja[0] += J * gf_f_cache[eN].PSIA_x();
 									gp_gja[1] += J * gf_f_cache[eN].PSIA_y();
 									gp_gjb[0] += J * gf_f_cache[eN].PSIB_x();
@@ -2111,7 +2186,7 @@ namespace proteus
 							ck.gradFromElementDOF(cb_s, vb_grad_trial, grad_ub);
 							if (gf_f_boundary_icase[eN] == 0) // flux-jump lift, as for the solution jump
 							{
-								const double J = immersedBoundary_fluxJump_element.data()[eN];
+								const double J = fluxLiftAmp[eN];
 								ua += J * gf_f.PSIA();
 								ub += J * gf_f.PSIB();
 								grad_ua[0] += J * gf_f.PSIA_x();
