@@ -22,7 +22,18 @@ These properties are tested:
 
 The global-correction variants (pwc, sun-rt0, sun-gs-rt0) solve one system per rank, so they are refused on more than
 one rank.
+
+The DG variants (dg: RT0, dg-bdm: BDM1) project the interior-penalty numerical flux of a DG P1 or P2 solution, which
+balances every element by construction; they need only the element and its faces, so with an element partition and one
+layer of overlap they give the serial answer on any number of ranks. dg-bdm stored face velocities that were not its
+own until 2026-11-03: the C routine indexed the face and the shape functions wrongly, its wrapper passed the number of
+face quadrature points as the number of shape functions, and with P2 it evaluated the linear representation with the
+quadratic basis. Its face fluxes missed the numerical flux by 0.5 (P1) and 1.3 (P2, 25 x 25 nodes).
+
+Every run checks the linear solver's converged reason: a solve stopped at the iteration limit makes every variant
+differ from serial (CG/ASM does on the interior-penalty systems, which are solved directly here).
 """
+import json
 import os
 import shutil
 import subprocess
@@ -47,9 +58,10 @@ def _mpiexec():
 MPIEXEC = _mpiexec()
 
 
-def _run(ranks, cwd, variant, order, overlap=1, check=True, **controls):
+def _run(ranks, cwd, variant, order, overlap=1, check=True, space="c0", nn=13, problem="smooth", **controls):
     os.makedirs(cwd, exist_ok=True)
-    env = dict(os.environ, OMP_NUM_THREADS="1", VPP_VARIANT=variant, VPP_ORDER=str(order), VPP_OVERLAP=str(overlap))
+    env = dict(os.environ, OMP_NUM_THREADS="1", VPP_VARIANT=variant, VPP_ORDER=str(order), VPP_OVERLAP=str(overlap),
+               VPP_SPACE=space, VPP_NN=str(nn), VPP_PROBLEM=problem)
     env.update({k: "1" for k, on in controls.items() if on})
     env.setdefault("FI_PROVIDER", "tcp")
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
@@ -60,8 +72,14 @@ def _run(ranks, cwd, variant, order, overlap=1, check=True, **controls):
     out = subprocess.run(argv, capture_output=True, text=True, timeout=600, env=env, cwd=str(cwd))
     if check:
         assert out.returncode == 0, out.stdout[-3000:] + out.stderr[-3000:]
+        assert _summary(cwd)["converged_reason"] > 0, "the linear solve did not converge: no variant can match serial"
         return numpy.loadtxt(os.path.join(str(cwd), "elements.csv"), delimiter=",")
     return out
+
+
+def _summary(cwd):
+    with open(os.path.join(str(cwd), "summary.json")) as f:
+        return json.load(f)
 
 
 CONSERVATIVE = [("pwl", 1, 1e-12), ("pwl-bdm", 1, 1e-12), ("pwc", 1, 1e-12), ("sun-rt0", 1, 1e-12),
@@ -157,3 +175,61 @@ def test_a_global_variant_is_refused_on_two_ranks(tmp_path, variant):
     out = _run(2, tmp_path, variant, 1, check=False)
     assert out.returncode != 0
     assert "one rank" in out.stdout + out.stderr
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+def test_element_partitioning_without_overlap_is_refused(tmp_path):
+    """Owned elements would have faces with no neighbour on the rank; this used to end every rank with exit()."""
+    out = _run(2, tmp_path, "pwl", 1, overlap=0, check=False, VPP_ELEMENT_PARTITION=True)
+    assert out.returncode != 0
+    assert "conservativeFlux needs an overlap" in out.stdout + out.stderr
+
+
+DG = [("dg", 1), ("dg", 2), ("dg-bdm", 1), ("dg-bdm", 2)]
+
+
+@pytest.mark.parametrize("variant,order", DG, ids=["%s-P%d" % case for case in DG])
+def test_a_dg_variant_balances_every_element(tmp_path, variant, order):
+    """The face fluxes are the numerical flux, which balances each element: 1.6e-13 measured (2.9e-13 on 25 x 25)."""
+    rows = _run(1, tmp_path, variant, order, space="dg")
+    assert len(rows) == 288
+    assert numpy.abs(rows[:, 3]).max() < 1e-12
+    assert numpy.abs(rows[:, 2] - rows[:, 3]).max() < 1e-12
+
+
+DG_PARALLEL = [("dg", 1, 2), ("dg", 2, 4), ("dg-bdm", 1, 4), ("dg-bdm", 2, 2)]
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("variant,order,ranks", DG_PARALLEL, ids=["%s-P%d-%dranks" % case for case in DG_PARALLEL])
+def test_a_dg_variant_in_parallel_is_the_serial_answer(tmp_path, variant, order, ranks):
+    """Element partition, one layer of overlap: every owned element has its neighbours. 4e-12 measured."""
+    serial = _run(1, tmp_path / "1", variant, order, space="dg")
+    parallel = _run(ranks, tmp_path / "2", variant, order, space="dg")
+    assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12
+    assert numpy.abs(parallel[:, 3]).max() < 1e-12
+    assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 1e-10
+
+
+@pytest.mark.parametrize("variant", ["dg", "dg-bdm"])
+def test_a_dg_variant_with_p2_has_the_exact_face_fluxes(tmp_path, variant):
+    """u = x^2 + y^2 is in DG P2, so the numerical flux is the exact one: 1.7e-13 measured (it missed by 0.45 with
+    dg-bdm before its face velocities were fixed)."""
+    _run(1, tmp_path, variant, 2, space="dg")
+    assert _summary(tmp_path)["max_face_flux_error"] < 1e-11
+
+
+# (variant, order, measured rate): the RT0 velocity is first order whatever the solution's order; BDM1 from the exact
+# P2 flux is second order. Measured L2 errors on 7, 13, 25 nodes: dg P1 0.126, 0.0629, 0.0313; dg-bdm P2 0.0143,
+# 0.00359, 0.000897 (dg-bdm P1 is first order too, at twice the RT0 error: 0.263, 0.132, 0.0662).
+DG_RATES = [("dg", 1, 1.0), ("dg", 2, 1.0), ("dg-bdm", 1, 1.0), ("dg-bdm", 2, 2.0)]
+
+
+@pytest.mark.parametrize("variant,order,rate", DG_RATES, ids=["%s-P%d" % case[:2] for case in DG_RATES])
+def test_a_dg_variant_converges_at_its_rate(tmp_path, variant, order, rate):
+    errors = []
+    for nn in (7, 13, 25):
+        _run(1, tmp_path / str(nn), variant, order, space="dg", nn=nn)
+        errors.append(_summary(tmp_path / str(nn))["l2_velocity_error"])
+    rates = numpy.log2(numpy.array(errors[:-1]) / numpy.array(errors[1:]))
+    assert numpy.abs(rates - rate).max() < 0.1, (errors, rates)

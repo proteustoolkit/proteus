@@ -24,8 +24,10 @@ def VelocityPostProcessingChooser(transport):
     velocityPostProcessor = None
     if transport.conservativeFlux is not None:
         if (transport.mesh.parallelPartitioningType == 0 and transport.mesh.nLayersOfOverlap==0): #element-based partition
-          logEvent("Cannot specify conservative flux if partitioned by element with no element overlaps")
-          exit()
+            # an owned element's faces on the rank interface have no neighbour there, so no variant has their flux;
+            # this used to call exit(), which ended every rank with status 0
+            raise RuntimeError("conservativeFlux needs an overlap with element partitioning: set "
+                               "nLayersOfOverlapForParallel = 1 (or use node partitioning)")
         ppcomps = []
         pptypes = {}
         for ci in list(transport.conservativeFlux.keys()):
@@ -2644,8 +2646,6 @@ class VPP_DG_BDM(VPP_DG_RT0):
     Have to use BDM projection to get degrees of freedom
 
     """
-#     TODO:
-#      need additional code to compute velocities at ebq and ebq_global if desired
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_DG_RT0.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
         #how is the local velocity represented
@@ -2741,18 +2741,24 @@ class VPP_DG_BDM(VPP_DG_RT0):
                                                                 self.q[('velocity_dofs',ci)],
                                                                 self.vt.q[('velocity',ci)])
 
+        # the BDM1 representation is in the linear basis, so evaluate it with the P1 test space's traces (self.w), not
+        # the solution space's (quadratic for DG P2)
         cpostprocessing.getElementBoundaryBDM1velocityValuesLagrangeRep(self.vt.mesh.elementBoundaryElementsArray,
                                                                         self.vt.mesh.exteriorElementBoundariesArray,
-                                                                        self.vt.ebq[('v',ci)],
+                                                                        self.w[ci],
                                                                         self.q[('velocity_dofs',ci)],
                                                                         self.vt.ebq[('velocity',ci)])
-
-        #tjp hack Only values computed and stored are the exterior element boundary velocity values -- interior are not computed
-        cpostprocessing.getGlobalElementBoundaryBDM1velocityValuesLagrangeRep(self.vt.mesh.elementBoundaryElementsArray,
-                                                                              self.vt.mesh.exteriorElementBoundariesArray,
-                                                                              self.vt.ebqe[('v',ci)],
-                                                                              self.q[('velocity_dofs',ci)],
-                                                                              self.vt.ebq_global[('velocity',ci)])
+        # every face takes its left element's trace (ebq_global's points are in the left element's order); the normal
+        # component is the projected numerical flux, the same from either side
+        mesh = self.vt.mesh
+        self.ebq_global[('velocity',ci)][:] = self.ebq[('velocity',ci)][mesh.elementBoundaryElementsArray[:,0],
+                                                                       mesh.elementBoundaryLocalElementBoundariesArray[:,0]]
+        if ('velocity',ci) in self.ebqe:
+            cfemIntegrals.copyExteriorElementBoundaryValuesFromGlobalElementBoundaryValues(mesh.exteriorElementBoundariesArray,
+                                                                                           mesh.elementBoundaryElementsArray,
+                                                                                           mesh.elementBoundaryLocalElementBoundariesArray,
+                                                                                           self.ebq_global[('velocity',ci)],
+                                                                                           self.ebqe[('velocity',ci)])
 
 
 
