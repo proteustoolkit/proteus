@@ -79,6 +79,19 @@ public:
   // Refreshed from args at
   // the top of every kernel that evaluates the closure.
   int PSK_TYPE_member = 0;
+  // Air-entry head h_e >= 0 of the van Genuchten-Mualem closure (PSK_TYPE 0), refreshed with
+  // PSK_TYPE. h_e > 0 selects the modification of Ippisch, Vogel & Bastian (2006): saturated for
+  // psiC <= h_e, Se = sBar(psiC)/S_c and k_r = sqrt(Se) (vBar/V_c)^2 above, S_c = sBar(h_e),
+  // V_c = vBar(h_e). theta and k_r then have bounded slopes at saturation; for n < 2 the
+  // unmodified closure's are unbounded there, which stalls Newton at nodes crossing psi = 0.
+  double VG_AIR_ENTRY_member = 0.0;
+  inline void vgAirEntryScales(const double alpha, const double n_vg, double &Sc, double &Vc)
+  {
+    const double m_vg  = 1.0 - 1.0 / n_vg;
+    const double pcBar = alpha * VG_AIR_ENTRY_member;
+    Sc = pow(1.0 + pow(pcBar, n_vg), -m_vg);
+    Vc = 1.0 - pow(pcBar, n_vg - 1.0) * Sc;
+  }
   Richards() : nDOF_test_X_trial_element(nDOF_test_element * nDOF_trial_element), ck() { }
   inline void evaluateCoefficients(const int rowptr[nSpace], const int colind[nnz], const double rho0, const double rho_transport, const double beta, const double gravity[nSpace], const double alpha, const double n_vg, const double thetaR, const double thetaSR, const double KWs[nnz], const double &u, double &m, double &dm, double f[nSpace], double df[nSpace], double a[nnz], double da[nnz], double as[nnz], double &kr, double &dkr, double &thetaW_out)
   {
@@ -100,6 +113,24 @@ public:
       proteus::richards::psk::hm_wetting(
           psiC, alpha, n_vg, thetaR, thetaSR,
           thetaW, DthetaW_DpsiC, KWr, DKWr_DpsiC);
+    } else if (VG_AIR_ENTRY_member > 0.0) {
+      if (psiC <= VG_AIR_ENTRY_member) {
+        thetaW        = thetaR + thetaSR;
+        DthetaW_DpsiC = 0.0;
+        KWr           = 1.0;
+        DKWr_DpsiC    = 0.0;
+      } else {
+        double Sc, Vc;
+        vgAirEntryScales(alpha, n_vg, Sc, Vc);
+        proteus::richards::psk::vgm_wetting(
+            psiC, alpha, n_vg, thetaR, thetaSR,
+            thetaW, DthetaW_DpsiC, KWr, DKWr_DpsiC);
+        thetaW         = thetaR + (thetaW - thetaR) / Sc;
+        DthetaW_DpsiC /= Sc;
+        const double krScale = 1.0 / (sqrt(Sc) * Vc * Vc);
+        KWr        *= krScale;
+        DKWr_DpsiC *= krScale;
+      }
     } else {
       proteus::richards::psk::vgm_wetting(
           psiC, alpha, n_vg, thetaR, thetaSR,
@@ -142,6 +173,11 @@ public:
       proteus::richards::psk::gardner_invert_analytic(m, rho, alpha, n_vg, thetaR, thetaSR, u);
     } else if (PSK_TYPE_member == 4) {
       proteus::richards::psk::hm_invert_analytic(m, rho, alpha, n_vg, thetaR, thetaSR, u);
+    } else if (VG_AIR_ENTRY_member > 0.0) {
+      // theta_vg = thetaR + S_c (theta - thetaR) is the unmodified curve's water content at the same psiC
+      double Sc, Vc;
+      vgAirEntryScales(alpha, n_vg, Sc, Vc);
+      proteus::richards::psk::vgm_invert_analytic(Sc * m + (1.0 - Sc) * rho * thetaR, rho, alpha, n_vg, thetaR, thetaSR, u);
     } else {
       proteus::richards::psk::vgm_invert_analytic(m, rho, alpha, n_vg, thetaR, thetaSR, u);
     }
@@ -177,6 +213,11 @@ inline void evaluateInverseCoefficients_Newton(const int rowptr[nSpace],
     proteus::richards::psk::gardner_invert_newton(m, rho, beta, alpha, n_vg, thetaR, thetaSR, u);
   } else if (PSK_TYPE_member == 4) {
     proteus::richards::psk::hm_invert_newton(m, rho, beta, alpha, n_vg, thetaR, thetaSR, u);
+  } else if (VG_AIR_ENTRY_member > 0.0) {
+    // as in evaluateInverseCoefficients; the shift uses rho, not rho exp(beta u) (O(beta) in thetaR)
+    double Sc, Vc;
+    vgAirEntryScales(alpha, n_vg, Sc, Vc);
+    proteus::richards::psk::vgm_invert_newton(Sc * m + (1.0 - Sc) * rho * thetaR, rho, beta, alpha, n_vg, thetaR, thetaSR, u);
   } else {
     proteus::richards::psk::vgm_invert_newton(m, rho, beta, alpha, n_vg, thetaR, thetaSR, u);
   }
@@ -364,6 +405,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &thetaR                                     = args.array<double>("thetaR");
     xt::pyarray<double> &thetaSR                                    = args.array<double>("thetaSR");
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
+    VG_AIR_ENTRY_member = args.scalar<double>("VG_AIR_ENTRY");
     xt::pyarray<double> &KWs                                        = args.array<double>("KWs");
     double               useMetrics                                 = args.scalar<double>("useMetrics");
     double               alphaBDF                                   = args.scalar<double>("alphaBDF");
@@ -740,6 +782,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &thetaR                    = args.array<double>("thetaR");
     xt::pyarray<double> &thetaSR                   = args.array<double>("thetaSR");
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
+    VG_AIR_ENTRY_member = args.scalar<double>("VG_AIR_ENTRY");
     xt::pyarray<double> &KWs                       = args.array<double>("KWs");
     double               useMetrics                = args.scalar<double>("useMetrics");
     double               alphaBDF                  = args.scalar<double>("alphaBDF");
@@ -1383,6 +1426,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &thetaR                                     = args.array<double>("thetaR");
     xt::pyarray<double> &thetaSR                                    = args.array<double>("thetaSR");
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
+    VG_AIR_ENTRY_member = args.scalar<double>("VG_AIR_ENTRY");
     xt::pyarray<double> &KWs                                        = args.array<double>("KWs");
     double               useMetrics                                 = args.scalar<double>("useMetrics");
     double               alphaBDF                                   = args.scalar<double>("alphaBDF");
@@ -2184,6 +2228,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &thetaR               = args.array<double>("thetaR");
     xt::pyarray<double> &thetaSR              = args.array<double>("thetaSR");
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
+    VG_AIR_ENTRY_member = args.scalar<double>("VG_AIR_ENTRY");
     xt::pyarray<double> &KWs                  = args.array<double>("KWs");
     xt::pyarray<int>    &elementMaterialTypes = args.array<int>("elementMaterialTypes");
     xt::pyarray<int>    &freeDOFMaterialTypes = args.array<int>("freeDOFMaterialTypes");
@@ -2263,6 +2308,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &thetaR               = args.array<double>("thetaR");
     xt::pyarray<double> &thetaSR              = args.array<double>("thetaSR");
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
+    VG_AIR_ENTRY_member = args.scalar<double>("VG_AIR_ENTRY");
     xt::pyarray<double> &KWs                  = args.array<double>("KWs");
     //end new
     double               useMetrics                                 = args.scalar<double>("useMetrics");

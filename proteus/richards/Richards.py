@@ -265,6 +265,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  FCT_PRELIMITER_POWER=3.0,
                  FCT_PRELIMITER_VARIABLE='pressure',
                  LSCHEME_L=0.0,
+                 VG_AIR_ENTRY=0.0,
                  NONLINEAR_SOLVER=None,
                  LSCHEME_RETRY_ITS=1,
                  LSCHEME_TRIGGER='residual',
@@ -440,6 +441,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         #                Theta_k = ||J_k^{-1} r(u_{k+1})|| / ||du_k|| exceeds LSCHEME_THETA_MAX;
         #                Theta ~ h_k/2 of the Kantorovich ball test, one extra back-solve per iteration).
         self.LSCHEME_L = LSCHEME_L
+        # VG_AIR_ENTRY = h_e >= 0, an air-entry head (length units) for the van Genuchten-Mualem
+        # closure (Ippisch, Vogel & Bastian 2006): saturated above psi = -h_e, with theta and k_r
+        # rescaled below so both stay continuous. For n < 2 the unmodified k_r and theta have
+        # unbounded slopes at psi = 0 and Newton can stall at nodes crossing it (dry clay under a
+        # ponded boundary); h_e of a few cm, as in HYDRUS, removes that. 0 (default) is unmodified.
+        if VG_AIR_ENTRY < 0.0:
+            raise ValueError("VG_AIR_ENTRY must be >= 0")
+        if VG_AIR_ENTRY > 0.0 and self.PSK_type != 0:
+            raise ValueError("VG_AIR_ENTRY applies to PSK_type='VG' only")
+        self.VG_AIR_ENTRY = float(VG_AIR_ENTRY)
         if NONLINEAR_SOLVER is None:
             NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
         if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
@@ -1953,6 +1964,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaSR"] = self.coefficients.thetaSR_types
         argsDict["KWs"] = self.coefficients.Ksw_types
         argsDict["PSK_TYPE"] = self.coefficients.PSK_type
+        argsDict["VG_AIR_ENTRY"] = self.coefficients.VG_AIR_ENTRY
         argsDict["useMetrics"] = 0.0
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = 0
@@ -2214,6 +2226,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaSR"] = self.coefficients.thetaSR_types
         argsDict["KWs"] = self.coefficients.Ksw_types
         argsDict["PSK_TYPE"] = self.coefficients.PSK_type
+        argsDict["VG_AIR_ENTRY"] = self.coefficients.VG_AIR_ENTRY
         argsDict["useMetrics"] = 0.0
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = 0
@@ -2341,6 +2354,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaSR"] = self.coefficients.thetaSR_types
         argsDict["KWs"] = self.coefficients.Ksw_types
         argsDict["PSK_TYPE"] = self.coefficients.PSK_type
+        argsDict["VG_AIR_ENTRY"] = self.coefficients.VG_AIR_ENTRY
         argsDict["useMetrics"] = 0.0
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = 0

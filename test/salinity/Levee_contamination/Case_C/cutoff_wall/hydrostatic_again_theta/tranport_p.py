@@ -46,6 +46,9 @@ aOfX = {0:a}
 alpha_L= 0.1
 alpha_T= 0.1*alpha_L
 Dm= 18.86e-6 #m2/s, dispersion coefficient
+# Compatible flow -> transport coupling (Barua & Kees, Sec. 2.2): the transport is driven by
+# the flow step's realized edge exchanges E_ij and carries its storage M, with a backward-Euler
+# low-order step and Zalesak limiting on S = Mc (proteus TADR STABILIZATION_TYPE='Compatible').
 coefficients = MyCoefficients(
     aOfX,
     alpha_L=alpha_L,
@@ -55,11 +58,9 @@ coefficients = MyCoefficients(
     specified_velocity=False,
     checkMass=checkMass,
     FCT=True,
-    LUMPED_MASS_MATRIX=True,
-    STABILIZATION_TYPE=2,
-    diagonal_conductivity= True,
-    ENTROPY_TYPE='LOG',
-    cE=0.1, cK=1.0, physicalDiffusion=0.0) #ct.physicalDiffusion)
+    LUMPED_MASS_MATRIX=False,
+    STABILIZATION_TYPE='Compatible',
+    diagonal_conductivity= True)
 coefficients.variableNames=['u']
 
 #####################
