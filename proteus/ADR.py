@@ -355,14 +355,10 @@ class Coefficients(TC_base):
                 and self.embeddedBoundary_u_outer is not None
                 and self.triplyCut_pinMaskedDofs):
             l2g = femSpace.dofMap.l2g
-            _watch = int(os.environ['ADR_DEBUG_NODE']) if os.environ.get('ADR_DEBUG_NODE') else None
             for eN in range(nElements):
                 local_g = l2g[eN,:3]
                 local_phi_s = self.embeddedBoundary_sdf_nodes[local_g]
                 masked = np.where(local_phi_s < 0.0)[0]
-                if _watch is not None and _watch in local_g:
-                    print(f"[DEBUG_NODE] eN={eN} local_g={local_g} phi_s={local_phi_s} "
-                          f"nMasked={len(masked)} masked_locals={masked}")
                 _allowed = (1,) if os.environ.get('ADR_TC_G1_ONLY') == '1' else (1, 2)
                 if len(masked) not in _allowed:
                     continue  # fully solid, fully fluid, or (never for P1) all 3 masked
@@ -378,37 +374,6 @@ class Coefficients(TC_base):
                     if m == self.triplyCut_maskedLocalNode[eN]:
                         self.triplyCut_overrideValue[eN] = override
                     self.triplyCut_globalDofOverrides[gN] = override
-        if os.environ.get('ADR_DEBUG_TC'):
-            _n = int((self.triplyCut_maskedLocalNode >= 0).sum())
-            print(f"[triplyCut] elements flagged: {_n} / {nElements}  "
-                  f"embeddedBoundary={self.embeddedBoundary} immersedBoundary={self.immersedBoundary} "
-                  f"max_nDOF_element={femSpace.max_nDOF_element}")
-            l2g_dbg = femSpace.dofMap.l2g
-            _genuine = []
-            for eN in range(nElements):
-                lg = l2g_dbg[eN,:3]
-                ps = self.embeddedBoundary_sdf_nodes[lg]
-                pf = self.immersedBoundary_sdf_nodes[lg]
-                if (ps < 0).any() and (ps > 0).any() and (pf < 0).any() and (pf > 0).any():
-                    _genuine.append((eN, int((ps < 0).sum()), self.triplyCut_maskedLocalNode[eN]))
-            print(f"[triplyCut] genuinely triply-cut elements (mixed phi_s AND mixed phi_f): {len(_genuine)}")
-            _pinned_global_dofs = set()
-            for eN in range(nElements):
-                m = self.triplyCut_maskedLocalNode[eN]
-                if m >= 0:
-                    _pinned_global_dofs.add(int(l2g_dbg[eN, m]))
-            for eN, nmasked, flagged in _genuine:
-                gN_dbg = l2g_dbg[eN, flagged] if flagged >= 0 else -1
-                coords_dbg = nodeArray[gN_dbg] if flagged >= 0 else None
-                print(f"  eN={eN} nMaskedNodes={nmasked} maskedLocalNode(flagged)={flagged} "
-                      f"globalNode={gN_dbg} coords={coords_dbg}")
-                if nmasked == 2:
-                    lg = l2g_dbg[eN, :3]
-                    ps = self.embeddedBoundary_sdf_nodes[lg]
-                    for _li in np.where(ps < 0)[0]:
-                        _gN = int(lg[_li])
-                        print(f"    -> G3/G4 masked local node {_li} = global dof {_gN}, "
-                              f"coords={nodeArray[_gN]}, pinned via a neighbor={_gN in _pinned_global_dofs}")
     def initializeElementQuadrature(self,t,cq):
         nd = self.nd
         for ci in range(self.nc):
@@ -915,9 +880,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict[dofN] = (lambda x, t, _v=v: _v)
                 self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN] = self.mesh.nodeArray[dofN]
                 _nForced += 1
-            if os.environ.get('ADR_DEBUG_TC'):
-                print(f"[triplyCut] strongly pinned {_nForced} masked DOF(s) via forceStrongDirichlet "
-                      f"(of {len(coefficients.triplyCut_globalDofOverrides)} identified)")
         compKernelFlag = 0
         self.adr = cADR_base(self.nSpace_global,
                                self.nQuadraturePoints_element,
@@ -1135,44 +1097,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         r*=self.isActiveDOF
         log("2 error = {0}".format(self.L2_error**0.5),level=3)
         log("infty error = {0}".format(self.Linfty_error),level=3)
-        if os.environ.get('ADR_DEBUG_RESID'):
-            rows = []
-            for i in range(len(self.u[0].dof)):
-                ri = r[self.offset[0] + self.stride[0]*i]
-                x = self.mesh.nodeArray[i]
-                phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
-                phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
-                rows.append((abs(ri), i, tuple(x), ri, phi_s, phi_f, self.isActiveDOF[i]))
-            rows.sort(reverse=True)
-            print(f"[RESID] top 15 |r[dof]| (nonlinear_function_evaluations="
-                  f"{self.nonlinear_function_evaluations}):")
-            for a, i, x, ri, phi_s, phi_f, act in rows[:15]:
-                print(f"  node={i} x={x} r={ri:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
-        if os.environ.get('ADR_DEBUG_DOFERR') and self.coefficients.analyticalSolution is not None:
-            ans0 = self.coefficients.analyticalSolution.get(0)
-            if ans0 is not None:
-                errs = []
-                for i in range(len(self.u[0].dof)):
-                    x = self.mesh.nodeArray[i]
-                    exact = ans0.uOfX(x)
-                    err = self.u[0].dof[i] - exact
-                    phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
-                    phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
-                    errs.append((abs(err), i, tuple(x), err, phi_s, phi_f, self.isActiveDOF[i]))
-                errs_active = [e for e in errs if e[6] == 1.0]
-                errs_active.sort(reverse=True)
-                print(f"[DOFERR] top 12 |u_dof - u_exact| among ACTIVE dofs only "
-                      f"(nonlinear_function_evaluations={self.nonlinear_function_evaluations}):")
-                for a, i, x, err, phi_s, phi_f, act in errs_active[:12]:
-                    print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
-                _watchset = set(int(v) for v in os.environ.get('ADR_DEBUG_NODESET','').split(',') if v)
-                if _watchset:
-                    print("[DOFERR] watched nodes:")
-                    for a, i, x, err, phi_s, phi_f, act in errs:
-                        if i in _watchset:
-                            print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
         log("Global residual",level=9,data=r)
-        #self.coefficients.massConservationError = fabs(globalSum(sum(r.flat[:self.mesh.nElements_owned])))
         #log("   Mass Conservation Error",level=3,data=self.coefficients.massConservationError)
         self.nonlinear_function_evaluations += 1
     def getJacobian(self,jacobian):
@@ -1348,78 +1273,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if _unsupported:
             log("ADR: pinned %d unsupported DOF(s) with no Jacobian contribution "
                 "(active element, but inside the embedded solid)" % len(_unsupported), level=4)
-        import os
-        # ADR_DUMP_JACOBIAN=<prefix>: save the final Jacobian (after strong Dirichlet rows and pinned
-        # rows) once, with the strongly imposed Dirichlet DOFs and the active flags, for an offline
-        # study of conditioning and linear solvers on the free (active, non-Dirichlet) unknowns.
-        if os.environ.get("ADR_DUMP_JACOBIAN") and not getattr(self, '_adr_jac_dumped', False):
-            _dir = [self.offset[0] + self.stride[0]*d for d in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys()] \
-                if self.forceStrongConditions else []
-            np.savez(os.environ["ADR_DUMP_JACOBIAN"] + ".npz", rowptr=np.array(self.rowptr), colind=np.array(self.colind),
-                     nzval=np.array(self.nzval), dirichlet=np.array(_dir, dtype='i'), active=np.array(self.isActiveDOF))
-            self._adr_jac_dumped = True
-        if os.environ.get("ADR_DEBUG_COND"):
-            import scipy.sparse as _sp
-            import scipy.sparse.linalg as _spla
-            _n = len(self.rowptr) - 1
-            _A = _sp.csr_matrix((self.nzval, self.colind, self.rowptr), shape=(_n, _n))
-            try:
-                if _n <= 2000:
-                    _dense = _A.toarray()
-                    _sv = np.linalg.svd(_dense, compute_uv=False)
-                    print("ADR_DEBUG_COND: n=%d smallest_sv=%.6e largest_sv=%.6e cond=%.6e rank=%d"
-                          % (_n, _sv[-1], _sv[0], _sv[0] / max(_sv[-1], 1e-300), np.sum(_sv > 1e-10 * _sv[0])))
-                else:
-                    _sv_min = _spla.svds(_A, k=1, which='SM', return_singular_vectors=False)
-                    _sv_max = _spla.svds(_A, k=1, which='LM', return_singular_vectors=False)
-                    print("ADR_DEBUG_COND: n=%d smallest_sv~=%.6e largest_sv~=%.6e"
-                          % (_n, _sv_min[0], _sv_max[0]))
-            except Exception as _e:
-                print("ADR_DEBUG_COND: failed:", _e)
-            # One-shot finite-difference Jacobian consistency check: does the assembled
-            # Jacobian actually predict how getResidual responds to a perturbation, at the
-            # SAME u this Jacobian was just built at? A mismatch here -- not a conditioning
-            # problem -- would explain a well-conditioned linear solve whose correction has
-            # zero effect on the true (residual-defined) objective.
-            if not getattr(self, '_adr_fd_done', False):
-                self._adr_fd_done = True
-                try:
-                    _u = self.u[0].dof.copy()
-                    _r0 = np.zeros(_n, 'd')
-                    self.getResidual(_u, _r0)
-                    _eps = 1.0e-6
-                    _forced = set(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys())
-                    _active = np.argwhere(self.isActiveDOF != 0.0).flatten()
-                    _sample = [i for i in _active if i not in _forced]
-                    print("ADR_DEBUG_FD: n=%d forced=%d testing %d free active dofs"
-                          % (_n, len(_forced), len(_sample)))
-                    _worst_overall = 0.0
-                    _worst_dof = -1
-                    _nbad = 0
-                    for _i in _sample:
-                        _up = _u.copy()
-                        _scale = max(1.0, abs(_u[_i]))
-                        _h = _eps * _scale
-                        _up[_i] += _h
-                        _r1 = np.zeros(_n, 'd')
-                        self.getResidual(_up, _r1)
-                        _fd_col = (_r1 - _r0) / _h
-                        _an_col = _A[:, _i].toarray().flatten()
-                        _tol = 1.0e-3 * max(1.0, np.max(np.abs(_an_col)))
-                        _diff = np.abs(_fd_col - _an_col)
-                        _worst = np.argmax(_diff)
-                        if _diff[_worst] > _tol:
-                            _nbad += 1
-                            print("ADR_DEBUG_FD: MISMATCH dof=%d h=%.3e max|fd-an|=%.6e at row=%d "
-                                  "fd=%.6e an=%.6e (tol=%.3e)"
-                                  % (_i, _h, _diff[_worst], _worst, _fd_col[_worst], _an_col[_worst], _tol))
-                        if _diff[_worst] > _worst_overall:
-                            _worst_overall = _diff[_worst]
-                            _worst_dof = _i
-                    print("ADR_DEBUG_FD: SUMMARY %d/%d free dofs mismatched (tol 1e-3 rel), "
-                          "worst=%.6e at dof=%d" % (_nbad, len(_sample), _worst_overall, _worst_dof))
-                except Exception as _e:
-                    print("ADR_DEBUG_FD: failed:", _e)
         return jacobian
     def invalidateIFEMGeometry(self):
         """

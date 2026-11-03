@@ -153,14 +153,12 @@ namespace equivalent_polynomials
       }
       else if (inside_out)
       {
-        // std::cout << "Inside out \t corner " << corner << "\t edge " << edge << std::endl;
         _H_q = _ImH[q];
         _ImH_q = _H[q];
         _D_q = _D[q];
       }
       else
       {
-        // std::cout << "corner " << corner << "\t edge " << edge << std::endl;
         _H_q = _H[q];
         _ImH_q = _ImH[q];
         _D_q = _D[q];
@@ -416,12 +414,6 @@ namespace equivalent_polynomials
   {
     if (flip_the_cell)
     {
-      //  std::cout << "Flipping the permutation from: " << std::endl;
-      // for (unsigned int i = 0; i < nP_ifem; i++)
-      // {
-      //   std::cout << permutation[i] << " ";
-      // }
-      // std::cout << std::endl;
       int temp = permutation[1];
       permutation[1] = permutation[2];
       permutation[2] = temp;
@@ -431,12 +423,6 @@ namespace equivalent_polynomials
       flip_the_cell = false;
       p2_cell_flipped = true;
 
-      // std::cout << "Flipping the permutation to: " << std::endl;
-      // for (unsigned int i = 0; i < nP_ifem; i++)
-      // {
-      //   std::cout << permutation[i] << " ";
-      // }
-      // std::cout << std::endl;
     }
     else
     {
@@ -451,8 +437,6 @@ namespace equivalent_polynomials
 
       for (unsigned int i = 0; i < nN; i++)
       { 
-        // std::cout << "phi_nodes[" << i << "] = " << phi_nodes[i*3+0] << ", " << phi_nodes[i*3+1] << ", " << phi_nodes[i*3+2] << std::endl;
-        // std::cout << "phi_dof[" << i << "] = " << phi_dof[i] << std::endl << std::endl;
         if (phi_dof[i] > eps)
         {
           if (pcount == 0)
@@ -472,7 +456,6 @@ namespace equivalent_polynomials
           zcount += 1;
         }
       }
-      // std::cout << "zcount " << zcount << "\t pcount " << pcount << "\t ncount " << ncount << std::endl;
       if (pcount == nN)
       {
         // All positive: element is fully in the +1 domain
@@ -490,11 +473,9 @@ namespace equivalent_polynomials
         if (zcount == nN - 1) // for P1 ifem, interface is on an element boundary and the element is fully in the -1 domain.
         {
           edge = -1;
-          // std::cout << "This is a edge case with negative side element." << std::endl;
         }
         else if (zcount == 1 && pcount == 1)
         {
-          // std::cout << "This is a true split element" << std::endl;
           split = true;
         }
         root_node = n_i;
@@ -504,7 +485,6 @@ namespace equivalent_polynomials
         if (zcount == nN - 1) // for P1 ifem, interface is on an element boundary and the element is fully in the +1 domain.
         {
           edge = 1;
-          // std::cout << "This is a edge case with positive side element." << std::endl;
         }
         root_node = p_i;
         inside_out = true;
@@ -518,7 +498,6 @@ namespace equivalent_polynomials
       else
       {
         assert(zcount < nN - 1);
-        // std::cout << "corner case: zcount " << zcount << "\t pcount " << pcount << "\t ncount " << ncount << std::endl;
         if (pcount && !ncount)
         {
           corner = 1; // The interface passes through a corner node and element is in + side
@@ -541,7 +520,6 @@ namespace equivalent_polynomials
         else
           assert(false);
       }
-      // std::cout << "root_node: " << root_node << "\t inside_out: " << inside_out << "\t quad_cut: " << quad_cut << std::endl;
       for (unsigned int i = 0; i < nDOF_phi; i++)
       {
         // Works for both P1 and P2 IFEM. The loop bound is nDOF_phi = max(nN, nP_ifem):
@@ -582,17 +560,14 @@ namespace equivalent_polynomials
         assert(phi_dof[permutation[1]] > 0.0);
         assert(phi_dof[permutation[2]] > 0.0);
       }
-      // std::cout << "pcount " << pcount << "\t ncount " << ncount << "\t zcount " << zcount << "\t root node = " << root_node << std::endl;
     }
     for (unsigned int i = 0; i < nDOF_phi; i++)
     {
       phi[i] = phi_dof[permutation[i]];
-      // // std::cout << "ref idx: " << i << "\t real idx(permutation[i]): " << permutation[i] << std::endl;
       for (unsigned int I = 0; I < 3; I++)
       {
         nodes[i * 3 + I] = phi_nodes[permutation[i] * 3 + I]; // nodes always 3D
 
-        // std::cout << "nodes[" << i * 3 + I << "] = " << nodes[i * 3 + I] << std::endl;
       }
     }
     double JacTest[nSpace * nSpace];
@@ -602,8 +577,6 @@ namespace equivalent_polynomials
       {
         Jac[I * nSpace + i] = nodes[(1 + i) * 3 + I] - nodes[I];
         JacTest[I * nSpace + i] = phi_nodes[(1 + i) * 3 + I] - phi_nodes[I];
-        // std::cout << "Jac[" << I * nSpace + i << "] = " << Jac[I * nSpace + i] << std::endl;
-        // std::cout << "JacTest[" << I * nSpace + i << "] = " << JacTest[I * nSpace + i] << std::endl;
       }
     }
     det_Jac = det<nSpace>(Jac);
@@ -667,13 +640,10 @@ namespace equivalent_polynomials
         for (unsigned int I = 0; I < 3; I++)
         {
           phys_nodes_cut[i * 3 + I] = (1 - X_0[i]) * nodes[I] + X_0[i] * nodes[(1 + i) * 3 + I];
-          // std::cout << "nodes[" << I << "] = " << nodes[I] << std::endl;
-          // std::cout << "phys_nodes_cut[" << i*3 + I << "] = " << phys_nodes_cut[i*3 + I] << std::endl << std::endl;
         }
       }
       else
       {
-        // assert(phi[i+1] < eps);
         if (phi[i + 1] < eps)
         {
           X_0[i] = 1.0;
@@ -701,7 +671,6 @@ namespace equivalent_polynomials
     // Redo the permutation for the case: (x0>0.5 and y0<=0.5)
     if (nP_ifem == 6 && (X_0[0] > 0.5 && X_0[1] <= 0.5))
     {
-      // std::cout << "Case (X_0[0] > 0.5 && X_0[1] <= 0.5) detected in _calculate_cuts(), flipping the cell" << std::endl;
       flip_the_cell = true;
     }
   }
@@ -793,11 +762,6 @@ namespace equivalent_polynomials
            y0 = X_0[1];
     const double *vall = nullptr;
 
-    // std::cout << "X0 = " << x0 << std::endl << "Y0 = " << y0 << std::endl;
-    // std::cout << "NX = " << nx << std::endl << "NY = " << ny << std::endl;
-    // std::cout << "MUA = " << ma << std::endl << "MUB = " << mb << std::endl << "jf = " << jf << std::endl;
-    // std::cout << "Jit00 = " << Jit00 << std::endl << "Jit01 = " << Jit01 << std::endl << "Jit10 = " << Jit10 << std::endl << "Jit11 = " << Jit11 << std::endl;
-    // std::cout << "nx: " << nx << "\t ny: " << ny << std::endl;
 
     switch (nP_ifem)
     {
@@ -881,7 +845,6 @@ namespace equivalent_polynomials
         v[4] = vall[j * 6 + 4];
         v[5] = vall[j * 6 + 5];
 
-        // std::cout << "v: " << v[0] << "\t" << v[1] << "\t" << v[2] << "\t" << v[3] << "\t" << v[4] << "\t" << v[5] << std::endl;
          if (corner || edge)
         {
           _a1[i] = v[0];
@@ -1028,11 +991,7 @@ namespace equivalent_polynomials
         va[i] = _a1[i] + _a2[i] * xi[0] + _a3[i] * xi[1];
         vb[i] = _b1[i] + _b2[i] * xi[0] + _b3[i] * xi[1];
 
-        // std::cout << "\nCoefficients for real node " << i << " at quadrature point: " << xi[0] << ", " << xi[1] << std::endl;
-        // std::cout << "a: \t [" << _a1[i] << ", " << _a2[i] << ", " << _a3[i] << "]" << std::endl;
-        // std::cout << "b: \t [" << _b1[i] << ", " << _b2[i] << ", " << _b3[i] << "]" << std::endl;
                  
-        // std::cout << "va[" << i << "] = " << va[i] << "\t vb[" << i << "] = " << vb[i] << std::endl;
       }
       break;
     case 6:
@@ -1041,11 +1000,7 @@ namespace equivalent_polynomials
         va[i] = _a1[i] + _a2[i] * xi[0] + _a3[i] * xi[1] + _a4[i] * xi[0] * xi[1] + _a5[i] * xi[0] * xi[0] + _a6[i] * xi[1] * xi[1];
         vb[i] = _b1[i] + _b2[i] * xi[0] + _b3[i] * xi[1] + _b4[i] * xi[0] * xi[1] + _b5[i] * xi[0] * xi[0] + _b6[i] * xi[1] * xi[1];
 
-        // std::cout << "\nCoefficients for real node " << i << " at quadrature point: " << xi[0] << ", " << xi[1] << std::endl;
-        // std::cout << "a: \t [" << _a1[i] << ", " << _a2[i] << ", " << _a3[i] << ", " << _a4[i] << ", " << _a5[i] << ", " << _a6[i] << "]" << std::endl;
-        // std::cout << "b: \t [" << _b1[i] << ", " << _b2[i] << ", " << _b3[i] << ", " << _b4[i] << ", " << _b5[i] << ", " << _b6[i] << "]" << std::endl;
                  
-        // std::cout << "va[" << i << "] = " << va[i] << "\t vb[" << i << "] = " << vb[i] << std::endl;
 
       }
       break;
@@ -1066,7 +1021,6 @@ namespace equivalent_polynomials
       {
         double grad_va[2] = {0.0, 0.0}, grad_vb[2] = {0.0, 0.0}, grad_va_ref[2] = {0.0, 0.0}, grad_vb_ref[2] = {0.0, 0.0};
 
-        // int i = permutation[j];
         grad_va_ref[0] = _a2[i];
         grad_va_ref[1] = _a3[i];
         grad_vb_ref[0] = _b2[i];
@@ -1075,32 +1029,16 @@ namespace equivalent_polynomials
         {
           for (int J = 0; J < nSpace; J++)
           {
-            // // std::cout << "inv_Jac[" << I * nSpace + J << "] = " << inv_Jac[I * nSpace + J] << "\t grad_va_ref[" << J << "] = " << grad_va_ref[J] << std::endl;
             grad_va[I] += inv_Jac[J * nSpace + I] * grad_va_ref[J];
             grad_vb[I] += inv_Jac[J * nSpace + I] * grad_vb_ref[J];
           }
         }
-        // if (inside_out){
-        //   va_x[i] = grad_vb[0];
-        //   va_y[i] = grad_vb[1];
-        //   vb_x[i] = grad_va[0];
-        //   vb_y[i] = grad_va[1];
-        // }
-        // else
-        // {
-          va_x[i] = grad_va[0];
-          va_y[i] = grad_va[1];
-          vb_x[i] = grad_vb[0];
-          vb_y[i] = grad_vb[1];
-        // }
+        va_x[i] = grad_va[0];
+        va_y[i] = grad_va[1];
+        vb_x[i] = grad_vb[0];
+        vb_y[i] = grad_vb[1];
 
-        // // std::cout << "Inverse jacobian: [" << inv_Jac[0] << ", " << inv_Jac[1] << ", " << inv_Jac[2] << ", " << inv_Jac[3] << "]\n"; 
 
-        // // std::cout << "quadrature point: (" << xi[0] << ", " << xi[1] << ")\n";
-        // // std::cout << i << "\t Ref: \t va_x: " << grad_va_ref[0] << ", va_y: " << grad_va_ref[1] 
-        //           << ", vb_x: " << grad_vb_ref[0] << ", vb_y: " << grad_vb_ref[1] << std::endl;
-        // // std::cout << j << "\t Real: \t va_x: " << grad_va[0] << ", va_y: " << grad_va[1] 
-        //           << ", vb_x: " << grad_vb[0] << ", vb_y: " << grad_vb[1] << std::endl;
       }
       break;
     case 6:
@@ -1108,42 +1046,24 @@ namespace equivalent_polynomials
       {
         double grad_va[2] = {0.0, 0.0}, grad_vb[2] = {0.0, 0.0}, grad_va_ref[2] = {0.0, 0.0}, grad_vb_ref[2] = {0.0, 0.0};
 
-        // int i = permutation[j];
         grad_va_ref[0] = _a2[i] + _a4[i] * xi[1] + 2.0 * _a5[i] * xi[0];
         grad_va_ref[1] = _a3[i] + _a4[i] * xi[0] + 2.0 * _a6[i] * xi[1];
         grad_vb_ref[0] = _b2[i] + _b4[i] * xi[1] + 2.0 * _b5[i] * xi[0];
         grad_vb_ref[1] = _b3[i] + _b4[i] * xi[0] + 2.0 * _b6[i] * xi[1];
 
-        // std::cout << i << "Ref: \t va_x: " << grad_va_ref[0] << ", va_y: " << grad_va_ref[1] << std::endl
-        //           << ", vb_x: " << grad_vb_ref[0] << ", vb_y: " << grad_vb_ref[1] << std::endl;
 
         for (int I = 0; I < nSpace; I++)
         {
           for (int J = 0; J < nSpace; J++)
           {
-            // std::cout << "Jac[" << I * nSpace + J << "] = " << Jac[I * nSpace + J] << std::endl;
-            // std::cout << "inv_Jac[" << I * nSpace + J << "] = " << inv_Jac[I * nSpace + J] << std::endl;
             grad_va[I] += inv_Jac[J * nSpace + I] * grad_va_ref[J];
             grad_vb[I] += inv_Jac[J * nSpace + I] * grad_vb_ref[J];
           }
         }
-        // va_x[i] = grad_va[0];
-        // va_y[i] = grad_va[1];
-        // vb_x[i] = grad_vb[0];
-        // vb_y[i] = grad_vb[1];
-        // if (inside_out){
-        //   va_x[i] = grad_vb[0];
-        //   va_y[i] = grad_vb[1];
-        //   vb_x[i] = grad_va[0];
-        //   vb_y[i] = grad_va[1];
-        // }
-        // else
-        // {
-          va_x[i] = grad_va[0];
-          va_y[i] = grad_va[1];
-          vb_x[i] = grad_vb[0];
-          vb_y[i] = grad_vb[1];
-        // }
+        va_x[i] = grad_va[0];
+        va_y[i] = grad_va[1];
+        vb_x[i] = grad_vb[0];
+        vb_y[i] = grad_vb[1];
       }
       break;
     default:
