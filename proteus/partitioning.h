@@ -283,11 +283,12 @@ namespace proteus
 
   extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit);
 
-  /* I/O, no MPI: stream a Triangle .ele file and return the star of each node in
-     [begin,end) and the element count. False if the file cannot be opened. */
-  extern bool readTriangleNodeStars(const std::string& elementFileName, int indexBase, int nNodes_global,
-                                    int begin, int end, int& nElements_global,
-                                    std::vector<std::set<int> >& nodeStar);
+  /* I/O, no MPI: stream a Triangle or TetGen .ele file (simplexDim nodes per
+     element) and return the star of each node in [begin,end) and the element
+     count. False if the file cannot be opened. */
+  extern bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
+                                   int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
+                                   std::vector<std::set<int> >& nodeStar);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 

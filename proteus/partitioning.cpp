@@ -1848,6 +1848,69 @@ namespace {
   }
 }
 
+/* I/O, local: stream a Triangle or TetGen element file (simplexDim nodes per
+   element; format names it in the error) and keep what a rank whose default
+   chunk is nodes [begin,end) needs to partition them: the star (the other
+   nodes of every element containing it) of each of its nodes. Reads every
+   element and keeps O(chunk) data. Returns false, having said why, if the file
+   cannot be opened. */
+bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
+                          int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
+                          std::vector<std::set<int> >& nodeStar)
+{
+  using namespace std;
+  using namespace IOutils;
+  std::ifstream elementFile(elementFileName.c_str());
+  if (!elementFile.good())
+    {
+      std::cerr<<"cannot open "<<format<<" element file "
+               <<elementFileName<<std::endl;
+      return false;
+    }
+  //read elements
+  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0;
+  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
+  assert(nElements_global > 0);
+  assert(nNodesPerSimplex == simplexDim);
+  vector<int> element_nodes_old(simplexDim);
+  nodeStar.assign(end-begin,set<int>());
+  for (int ie = 0; ie < nElements_global; ie++)
+    {
+      int ne, nv;
+      elementFile >> eatcomments >> ne;
+      ne -= indexBase;
+      assert(0 <= ne && ne < nElements_global && elementFile.good());
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          elementFile >> nv;
+          nv -= indexBase;
+          assert(0 <= nv && nv < nNodes_global);
+          element_nodes_old[iv] = nv;
+        }
+      //for each node on the element
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          //check if the node is owned by the subdomain
+          int nN_star = element_nodes_old[iv];
+          if (nN_star >= begin && nN_star < end)
+            {
+              //this node is owned by the subdomain so
+              for (int jv = 0; jv < simplexDim; jv++)
+                {
+                  if (iv != jv)
+                    {
+                      int nN_star_subdomain = nN_star-begin;
+                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
+                    }
+                }
+            }
+        }
+      elementFile >> eatline;
+    }//end ie
+  elementFile.close();
+  return true;
+}
+
 int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, 
                                   Mesh& newMesh, int nNodes_overlap, double memHardLimit)
 {
@@ -1956,61 +2019,17 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //connectivty commes from the topology (elements) file. We just grab the elements
   //that contain currently owned nodes
   logEvent("Determining nodal connectivity to construct new partitioning",5);
-  std::ifstream elementFile(elementFileName.c_str());
-  if (!elementFile.good())
+  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0,nElements_global;
+  valarray<int> element_nodes_old(4);
+  vector<set<int>> nodeStar;
+  if (!readSimplexNodeStars(elementFileName,"Tetgen",simplexDim,indexBase,nNodes_global,
+                            nodeOffsets_old[rank],nodeOffsets_old[rank+1],
+                            nElements_global,nodeStar))
     {
-      std::cerr<<"cannot open Tetgen element file "
-               <<elementFileName<<std::endl;
       failed = true;
       return failed;
     }
-  //read elements
-  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0,nElements_global;
-  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
   newMesh.nElements_global = nElements_global;
-  valarray<int> element_nodes_old(4);
-  vector<set<int>> nodeStar(nNodes_subdomain_old);
-  map<int,valarray<int>> elements_old;
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      int ne, nv;
-      elementFile >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile.good());
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile >> nv;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          element_nodes_old[iv] = nv;
-        }
-      //for each node on the element
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          //check if the node is owned by the subdomain
-          int nN_star = element_nodes_old[iv];
-          bool inSubdomain=false;
-          if (nN_star >= nodeOffsets_old[rank] && nN_star < nodeOffsets_old[rank+1])
-            {
-              inSubdomain = true;
-              for (int jv = 0; jv < simplexDim; jv++)
-                {
-                  if (iv != jv)
-                    {
-                      int nN_star_subdomain = nN_star-nodeOffsets_old[rank];
-                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
-                    }
-                }
-            }
-          if (inSubdomain)
-            elements_old[ie] = element_nodes_old;
-        }
-      elementFile >> eatline;
-    }//end ie
-  elements_old.clear();
-  elementFile.close();
   //cek todo: track c++ containers and put inside scope to reduce dynamic memory usage
   PetscLogEventEnd(read_elements_event,0,0,0,0);
   int repartition_nodes_event;
@@ -3823,68 +3842,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   return 0;
 }
-/* I/O, local: stream the Triangle element file and keep what a rank whose
-   default chunk is nodes [begin,end) needs to partition them: the star (the
-   other nodes of every element containing it) of each of its nodes. Reads
-   every element and keeps O(chunk) data. Returns false, having said why, if
-   the file cannot be opened. */
-bool readTriangleNodeStars(const std::string& elementFileName, int indexBase, int nNodes_global,
-                           int begin, int end, int& nElements_global,
-                           std::vector<std::set<int> >& nodeStar)
-{
-  using namespace std;
-  using namespace IOutils;
-  const int simplexDim = 3;
-  std::ifstream elementFile(elementFileName.c_str());
-  if (!elementFile.good())
-    {
-      std::cerr<<"cannot open triangle element file "
-               <<elementFileName<<std::endl;
-      return false;
-    }
-  //read elements
-  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0;
-  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
-  vector<int> element_nodes_old(3);
-  nodeStar.assign(end-begin,set<int>());
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      int ne, nv;
-      elementFile >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile.good());
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile >> nv;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          element_nodes_old[iv] = nv;
-        }
-      //for each node on the element
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          //check if the node is owned by the subdomain
-          int nN_star = element_nodes_old[iv];
-          if (nN_star >= begin && nN_star < end)
-            {
-              //this node is owned by the subdomain so
-              for (int jv = 0; jv < simplexDim; jv++)
-                {
-                  if (iv != jv)
-                    {
-                      int nN_star_subdomain = nN_star-begin;
-                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
-                    }
-                }
-            }
-        }
-      elementFile >> eatline;
-    }//end ie
-  elementFile.close();
-  return true;
-}
 
 int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap)
 {
@@ -3988,9 +3945,9 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   int nNodesPerSimplex(simplexDim),hasElementMarkers = 0,nElements_global;
   vector<int> element_nodes_old(3);
   vector<set<int> > nodeStar;
-  if (!readTriangleNodeStars(elementFileName,indexBase,nNodes_global,
-                             nodeOffsets_old[rank],nodeOffsets_old[rank+1],
-                             nElements_global,nodeStar))
+  if (!readSimplexNodeStars(elementFileName,"triangle",simplexDim,indexBase,nNodes_global,
+                            nodeOffsets_old[rank],nodeOffsets_old[rank+1],
+                            nElements_global,nodeStar))
     {
       failed = true;
       return failed;

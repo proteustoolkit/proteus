@@ -594,21 +594,23 @@ def test_element_ownership_rules_in_process(kind, size):
 
 
 @pytest.mark.parametrize('size', [1, 2, 4])
-def test_triangle_files_reader_node_stars(size):
-    """The first read of partitionNodesFromTriangleFiles (parun -F): each rank
-    streams pslg.ele and keeps the star of every node in its default chunk.
-    That is the in-memory reader's node star for the same nodes."""
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_reader_node_stars(mesh, size):
+    """The first read of the parun -F partitioners (Triangle and TetGen): each
+    rank streams the .ele file and keeps the star of every node in its default
+    chunk. That is the in-memory reader's node star for the same nodes."""
     from proteus import cpartitioning
-    m = _readMesh('tri')
+    m = _readMesh(mesh)
     n = m.nNodes_global
     starts = np.cumsum([0] + [n // size + (n % size > r) for r in range(size)])
     starOffsets, star = np.asarray(m.nodeStarOffsets), np.asarray(m.nodeStarArray)
-    filebase = os.path.join(HERE, 'meshPartition', 'pslg')
+    filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    simplexDim = {'tri': 3, 'tet': 4}[mesh]
     for r in range(size):
-        nElements, stars = cpartitioning.readTriangleNodeStars(filebase, 1, n, int(starts[r]), int(starts[r + 1]))
+        nElements, stars = cpartitioning.readNodeStars(filebase, simplexDim, 1, n, int(starts[r]), int(starts[r + 1]))
         assert nElements == m.nElements_global
         assert len(stars) == starts[r + 1] - starts[r]
         for k, a in enumerate(range(starts[r], starts[r + 1])):
             assert np.array_equal(stars[k], np.sort(star[starOffsets[a]:starOffsets[a + 1]])), (r, a)
     with pytest.raises(IOError):
-        cpartitioning.readTriangleNodeStars(filebase + '_missing', 1, n, 0, n)
+        cpartitioning.readNodeStars(filebase + '_missing', simplexDim, 1, n, 0, n)

@@ -61,9 +61,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap,
                                                                                          double memHardLimit);
-    extern cppbool c_readTriangleNodeStars "proteus::readTriangleNodeStars" (const string& elementFileName, int indexBase,
-                                                                          int nNodes_global, int begin, int end,
-                                                                          int& nElements_global, vector[cppset[int]]& nodeStar)
+    extern cppbool c_readSimplexNodeStars "proteus::readSimplexNodeStars" (const string& elementFileName, const char* format,
+                                                                           int simplexDim, int indexBase,
+                                                                           int nNodes_global, int begin, int end,
+                                                                           int& nElements_global, vector[cppset[int]]& nodeStar)
     extern int c_partitionNodesFromTriangleFiles "proteus::partitionNodesFromTriangleFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,
