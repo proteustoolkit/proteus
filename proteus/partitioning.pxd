@@ -1,6 +1,8 @@
 # A type of -*- python -*- file
 from libcpp.vector cimport vector
 from libcpp.string cimport string
+from libcpp.set cimport set as cppset
+from libcpp cimport bool as cppbool
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
 
@@ -59,6 +61,9 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap,
                                                                                          double memHardLimit);
+    extern cppbool c_readTriangleNodeStars "proteus::readTriangleNodeStars" (const string& elementFileName, int indexBase,
+                                                                          int nNodes_global, int begin, int end,
+                                                                          int& nElements_global, vector[cppset[int]]& nodeStar)
     extern int c_partitionNodesFromTriangleFiles "proteus::partitionNodesFromTriangleFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,

@@ -591,3 +591,24 @@ def test_element_ownership_rules_in_process(kind, size):
     assert np.array_equal(edgeOwner, [lowest(e) for e in np.asarray(m.edgeNodesArray)])
     if size > 1:
         assert len(set(nodeOwner.tolist())) > 1
+
+
+@pytest.mark.parametrize('size', [1, 2, 4])
+def test_triangle_files_reader_node_stars(size):
+    """The first read of partitionNodesFromTriangleFiles (parun -F): each rank
+    streams pslg.ele and keeps the star of every node in its default chunk.
+    That is the in-memory reader's node star for the same nodes."""
+    from proteus import cpartitioning
+    m = _readMesh('tri')
+    n = m.nNodes_global
+    starts = np.cumsum([0] + [n // size + (n % size > r) for r in range(size)])
+    starOffsets, star = np.asarray(m.nodeStarOffsets), np.asarray(m.nodeStarArray)
+    filebase = os.path.join(HERE, 'meshPartition', 'pslg')
+    for r in range(size):
+        nElements, stars = cpartitioning.readTriangleNodeStars(filebase, 1, n, int(starts[r]), int(starts[r + 1]))
+        assert nElements == m.nElements_global
+        assert len(stars) == starts[r + 1] - starts[r]
+        for k, a in enumerate(range(starts[r], starts[r + 1])):
+            assert np.array_equal(stars[k], np.sort(star[starOffsets[a]:starOffsets[a + 1]])), (r, a)
+    with pytest.raises(IOError):
+        cpartitioning.readTriangleNodeStars(filebase + '_missing', 1, n, 0, n)

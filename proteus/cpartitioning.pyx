@@ -21,6 +21,8 @@ cdef extern from *:
 from mpi4py.MPI cimport (Comm,
                          Op)
 from libcpp.vector cimport vector
+from libcpp.set cimport set as cppset
+from libcpp.string cimport string
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
 from proteus cimport cmeshTools
@@ -47,6 +49,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_edgeOwnersFromNodeOwners,
                                    c_partitionNodesFromTetgenFiles,
                                    c_partitionNodesFromTriangleFiles,
+                                   c_readTriangleNodeStars,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
                                    buildQuadraticSubdomain2GlobalMappings_2d,
                                    buildQuadraticSubdomain2GlobalMappings_3d,
@@ -415,6 +418,19 @@ def partitionNodesFromTetgenFiles(Comm comm, object filebase, int indexBase, int
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
+
+def readTriangleNodeStars(object filebase, int indexBase, int nNodes_global, int begin, int end):
+    """What partitionNodesFromTriangleFiles reads from filebase.ele for a rank
+    whose default chunk is nodes [begin,end): (nElements_global, stars), the
+    sorted star of each node of the chunk. No MPI."""
+    if not isinstance(filebase, bytes):
+        filebase = filebase.encode()
+    cdef string name = filebase + b'.ele'
+    cdef int nElements_global = 0
+    cdef vector[cppset[int]] stars
+    if not c_readTriangleNodeStars(name, indexBase, nNodes_global, begin, end, nElements_global, stars):
+        raise IOError("cannot open triangle element file %s" % name.decode())
+    return nElements_global, [np.array(sorted(star), dtype=np.intc) for star in stars]
 
 def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmeshTools.CMesh subdomain_cmesh):
     #the partitioners need the PETSc C library, which petsc4py would have initialized
