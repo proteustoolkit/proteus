@@ -519,10 +519,13 @@ namespace proteus
 											 const double fluxLiftJ,
 											 double &L2_error,
 											 double &Linfty_error,
+											 double &H1_error,
 											 double mua,
 											 double mub,
 											 xt::pyarray<double> &q_u_exact_inner,
 											 xt::pyarray<double> &q_u_exact_outer,
+											 xt::pyarray<double> &q_grad_u_exact_inner,
+											 xt::pyarray<double> &q_grad_u_exact_outer,
 											 const bool PG)
 		{
 			// per-element cached equivalent-polynomial/IFEM reconstruction
@@ -1080,6 +1083,11 @@ namespace proteus
 				// behaves right at that point.
 				const double phi_s_q = embeddedBoundary_sdf_q.data()[eN_k];
 				double L2_contrib = 0.0;
+				// H1 seminorm part: |grad(u - u_h)|^2 of the phase the point belongs to, with the same
+				// weights and the same fluid gate as the L2 error.
+				double H1_contrib = 0.0;
+				const double *gex_in = &q_grad_u_exact_inner.data()[eN_k * nSpace];
+				const double *gex_out = &q_grad_u_exact_outer.data()[eN_k * nSpace];
 				if (icase_f == 0)
 				{
 					double sol_in = q_u_exact_inner.data()[eN_k];
@@ -1088,6 +1096,12 @@ namespace proteus
 					double sol_out = q_u_exact_outer.data()[eN_k];
 					double err_out = fabs(ub + ujb - sol_out);
 					L2_contrib += H_f * err_out * err_out * dV;
+					for (int I = 0; I < nSpace; I++)
+					{
+						const double gerr_in = grad_ua[I] + grad_uja[I] - gex_in[I];
+						const double gerr_out = grad_ub[I] + grad_ujb[I] - gex_out[I];
+						H1_contrib += (ImH_f * gerr_in * gerr_in + H_f * gerr_out * gerr_out) * dV;
+					}
 					if (phi_s_q >= 0.0)
 					{
 						if (ImH_f >= H_f)
@@ -1103,6 +1117,8 @@ namespace proteus
 						double sol = q_u_exact_inner.data()[eN_k];
 						double err = fabs(u - sol);
 						L2_contrib += err * err * dV;
+						for (int I = 0; I < nSpace; I++)
+							H1_contrib += (grad_u[I] - gex_in[I]) * (grad_u[I] - gex_in[I]) * dV;
 						if (phi_s_q >= 0.0)
 						{
 							Linfty_error = std::max(Linfty_error, err);
@@ -1113,6 +1129,8 @@ namespace proteus
 						double sol = q_u_exact_outer.data()[eN_k];
 						double err = fabs(u - sol);
 						L2_contrib += err * err * dV;
+						for (int I = 0; I < nSpace; I++)
+							H1_contrib += (grad_u[I] - gex_out[I]) * (grad_u[I] - gex_out[I]) * dV;
 						if (phi_s_q >= 0.0)
 						{
 							Linfty_error = std::max(Linfty_error, err);
@@ -1120,7 +1138,10 @@ namespace proteus
 					}
 				}
 				if (phi_s_q >= 0.0)
+				{
 					L2_error += L2_contrib;
+					H1_error += H1_contrib;
+				}
 			}
 		}
 
@@ -1223,6 +1244,9 @@ namespace proteus
 			const double jf = args.scalar<double>("jf");
 			xt::pyarray<double> &q_u_exact_inner = args.array<double>("q_u_exact_inner");
 			xt::pyarray<double> &q_u_exact_outer = args.array<double>("q_u_exact_outer");
+			xt::pyarray<double> &q_grad_u_exact_inner = args.array<double>("q_grad_u_exact_inner");
+			xt::pyarray<double> &q_grad_u_exact_outer = args.array<double>("q_grad_u_exact_outer");
+			xt::pyarray<double> &H1_error = args.array<double>("H1_error");
 			const bool recomputeIFEMGeometry = args.scalar<int>("recomputeIFEMGeometry");
 			const bool fluxJumpLift = args.scalar<int>("immersedBoundary_fluxJumpLift");
 			ensureIFEMCacheSized(nElements_global); // also (re)asserts useExact = true on (re)allocation
@@ -1464,7 +1488,7 @@ namespace proteus
 							}
 						}
 				}
-				double L2_elem = 0.0;
+				double L2_elem = 0.0, H1_elem = 0.0;
 				// j_h carries the flux jump [mu dj_h/dn] = sum_i (mub JB_i grad phi_i^b - mua JA_i grad phi_i^a).n,
 				// which vanishes when J_s is the same at every node of the cell (partition of unity) but
 				// not when J_s varies. The flux-jump lift supplies only the rest, J_f - [mu dj_h/dn], so
@@ -1616,13 +1640,19 @@ namespace proteus
 										 fluxLiftJ,
 										 L2_elem,
 										 Linfty_error.data()[0],
+										 H1_elem,
 												 mua,
 											 mub,
 											 q_u_exact_inner,
 											 q_u_exact_outer,
+											 q_grad_u_exact_inner,
+											 q_grad_u_exact_outer,
 											 PG);
 				if (eN < nElements_owned)
+				{
 					L2_error.data()[0] += L2_elem;
+					H1_error.data()[0] += H1_elem;
+				}
 				//
 				// load element into global residual and save element residual
 				//

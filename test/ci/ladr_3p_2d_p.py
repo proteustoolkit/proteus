@@ -372,6 +372,18 @@ class TrigMMS(AnalyticalSolutions.SteadyState):
             return self.uOfX_inner(x)
         else:
             return self.uOfX_outer(x)
+    def _grad_g(self, x):
+        # grad(d) = interface_normal and grad(t) = interface_tangent (orthonormal coordinates)
+        d = interface_d(x)
+        t = interface_t(x)
+        gd = math.pi*math.cos(math.pi*d)*math.cos(math.pi*t)
+        gt = -math.pi*math.sin(math.pi*d)*math.sin(math.pi*t)
+        return [gd*interface_normal[i] + gt*interface_tangent[i] for i in range(2)]
+    def duOfX_inner(self, x):
+        return [gi/self.betaMinus for gi in self._grad_g(x)]
+    def duOfX_outer(self, x):
+        return [(gi + self.fluxJumpConstant*interface_normal[i])/self.betaPlus
+                for i, gi in enumerate(self._grad_g(x))]
     def solutionJump(self, x):
         # [u] = u_outer - u_inner, the sign convention immersedBoundary_solutionJump_nodes
         # expects in ADR.h (cross-checked against ladr_ss_2d_p.py's LevequeLiExample3, whose

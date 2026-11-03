@@ -404,6 +404,27 @@ class Coefficients(TC_base):
                     else:
                         cq[('u_exact_inner',0)][eN,k] = ans0.uOfX(xk)
                         cq[('u_exact_outer',0)][eN,k] = cq[('u_exact_inner',0)][eN,k]
+        # Exact gradient of each phase, for the H1 error, when the analytical solution provides it
+        # (duOfX_inner/duOfX_outer, or a single duOfX); otherwise the H1 error is not reported.
+        nq_shape = cq[('u',0)].shape
+        cq[('grad_u_exact_inner',0)] = np.zeros(nq_shape + (self.nd,),'d')
+        cq[('grad_u_exact_outer',0)] = np.zeros(nq_shape + (self.nd,),'d')
+        self.hasExactGradient = False
+        if self.analyticalSolution is not None and self.analyticalSolution.get(0) is not None:
+            ans0 = self.analyticalSolution[0]
+            if hasattr(ans0,'duOfX_inner') and hasattr(ans0,'duOfX_outer'):
+                du_in, du_out = ans0.duOfX_inner, ans0.duOfX_outer
+            elif hasattr(ans0,'duOfX'):
+                du_in = du_out = ans0.duOfX
+            else:
+                du_in = du_out = None
+            if du_in is not None:
+                self.hasExactGradient = True
+                for eN in range(cq['x'].shape[0]):
+                    for k in range(cq['x'].shape[1]):
+                        xk = cq['x'][eN,k]
+                        cq[('grad_u_exact_inner',0)][eN,k,:] = np.asarray(du_in(xk))[:self.nd]
+                        cq[('grad_u_exact_outer',0)][eN,k,:] = np.asarray(du_out(xk))[:self.nd]
 
     def initializeElementBoundaryQuadrature(self,t,cebq,cebq_global):
         nd = self.nd
@@ -983,18 +1004,23 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["jf"] = self.coefficients.jf
         argsDict["q_u_exact_inner"] = self.q[('u_exact_inner',0)]
         argsDict["q_u_exact_outer"] = self.q[('u_exact_outer',0)]
+        argsDict["q_grad_u_exact_inner"] = self.q[('grad_u_exact_inner',0)]
+        argsDict["q_grad_u_exact_outer"] = self.q[('grad_u_exact_outer',0)]
         argsDict["recomputeIFEMGeometry"] = int(self.recompute_ifem_geometry)
         self.recompute_ifem_geometry = False
         self.L2_error = np.array((0.0,),'d')
         argsDict["L2_error"] = self.L2_error
         self.Linfty_error = np.array((0.0,),'d')
         argsDict["Linfty_error"] = self.Linfty_error
+        self.H1_error = np.array((0.0,),'d')  # squared H1 seminorm of the error
+        argsDict["H1_error"] = self.H1_error
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 self.u[0].dof[dofN] = g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
         self.adr.calculateResidual(argsDict)
         self.L2_error[0] = globalSum(self.L2_error[0])
         self.Linfty_error[0] = globalMax(self.Linfty_error[0])
+        self.H1_error[0] = globalSum(self.H1_error[0])
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 r[self.offset[0] + self.stride[0] * dofN] = self.u[0].dof[dofN] - g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
@@ -1244,6 +1270,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def calculateAuxiliaryQuantitiesAfterStep(self):
         log("L2 error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.L2_error**0.5))),level=3)
         log("Linfty error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.Linfty_error))),level=3)
+        if getattr(self.coefficients, 'hasExactGradient', False):
+            # broken H1 norm and seminorm of the error, gradient taken on each element and each phase:
+            # |e|_1,h = (sum_K sum_phases ||grad e||^2)^(1/2), ||e||_1,h = (||e||_L2^2 + |e|_1,h^2)^(1/2)
+            log("H1 error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d((self.L2_error + self.H1_error)**0.5))),level=3)
+            log("H1 seminorm error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.H1_error**0.5))),level=3)
         pass
     def calculateSolutionAtQuadrature(self):
         pass
