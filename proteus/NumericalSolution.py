@@ -1344,14 +1344,17 @@ class NS_base(object):  # (HasTraits):
         self._systemStepState = []
         for m in self.modelList:
             levels = []
-            for lm in m.levelModelList:
+            for level, lm in enumerate(m.levelModelList):
                 owners = {}
                 for owner in self.SOLVER_STATE_OWNERS:
                     obj = getattr(lm, owner, None)
                     if obj is not None and hasattr(obj, "state"):
                         owners[owner] = copy.deepcopy(obj.state())
+                # the solver's unknowns are kept as they are, not rebuilt from the dofs: a model's Newton starts
+                # from them, and they need not equal its dofs at the start of a step (RDLS's do not: the dofs
+                # are changed after its last solve)
                 levels.append(([lm.u[ci].dof.copy() for ci in range(lm.coefficients.nc)], owners,
-                               {k: v.copy() for k, v in self._coupledFields(lm)}))
+                               {k: v.copy() for k, v in self._coupledFields(lm)}, m.uList[level].copy()))
             self._systemStepState.append(levels)
 
     #: the quadrature-point and face fields that one model reads from another (RANS2P reads VOF's and NCLS's
@@ -1380,13 +1383,13 @@ class NS_base(object):  # (HasTraits):
         in the failed attempt kept the lags its postStep had moved forward, and the next model read the failed
         attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's)."""
         for m, levels in zip(self.modelList, self._systemStepState):
-            for level, (lm, (dofs, owners, fields)) in enumerate(zip(m.levelModelList, levels)):
+            for level, (lm, (dofs, owners, fields, unknowns)) in enumerate(zip(m.levelModelList, levels)):
                 for ci in range(lm.coefficients.nc):
                     lm.u[ci].dof[:] = dofs[ci]
                 for k, v in self._coupledFields(lm):
                     if k in fields:
                         v[:] = fields[k]
-                lm.setFreeDOF(m.uList[level])
+                m.uList[level][:] = unknowns
                 for owner, st in owners.items():
                     if st is not None:
                         getattr(lm, owner).set_state(copy.deepcopy(st))

@@ -12,6 +12,9 @@ that lands on the same accepted times (measured, macOS arm64; velocity before):
   damBreakLevelSet    VOF, NCLS, RDLS or MCorr 6.1e-2 (RANS2P 2.6e-15)             after: 3.8e-13
 The retry also read the failed attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's), and RANS2P
 and RANS3PF wrote a history row for the failed attempt; both are covered here.
+Round 4 (same measure; before is main 9fca0b95):
+  rising_bubble_rans3p  MCorr3P (or RANS3PF, PresInc) failure 7.6e-1   after: 2.7e-13   the solver's unknowns (uList)
+                        were rebuilt from the dofs; RDLS's are not its dofs at the start of a step
 (The 16% first reported was mostly the different step sequence: the same steps without a failure differ from the
 default run by 15-17% in velocity at t=0.05; fillingTank is that sensitive to dt.)
 """
@@ -52,6 +55,9 @@ CASES = {
     "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10),
     "fillingTank-pressureIncrement": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="pressureIncrement", FAILAT=10),
     "damBreakLevelSet-vof": dict(DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT=5),
+    "rising_bubble_rans3p-mcorr3p": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                         OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
+                                         MAXITS=200, FAILMODEL="ls_consrv_p0", FAILAT=4),
 }
 
 
