@@ -666,3 +666,19 @@ Galerkin comparison, and the K-upwinded low-order scheme differs by 5.8e-2 in mo
 so the Dirichlet nodes cover 3.44 to 6.56 here, and in proteus the weak flux also acts on the two faces that are part pond. Its wetting front lies between mine with the pond on nodes only and mine with the pond widened by one node at each end
 (mean |dtheta| 4.4e-3 and 7.8e-3 for those two; proteus's is the one in between), the largest differences being the nodes just outside the pond (x = 3.125 and 6.875, y = 10: -0.169 against -0.102). Matching it needs the weak boundary flux of
 `Richards_IIPG_exterior`, which this driver does not model.
+
+## Two-phase level set, slice 1: VOF (`vof.h`, `vof_test.py`)
+
+The first model of the two-phase family (C19, decided 2026-11-01). `vof.h` splits proteus's VOF
+(`mprans/VOF.h`, `STABILIZATION_TYPE=0`, as `test/TwoPhaseFlow/damBreakLevelSet.py` runs it) into the part a
+generator writes, `VOFCoefficients` (m = porosity u, f = porosity v u), and two kernels that do not know it is VOF:
+`scalarSUPGElement` (BDF1 with the mass history as a point field, metric SUPG tau, the residual-based shock-capturing
+viscosity computed and returned, the lagged one used) and `scalarUpwindFace` (upwind advective flux with Dirichlet
+inflow and prescribed-flux points). Fields from other models (RANS2P's velocity, the porosity) come in per quadrature
+point through the functor's `nFields`.
+
+`vof_capture.py` runs the damBreak case in proteus and keeps one VOF Newton iteration exactly as its kernel saw it;
+`vof_damBreak_he0.05.npz` (733 triangles, t = 0.063, dt = 0.032) is its output. `vof_test.py` gives the engine the same
+arrays and checks against proteus: residual 1.9e-15, Jacobian 2.4e-16, CFL, boundary flux and upwinded trace bitwise,
+the next step's shock-capturing viscosity 5.5e-12 of its maximum (round-off amplified by the formula where u is flat;
+the test explains the tolerance), and one Newton step reproduces proteus's solution to 3.3e-16.
