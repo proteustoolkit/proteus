@@ -919,35 +919,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             d[self._mesh_l2g()] = self.mesh.nodeDiametersArray[self.mesh.elementNodesArray]
             self._nodeDiameters_vertices = d
         return self._nodeDiameters_vertices
-    # 4-point Gauss-Legendre abscissae on [0,1], used to hand the kernel the exterior Dirichlet data of
-    # each phase along an exterior edge (ADR_EXT_NITSCHE). Edge parameter t runs from the lower to the
-    # higher global node number of the edge.
-    _EXT_T = np.array([0.5 - 0.5*0.8611363115940526, 0.5 - 0.5*0.3399810435848563,
-                       0.5 + 0.5*0.3399810435848563, 0.5 + 0.5*0.8611363115940526])
-
-    def _exteriorEdgeBranchData(self):
-        if getattr(self, '_extEdgeData', None) is not None:
-            return self._extEdgeData
-        nExt = self.mesh.nExteriorElementBoundaries_global
-        ua = np.zeros((nExt, 4), 'd')
-        ub = np.zeros((nExt, 4), 'd')
-        ans = self.coefficients.analyticalSolution
-        ans0 = ans.get(0) if ans is not None else None
-        if ans0 is not None and os.environ.get('ADR_EXT_NITSCHE'):
-            for ebNE in range(nExt):
-                ebN = self.mesh.exteriorElementBoundariesArray[ebNE]
-                n0, n1 = sorted(self.mesh.elementBoundaryNodesArray[ebN][:2])
-                P0, P1 = self.mesh.nodeArray[n0], self.mesh.nodeArray[n1]
-                for k, t in enumerate(self._EXT_T):
-                    x = P0 + t*(P1 - P0)
-                    if hasattr(ans0, 'uOfX_inner') and hasattr(ans0, 'uOfX_outer'):
-                        ua[ebNE, k] = ans0.uOfX_inner(x)
-                        ub[ebNE, k] = ans0.uOfX_outer(x)
-                    else:
-                        ua[ebNE, k] = ub[ebNE, k] = ans0.uOfX(x)
-        self._extEdgeData = (ua, ub)
-        return self._extEdgeData
-
     def getResidual(self,u,r):
         import pdb
         import copy
@@ -1022,9 +993,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
-        ext_ua, ext_ub = self._exteriorEdgeBranchData()
-        argsDict["ext_edge_u_inner"] = ext_ua
-        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -1159,9 +1127,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
-        ext_ua, ext_ub = self._exteriorEdgeBranchData()
-        argsDict["ext_edge_u_inner"] = ext_ua
-        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
