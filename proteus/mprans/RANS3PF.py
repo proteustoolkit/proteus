@@ -1,4 +1,5 @@
 import proteus
+from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 from proteus import Profiling
 import numpy as np
 from proteus.Transport import OneLevelTransport
@@ -751,17 +752,26 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.barycenters = np.zeros((nBoundariesMax, 3), 'd')
         comm = Comm.get()
         if comm.isMaster():
-            self.timeHistory = open(os.path.join(proteus.Profiling.logDir, "timeHistory.txt"), "w")
-            self.wettedAreaHistory = open(os.path.join(proteus.Profiling.logDir, "wettedAreaHistory.txt"), "w")
-            self.forceHistory_p = open(os.path.join(proteus.Profiling.logDir, "forceHistory_p.txt"), "w")
-            self.forceHistory_v = open(os.path.join(proteus.Profiling.logDir, "forceHistory_v.txt"), "w")
-            self.momentHistory = open(os.path.join(proteus.Profiling.logDir, "momentHistory.txt"), "w")
+            # the histories postStep writes: one time and one row (the last boundary flag, the particles) per step
+            perStep = [(name, 1) for name in ("wettedAreaHistory", "forceHistory_p", "forceHistory_v", "momentHistory")]
             if self.nParticles:
-                self.particle_surfaceAreaHistory = open(os.path.join(proteus.Profiling.logDir, "particle_surfaceAreaHistory.txt"), "w")
-                self.particle_forceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_forceHistory.txt"), "w")
-                self.particle_pforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_pforceHistory.txt"), "w")
-                self.particle_vforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_vforceHistory.txt"), "w")
-                self.particle_momentHistory = open(os.path.join(proteus.Profiling.logDir, "particle_momentHistory.txt"), "w")
+                perStep += [(name, 1) for name in ("particle_surfaceAreaHistory", "particle_forceHistory",
+                                                   "particle_pforceHistory", "particle_vforceHistory",
+                                                   "particle_momentHistory")]
+            self.openHistoryFiles(perStep)
+
+    def openHistoryFiles(self, perStep):
+        """Open timeHistory.txt and the per-step history files ((name, rows per step) pairs) as attributes of the
+        same names. On a hot start the files of the run this one continues are kept, cut back to the steps at or
+        before the restart instant (proteus.Gauges.open_history_file)."""
+        logDir = proteus.Profiling.logDir
+        self.timeHistory, resumed = open_history_file(os.path.join(logDir, "timeHistory.txt"))
+        for name, rows in perStep:
+            setattr(self, name, open_history_file(os.path.join(logDir, name + ".txt"))[0])
+        if resumed:
+            members = [(getattr(self, name), rows) for name, rows in perStep]
+            on_hot_start(lambda t: keep_steps_up_to(self.timeHistory, members, t))
+
     # initialize so it can run as single phase
 
     def initializeElementQuadrature(self, t, cq):

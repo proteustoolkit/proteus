@@ -17,6 +17,7 @@ from . import Transport
 from . import SimTools
 from . import Archiver
 from . import Viewers
+from . import Gauges
 from .Archiver import ArchiveFlags
 from . import Domain
 from .MeshAdaptPUMI import Checkpoint,AdaptHelper
@@ -125,6 +126,8 @@ class NS_base(object):  # (HasTraits):
         from . import Comm
         comm=Comm.get()
         self.comm=comm
+        # before any model opens its history or gauge files: a hot start keeps them (proteus.Gauges)
+        Gauges.reset_history_files(opts.hotStart)
         message = "Initializing NumericalSolution for "+so.name+"\n System includes: \n"
         for p in pList:
             message += p.name+"\n"
@@ -523,6 +526,9 @@ class NS_base(object):  # (HasTraits):
                     lm.calculateSolutionAtQuadrature()
             else:
                 logEvent("No initial conditions provided for model "+p.name)
+        if self.opts.hotStart:
+            # the history and gauge files keep their rows up to the restart instant, before the gauges sample it
+            Gauges.resume_history_files(time)
         for model in self.modelList:
             for av in self.auxiliaryVariables[model.name]:
                 # auxiliary variables need not derive from AV_base

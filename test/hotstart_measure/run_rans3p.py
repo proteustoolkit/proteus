@@ -147,6 +147,12 @@ if os.environ.get("HS_DUMP_START"):  # the state a hot run starts stepping from,
             pickle.dump({g: _grab(o, g) for g, o in _owners(self).items()}, open(os.environ["HS_DUMP_START"], "wb"))
     _NS.restoreSolverState = _restore_and_dump
 
+if os.environ.get("HS_GAUGES"):  # gauges on the momentum model: their files continue across the hot start
+    from proteus.Gauges import PointGauges, LineIntegralGauges  # noqa: E402
+    nList[0].auxiliaryVariables = [
+        PointGauges(gauges=((("u", "v"), ((0.5, 0.25, 0.0),)),), fileName="gauge_every_step.csv"),
+        PointGauges(gauges=((("u",), ((0.7, 0.5, 0.0),)),), sampleRate=0.012, fileName="gauge_sampled.csv"),
+        LineIntegralGauges(gauges=((("u",), (((0.2, 0.1, 0.0), (0.2, 0.9, 0.0)),)),), fileName="gauge_line.csv")]
 ns = proteus.NumericalSolution.NS_base(so, pList, nList, sList, opts)
 ns.calculateSolution(so.name)
 if os.environ.get("HS_DUMP"):

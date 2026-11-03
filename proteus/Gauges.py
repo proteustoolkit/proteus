@@ -61,6 +61,80 @@ def _checkLine(line):
     return start, end
 
 
+#: History files and hot starts. A run writes gauge files and the legacy RANS2P/RANS3PF histories as it goes; a run
+#: continued from an archive must leave each one as the uninterrupted run would: its header and every row up to the
+#: restart instant, then the continuation's rows. NumericalSolution sets the hot start before the models are built
+#: (reset_history_files), every writer opens its files with open_history_file and registers how to cut them back
+#: (on_hot_start), and once the restart instant is known NumericalSolution calls resume_history_files(t).
+_history = {"hotStart": False, "resumers": []}
+
+
+def reset_history_files(hotStart):
+    """Start a run: on a hot start the history files are kept and cut back, otherwise they are rewritten."""
+    _history["hotStart"] = bool(hotStart)
+    _history["resumers"] = []
+
+
+def open_history_file(path):
+    """Open a history file for writing: (file, resumed). On a hot start an existing file is kept (resumed is True)
+    and its writer cuts it back in the callback it gives on_hot_start."""
+    if _history["hotStart"] and os.path.exists(path):
+        return open(path, "a+"), True
+    return open(path, "w"), False
+
+
+def on_hot_start(callback):
+    """callback(t) is called with the restart instant on a hot start (on every rank that registered it)."""
+    _history["resumers"].append(callback)
+
+
+def resume_history_files(t):
+    """Cut every registered history file back to the restart instant t."""
+    for callback in _history["resumers"]:
+        callback(t)
+
+
+def _rewrite(f, lines):
+    f.seek(0)
+    f.truncate()
+    f.write("".join(lines))
+    f.flush()
+
+
+def _at_or_before(time, t):
+    return time <= t + 1e-10 * max(1.0, abs(t))
+
+
+def keep_rows_up_to(f, t, nHeader=1):
+    """Keep the header and the rows whose first column (the time) is at or before t; returns their times."""
+    f.seek(0)
+    lines = f.readlines()
+    kept, times = lines[:nHeader], []
+    for line in lines[nHeader:]:
+        time = float(line.split(",")[0])
+        if not _at_or_before(time, t):
+            break
+        kept.append(line)
+        times.append(time)
+    _rewrite(f, kept)
+    return times
+
+
+def keep_steps_up_to(timeFile, members, t):
+    """For histories that write one time per step to timeFile and rowsPerStep rows per step to each member file
+    (members: (file, rowsPerStep) pairs, no header): keep the steps at or before t in all of them."""
+    timeFile.seek(0)
+    lines = timeFile.readlines()
+    nSteps = 0
+    while nSteps < len(lines) and _at_or_before(float(lines[nSteps]), t):
+        nSteps += 1
+    _rewrite(timeFile, lines[:nSteps])
+    for f, rowsPerStep in members:
+        f.seek(0)
+        _rewrite(f, f.readlines()[:nSteps * rowsPerStep])
+    return nSteps
+
+
 def PointGauges(gauges, activeTime=None, sampleRate=0, fileName='point_gauges.csv'):
     """Create a set of point gauges that will automatically be serialized
     as CSV data to the requested file.
@@ -249,6 +323,8 @@ class Gauges(AV_base):
         self.segments = []
         self.discontinuousFields = {}
         self.adapted = False
+        self.resumed = False  # the file of the run this one continues is kept (a hot start)
+        self.resumeTime = None  # rows at or before it are in that file already
 
         self.isPointGauge = bool(points)
         self.isLineGauge = bool(lines) and not integrate
@@ -444,7 +520,7 @@ class Gauges(AV_base):
               self.file = open(self.fileName, 'a')
             else:
               self.fileName = os.path.join(Profiling.logDir, self.fileName)
-              self.file = open(self.fileName, 'w')
+              self.file, self.resumed = open_history_file(self.fileName)
 
             if self.isLineIntegralGauge:
                 #Only need to set up mapping for point gauges
@@ -980,11 +1056,27 @@ class Gauges(AV_base):
             self.initOutputWriter()
             self.buildPointGaugeOperators()
             self.buildLineIntegralGaugeOperators(self.lines, linesSegments, linesSegmentKeys)
-            if self.adapted:
+            if self.adapted or self.resumed:
               pass
             else:
               self.outputHeader()
+            on_hot_start(self.resumeAt)
         return self
+
+    def resumeAt(self, t):
+        """Hot start from t: keep the file's header and rows up to t, and sample on the grid of the run it continues
+        (first_output is that run's first sample), writing nothing more at or before t. Collective over gaugeComm."""
+        times = None
+        if self.gaugeComm.rank == 0 and self.resumed:
+            times = keep_rows_up_to(self.file, t)
+        times = self.gaugeComm.bcast(times, root=0)
+        if times is None:
+            return
+        self.resumeTime = t
+        if times:
+            self.first_output = times[0]
+            self.last_output = times[-1]
+            self.advanceSampleGrid(times[-1])
 
     def get_time(self):
         """ Returns the current model time"""
@@ -1093,6 +1185,9 @@ class Gauges(AV_base):
 
         time = self.get_time()
         logEvent("Gauges calculate called at time %g" % time, 4)
+        # a hot start: the rows up to the restart instant are in the file already
+        if self.resumeTime is not None and _at_or_before(time, self.resumeTime):
+            return
         # check that gauge is in its active time region
         if self.activeTime is not None and (self.activeTime[0] > time or self.activeTime[1] < time):
             return
