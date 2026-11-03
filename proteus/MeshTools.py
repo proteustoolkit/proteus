@@ -8453,10 +8453,23 @@ def msh2simplex(fileprefix, nd):
     logEvent('msh2simplex: finished converting .msh to simplex files')
 
 def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
-    # Choose the options, then mesh once: retrying with the numerics module
-    # when meshing failed hid the first error behind whatever the retry did.
     meshOptions = chooseMeshOptions(physics, numerics)
-    return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
+    try:
+        return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
+    except Exception as first:
+        if meshOptions is numerics:
+            raise
+        # Old-style input: domain options that cannot mesh this domain (a box
+        # with triangle options but no node counts, say) mesh with the n module
+        # instead, as they always have. If that fails too, the first error is
+        # the one that explains the failure, so it is the one raised.
+        logEvent("Meshing with the domain's MeshOptions failed (%s: %s); meshing with the n module"
+                 % (type(first).__name__, first), level=1)
+        numerics.genMesh = physics.genMesh
+        try:
+            return _generateMesh(physics.domain, numerics, generatePartitionedMeshFromFiles, numerics)
+        except Exception:
+            raise first
 
 def chooseMeshOptions(physics, numerics):
     """The options :func:`generateMesh` meshes with.

@@ -17,23 +17,38 @@ from proteus import Comm, Domain, MeshTools
 Comm.init()
 
 
-def test_a_meshing_error_is_not_swallowed(monkeypatch):
+def _spy(monkeypatch, outcomes):
+    """Replace _generateMesh with one that raises or returns ``outcomes`` in turn."""
     calls = []
 
-    def failing(domain, meshOptions, generatePartitionedMeshFromFiles=False, numerics=None):
+    def generate(domain, meshOptions, generatePartitionedMeshFromFiles=False, numerics=None):
         calls.append(meshOptions)
-        if len(calls) == 1:
-            raise RuntimeError("the mesher failed")
-        return "a mesh from the second try"
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
-    monkeypatch.setattr(MeshTools, "_generateMesh", failing)
+    monkeypatch.setattr(MeshTools, "_generateMesh", generate)
     domain = Domain.RectangularDomain(L=[1.0, 1.0], x=[0.0, 0.0])
     MeshTools.getMeshOptions(domain).setTriangleOptions("pq30Dena0.1")
-    physics = types.SimpleNamespace(domain=domain, genMesh=True)
-    numerics = types.SimpleNamespace()
-    with pytest.raises(RuntimeError, match="the mesher failed"):
+    return calls, types.SimpleNamespace(domain=domain, genMesh=True), types.SimpleNamespace()
+
+
+def test_a_meshing_error_is_not_swallowed(monkeypatch):
+    """When the n-module retry fails too, the first error is raised, not the retry's."""
+    calls, physics, numerics = _spy(monkeypatch, [RuntimeError("the mesher failed"),
+                                                  AttributeError("numerics has no nn")])
+    with pytest.raises(RuntimeError, match="the mesher failed") as raised:
         MeshTools.generateMesh(physics, numerics)
-    assert len(calls) == 1
+    assert isinstance(raised.value.__context__, AttributeError)
+    assert calls[1] is numerics
+
+
+def test_domain_options_that_cannot_mesh_fall_back_to_the_numerics_module(monkeypatch):
+    """Old-style decks rely on it: a box with triangle options and no node counts."""
+    calls, physics, numerics = _spy(monkeypatch, [TypeError("no nn"), "mesh"])
+    assert MeshTools.generateMesh(physics, numerics) == "mesh"
+    assert calls[1] is numerics and numerics.genMesh is True
 
 
 def test_mesh_options_without_a_size_still_fall_back_to_the_numerics_module(monkeypatch):
