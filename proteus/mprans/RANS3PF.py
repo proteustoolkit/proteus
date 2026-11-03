@@ -940,8 +940,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
 
     #: what preStep and postStep leave on the level model for the next step: the entropy residual of the
     #: last step, the two previous solutions (for the extrapolated star velocity), dt, the first-step flag,
-    #: and the velocity at the quadrature points as it was after the last step and before it. A hot start
-    #: rebuilds them from the restart state, which is not the state the archived step ended with.
+    #: and the velocity at the quadrature points as it was after the last step and before it; and on the
+    #: coefficients the boundary velocity of the last step (ebqe_velocity_last), which PresInc's postStep sets
+    #: and the next step reads as its star velocity. A hot start rebuilds them from the restart state, which is
+    #: not the state the archived step ended with.
     _state_model_arrays = ("entropyResidualPerNode", "u_dof_old", "v_dof_old", "w_dof_old",
                            "u_dof_old_old", "v_dof_old_old", "w_dof_old_old")
     _state_q_arrays = (('velocity', 0), ('velocityOld', 0))
@@ -956,6 +958,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 st[name] = getattr(m, name).copy()
         for key in self._state_q_arrays:
             st["q_%s_%d" % key] = m.q[key].copy()
+        if hasattr(self, "ebqe_velocity_last"):
+            st["coef_ebqe_velocity_last"] = self.ebqe_velocity_last.copy()
         return st
 
     def set_state(self, state):
@@ -967,6 +971,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 getattr(m, name)[:] = state[name]
         for key in self._state_q_arrays:
             m.q[key][:] = state["q_%s_%d" % key]
+        if "coef_ebqe_velocity_last" in state:
+            self.ebqe_velocity_last[:] = state["coef_ebqe_velocity_last"]
 
     def preStep(self, t, firstStep=False):
         if firstStep:
