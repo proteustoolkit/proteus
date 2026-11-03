@@ -407,6 +407,26 @@ def test_shell_without_a_model(tmp_path):
     assert "no model loaded: load('model_so.py') first" in out.stderr
 
 
+def test_a_discretization_split_into_sub_problems_is_not_run_as_one_system(tmp_path):
+    """ymf lets a discretization split the model into sub-problems (C42). Until
+    those are mapped onto Proteus's models, ymf_run refuses the branch rather
+    than solve the whole model as one system under its name."""
+    pytest.importorskip("ymf.symbolic")
+    pytest.importorskip("strictyaml")
+    from ymf.schema import load_ymf
+    from ymf.symbolic import adr_problem
+    from proteus.cli.ymfrun import blockers
+    (tmp_path / "poisson.ymf").write_text(POISSON_SPEC, encoding="utf-8")
+    doc = load_ymf(tmp_path / "poisson.ymf")
+    problem = adr_problem(doc)
+    entry = doc["solution_paths"]["discretizations"][0]
+    entry["mesh"] = {"cells": 4}
+    assert blockers(doc, problem, entry) == []
+    entry["subproblems"] = [{"name": "first"}, {"name": "second"}]
+    (reason,) = blockers(doc, problem, entry)
+    assert "split into sub-problems (first, second)" in reason
+
+
 @pytest.mark.skipif(shutil.which("triangle") is None, reason="triangle not on PATH")
 def test_emitted_region_files_mesh_with_pro_msh(tmp_path):
     pytest.importorskip("ymf.symbolic")
