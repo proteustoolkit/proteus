@@ -45,9 +45,6 @@ namespace proteus
 		std::valarray<bool> elementIsActive;
 		const int nDOF_test_X_trial_element;
 		CompKernelType ck;
-		// Debug-only per-element split of elementResidual_u (ADR_DEBUG_ROW): 0 bulk, 1 Nitsche
-		// penalty, 2 Nitsche consistency flux, 3 Nitsche adjoint consistency. Written every call.
-		double dbgElem[4][nDOF_test_element];
 		// TC_EDGE dead-cell experiment (env ADR_TC_EDGE_INCLUDE_DEAD): 0/unset = off, 1 = every
 		// fully-solid Gamma_f-cut cell, 2 = only those sharing a node with a cell that has fluid.
 		static int tcDeadMode()
@@ -442,26 +439,6 @@ namespace proteus
 												const double D_f)
 		{
 			// todo this doesn't look 1d/3d
-			/*       double outward_normal[nSpace];
-				  for (int I=0;I<nSpace;I++)
-					outward_normal[I] = immersedBoundary_normal[I];
-
-
-
-				  //diffusive flux
-				  for (int I=0;I<nSpace;I++)
-					{
-					ham -= outward_normal[I] * grad_u[I];
-					dham[I] -= D_f * a * outward_normal[I];
-					//Nitsche adjoint consistency
-					f[I] += D_f * a * outward_normal[I] * (u - u_s);
-					df[I] += D_f * a * outward_normal[I];
-					}
-				  ham *= D_f * a;
-				  //Nitsche Dirichlet penalty
-				  r  += D_f*a*immersedBoundary_penalty * (u - u_s);
-				  dr += D_f*a*immersedBoundary_penalty; */
-			// std::cout << "D_f = " << D_f << std::endl;
 			// Prescribed flux jump across the interface, supplied by the physics file as
 			// [beta du/dn] = fluxJump(x) + fluxJumpVector(x) . n. The vector part carries
 			// the cases whose jump depends on the interface normal. Both default to zero,
@@ -587,11 +564,7 @@ namespace proteus
 			GfType &gf_f = gf_f_cache[eN];
 			GfType &gf_s = gf_s_cache[eN];
 			for (int i = 0; i < nDOF_test_element; i++)
-			{
 				elementResidual_u.data()[i] = 0.0;
-				for (int b = 0; b < 4; b++)
-					dbgElem[b][i] = 0.0;
-			}
 			// loop over quadrature points and compute integrands
 			for (int k = 0; k < nQuadraturePoints_element; k++)
 			{
@@ -690,10 +663,8 @@ namespace proteus
 				// get the metric tensor and friends
 				ck.calculateG(jacInv, G, G_dd_G, tr_G);
 				// get the trial function gradients
-				// std::cout << "Calculating gradTrialFromRef from calculateElementResidual()" << std::endl;
 				ck.gradTrialFromRef(&u_grad_trial_ref.data()[k * nDOF_trial_element * nSpace], jacInv, u_grad_trial);
 				// get the solution
-				// std::cout << "element_u data: " << std::endl;
 				ck.valFromElementDOF(element_u.data(), &u_trial_ref.data()[k * nDOF_trial_element], u);
 				// get the solution gradients
 				ck.gradFromElementDOF(element_u.data(), u_grad_trial, grad_u);
@@ -705,8 +676,6 @@ namespace proteus
 					{
 						u_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
 						//PGIFEM
-						//ua_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
-						//ub_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
 					}
 				}
 				if (icase_f == 0)
@@ -715,25 +684,12 @@ namespace proteus
 					for (int i = 0; i < nDOF_trial_element; i++)
 					{
 						va[i] = gf_f.VA(i);
-						//assert(fabs(va[i] - u_trial_ref.data()[k * nDOF_trial_element+i])< 1.0e-8);
 						va_grad_trial[i * nSpace + 0] = gf_f.VA_x(i);
-						//assert(fabs(va_grad_trial[i * nSpace + 0] - u_grad_trial[i * nSpace + 0]) < 1.0e-8);
 						va_grad_trial[i * nSpace + 1] = gf_f.VA_y(i);
-						//assert(fabs(va_grad_trial[i * nSpace + 1] - u_grad_trial[i * nSpace + 1]) < 1.0e-8);
 						vb[i] = gf_f.VB(i);
-						//assert(fabs(vb[i] - u_trial_ref.data()[k * nDOF_trial_element+i])< 1.0e-8);
 						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
-						//assert(fabs(vb_grad_trial[i * nSpace + 0] - u_grad_trial[i * nSpace + 0]) < 1.0e-8);
 						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
-						//assert(fabs(vb_grad_trial[i * nSpace + 0] - u_grad_trial[i * nSpace + 0]) < 1.0e-8);
-						// std::cout << "\ni: " << i << ", va: " << va[i] << ", vb: " << vb[i] << std::endl;
-						// std::cout << "i: " << i << ", va_x: " << va_grad_trial[i * nSpace + 0] << ", va_y: " << va_grad_trial[i * nSpace + 1] << std::endl;
-						// std::cout << "i: " << i << ", vb_x: " << vb_grad_trial[i * nSpace + 0] << ", vb_y: " << vb_grad_trial[i * nSpace + 1] << std::endl;
 					}	
-					// std::cout << "--------------------------------------------------------------------------------" << std::endl;
-					// std::cout << nDOF_trial_element << std::endl;
-					// std::cout << "va: " << va[0] << ", " << va[1] << ", " << va[2] << ", " << va[3] << ", " << va[4] << ", " << va[5] << std::endl;
-					// std::cout << "vb: " << vb[0] << ", " << vb[1] << ", " << vb[2] << ", " << vb[3] << ", " << vb[4] << ", " << vb[5] << std::endl;
 					
 					
 					// Triply-cut: use the analytic boundary value for the masked node, not its
@@ -759,43 +715,6 @@ namespace proteus
 					grad_uja[1] += fluxLiftJ * gf_f.PSIA_y();
 					grad_ujb[0] += fluxLiftJ * gf_f.PSIB_x();
 					grad_ujb[1] += fluxLiftJ * gf_f.PSIB_y();
-					if (getenv("ADR_DEBUG_JAJB3") && eN == atoi(getenv("ADR_DEBUG_JAJB3")))
-					{
-						fprintf(stderr, "ADR_DEBUG_JAJB3 eN=%d k=%d maskedLocalNode=%d "
-								"vb_grad=[(%.6f,%.6f),(%.6f,%.6f),(%.6f,%.6f)] "
-								"va_grad=[(%.6f,%.6f),(%.6f,%.6f),(%.6f,%.6f)] "
-								"JB_node_contrib=[(%.6e,%.6e),(%.6e,%.6e),(%.6e,%.6e)] "
-								"JA_node_contrib=[(%.6e,%.6e),(%.6e,%.6e),(%.6e,%.6e)] "
-								"grad_ujb_total=(%.6e,%.6e) grad_uja_total=(%.6e,%.6e)\n",
-								eN, k, triplyCut_maskedLocalNode_eN,
-								vb_grad_trial[0 * nSpace + 0], vb_grad_trial[0 * nSpace + 1],
-								vb_grad_trial[1 * nSpace + 0], vb_grad_trial[1 * nSpace + 1],
-								vb_grad_trial[2 * nSpace + 0], vb_grad_trial[2 * nSpace + 1],
-								va_grad_trial[0 * nSpace + 0], va_grad_trial[0 * nSpace + 1],
-								va_grad_trial[1 * nSpace + 0], va_grad_trial[1 * nSpace + 1],
-								va_grad_trial[2 * nSpace + 0], va_grad_trial[2 * nSpace + 1],
-								JB[0] * vb_grad_trial[0 * nSpace + 0], JB[0] * vb_grad_trial[0 * nSpace + 1],
-								JB[1] * vb_grad_trial[1 * nSpace + 0], JB[1] * vb_grad_trial[1 * nSpace + 1],
-								JB[2] * vb_grad_trial[2 * nSpace + 0], JB[2] * vb_grad_trial[2 * nSpace + 1],
-								JA[0] * va_grad_trial[0 * nSpace + 0], JA[0] * va_grad_trial[0 * nSpace + 1],
-								JA[1] * va_grad_trial[1 * nSpace + 0], JA[1] * va_grad_trial[1 * nSpace + 1],
-								JA[2] * va_grad_trial[2 * nSpace + 0], JA[2] * va_grad_trial[2 * nSpace + 1],
-								grad_ujb[0], grad_ujb[1], grad_uja[0], grad_uja[1]);
-						// uja/ujb are affine (constant gradient), so extrapolate their VALUE from
-						// this quadrature point straight to each node's own physical position --
-						// answers "what does the jump lift evaluate to AT the masked node itself".
-						for (int i_n = 0; i_n < nDOF_trial_element; i_n++)
-						{
-							double xi_n = mesh_dof.data()[u_l2g.data()[eN * nDOF_trial_element + i_n] * 3 + 0];
-							double yi_n = mesh_dof.data()[u_l2g.data()[eN * nDOF_trial_element + i_n] * 3 + 1];
-							double uja_at_i = uja + grad_uja[0] * (xi_n - x) + grad_uja[1] * (yi_n - y);
-							double ujb_at_i = ujb + grad_ujb[0] * (xi_n - x) + grad_ujb[1] * (yi_n - y);
-							fprintf(stderr, "ADR_DEBUG_JAJB3_NODE eN=%d node=%d x=%.10f y=%.10f "
-									"uja_at_node=%.10e ujb_at_node=%.10e is_masked=%d\n",
-									eN, i_n, xi_n, yi_n, uja_at_i, ujb_at_i,
-									i_n == triplyCut_maskedLocalNode_eN ? 1 : 0);
-						}
-					}
 					for (int i = 0; i < nDOF_test_element; i++)
 					{
 						ua_test_dV[i] = va[i] * dV;
@@ -987,27 +906,6 @@ namespace proteus
 				// spurious source).
 				if (demoted_f != 0)
 					D_f = 0.0;
-				if (getenv("ADR_DEBUG_ELEM") && eN == atoi(getenv("ADR_DEBUG_ELEM")))
-				{
-					fprintf(stderr, "ADR_DEBUG_ELEM eN=%d k=%d xi=%.10f eta=%.10f x=%.10f y=%.10f "
-							"D_f=%.10e dV=%.10e D_f_dV=%.10e comp_DFa_null=%d\n",
-							eN, k, x_ref.data()[k * 3 + 0], x_ref.data()[k * 3 + 1], x, y,
-							D_f, dV, D_f * dV, comp_DFa == nullptr ? 1 : 0);
-				}
-				if (getenv("ADR_DEBUG_JAJB2") && eN == atoi(getenv("ADR_DEBUG_JAJB2")))
-				{
-					fprintf(stderr, "ADR_DEBUG_JAJB2 eN=%d k=%d x=%.10f y=%.10f dV=%.10e "
-							"JA=[%.6f,%.6f,%.6f] JB=[%.6f,%.6f,%.6f] "
-							"uja=%.10e ujb=%.10e grad_uja=(%.10e,%.10e) grad_ujb=(%.10e,%.10e) "
-							"ua=%.10e ub=%.10e H_s=%.6f ImH_f=%.6f H_f=%.6f wA=%.6f wB=%.6f "
-							"wA_raw=%.6f wB_raw=%.6f D_s=%.10e D_s_a=%.10e D_s_b=%.10e\n",
-							eN, k, x, y, dV,
-							JA[0], JA[1], JA[2], JB[0], JB[1], JB[2],
-							uja, ujb, grad_uja[0], grad_uja[1], grad_ujb[0], grad_ujb[1],
-							ua, ub, H_s, ImH_f, H_f, wA, wB, ImH_f * H_s, H_f * H_s,
-							D_s, D_s_a, D_s_b);
-				}
-				// if ( H_s*ImH_f != 0.0 || D_s != 0.0 || D_f != 0.0) //for two embedded interfaces
 				if (H_s != 0.0 || D_s != 0.0 || D_f != 0.0) // for one embedded interface and one immersed interface
 				{
 					element_active = true;
@@ -1124,7 +1022,6 @@ namespace proteus
 				for (int i = 0; i < nDOF_test_element; i++)
 				{
 					int i_nSpace = i * nSpace;
-					const double dbg_e0 = elementResidual_u.data()[i];
 					if (icase_f == 0)
 					{
 						if(!gf_f.exact.edge  && !gf_f.exact.corner)//full cut or cut on boundary of negative cell
@@ -1179,7 +1076,6 @@ namespace proteus
 															  ck.SubgridError(subgridError_u, Lstar_u[i]) +
 															  ck.NumericalDiffusion(q_numDiff_u_last.data()[eN_k], grad_u, &u_grad_test_dV[i_nSpace]));
 					}
-					dbgElem[0][i] += elementResidual_u.data()[i] - dbg_e0;
 					if (embeddedBoundary)
 					{
 						if (gf_s.exact.edge >= 0 && !gf_s.exact.corner)
@@ -1205,21 +1101,6 @@ namespace proteus
 																ck.Reaction_weak(r_s, u_test_dV[i]) +
 																ck.Hamiltonian_weak(ham_s, u_test_dV[i]));
 							}
-						}
-					}
-					if (embeddedBoundary && gf_s.exact.edge >= 0 && !gf_s.exact.corner)
-					{
-						if (icase_f == 0)
-						{
-							dbgElem[1][i] += ck.Reaction_weak(r_s_a, ua_test_dV[i]) + ck.Reaction_weak(r_s_b, ub_test_dV[i]);
-							dbgElem[2][i] += ck.Hamiltonian_weak(ham_s_a, ua_test_dV[i]) + ck.Hamiltonian_weak(ham_s_b, ub_test_dV[i]);
-							dbgElem[3][i] += ck.Advection_weak(f_s_a, &ua_grad_test_dV[i_nSpace]) + ck.Advection_weak(f_s_b, &ub_grad_test_dV[i_nSpace]);
-						}
-						else
-						{
-							dbgElem[1][i] += ck.Reaction_weak(r_s, u_test_dV[i]);
-							dbgElem[2][i] += ck.Hamiltonian_weak(ham_s, u_test_dV[i]);
-							dbgElem[3][i] += ck.Advection_weak(f_s, &u_grad_test_dV[i_nSpace]);
 						}
 					}
 					// immersedBoundary's r_f (the flux-jump Dirac reaction) is tested above against the
@@ -1252,15 +1133,6 @@ namespace proteus
 					L2_contrib += H_f * err_out * err_out * dV;
 					if (phi_s_q >= 0.0)
 					{
-						double _cand = (ImH_f >= H_f) ? err_in : err_out;
-						if (getenv("ADR_DEBUG_LINF") && _cand > Linfty_error)
-						{
-							fprintf(stderr, "ADR_DEBUG_LINF NEWMAX eN=%d x=%.10f y=%.10f err=%.6e "
-									"branch=%s H_s=%.6f ImH_f=%.6f H_f=%.6f wA=%.6f wB=%.6f D_f=%.6e "
-									"icase_f=%d\n",
-									eN, x, y, _cand, (ImH_f >= H_f) ? "inner" : "outer",
-									H_s, ImH_f, H_f, wA, wB, D_f, icase_f);
-						}
 						if (ImH_f >= H_f)
 							Linfty_error = std::max(Linfty_error, err_in);
 						else
@@ -1276,18 +1148,6 @@ namespace proteus
 						L2_contrib += err * err * dV;
 						if (phi_s_q >= 0.0)
 						{
-							if (getenv("ADR_DEBUG_LINF") && err > Linfty_error)
-							{
-								fprintf(stderr, "ADR_DEBUG_LINF NEWMAX2 eN=%d x=%.10f y=%.10f err=%.6e branch=inner H_s=%.6f phi_s_q=%.6e icase_f=-1\n", eN, x, y, err, H_s, phi_s_q);
-								// vertices from the quad point's reference coordinates (valid for P1 and P2)
-								const double xi0 = x_ref.data()[k * 3 + 0], xi1 = x_ref.data()[k * 3 + 1];
-								const double v0x = x - (jac[0] * xi0 + jac[1] * xi1), v0y = y - (jac[2] * xi0 + jac[3] * xi1);
-								fprintf(stderr, "ADR_DEBUG_LINF   v0=(%.10f,%.10f) v1=(%.10f,%.10f) v2=(%.10f,%.10f) xi=(%.6f,%.6f) uh_q=%.10e exact_q=%.10e u=",
-										v0x, v0y, v0x + jac[0], v0y + jac[2], v0x + jac[1], v0y + jac[3], xi0, xi1, u, sol);
-								for (int i = 0; i < nDOF_trial_element; i++)
-									fprintf(stderr, "%s%.10e", i ? "," : "", element_u.data()[i]);
-								fprintf(stderr, "\n");
-							}
 							Linfty_error = std::max(Linfty_error, err);
 						}
 					}
@@ -1298,18 +1158,6 @@ namespace proteus
 						L2_contrib += err * err * dV;
 						if (phi_s_q >= 0.0)
 						{
-							if (getenv("ADR_DEBUG_LINF") && err > Linfty_error)
-								fprintf(stderr, "ADR_DEBUG_LINF NEWMAX2 eN=%d x=%.10f y=%.10f err=%.6e branch=outer H_s=%.6f phi_s_q=%.6e icase_f=1\n", eN, x, y, err, H_s, phi_s_q);
-							if (getenv("ADR_DEBUG_LINF") && err > Linfty_error)
-							{
-								// vertices recovered from the quad point, the Jacobian and the P1 reference basis
-								const double b1 = u_trial_ref.data()[k * nDOF_trial_element + 1];
-								const double b2 = u_trial_ref.data()[k * nDOF_trial_element + 2];
-								const double v0x = x - (jac[0] * b1 + jac[1] * b2), v0y = y - (jac[2] * b1 + jac[3] * b2);
-								fprintf(stderr, "ADR_DEBUG_LINF   v0=(%.10f,%.10f) v1=(%.10f,%.10f) v2=(%.10f,%.10f) u=(%.10e,%.10e,%.10e) uh_q=%.10e exact_q=%.10e\n",
-										v0x, v0y, v0x + jac[0], v0y + jac[2], v0x + jac[1], v0y + jac[3],
-										element_u.data()[0], element_u.data()[1], element_u.data()[2], u, sol);
-							}
 							Linfty_error = std::max(Linfty_error, err);
 						}
 					}
@@ -1436,10 +1284,6 @@ namespace proteus
 			cutfem_boundaries.clear();
 			cutfem_boundary_elements.clear();
 			elementIsActive.resize(nElements_global);
-			// Debug-only (ADR_DEBUG_ROW=<global dof>): decompose that row's residual by mechanism.
-			const int dbgRow = getenv("ADR_DEBUG_ROW") ? atoi(getenv("ADR_DEBUG_ROW")) : -1;
-			double dbgDelta[8] = {0., 0., 0., 0., 0., 0., 0., 0.};
-			auto dbgRowVal = [&]() { return dbgRow >= 0 ? globalResidual.data()[offset_u + stride_u * dbgRow] : 0.0; };
 			const int tcDeadModeV = tcDeadMode();
 			// Coefficients.triplyCut_edgeFluidSide: take the fluid-side one-sided edge correction on
 			// triply-cut cells (flips the sign of the correction in residual and Jacobian).
@@ -1516,7 +1360,6 @@ namespace proteus
 				}
 			for (int eN = 0; eN < nElements_global; eN++)
 			{
-				// std::cout << "########################\n element: " << eN << " \n########################" << std::endl;
 				// declare local storage for element residual and initialize
 				// double elementResidual_u[nDOF_test_element],element_u[nDOF_trial_element];
 				auto elementResidual_u = proteus::pyarray<double>::from_shape({nDOF_test_element});
@@ -1527,7 +1370,6 @@ namespace proteus
 				{
 					int eN_i = eN * nDOF_trial_element + i;
 					element_u.data()[i] = u_dof.data()[u_l2g.data()[eN_i]];
-					// std::cout << "element_u[" << i << "]:" << element_u.data()[i] << std::endl;
 				} // i
 				double element_phi_s[nDOF_trial_element];
 				for (int j = 0; j < nDOF_trial_element; j++)
@@ -1541,17 +1383,12 @@ namespace proteus
 					int eN_j = eN * nDOF_trial_element + j;
 					element_phi_f[j] = immersedBoundary_sdf_nodes.data()[u_l2g.data()[eN_j]];
 				}
-				// std::cout << std::endl;
 				double element_nodes[nDOF_trial_element * 3];
 				for (int i = 0; i < nDOF_trial_element; i++)
 				{
 					int eN_i = eN * nDOF_trial_element + i;
 					for (int I = 0; I < 3; I++)
-						// element_nodes[i * 3 + I] = mesh_dof.data()[mesh_l2g.data()[eN_i] * 3 + I];
 						element_nodes[i * 3 + I] = mesh_dof.data()[u_l2g.data()[eN_i] * 3 + I];
-					// std::cout << "element node[" << i << "]:" << element_nodes[i * 3 + 0] << " " << element_nodes[i * 3 + 1] << " " << element_nodes[i * 3 + 2] << std::endl;
-					// std::cout << "element node[" << i << "]:" << element_nodes[i * 3 + 0] << " " << element_nodes[i * 3 + 1] << " " << element_nodes[i * 3 + 2] << std::endl;
-					// std::cout << "element phi_f[" << i << "]:" << element_phi_f[i] << std::endl << std::endl;
 				} // i
 				if (gf_s_interior_gen[eN] != ifemGeometryGeneration)
 				{
@@ -1656,25 +1493,13 @@ namespace proteus
 				std::fill(JB, JB + nDOF_trial_element, 0.0);
 				// Prescribed flux jump of this cell for the flux-jump lift (0 if the lift is off).
 				const double fluxLiftJ = (icase_f == 0) ? immersedBoundary_fluxJump_element.data()[eN] : 0.0;
-				if (getenv("ADR_DEBUG_JAJB") && eN == atoi(getenv("ADR_DEBUG_JAJB")))
-				{
-					fprintf(stderr, "ADR_DEBUG_JAJB eN=%d icase_s=%d icase_f=%d comp_valid=%d comp_DF_valid=%d "
-							"maskedLocalNode=%d phi_f=[%.6f,%.6f,%.6f] phi_s=[%.6f,%.6f,%.6f]\n",
-							eN, icase_s, icase_f, comp_valid[eN], comp_DF_valid[eN],
-							triplyCut_maskedLocalNode.data()[eN],
-							element_phi_f[0], element_phi_f[1], element_phi_f[2],
-							element_phi_s[0], element_phi_s[1], element_phi_s[2]);
-				}
 				if (icase_f == 0)
 				{
-					// std::cout << "Active element" << std::endl;
 					// only works for simplices
 					for (int ebN_element = 0; ebN_element < nDOF_mesh_trial_element; ebN_element++)
 					{
-						// std::cout << "ebN_element =" << ebN_element << "\t ebN=" << ebN << std::endl;
 						// internal and actually a cut edge
 						const int ebN = elementBoundariesArray.data()[eN * nDOF_mesh_trial_element + ebN_element];
-						// if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 && (ebN < nElementBoundaries_owned)) // This gives all the internal edges instead of just the cut edges.
 						
 						// indexing convention for P1: edge opposite to node i is given by (i+1)%3 and (i+2)%3 nodes. 
 						// nathawani: P2 needs different indexing convention.
@@ -1725,12 +1550,6 @@ namespace proteus
 								assign_jump_side(i, false, jump_i);
 							}
 						}
-				}
-				else if (icase_f == -1)
-				{
-				}
-				else if (icase_f == 1)
-				{
 				}
 				double L2_elem = 0.0;
 				calculateElementResidual(icase_f,
@@ -1836,46 +1655,7 @@ namespace proteus
 					globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u.data()[i];
 					if (element_active)
 						isActiveDOF.data()[offset_u + stride_u * u_l2g.data()[eN_i]] = 1.0;
-					// std::cout << "globalResidual[" << offset_u + stride_u * u_l2g.data()[eN_i] << "] += " << elementResidual_u.data()[i] << std::endl;
-					if (dbgRow >= 0 && u_l2g.data()[eN_i] == dbgRow)
-					{
-						for (int b = 0; b < 4; b++)
-							dbgDelta[b] += dbgElem[b][i];
-						fprintf(stderr, "ADR_ROW_ELEM eN=%d i=%d icase_s=%d icase_f=%d bulk=%.6e nitsche_pen=%.6e nitsche_cons=%.6e nitsche_adj=%.6e total=%.6e\n",
-								eN, i, icase_s, icase_f, dbgElem[0][i], dbgElem[1][i], dbgElem[2][i], dbgElem[3][i], elementResidual_u.data()[i]);
-					}
 				} // i
-				if (getenv("ADR_DEBUG_TC_RESIDUAL") && comp_valid[eN])
-				{
-					fprintf(stderr, "ADR_DEBUG_TC_RESIDUAL eN=%d maskedLocalNode=%d "
-							"elementResidual_u=[%.10e,%.10e,%.10e]\n",
-							eN, triplyCut_maskedLocalNode.data()[eN],
-							elementResidual_u.data()[0], elementResidual_u.data()[1], elementResidual_u.data()[2]);
-				}
-				if (std::getenv("ADR_DUMP_BASIS") && embeddedBoundary && immersedBoundary && nDOF_trial_element == 3)
-				{
-					// Inert unless ADR_DUMP_BASIS is set: one line per element with its geometry and
-					// (for Gamma_f-cut elements) the affine two-branch basis, for offline analysis.
-					fprintf(stderr, "ADR_BASIS e=%d is=%d if=%d g=%d,%d,%d xy=%.12e,%.12e,%.12e,%.12e,%.12e,%.12e pf=%.12e,%.12e,%.12e ps=%.12e,%.12e,%.12e",
-							eN, icase_s, icase_f, u_l2g.data()[eN * 3 + 0], u_l2g.data()[eN * 3 + 1], u_l2g.data()[eN * 3 + 2],
-							element_nodes[0], element_nodes[1], element_nodes[3], element_nodes[4], element_nodes[6], element_nodes[7],
-							element_phi_f[0], element_phi_f[1], element_phi_f[2], element_phi_s[0], element_phi_s[1], element_phi_s[2]);
-					if (icase_f == 0)
-					{
-						GfType &gf_dump = gf_f_cache[eN];
-						gf_dump.set_quad(0);
-						double jacd[nSpace * nSpace], jacDetd, jacInvd[nSpace * nSpace], xdp, ydp, zdp;
-						ck.calculateMapping_element(eN, 0, mesh_dof.data(), mesh_l2g.data(),
-													mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
-													jacd, jacDetd, jacInvd, xdp, ydp, zdp);
-						fprintf(stderr, " ref=%.12e,%.12e", xdp, ydp);
-						for (int ii = 0; ii < 3; ii++)
-							fprintf(stderr, " VA%d=%.12e,%.12e,%.12e VB%d=%.12e,%.12e,%.12e", ii,
-									gf_dump.VA(ii), gf_dump.VA_x(ii), gf_dump.VA_y(ii), ii,
-									gf_dump.VB(ii), gf_dump.VB_x(ii), gf_dump.VB_y(ii));
-					}
-					fprintf(stderr, "\n");
-				}
 				// Masked root-adjacent edges leak boundary flux H_s doesn't remove (ordinary
 				// hat functions vanish there; two-sided branches don't). Add it back for all 3
 				// local dofs. ADR_DISABLE_TC_EDGE=1 disables (residual+Jacobian).
@@ -1996,51 +1776,12 @@ namespace proteus
 													+ Wb * (-dvnB * (uB - gB) + extNitschePen * mub / h_e * (uB - gB) * vB)) * dS;
 									}
 									globalResidual.data()[offset_u + stride_u * gdof] += contrib;
-									if (gdof == dbgRow)
-									{
-										dbgDelta[4] += contrib;
-										fprintf(stderr, "ADR_ROW_TCEDGE eN=%d face=%d kb=%d t=%.4f Wa=%.6e Wb=%.6e jj=%d fluxA=%.6e fluxB=%.6e contrib=%.6e\n",
-												eN, pj, kb, t, Wa, Wb, jj, fluxA, fluxB, contrib);
-									}
 								}
 							}
 						}
 					}
 				}
 			} // elements
-			if (std::getenv("ADR_DEBUG_DEAD") && embeddedBoundary)
-			{
-				std::vector<char> nf;
-				tcBuildNodeFluid(nf, nElements_global, u_l2g, embeddedBoundary_sdf_nodes, u_dof.size());
-				int nDeadF = 0, nTouch = 0, nDeadAll = 0;
-				const bool dumpCells = std::atoi(std::getenv("ADR_DEBUG_DEAD")) == 2;
-				for (int e = 0; e < nElements_global; e++)
-				{
-					if (dumpCells)
-					{
-						fprintf(stderr, "ADR_CELL e=%d icase_s=%d icase_f=%d touch=%d", e, gf_s_interior_icase[e], gf_f_interior_icase[e],
-								(int)tcDeadOK(2, nf, u_l2g, e));
-						for (int i = 0; i < nDOF_trial_element; i++)
-						{
-							const int g = u_l2g.data()[e * nDOF_trial_element + i];
-							fprintf(stderr, " | g=%d (%.4f,%.4f) ps=%.5f pf=%.5f", g, mesh_dof.data()[g * 3 + 0], mesh_dof.data()[g * 3 + 1],
-									embeddedBoundary_sdf_nodes.data()[g], immersedBoundary_sdf_nodes.data()[g]);
-						}
-						fprintf(stderr, "\n");
-					}
-					if (gf_s_interior_icase[e] == -1)
-						nDeadAll++;
-					if (gf_s_interior_icase[e] == -1 && gf_f_interior_icase[e] == 0)
-					{
-						nDeadF++;
-						if (tcDeadOK(2, nf, u_l2g, e))
-							nTouch++;
-					}
-				}
-				fprintf(stderr, "ADR_DEAD total_cells=%d fully_solid=%d fully_solid_and_cut_by_Gf=%d of_which_touch_a_fluid_bearing_cell=%d never_touch=%d\n",
-						nElements_global, nDeadAll, nDeadF, nTouch, nDeadF - nTouch);
-			}
-			const double dbg_g0 = dbgRowVal();
 			for (std::set<int>::iterator it = cutfem_boundaries.begin(); it != cutfem_boundaries.end();)
 			{
 				if (elementIsActive[elementBoundaryElementsArray[(*it) * 2 + 0]] && elementIsActive[elementBoundaryElementsArray[(*it) * 2 + 1]])
@@ -2148,7 +1889,6 @@ namespace proteus
 							dS = metricTensorDetSqrt * dS_ref.data()[kb_s]; // kb_s mirrors kb: same Gauss weight
 							// compute shape and solution information
 							// shape
-							// std::cout << "Calculating gradTrialFromRef from calculateResidual() 1" << std::endl;
 							ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_int, u_grad_trial_trace);
 							// solution and gradients
 							ck.valFromDOF(u_dof.data(), &u_l2g.data()[eN_nDOF_trial_element], &u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element], u_int);
@@ -2294,8 +2034,6 @@ namespace proteus
 					it = cutfem_boundaries.erase(it);
 				}
 			} // cutfem element boundaries
-			dbgDelta[5] += dbgRowVal() - dbg_g0;
-			const double dbg_s0 = dbgRowVal();
 			// SCIFEM (Ji et al. 2014, eq. 3.7/3.8) symmetric consistency + adjoint-consistency terms
 			// on cut edges: -switch*({{beta grad u}}.n_e*[[v]] + {{beta grad v}}.n_e*[[u]]).
 			// A genuine 1D facet term -- the edge carries its own arc-length measure -- so no Dirac
@@ -2590,8 +2328,6 @@ namespace proteus
 					it = ifem_boundaries.erase(it);
 				}
 			} // ifem element boundaries
-			dbgDelta[6] += dbgRowVal() - dbg_s0;
-			const double dbg_x0 = dbgRowVal();
 			//
 			// loop over exterior element boundaries to calculate surface integrals and load into element and global residuals
 			//
@@ -2687,7 +2423,6 @@ namespace proteus
 					ck.calculateG(jacInv_ext, G, G_dd_G, tr_G);
 					// compute shape and solution information
 					// shape
-					// std::cout << "Calculating gradTrialFromRef from calculateResidual() 3" << std::endl;
 					ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_ext, u_grad_trial_trace);
 					// solution and gradients
 					ck.valFromDOF(u_dof.data(), &u_l2g.data()[eN_nDOF_trial_element], &u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element], u_ext);
@@ -2796,27 +2531,6 @@ namespace proteus
 					globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u[i];
 				} // i
 			} // ebNE
-			if (dbgRow >= 0)
-			{
-				dbgDelta[7] = dbgRowVal() - dbg_x0;
-				fprintf(stderr, "ADR_ROW_SUMMARY row=%d total=%.6e | bulk=%.6e nitsche_pen=%.6e nitsche_cons=%.6e nitsche_adj=%.6e "
-						"tc_edge=%.6e ghost=%.6e scifem=%.6e exterior=%.6e\n",
-						dbgRow, dbgRowVal(), dbgDelta[0], dbgDelta[1], dbgDelta[2], dbgDelta[3],
-						dbgDelta[4], dbgDelta[5], dbgDelta[6], dbgDelta[7]);
-			}
-			if (getenv("ADR_DEBUG_ROWS"))
-			{
-				// Interior nodes only: exterior-boundary rows are overwritten by the strong BC anyway.
-				for (int g = 0; g < (int)u_dof.size(); g++)
-				{
-					const double xg = mesh_dof.data()[g * 3 + 0], yg = mesh_dof.data()[g * 3 + 1];
-					const double rg = globalResidual.data()[offset_u + stride_u * g];
-					if (fabs(xg) < 0.999 && fabs(yg) < 0.999 && fabs(rg) > 1.0e-9)
-						fprintf(stderr, "ADR_ROWS g=%d x=%.6f y=%.6f phi_s=%.6f phi_f=%.6f r=%.6e\n", g, xg, yg,
-								embeddedBoundary ? embeddedBoundary_sdf_nodes.data()[g] : 0.0,
-								immersedBoundary_sdf_nodes.data()[g], rg);
-				}
-			}
 		}
 
 		inline void calculateElementJacobian(int icase_f,
@@ -2979,7 +2693,6 @@ namespace proteus
 				// get metric tensor and friends
 				ck.calculateG(jacInv, G, G_dd_G, tr_G);
 				// get the trial function gradients
-				// std::cout << "    calculating gradTrialfromRef from calculateElementJacobian() "<< std::endl;
 				ck.gradTrialFromRef(&u_grad_trial_ref.data()[k * nDOF_trial_element * nSpace], jacInv, u_grad_trial);
 				// get the solution
 				ck.valFromElementDOF(element_u.data(), &u_trial_ref.data()[k * nDOF_trial_element], u);
@@ -2993,8 +2706,6 @@ namespace proteus
 					{
 						u_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
 						//PGIFEM
-						//ua_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
-						//ub_grad_test_dV[j * nSpace + I] = u_grad_trial[j * nSpace + I] * dV; // cek warning won't work for Petrov-Galerkin
 					}
 				}
 				if (icase_f == 0)
@@ -3009,10 +2720,6 @@ namespace proteus
 						vb[i] = gf_f.VB(i);
 						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
 						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
-						// std::cout << " va[" << i << "]=" << va[i] << std::endl;
-						// std::cout << " vb[" << i << "]=" << vb[i] << std::endl;
-						// std::cout << " va_grad_trial[" << i << "]=" << va_grad_trial[i * nSpace + 0] << "," << va_grad_trial[i * nSpace + 1] << std::endl;
-						// std::cout << " vb_grad_trial[" << i << "]=" << vb_grad_trial[i * nSpace + 0] << "," << vb_grad_trial[i * nSpace + 1] << std::endl;
 					}
 					ck.valFromElementDOF(element_u.data(), va, ua);
 					ck.gradFromElementDOF(element_u.data(), va_grad_trial, grad_ua);
@@ -3037,8 +2744,6 @@ namespace proteus
 							ua_grad_trial[j * nSpace + I] = va_grad_trial[j * nSpace + I];
 							ub_grad_trial[j * nSpace + I] = vb_grad_trial[j * nSpace + I];
 						}
-						// std::cout << " ua_grad_test_dV[" << j << "]=" << ua_grad_test_dV[j * nSpace + 0] << "," << ua_grad_test_dV[j * nSpace + 1] << std::endl;
-						// std::cout << " ub_grad_test_dV[" << j << "]=" << ub_grad_test_dV[j * nSpace + 0] << "," << ub_grad_test_dV[j * nSpace + 1] << std::endl;
 					}
 					if (PG && pgElem)
 					{
@@ -3193,13 +2898,6 @@ namespace proteus
 				// spurious source).
 				if (demoted_f != 0)
 					D_f = 0.0;
-				if (getenv("ADR_DEBUG_ELEM") && eN == atoi(getenv("ADR_DEBUG_ELEM")))
-				{
-					fprintf(stderr, "ADR_DEBUG_ELEM eN=%d k=%d xi=%.10f eta=%.10f x=%.10f y=%.10f "
-							"D_f=%.10e dV=%.10e D_f_dV=%.10e comp_DFa_null=%d\n",
-							eN, k, x_ref.data()[k * 3 + 0], x_ref.data()[k * 3 + 1], x, y,
-							D_f, dV, D_f * dV, comp_DFa == nullptr ? 1 : 0);
-				}
 				if (immersedBoundary)
 				{
 					double level_set_normal[nSpace];
@@ -3365,11 +3063,8 @@ namespace proteus
 						// restructuring -- see the comment there. dr_f/df_f/dham_f are always zero
 						// (updateImmersedBoundaryTerms), so this was a no-op numerically either way,
 						// but kept the wrong (unenriched) test function on the books.
-						// std::cout << "   elementJacobian_u_u[" << i << "," << j << "] = " << elementJacobian_u_u.data()[i * nDOF_trial_element + j];
 					} // j
-					// std::cout << std::endl;
 				} // i
-				// std::cout << std::endl;
 			} // k
 		}
 
@@ -3518,7 +3213,6 @@ namespace proteus
 			std::vector<char> tcNodeFluid;
 			if (tcDeadModeV == 2 && embeddedBoundary)
 				tcBuildNodeFluid(tcNodeFluid, nElements_global, u_l2g, embeddedBoundary_sdf_nodes, u_dof.size());
-			// std::cout << "We are computing the Jacobian...\n" << std::endl;
 			// Per-face reference-ELEMENT quadrature points, taken from proteus' own trace tables.
 			// Simplex::calculate(..., isBoundary=true) reads its xi_r argument as reference *element*
 			// coordinates (it forms x = node0 + Jac_0*xi_r), but xB_ref holds reference *boundary*
@@ -3539,7 +3233,6 @@ namespace proteus
 				}
 			for (int eN = 0; eN < nElements_global; eN++)
 			{
-				// std::cout << "########################\n element: " << eN << " \n########################" << std::endl;
 				// double  elementJacobian_u_u.data()[nDOF_test_element*nDOF_trial_element],element_u[nDOF_trial_element];
 				auto elementJacobian_u_u = proteus::pyarray<double>::from_shape({nDOF_test_element * nDOF_trial_element});
 				auto element_u = proteus::pyarray<double>::from_shape({nDOF_trial_element});
@@ -3565,9 +3258,7 @@ namespace proteus
 				{
 					int eN_i = eN * nDOF_trial_element + i;
 					for (int I = 0; I < 3; I++)
-						// element_nodes[i * 3 + I] = mesh_dof.data()[mesh_l2g.data()[eN_i] * 3 + I];
 						element_nodes[i * 3 + I] = mesh_dof.data()[u_l2g.data()[eN_i] * 3 + I];
-					// std::cout << "element_nodes[" << i << "] = (" << element_nodes[i * 3 + 0] << ", " << element_nodes[i * 3 + 1] << ", " << element_nodes[i * 3 + 2] << ")\n";
 				} // i
 				if (gf_s_interior_gen[eN] != ifemGeometryGeneration)
 				{
@@ -3731,7 +3422,6 @@ namespace proteus
 					{
 						int eN_i_j = eN_i * nDOF_trial_element + j;
 						globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]] += elementJacobian_u_u.data()[i * nDOF_trial_element + j];
-						// std::cout << "globalJacobian[" << eN_i << "," << eN * nDOF_trial_element + j << "] += " << elementJacobian_u_u.data()[i * nDOF_trial_element + j] << std::endl;
 					} // j
 				} // i
 				// Jacobian of the correction above: exact 3x3 block, linear in u_dof through
@@ -3923,7 +3613,6 @@ namespace proteus
 						dS = metricTensorDetSqrt * dS_ref.data()[kb_s]; // kb_s mirrors kb: same Gauss weight
 						// compute shape and solution information
 						// shape
-						// std::cout << "Calculating gradTrialFromRef from calculateJacobian() 1" << std::endl;
 						ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_int, u_grad_trial_trace);
 						for (int i = 0; i < nDOF_test_element; i++)
 						{
@@ -4347,7 +4036,6 @@ namespace proteus
 					ck.calculateG(jacInv_ext, G, G_dd_G, tr_G);
 					// compute shape and solution information
 					// shape
-					// std::cout << "Calculating gradTrialFromRef from calculateJacobian() 3" << std::endl;
 					ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_ext, u_grad_trial_trace);
 					// solution and gradients
 					ck.valFromDOF(u_dof.data(), &u_l2g.data()[eN_nDOF_trial_element], &u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element], u_ext);
