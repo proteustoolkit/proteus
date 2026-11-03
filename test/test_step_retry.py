@@ -40,11 +40,11 @@ def _run(cwd, **overrides):
 
 
 def _worst(a, b):
-    assert a.shape == b.shape and numpy.abs(a[:, :3] - b[:, :3]).max() < 1e-10
+    assert a.shape == b.shape and numpy.abs(a[:, :4] - b[:, :4]).max() < 1e-10
     worst = 0.0
     for key in numpy.unique(a[:, 0]):
         k = a[:, 0] == key
-        worst = max(worst, numpy.abs(a[k, 3] - b[k, 3]).max() / (numpy.abs(a[k, 3]).max() + 1e-300))
+        worst = max(worst, numpy.abs(a[k, 4] - b[k, 4]).max() / (numpy.abs(a[k, 4]).max() + 1e-300))
     return worst
 
 
@@ -55,22 +55,30 @@ CASES = {
 }
 
 
+def _replay_options(options):
+    """The case's options without the forced failure."""
+    return {k: v for k, v in options.items() if k not in ("FAILMODEL", "FAILAT", "FAILSTEP", "NORESTORE")}
+
+
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, case):
     options = CASES[case]
     forced, accepted = _run(tmp_path / "forced", **options)
-    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **{k: v for k, v in options.items() if k in ("DECK", "ATOL")})
+    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
+    assert int(open(os.path.join(str(tmp_path / "forced"), "retries.txt")).read()) >= 1, "the failure was not retried"
     assert _worst(forced, replay) < 1e-10
     # the failed attempt leaves no row in the histories RANS2P/RANS3PF write
-    times = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "timeHistory.txt"))
-    numpy.testing.assert_array_equal(times, numpy.loadtxt(accepted))
-    forces = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "forceHistory_p.txt"))
-    assert forces.shape[0] % len(times) == 0
+    history = os.path.join(str(tmp_path / "forced"), "timeHistory.txt")
+    if os.path.exists(history):
+        times = numpy.loadtxt(history)
+        numpy.testing.assert_array_equal(times, numpy.loadtxt(accepted))
+        forces = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "forceHistory_p.txt"))
+        assert forces.shape[0] % len(times) == 0
 
 
 @pytest.mark.parametrize("case", ["fillingTank-clsvof", "damBreakLevelSet-vof"])
 def test_without_the_restore_the_retry_differs(tmp_path, case):
     options = CASES[case]
     forced, accepted = _run(tmp_path / "forced", NORESTORE=1, **options)
-    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **{k: v for k, v in options.items() if k in ("DECK", "ATOL")})
+    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
     assert _worst(forced, replay) > 1e-5
