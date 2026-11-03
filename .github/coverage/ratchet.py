@@ -27,22 +27,30 @@ TOLERANCE_PP = 0.5
 TOLERANCE_STATEMENTS = 2
 
 
-def module_name(filename):
-    """``proteus/...`` for a file measured in a checkout or in site-packages."""
-    filename = filename.replace(os.sep, '/')
-    if 'site-packages/' in filename:
-        filename = filename.rsplit('site-packages/', 1)[1]
-    elif not filename.startswith('proteus/') and '/proteus/proteus/' in filename:
-        filename = 'proteus/' + filename.rsplit('/proteus/proteus/', 1)[1]
-    return filename
+def module_name(filename, source=''):
+    """``proteus/...`` for a file measured in a checkout or in site-packages.
+
+    A combined report names files relative to its <source> (the checkout's proteus/ directory), a single
+    run's report by their absolute site-packages path; both end in .../proteus/<module path>, and the
+    package has no directory of its own called proteus.
+    """
+    path = filename.replace(os.sep, '/')
+    if source and not path.startswith('/'):
+        path = source.replace(os.sep, '/').rstrip('/') + '/' + path
+    if '/proteus/' in '/' + path:
+        return 'proteus/' + ('/' + path).rsplit('/proteus/', 1)[1]
+    return path
 
 
 def measure(report):
     """{module: (statements, covered)} from a Cobertura report."""
     modules = {}
-    for cls in ET.parse(report).iter('class'):
+    root = ET.parse(report).getroot()
+    sources = [s.text or '' for s in root.iter('source')]
+    source = sources[0] if len(sources) == 1 else ''
+    for cls in root.iter('class'):
         lines = [int(line.get('hits')) for line in cls.iter('line')]
-        name = module_name(cls.get('filename'))
+        name = module_name(cls.get('filename'), source)
         statements, covered = modules.get(name, (0, 0))
         modules[name] = (statements + len(lines), covered + sum(1 for hits in lines if hits > 0))
     return modules
@@ -140,6 +148,12 @@ def main(argv=None):
             floors = json.load(f)
     drops, rises, new, gone = compare(modules, floors)
     sys.stdout.write(tables(modules, drops, rises, new, gone, args.partial))
+    # a report whose module names do not match the floors' checks nothing, and would pass
+    if floors and not args.write_floors and len(set(floors) & set(modules)) < len(floors) // 2:
+        sys.stderr.write('only %d of %d floors name a module in this report (first module: %s): '
+                         'the report and the floors disagree about module names\n'
+                         % (len(set(floors) & set(modules)), len(floors), min(modules) if modules else 'none'))
+        return 1
     if args.write_floors:
         write_floors(args.floors, modules, floors)
         return 0
