@@ -3310,6 +3310,36 @@ class MultilevelRectangularGrid(MultilevelMesh):
         self.elementChildren.append(childrenDict)
 
 
+def _readADHMeshCards(path, cellCard, nCellNodes, adhBase=1):
+    """The cells and nodes of an ADH/SMS mesh file (``.3dm``, ``.2dm``), read by card.
+
+    Returns the node numbers of each ``cellCard`` line (``E3T`` or ``E4T``),
+    shifted to base 0, and a :class:`Node` per ``ND`` line, ordered by node
+    number. The cards a mesh written by SMS or by another tool may also carry
+    (``MESH2D``/``MESH3D``, ``MESHNAME``, nodestrings ``NS``, parameter blocks,
+    ``END``) and blank lines are skipped, wherever they sit.
+    """
+    cells = []
+    nodes = []
+    with open(path, 'r') as meshIn:
+        for line in meshIn:
+            columns = line.split()
+            if not columns:
+                continue
+            if columns[0] == cellCard:
+                cells.append([int(c) - adhBase for c in columns[2:2+nCellNodes]])
+            elif columns[0] == 'ND':
+                nodes.append(Node(int(columns[1]) - adhBase,
+                                  float(columns[2]),
+                                  float(columns[3]),
+                                  float(columns[4])))
+    nodes.sort(key=lambda n: n.N)
+    if [n.N for n in nodes] != list(range(len(nodes))):
+        raise ValueError("%s: ND cards must number the nodes %d..%d without gaps"
+                         % (path, adhBase, adhBase + len(nodes) - 1))
+    logEvent("Read %d %s cells and %d nodes from %s" % (len(cells), cellCard, len(nodes), path))
+    return cells, nodes
+
 class TetrahedralMesh(Mesh):
     """A mesh of tetrahedra.
 
@@ -3574,19 +3604,13 @@ class TetrahedralMesh(Mesh):
         return node
 
     def readMeshADH(self,filename,adhBase=1):
-        meshIn = open(filename+'.3dm','r')
-        firstLine = meshIn.readline()
-        firstWords = firstLine.split()
-        logEvent("Reading object=%s from file=%s" % (firstWords[0],filename))
-        line = meshIn.readline()
-        columns = line.split()
+        cells, self.nodeList = _readADHMeshCards(filename+'.3dm', 'E4T', 4, adhBase)
+        self.nodeDict = dict((n,n) for n in self.nodeList)
         tets = []
         tetEdges=set()
         tetTriangles=set()
         logEvent("Reading "+str(filename)+" and building node lists for tetrahedra,triangles, and edges")
-        #assume test are ordered by tet number
-        while (columns[0] == 'E4T'):
-            nodeNumbers = [int(c) - adhBase for c in columns[2:6]]
+        for nodeNumbers in cells:
             nodeNumbers.sort()
             tets.append(array.array('i',nodeNumbers))
             tetTriangles.update([(nodeNumbers[1],nodeNumbers[2],nodeNumbers[3]),
@@ -3599,19 +3623,6 @@ class TetrahedralMesh(Mesh):
                              (nodeNumbers[1],nodeNumbers[2]),
                              (nodeNumbers[1],nodeNumbers[3]),
                              (nodeNumbers[2],nodeNumbers[3])])
-            line = meshIn.readline()
-            columns = line.split()
-        print("Building node list and dict")
-        #assume nodes are ordered by node number
-        while (len(columns) == 5):
-            newNode = Node(int(columns[1]) - adhBase,
-                           float(columns[2]),
-                           float(columns[3]),
-                           float(columns[4]))
-            self.nodeList.append(newNode)
-            self.nodeDict[newNode]=newNode
-            line = meshIn.readline()
-            columns = line.split()
         print("Number of tetrahedra:"+str(len(tets)))
         print("Number of triangles :"+str(len(tetTriangles)))
         print("Number of edges     :"+str(len(tetEdges)))
@@ -5536,37 +5547,18 @@ Number of nodes : %d\n""" % (self.nElements_global,
         return minfo
 
     def readMeshADH(self,filename,adhBase=1,suffix='3dm'):
-        meshIn = open(filename+'.'+suffix,'r')
-        firstLine = meshIn.readline()
-        firstWords = firstLine.split()
-        print("Reading object=%s from file=%s" % (firstWords[0],filename))
-        line = meshIn.readline()
-        columns = line.split()
+        cells, self.nodeList = _readADHMeshCards(filename+'.'+suffix, 'E3T', 3, adhBase)
+        self.nodeDict = dict((n,n) for n in self.nodeList)
         triangles = []
         triangleEdges=set()
         logEvent("Reading "+str(filename)+ \
                 " and building node lists for triangles, and edges")
-        #assume triangles are ordered by triangle number
-        while (columns[0] == 'E3T'):
-            nodeNumbers = [int(c) - adhBase for c in columns[2:5]]
+        for nodeNumbers in cells:
             nodeNumbers.sort()
             triangles.append(array.array('i',nodeNumbers))
             triangleEdges.update([(nodeNumbers[0],nodeNumbers[1]),
                                   (nodeNumbers[0],nodeNumbers[2]),
                                   (nodeNumbers[1],nodeNumbers[2])])
-            line = meshIn.readline()
-            columns = line.split()
-        print("Building node list and dict")
-        #assume nodes are ordered by node number
-        while (len(columns) == 5):
-            newNode = Node(int(columns[1]) - adhBase,
-                           float(columns[2]),
-                           float(columns[3]),
-                           float(columns[4]))
-            self.nodeList.append(newNode)
-            self.nodeDict[newNode]=newNode
-            line = meshIn.readline()
-            columns = line.split()
         print("Number of triangles :"+str(len(triangles)))
         print("Number of edges     :"+str(len(triangleEdges)))
         print("Number of nodes     :"+str(len(self.nodeList)))

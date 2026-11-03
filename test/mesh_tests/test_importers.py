@@ -7,8 +7,11 @@ with a strict xfail naming why, so a fix shows up as an unexpected pass.
 
 - 3DM (``Mesh3DMDomain``, C++ ``read3DM``): ``importers/cube_3x3x3.3dm``, written
   by proteus's own ``write3dmFiles`` from the 3x3x3 cube, element materials 1, 2, 3.
-- ADH (``readMeshADH``, Python, tetrahedra and triangles): the same 3DM file, and
-  the 2DM fixture ``test/poisson_2d/square4x4.3dm`` that ``test_2dm`` reads.
+- ADH (``readMeshADH``, Python, tetrahedra and triangles): the same 3DM file, the
+  2DM fixture ``test/poisson_2d/square4x4.3dm`` that ``test_2dm`` reads, and
+  ``importers/adh/angle_bt.3dm``, a real AdH/SMS mesh from the public erdc/AdhModel
+  repository (BSD-3-Clause; source and licence in ``importers/adh/``). Each is
+  compared with the C++ reader of the same file (``read3DM``, ``read2DM``).
 - IFISS (``QuadrilateralMesh.generateFromQuadFileIFISS``): ``.mat`` grids made in the
   test, in the reader's own layout and in IFISS 3.7's.
 - NURBS (``MultilevelNURBSMesh``): the box.
@@ -25,6 +28,7 @@ Comm.init()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CUBE_3DM = os.path.join(HERE, "importers", "cube_3x3x3")
+ANGLE_BT = os.path.join(HERE, "importers", "adh", "angle_bt")
 SQUARE_2DM = os.path.join(os.path.dirname(HERE), "poisson_2d", "square4x4")
 
 
@@ -86,22 +90,28 @@ def test_a_3dm_domain_is_meshed_and_partitioned():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, raises=IndexError,
-                   reason="write3dmFiles leaves a blank line between the E4T and ND "
-                          "blocks; read3DM (C++) skips it, readMeshADH stops on it")
+def _adh_nodes(mesh):
+    nodes = mesh.nodeList
+    assert [n.N for n in nodes] == list(range(len(nodes)))
+    return np.array([n.p for n in nodes])
+
+
 def test_the_tetrahedral_adh_reader_reads_what_proteus_writes():
-    MeshTools.TetrahedralMesh().readMeshADH(CUBE_3DM)
+    """write3dmFiles leaves a blank line between the E4T and ND blocks; both readers skip it."""
+    adh = MeshTools.TetrahedralMesh()
+    adh.readMeshADH(CUBE_3DM)
+    c3dm = MeshTools.TetrahedralMesh()
+    c3dm.generateFrom3DMFile(CUBE_3DM)
+    np.testing.assert_array_equal(_adh_nodes(adh), c3dm.nodeArray)
+    assert _as_sets([[n.N for n in T.nodes] for T in adh.tetrahedronList]) == \
+        _as_sets(c3dm.elementNodesArray)
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError,
-                   reason="TetrahedralMesh.readMeshADH appends to self.nodeList, which "
-                          "TetrahedralMesh never creates")
 def test_the_tetrahedral_adh_reader_agrees_with_read3DM(tmp_path):
     """On the 3DM fixture with its blank line removed, the two readers see one mesh.
 
-    Whether one SMS/ADH reader can serve both is an open C7.1 question. Once the
-    reader runs, this is the check: the same nodes and the same cells (the ADH
-    reader sorts each cell's nodes, and drops the material).
+    The same nodes and the same cells (the ADH reader sorts each cell's nodes, and
+    drops the material).
     """
     text = open(CUBE_3DM + ".3dm").read()
     (tmp_path / "cube.3dm").write_text("\n".join(l for l in text.splitlines() if l.strip()) + "\n")
@@ -116,11 +126,61 @@ def test_the_tetrahedral_adh_reader_agrees_with_read3DM(tmp_path):
     assert len(adh.triangleList) == 120 and len(adh.edgeList) == 98
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError,
-                   reason="TriangularMesh.readMeshADH appends to self.nodeList, which "
-                          "TriangularMesh never creates")
+def _compare_2d_readers(filebase):
+    """readMeshADH and read2DM on one file: the same nodes, cells and edges."""
+    adh = MeshTools.TriangularMesh()
+    adh.readMeshADH(filebase)
+    c2dm = MeshTools.TriangularMesh()
+    c2dm.generateFrom2DMFile(filebase)
+    np.testing.assert_array_equal(_adh_nodes(adh), c2dm.nodeArray)
+    assert _as_sets([[n.N for n in t.nodes] for t in adh.triangleList]) == \
+        _as_sets(c2dm.elementNodesArray)
+    assert len(adh.edgeList) == c2dm.nElementBoundaries_global
+    return c2dm
+
+
 def test_the_triangular_adh_reader_reads_the_2dm_fixture():
-    MeshTools.TriangularMesh().readMeshADH(SQUARE_2DM)
+    mesh = _compare_2d_readers(SQUARE_2DM)
+    assert (mesh.nNodes_global, mesh.nElements_global) == (9, 8)
+
+
+def test_both_readers_read_a_real_adh_mesh():
+    """A mesh from erdc/AdhModel, with the cards SMS writes that proteus does not use.
+
+    MESHNAME, a nodestring (NS) and a BEGPARAMDEF..ENDPARAMDEF block are skipped;
+    the mesh is a 250-node, 392-triangle angled channel of area 50,000 m^2.
+    """
+    mesh = _compare_2d_readers(ANGLE_BT)
+    assert (mesh.nNodes_global, mesh.nElements_global, mesh.nElementBoundaries_global,
+            mesh.nExteriorElementBoundaries_global) == (250, 392, 641, 106)
+    x = mesh.nodeArray[mesh.elementNodesArray]
+    a, b = x[:, 1, :2] - x[:, 0, :2], x[:, 2, :2] - x[:, 0, :2]
+    area = 0.5 * np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum()
+    assert area == pytest.approx(50000.0)
+    # the material column is 1 throughout, read as material 0 (index base 1)
+    assert not mesh.elementMaterialTypes.any()
+
+
+@pytest.fixture
+def shared_dir(tmp_path, monkeypatch):
+    """One working directory for every rank (each rank's tmp_path is its own),
+    since rank 0 writes the files the other ranks read."""
+    comm = Comm.get().comm.tompi4py()
+    path = comm.bcast(str(tmp_path) if comm.rank == 0 else None, root=0)
+    monkeypatch.chdir(path)
+    yield path
+    comm.barrier()
+
+
+def test_a_real_adh_mesh_is_meshed_and_partitioned(shared_dir):
+    """The SMS file through Mesh2DMDomain (converted to a ymf mesh, then read),
+    on however many ranks the test runs on."""
+    mlMesh = MeshTools._generateMesh(Domain.Mesh2DMDomain(ANGLE_BT), MeshTools.MeshOptions(nd=2))
+    mesh = mlMesh.meshList[0]
+    assert (mesh.nNodes_global, mesh.nElements_global) == (250, 392)
+    owned = (mesh.elementOffsets_subdomain_owned[Comm.get().rank() + 1]
+             - mesh.elementOffsets_subdomain_owned[Comm.get().rank()])
+    assert Comm.get().comm.tompi4py().allreduce(int(owned)) == 392
 
 
 # --------------------------------------------------------------------------
