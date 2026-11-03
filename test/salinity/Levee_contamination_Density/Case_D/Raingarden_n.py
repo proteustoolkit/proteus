@@ -78,13 +78,13 @@ matrix = SparseMatrix
 #multilevelLinearSolver = LU
 #multilevelLinearSolver = PETSc
 #multilevelLinearSolver = NI
-multilevelLinearSolver = KSP_petsc4py
+multilevelLinearSolver = LU  # direct solve; the compatible transport is serial
 
 
 #levelLinearSolver = LU
 #levelLinearSolver = PETSc
 #levelLinearSolver = MGM
-levelLinearSolver = KSP_petsc4py
+levelLinearSolver = LU
 
 linearSmoother = Jacobi
 linearSmoother = GaussSeidel

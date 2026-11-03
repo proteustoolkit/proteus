@@ -3,6 +3,7 @@ An optimized Advection-Diffusion-Reaction module
 """
 import numpy as np
 import os
+import warnings
 from math import fabs
 import proteus
 from proteus import  cfemIntegrals, Quadrature
@@ -140,6 +141,9 @@ class Coefficients(TC_base):
                  immersedBoundary_fluxJumpVector=None,
                  immersedBoundary_solutionJump=None,
                  immersedBoundary_fluxJumpLift=True,
+                 triplyCut_pinMaskedDofs=True,
+                 triplyCut_edgeFluidSide=False,
+                 triplyCut_edgeBoundaryOnly=False,
                  analyticalSolution=None,
                  test=1.0):
         self.test = test
@@ -209,6 +213,28 @@ class Coefficients(TC_base):
         #   solution jump  [u]          = immersedBoundary_solutionJump(x,t)
         # All default to zero, i.e. a continuous interface with continuous flux.
         self.immersedBoundary_fluxJump=immersedBoundary_fluxJump
+        # Triply-cut cells (both embeddedBoundary and immersedBoundary on; Gamma_s meets Gamma_f inside
+        # the cell). Three choices, formerly the environment variables ADR_DISABLE_TC, ADR_TC_EDGE_FLUID
+        # and ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (False, True, True)
+        # together with immersedSCIFEM_switch=1.
+        #   triplyCut_pinMaskedDofs: pin the raw DOF of a solid-side node of a cut P1 cell to the exact
+        #     solution of its phase (embeddedBoundary_u_inner/_outer) through forceStrongDirichlet.
+        #   triplyCut_edgeFluidSide: take the one-sided Gamma_f edge correction from the fluid side
+        #     (flips its sign in residual and Jacobian).
+        #   triplyCut_edgeBoundaryOnly: keep that correction only on exterior edges; SCIFEM's two-sided
+        #     consistency term handles the interior ones.
+        # The old environment variables still work and override these arguments, with a warning.
+        self.triplyCut_pinMaskedDofs = bool(triplyCut_pinMaskedDofs)
+        self.triplyCut_edgeFluidSide = bool(triplyCut_edgeFluidSide)
+        self.triplyCut_edgeBoundaryOnly = bool(triplyCut_edgeBoundaryOnly)
+        for _env, _attr, _val in (("ADR_DISABLE_TC", "triplyCut_pinMaskedDofs", False),
+                                  ("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
+                                  ("ADR_TC_EDGE_BOUNDARY_ONLY", "triplyCut_edgeBoundaryOnly", True)):
+            # ADR_DISABLE_TC acted only when set to '1'; the other two acted when set at all
+            if (os.environ.get(_env) == '1') if _env == "ADR_DISABLE_TC" else (_env in os.environ):
+                warnings.warn("ADR: environment variable {0} is deprecated; pass {1}={2} to "
+                              "ADR.Coefficients instead".format(_env, _attr, _val), DeprecationWarning)
+                setattr(self, _attr, _val)
         self.immersedBoundary_fluxJumpVector=immersedBoundary_fluxJumpVector
         self.immersedBoundary_solutionJump=immersedBoundary_solutionJump
         # Flux-jump lift: the IFE basis is built for a homogeneous flux jump, and a prescribed
@@ -327,7 +353,7 @@ class Coefficients(TC_base):
         if (self.embeddedBoundary and self.immersedBoundary and femSpace.max_nDOF_element == 3
                 and self.embeddedBoundary_u_inner is not None
                 and self.embeddedBoundary_u_outer is not None
-                and os.environ.get('ADR_DISABLE_TC') != '1'):
+                and self.triplyCut_pinMaskedDofs):
             l2g = femSpace.dofMap.l2g
             _watch = int(os.environ['ADR_DEBUG_NODE']) if os.environ.get('ADR_DEBUG_NODE') else None
             for eN in range(nElements):
@@ -574,6 +600,19 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.dirichletConditions = dofBoundaryConditionsDict
         self.dirichletNodeSetList=None #explicit Dirichlet  conditions for now, no Dirichlet BC constraints
         self.coefficients = coefficients
+        # The ghost-penalty and SCIFEM face terms couple the vertex opposite a face in one element to
+        # the face's other element. With full-overlap assembly a rank owns such a row only if that
+        # other element is local too, which needs two layers of overlap; with one, the face looks
+        # exterior on the rank that owns the row and its contribution is lost.
+        _c = coefficients
+        _faceTerms = ((_c.embeddedBoundary and _c.embeddedBoundary_ghost_penalty != 0.0) or
+                      (_c.immersedBoundary and (_c.immersedSCIFEM_switch != 0.0 or _c.immersedSCIFEM_penalty != 0.0)))
+        _layers = getattr(self.mesh, 'nLayersOfOverlap', None)
+        if _faceTerms and Comm.get().size() > 1 and _layers is not None and _layers < 2:
+            raise ValueError("ADR: the ghost-penalty/SCIFEM face terms need two layers of mesh overlap in "
+                             "parallel, but the mesh has {0}. Set nLayersOfOverlapForParallel = 2 in the n module "
+                             "(and domain.MeshOptions.nLayersOfOverlapForParallel = 2 in the p module)."
+                             .format(_layers))
         self.coefficients.initializeSDF(self.u[0].femSpace)
         # Level sets as ordinary finite element functions, purely so they land in the
         # h5/xmf archive next to the solution and can be contoured in ParaView. The
@@ -889,6 +928,35 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                                compKernelFlag)
     def calculateCoefficients(self):
         pass
+
+    def _mesh_l2g(self):
+        """Vertex numbers of each element in the numbering of the mesh_dof array.
+
+        For P1, mesh_dof is the node array and the vertices are the element's nodes. For P2,
+        mesh_dof is the dof map's Lagrange-node array (the kernel also reads it through u_l2g for
+        the cut geometry), so the vertices must be the element's vertex dofs, the first entries of
+        each row of the dof map. Node numbers coincide with those only in serial, where vertex dofs
+        are numbered first; on a partitioned mesh they did not, and P2 elements were mapped with the
+        coordinates of other points (NaN residual on 2 ranks). Arrays the kernel reads through
+        mesh_l2g must be in the same numbering (see _nodeDiameters).
+        """
+        if self.u[0].femSpace.max_nDOF_element == 3:
+            return self.mesh.elementNodesArray
+        if getattr(self, '_mesh_l2g_vertices', None) is None:
+            nV = self.mesh.elementNodesArray.shape[1]
+            self._mesh_l2g_vertices = np.ascontiguousarray(self.u[0].femSpace.dofMap.l2g[:, :nV])
+        return self._mesh_l2g_vertices
+
+    def _nodeDiameters(self):
+        """mesh.nodeDiametersArray in the numbering of _mesh_l2g, which the kernel reads it through
+        (the Nitsche penalty length h_phi). For P2 that is the vertex dofs, not the nodes."""
+        if self.u[0].femSpace.max_nDOF_element == 3:
+            return self.mesh.nodeDiametersArray
+        if getattr(self, '_nodeDiameters_vertices', None) is None:
+            d = np.zeros((self.u[0].femSpace.dim,), 'd')
+            d[self._mesh_l2g()] = self.mesh.nodeDiametersArray[self.mesh.elementNodesArray]
+            self._nodeDiameters_vertices = d
+        return self._nodeDiameters_vertices
     # 4-point Gauss-Legendre abscissae on [0,1], used to hand the kernel the exterior Dirichlet data of
     # each phase along an exterior edge (ADR_EXT_NITSCHE). Edge parameter t runs from the lower to the
     # higher global node number of the edge.
@@ -939,8 +1007,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         # ToDo: Have lagrange nodes for all DOFmaps. 
         argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
-        # argsDict["mesh_dof"] = self.mesh.nodeArray
-        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints
         argsDict["dV_ref"] = self.elementQuadratureWeights[('u',0)]
@@ -950,7 +1017,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["u_grad_test_ref"] = self.u[0].femSpace.grad_psi
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["cfl"] = self.q[('cfl',0)]
         argsDict["Ct_sge"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
@@ -966,6 +1033,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["normal_ref"] = self.u[0].femSpace.elementMaps.boundaryNormals
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["nElements_owned"] = int(self.mesh.nElements_owned)
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["u_dof"] = self.u[0].dof
@@ -1020,6 +1088,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
         argsDict["immersedSCIFEM_penalty"] = self.coefficients.immersedSCIFEM_penalty
+        argsDict["triplyCut_edgeFluidSide"] = int(self.coefficients.triplyCut_edgeFluidSide)
+        argsDict["triplyCut_edgeBoundaryOnly"] = int(self.coefficients.triplyCut_edgeBoundaryOnly)
         argsDict["PG"] = self.coefficients.PG
         argsDict["immersedBoundary_sdf_nodes"] = self.coefficients.immersedBoundary_sdf_nodes
         argsDict["immersedBoundary_sdf_q"] = self.q['immersedBoundary_sdf']
@@ -1027,7 +1097,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_u_q"] = self.q['immersedBoundary_u']
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
@@ -1114,8 +1184,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
-        # argsDict["mesh_dof"] = self.mesh.nodeArray
-        argsDict["mesh_l2g"] = self.mesh.elementNodesArray
+        argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints
         argsDict["dV_ref"] = self.elementQuadratureWeights[('u',0)]
@@ -1125,7 +1194,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["u_grad_test_ref"] = self.u[0].femSpace.grad_psi
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["cfl"] = self.q[('cfl',0)]
         argsDict["Ct_sge"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
@@ -1194,6 +1263,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_penalty"] = self.coefficients.immersedBoundary_penalty
         argsDict["immersedSCIFEM_switch"] = self.coefficients.immersedSCIFEM_switch
         argsDict["immersedSCIFEM_penalty"] = self.coefficients.immersedSCIFEM_penalty
+        argsDict["triplyCut_edgeFluidSide"] = int(self.coefficients.triplyCut_edgeFluidSide)
+        argsDict["triplyCut_edgeBoundaryOnly"] = int(self.coefficients.triplyCut_edgeBoundaryOnly)
         argsDict["PG"] = self.coefficients.PG
         argsDict["immersedBoundary_sdf_nodes"] = self.coefficients.immersedBoundary_sdf_nodes
         argsDict["immersedBoundary_sdf_q"] = self.q['immersedBoundary_sdf']
@@ -1201,7 +1272,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_u_q"] = self.q['immersedBoundary_u']
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
+        argsDict["nodeDiametersArray"] = self._nodeDiameters()
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']

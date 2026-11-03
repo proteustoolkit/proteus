@@ -54,6 +54,8 @@ domainUS.boundaryTags = domainR.boundaryTags
 domain = domainR
 if opts.unstructured:
     domain = domainUS    
+# The ghost-penalty and SCIFEM face terms need two layers of overlap in parallel (see ADR.LevelModel).
+domain.MeshOptions.nLayersOfOverlapForParallel = 2  # the n module's value is copied over it
 a0=1.0
 if opts.test == 2.0:
     a0 = 10.0

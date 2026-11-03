@@ -62,8 +62,20 @@ opts = Context.Options([
     ("pOrder", 1, "order of FEM basis (default is 1)"),
     ("usePetsc", False, "Use PETSc linear solvers"),
     ("name", "ladr_3p_2d", "name of the test (default is ladr_3p_2d)"),
-    ("immersedSCIFEM_switch", 0.0, "switch (0/1) for the SCIFEM interface consistency terms"),
-    ("immersedSCIFEM_penalty", 0.0, "coefficient gamma of the interior-penalty stabilization"),
+    ("paper", False, "use the settings of the hybrid CutFEM-IFEM manuscript for every knob below left at\n"
+     "        None: immersedSCIFEM_switch=1, immersedSCIFEM_penalty=0 (p=1) / 100 (p=2),\n"
+     "        embeddedPenalty=10*p^2, embeddedGhostPenalty=0.15, tcPinMaskedDofs=False,\n"
+     "        tcEdgeFluidSide=True, tcEdgeBoundaryOnly=True. With the default qOrder (6 for p=1,\n"
+     "        8 for p=2), test=2.0 nCells=10*2**k gives the structured column of Table 1.\n"
+     "        False: the earlier defaults (in brackets below)."),
+    ("immersedSCIFEM_switch", None, "switch (0/1) for the SCIFEM interface consistency terms [0]"),
+    ("immersedSCIFEM_penalty", None, "coefficient gamma of the interior-penalty stabilization [0]"),
+    ("tcPinMaskedDofs", None, "triply-cut P1 cells: pin solid-side DOFs to the exact solution of their phase\n"
+     "        (ADR.Coefficients triplyCut_pinMaskedDofs) [True]"),
+    ("tcEdgeFluidSide", None, "triply-cut cells: one-sided Gamma_f edge correction from the fluid side\n"
+     "        (ADR.Coefficients triplyCut_edgeFluidSide) [False]"),
+    ("tcEdgeBoundaryOnly", None, "triply-cut cells: keep that correction on exterior edges only\n"
+     "        (ADR.Coefficients triplyCut_edgeBoundaryOnly) [False]"),
     ("interfaceSlope", 1.0, "slope m of the fluid-fluid interface y = m*x + interfaceOffset."),
     ("interfaceOffset", 1.0/3.0, "intercept c of the interface y = m*x + c.\n"
         "Two regimes, and BOTH must work:\n"
@@ -93,7 +105,7 @@ opts = Context.Options([
     ("solidCenterY", 1.0/3.0, "y-coordinate of the solid object's center. The solid sits at "
                               "(0, solidCenterY), so setting this equal to interfaceOffset puts its "
                               "centre on the interface and makes it straddle."),
-    ("embeddedPenalty", 10.0, "Nitsche Dirichlet penalty on the embedded (solid) boundary. A"
+    ("embeddedPenalty", None, "[10] Nitsche Dirichlet penalty on the embedded (solid) boundary. A"
         " penalty this large relative to h grows unboundedly as O(1/h) (see updateEmbeddedBoundaryTerms's"
         " embeddedBoundary_penalty/h_phi), which is required for coercivity but also degrades"
         " conditioning at fine mesh; 100.0 (the old default) visibly softened the L-infinity"
@@ -101,7 +113,7 @@ opts = Context.Options([
         " Newton's one-step convergence. 10.0 removes that softening in every test checked"
         " (see claude_addition.tex Sec. Numerical validation) while still converging cleanly;"
         " it has not been pushed lower to find where stability actually breaks."),
-    ("embeddedGhostPenalty", 0.1, "ghost penalty coefficient on cutfem (solid) cut edges"),
+    ("embeddedGhostPenalty", None, "ghost penalty coefficient on cutfem (solid) cut edges [0.1]"),
     ("robin_h_water", 600.0, "test=3.0 only: convective heat-transfer coefficient on the water\n"
         "        (mua) side of Gamma_s, W/(m^2 K) -- natural convection in water\n"
         "        (Incropera & DeWitt, Fundamentals of Heat and Mass Transfer, Table 1.1)."),
@@ -148,6 +160,20 @@ opts = Context.Options([
 
 name = opts.name
 nd = 2
+
+# Resolve the knobs left at None: the manuscript's settings with paper=True, the earlier defaults otherwise.
+_p = opts.pOrder
+_knob_defaults = {
+    "immersedSCIFEM_switch":  (0.0,   1.0),
+    "immersedSCIFEM_penalty": (0.0,   100.0 if _p == 2 else 0.0),
+    "embeddedPenalty":        (10.0,  10.0*_p**2),
+    "embeddedGhostPenalty":   (0.1,   0.15),
+    "tcPinMaskedDofs":        (True,  False),
+    "tcEdgeFluidSide":        (False, True),
+    "tcEdgeBoundaryOnly":     (False, True),
+}
+knobs = {k: (getattr(opts, k) if getattr(opts, k) is not None else v[1 if opts.paper else 0])
+         for k, v in _knob_defaults.items()}
 L=(2.0,2.0)
 x0 = (-1.0,-1.0)
 if opts.unstructured:
@@ -159,6 +185,8 @@ domainUS.boundaryTags = domainR.boundaryTags
 domain = domainR
 if opts.unstructured:
     domain = domainUS
+# The ghost-penalty and SCIFEM face terms need two layers of overlap in parallel (see ADR.LevelModel).
+domain.MeshOptions.nLayersOfOverlapForParallel = 2  # the n module's value is copied over it
 a0=1.0
 b0 = 0.0
 A0_1c={0:numpy.array([[a0,0],[0,a0]])}
@@ -563,8 +591,8 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 mub=mub,
                                 jf=jf,
                                 embeddedBoundary=True,
-                                embeddedBoundary_penalty=opts.embeddedPenalty,
-                                embeddedBoundary_ghost_penalty=opts.embeddedGhostPenalty,
+                                embeddedBoundary_penalty=knobs['embeddedPenalty'],
+                                embeddedBoundary_ghost_penalty=knobs['embeddedGhostPenalty'],
                                 embeddedBoundary_sdf=solidBoundary_sdf,
                                 embeddedBoundary_u=embeddedBoundary_u,
                                 embeddedBoundary_u_inner=embeddedBoundary_u_inner,
@@ -581,8 +609,11 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 immersedBoundary_fluxJump=immersedBoundary_fluxJump,
                                 immersedBoundary_fluxJumpLift=opts.fluxLift,
                                 immersedBoundary_penalty=0.0,
-                                immersedSCIFEM_switch=opts.immersedSCIFEM_switch,
-                                immersedSCIFEM_penalty=opts.immersedSCIFEM_penalty,
+                                immersedSCIFEM_switch=knobs['immersedSCIFEM_switch'],
+                                immersedSCIFEM_penalty=knobs['immersedSCIFEM_penalty'],
+                                triplyCut_pinMaskedDofs=knobs['tcPinMaskedDofs'],
+                                triplyCut_edgeFluidSide=knobs['tcEdgeFluidSide'],
+                                triplyCut_edgeBoundaryOnly=knobs['tcEdgeBoundaryOnly'],
                                 PG=opts.PG,
                                 analyticalSolution=analyticalSolution)
 
