@@ -69,7 +69,7 @@ fullNewtonFlag = True
 
 tolFac = 0.0
 
-nl_atol_res = 1.0e-2
+nl_atol_res = 1.0e-8  # the transport inherits this fluid budget error (was 1e-2)
 
 maxNonlinearIts = 30#1001
 maxLineSearches =0
@@ -79,13 +79,13 @@ matrix = SparseMatrix
 #multilevelLinearSolver = LU
 #multilevelLinearSolver = PETSc
 #multilevelLinearSolver = NI
-multilevelLinearSolver = KSP_petsc4py
+multilevelLinearSolver = LU  # direct solve; the compatible transport is serial
 
 
 #levelLinearSolver = LU
 #levelLinearSolver = PETSc
 #levelLinearSolver = MGM
-levelLinearSolver = KSP_petsc4py
+levelLinearSolver = LU
 
 linearSmoother = Jacobi
 linearSmoother = GaussSeidel
