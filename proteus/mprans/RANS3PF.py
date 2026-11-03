@@ -1119,27 +1119,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                         if self.model.isActiveDOF[dof] < 0.5:
                             self.model.u[ci].dof[ci_g_dof] = vel_at_xyz[ci]
         if self.model.comm.isMaster():
-            self.timeHistory.write("%21.16e\n" % (t,))
-            self.timeHistory.flush()
-            self.wettedAreaHistory.write("%21.16e\n" % (self.wettedAreas[-1],))
-            self.wettedAreaHistory.flush()
-            self.forceHistory_p.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))
-            self.forceHistory_p.flush()
-            self.forceHistory_v.write("%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[-1, :]))
-            self.forceHistory_v.flush()
-            self.momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[-1, :]))
-            self.momentHistory.flush()
+            self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
+            self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[-1],))
+            self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))
+            self.deferWrite(self.forceHistory_v, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[-1, :]))
+            self.deferWrite(self.momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[-1, :]))
             if self.nParticles:
-                self.particle_surfaceAreaHistory.write("%21.16e\n" % tuple(self.particle_surfaceArea[:]))
-                self.particle_surfaceAreaHistory.flush()
-                self.particle_forceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
-                self.particle_forceHistory.flush()
-                self.particle_pforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
-                self.particle_pforceHistory.flush()
-                self.particle_vforceHistory.write("%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
-                self.particle_vforceHistory.flush()
-                self.particle_momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
-                self.particle_momentHistory.flush()
+                self.deferWrite(self.particle_surfaceAreaHistory, "%21.16e\n" % tuple(self.particle_surfaceArea[:]))
+                self.deferWrite(self.particle_forceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0, :]))
+                self.deferWrite(self.particle_pforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+self.nParticles, :]))
+                self.deferWrite(self.particle_vforceHistory, "%21.16e %21.16e %21.16e\n" % tuple(self.particle_netForces[0+2*self.nParticles, :]))
+                self.deferWrite(self.particle_momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.particle_netMoments[0, :]))
 
     def archiveFields(self, lm):
         """Archive the solid-phase signed distance alongside the solution.
@@ -2249,14 +2239,20 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         """Replace the ghost entries of a velocity-space dof array by the owners' values (in place)."""
         if self.comm.size() == 1:
             return
-        par = self._dofVecs.get(id(a))
-        if par is None:
+        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
+        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
             dofMap = self.u[0].femSpace.dofMap
             rank = self.comm.rank()
             nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            par = self._dofVecs[id(a)] = ParVec_petsc4py(
-                a, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global)
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
         par.scatter_forward_insert()
+        a[:] = buf
 
     def updateSmoothnessIndicator(self):
         """Smoothness indicator psi of ARTIFICIAL_VISCOSITY=3, from the lagged star velocities.

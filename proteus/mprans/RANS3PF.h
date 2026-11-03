@@ -4231,9 +4231,13 @@ namespace proteus
                 //
                 if (ebN < nElementBoundaries_owned)
                   {
-                    force_v_x = (flux_mom_u_adv_ext + flux_mom_uu_diff_ext + flux_mom_uv_diff_ext + flux_mom_uw_diff_ext)/dmom_u_ham_grad_p_ext[0];//same as *rho
-                    force_v_y = (flux_mom_v_adv_ext + flux_mom_vu_diff_ext + flux_mom_vv_diff_ext + flux_mom_vw_diff_ext)/dmom_u_ham_grad_p_ext[0];
-                    force_v_z = (flux_mom_w_adv_ext + flux_mom_wu_diff_ext + flux_mom_wv_diff_ext + flux_mom_ww_diff_ext)/dmom_u_ham_grad_p_ext[0];
+                    // the momentum fluxes carry phi_s_effect*porosity (dmom_u_acc_u = phi_s_effect*rho*porosity); dmom_u_ham_grad_p
+                    // is that times aux_pressure, which is 0 when the pressure is integrated by parts or killed (the projection
+                    // scheme), so dividing by it made every viscous force and moment NaN
+                    const double flux_scaling_ext = dmom_u_acc_u_ext/ebqe_rho[ebNE_kb];
+                    force_v_x = (flux_mom_u_adv_ext + flux_mom_uu_diff_ext + flux_mom_uv_diff_ext + flux_mom_uw_diff_ext)/flux_scaling_ext;
+                    force_v_y = (flux_mom_v_adv_ext + flux_mom_vu_diff_ext + flux_mom_vv_diff_ext + flux_mom_vw_diff_ext)/flux_scaling_ext;
+                    force_v_z = (flux_mom_w_adv_ext + flux_mom_wu_diff_ext + flux_mom_wv_diff_ext + flux_mom_ww_diff_ext)/flux_scaling_ext;
 
                     force_p_x = p_ext*normal[0];
                     force_p_y = p_ext*normal[1];

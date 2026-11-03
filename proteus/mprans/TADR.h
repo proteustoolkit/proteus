@@ -32,7 +32,9 @@ namespace proteus
   // the current Newton iterate and contribute to the Jacobian, so it is NOT
   // CFL-limited.  The Jacobian is assembled in calculateJacobian (a separate
   // function), NOT inside calculateResidual as Richards does.
-  enum class STABILIZATION : int { Galerkin=-1, VMS=0, TaylorGalerkinEV=1, EntropyViscosity=2, SmoothnessIndicator=3, Kuzmin=4, ImplicitEV=5};
+  // Compatible=6: implicit transport driven by the flow model's realized exchanges; see
+  // calculateResidual_compatible.
+  enum class STABILIZATION : int { Galerkin=-1, VMS=0, TaylorGalerkinEV=1, EntropyViscosity=2, SmoothnessIndicator=3, Kuzmin=4, ImplicitEV=5, Compatible=6};
   enum class ENTROPY : int { POWER=0, LOG=1};
   enum class DISPERSION : int { Constant=0, PowerLawSaturation=1, VelocityBased=2};
   // Power entropy //
@@ -72,6 +74,9 @@ namespace proteus
     virtual void calculateJacobian(arguments_dict& args)=0;
     virtual void invert(arguments_dict& args)=0;
     virtual void FCTStep(arguments_dict& args)=0;
+    virtual void calculateResidual_compatible(arguments_dict& args)=0;
+    virtual void reconstructFlux_compatible(arguments_dict& args)=0;
+    virtual void FCTStep_compatible(arguments_dict& args)=0;
   };
 
   template<class CompKernelType,
@@ -576,6 +581,11 @@ inline
       const int phase = args.scalar<int>("phase");
       proteus::pyarray<double>& psi_dof = args.array<double>("psi_dof");
       proteus::pyarray<double>& global_entropy_residual_dof = args.array<double>("global_entropy_residual_dof");
+      // The projected nodal porosity of a ghost dof sums only the elements this rank has, which do not cover its
+      // support, and the edge loops of an owned dof read it at the neighbours (m_dof[j], theta_dof_proj[j]).
+      // Phase -1 stops after the projection and writes it to theta_dof; Python scatters it from the owners and
+      // the later phases take those values (the owned ones are the numbers this rank computed).
+      proteus::pyarray<double>& theta_dof = args.array<double>("theta_dof");
       
       double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
       const double eps_rho = (rho_s - rho_f)/rho_f;
@@ -643,6 +653,17 @@ inline
               const double un_i = u_dof_old.data()[i];
               rho_dof_proj[i] = rho_f*(1.0 + eps_rho*un_i);
               m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*un_i;
+            }
+          if (phase == -1)
+            {
+              for (int i=0; i<numDOFs; i++)
+                theta_dof.data()[i] = theta_dof_proj[i];
+              return;
+            }
+          for (int i=0; i<numDOFs; i++)
+            {
+              theta_dof_proj[i] = theta_dof.data()[i];
+              m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*u_dof_old.data()[i];
             }
           // compute entropy and init global_entropy_residual and boundary_integral
           psi.resize(numDOFs,0.0);
@@ -2660,6 +2681,17 @@ inline
       if (ML_proj[i] > 1.0e-14) { theta_dof[i] /= ML_proj[i]; rho_dof[i] /= ML_proj[i]; }
       else { theta_dof[i] = 1.0; rho_dof[i] = rho_f; }
     }
+    // The projection of a ghost dof sums only the elements this rank has, and the limiter of an owned dof reads
+    // theta_j. Phase -1 writes the projection to theta_dof_out and returns; Python scatters it from the owners and
+    // phases 0 and 1 take those values.
+    if (phase == -1)
+      {
+        for (int i=0; i<numDOFs; i++)
+          theta_dof_out.data()[i] = theta_dof[i];
+        return;
+      }
+    for (int i=0; i<numDOFs; i++)
+      theta_dof[i] = theta_dof_out.data()[i];
     if (phase == 0)
       {
         // resize also zeroes, so phase 1 must not do it: it needs the matrix phase 0 filled
@@ -2783,6 +2815,335 @@ inline
         theta_dof_out.data()[i] = theta_dof[i];
       }
     }//FCTStep
+
+    //////////////////////////////////////////////////////////////////////
+    // STABILIZATION_TYPE=Compatible: transport driven by the realized   //
+    // fluid exchanges of the flow step (Barua & Kees, Sec. 2.2).        //
+    //                                                                   //
+    // Flow exports, per step, the antisymmetric edge exchanges          //
+    // Fhat_ij = E_ij (fluid mass rate into i from j) and the nodal      //
+    // masses m^n, m^{n+1}. The transport carries the storage            //
+    //   M^{n+1} = M^n + (m^{n+1} - m^n),   M^0 = m^0,                   //
+    // and B_i = M_L,i (M^{n+1}_i - M^n_i)/dt - sum_j Fhat_ij closes the  //
+    // fluid balance exactly (boundary exchange plus solver residual).   //
+    // Low order (backward Euler), cancelled form at free nodes:         //
+    //   R_i = M_L,i M^n_i (c_i - c^n_i)/dt - sum_j gamma_ij (c_j - c_i)  //
+    //         - B^+_i (c_in,i - c_i),                                    //
+    //   gamma_ij = max(Fhat_ij,0) + max(0, -d_ij - |Fhat_ij|/2) >= 0,    //
+    // d_ij = int theta rho_T(c_h) D(v_h) grad w_j . grad w_i, so a       //
+    // constant c is reproduced exactly whatever the flow does. Strong   //
+    // Dirichlet rows: R_i = c_i - c_D,i. The Jacobian (computeJacobian) //
+    // freezes gamma (Picard in the dispersion's rho_T(c)).              //
+    //////////////////////////////////////////////////////////////////////
+    void calculateResidual_compatible(arguments_dict& args)
+    {
+      const double dt = args.scalar<double>("dt");
+      const int numDOFs = args.scalar<int>("numDOFs");
+      const int nElements_global = args.scalar<int>("nElements_global");
+      proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
+      proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
+      proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
+      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
+      proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
+      proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
+      proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
+      proteus::pyarray<int>& r_l2g = args.array<int>("r_l2g");
+      proteus::pyarray<int>& a_rowptr = args.array<int>("a_rowptr");
+      proteus::pyarray<int>& a_colind = args.array<int>("a_colind");
+      const double alpha_L = args.scalar<double>("alpha_L");
+      const double alpha_T = args.scalar<double>("alpha_T");
+      const double Dm = args.scalar<double>("Dm");
+      const double rho_f = args.scalar<double>("rho_f");
+      const double rho_s = args.scalar<double>("rho_s");
+      proteus::pyarray<double>& q_porosity = args.array<double>("q_porosity");
+      proteus::pyarray<double>& q_velocity_dispersion = args.array<double>("q_velocity_dispersion");
+      proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
+      proteus::pyarray<double>& u_dof_old = args.array<double>("u_dof_old");
+      proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
+      proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+      proteus::pyarray<int>& csrRowIndeces_CellLoops = args.array<int>("csrRowIndeces_CellLoops");
+      proteus::pyarray<int>& csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
+      proteus::pyarray<double>& ML = args.array<double>("ML");
+      proteus::pyarray<double>& Fhat = args.array<double>("Fhat");
+      proteus::pyarray<double>& Mn = args.array<double>("Mn");
+      proteus::pyarray<double>& B = args.array<double>("B");
+      proteus::pyarray<double>& cin = args.array<double>("cin");
+      proteus::pyarray<double>& bc_mask = args.array<double>("bc_mask");
+      proteus::pyarray<double>& cD = args.array<double>("cD");
+      proteus::pyarray<double>& dDispersion = args.array<double>("dDispersion");
+      proteus::pyarray<double>& globalResidual = args.array<double>("globalResidual");
+      const int computeJacobian = args.scalar<int>("computeJacobian");
+      proteus::pyarray<double>& globalJacobian = args.array<double>("globalJacobian");
+      std::valarray<double> c(numDOFs), cn(numDOFs);
+      for (int eN=0; eN<nElements_global; eN++)
+        for (int j=0; j<nDOF_trial_element; j++)
+          {
+            const int eN_j = eN*nDOF_trial_element + j;
+            c[r_l2g.data()[eN_j]] = u_dof.data()[u_l2g.data()[eN_j]];
+            cn[r_l2g.data()[eN_j]] = u_dof_old.data()[u_l2g.data()[eN_j]];
+          }
+      // dispersion matrix d_ij(c)
+      std::fill(dDispersion.begin(), dDispersion.end(), 0.0);
+      for (int eN=0; eN<nElements_global; eN++)
+        {
+          double elementDispersion[nDOF_test_element][nDOF_trial_element];
+          for (int i=0; i<nDOF_test_element; i++)
+            for (int j=0; j<nDOF_trial_element; j++)
+              elementDispersion[i][j] = 0.0;
+          for (int k=0; k<nQuadraturePoints_element; k++)
+            {
+              const int eN_k = eN*nQuadraturePoints_element + k;
+              double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z;
+              double u_grad_trial[nDOF_trial_element*nSpace], u_grad_test_dV[nDOF_test_element*nSpace];
+              ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
+                                          jac, jacDet, jacInv, x, y, z);
+              const double dV = fabs(jacDet)*dV_ref.data()[k];
+              ck.gradTrialFromRef(&u_grad_trial_ref.data()[k*nDOF_trial_element*nSpace], jacInv, u_grad_trial);
+              double u = 0.0;
+              ck.valFromDOF(u_dof.data(), &u_l2g.data()[eN*nDOF_trial_element], &u_trial_ref.data()[k*nDOF_trial_element], u);
+              for (int j=0; j<nDOF_trial_element; j++)
+                for (int I=0; I<nSpace; I++)
+                  u_grad_test_dV[j*nSpace+I] = u_grad_trial[j*nSpace+I]*dV;
+              double rho_out, m, dm, f[nSpace], df[nSpace], a[nnz], da[nnz];
+              evaluateCoefficients(a_rowptr.data(), a_colind.data(), &q_velocity_dispersion.data()[eN_k*nSpace],
+                                   alpha_L, alpha_T, Dm, q_porosity.data()[eN_k], rho_f, rho_s, u,
+                                   rho_out, m, dm, f, df, a, da);
+              for (int i=0; i<nDOF_test_element; i++)
+                for (int j=0; j<nDOF_trial_element; j++)
+                  elementDispersion[i][j] += ck.SimpleDiffusionJacobian_weak(a_rowptr.data(), a_colind.data(), a,
+                                                                              &u_grad_trial[j*nSpace], &u_grad_test_dV[i*nSpace]);
+            }
+          for (int i=0; i<nDOF_test_element; i++)
+            {
+              const int eN_i = eN*nDOF_test_element + i;
+              for (int j=0; j<nDOF_trial_element; j++)
+                dDispersion.data()[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j]]
+                  += elementDispersion[i][j];
+            }
+        }
+      // edge loop
+      for (int i=0; i<numDOFs; i++)
+        {
+          if (bc_mask.data()[i] == 0.0)
+            {
+              globalResidual.data()[i] = c[i] - cD.data()[i];
+              if (computeJacobian)
+                for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+                  globalJacobian.data()[offset] = (csrColumnOffsets_DofLoops.data()[offset] == i) ? 1.0 : 0.0;
+              continue;
+            }
+          const double Bpos = fmax(B.data()[i], 0.0);
+          const double storage = ML.data()[i]*Mn.data()[i]/dt;
+          double res = storage*(c[i] - cn[i]) - Bpos*(cin.data()[i] - c[i]);
+          double jac_ii = storage + Bpos;
+          int ii = -1;
+          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+            {
+              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              if (j == i)
+                {
+                  ii = offset;
+                  continue;
+                }
+              const double F = Fhat.data()[offset];
+              const double gamma = fmax(F, 0.0) + fmax(0.0, -dDispersion.data()[offset] - 0.5*fabs(F));
+              res -= gamma*(c[j] - c[i]);
+              jac_ii += gamma;
+              if (computeJacobian)
+                globalJacobian.data()[offset] = -gamma;
+            }
+          globalResidual.data()[i] = res;
+          if (computeJacobian)
+            globalJacobian.data()[ii] = jac_ii;
+        }
+    }
+
+    // Piecewise constant mass flux q_h with int q_h . grad w_i = sum_j E_ij (Sec. 2.2, compatibility
+    // conditions). Each edge exchange is split among the elements sharing the edge in proportion to
+    // |K^e_ij|, K^e the element Laplacian (equal shares where every |K^e_ij| vanishes); within a simplex
+    // the d+1 element moments then sum to zero and determine q_e uniquely. Used for the dispersion only.
+    void reconstructFlux_compatible(arguments_dict& args)
+    {
+      const int nElements_global = args.scalar<int>("nElements_global");
+      proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
+      proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
+      proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
+      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
+      proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
+      proteus::pyarray<int>& csrRowIndeces_CellLoops = args.array<int>("csrRowIndeces_CellLoops");
+      proteus::pyarray<int>& csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
+      proteus::pyarray<double>& Espatial = args.array<double>("Espatial");
+      proteus::pyarray<double>& edgeWeight = args.array<double>("edgeWeight");
+      proteus::pyarray<double>& edgeCount = args.array<double>("edgeCount");
+      proteus::pyarray<double>& element_q = args.array<double>("element_q");
+      std::vector<double> gradInt(nElements_global*nDOF_trial_element*nSpace, 0.0), K(nElements_global*nDOF_test_X_trial_element, 0.0);
+      for (int eN=0; eN<nElements_global; eN++)
+        for (int k=0; k<nQuadraturePoints_element; k++)
+          {
+            double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z, u_grad_trial[nDOF_trial_element*nSpace];
+            ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
+                                        jac, jacDet, jacInv, x, y, z);
+            const double dV = fabs(jacDet)*dV_ref.data()[k];
+            ck.gradTrialFromRef(&u_grad_trial_ref.data()[k*nDOF_trial_element*nSpace], jacInv, u_grad_trial);
+            for (int i=0; i<nDOF_trial_element; i++)
+              {
+                for (int I=0; I<nSpace; I++)
+                  gradInt[(eN*nDOF_trial_element + i)*nSpace + I] += u_grad_trial[i*nSpace+I]*dV;
+                for (int j=0; j<nDOF_trial_element; j++)
+                  for (int I=0; I<nSpace; I++)
+                    K[eN*nDOF_test_X_trial_element + i*nDOF_trial_element + j] += u_grad_trial[i*nSpace+I]*u_grad_trial[j*nSpace+I]*dV;
+              }
+          }
+      std::fill(edgeWeight.begin(), edgeWeight.end(), 0.0);
+      std::fill(edgeCount.begin(), edgeCount.end(), 0.0);
+      for (int eN=0; eN<nElements_global; eN++)
+        for (int i=0; i<nDOF_test_element; i++)
+          {
+            const int eN_i = eN*nDOF_test_element + i;
+            for (int j=0; j<nDOF_trial_element; j++)
+              {
+                const int ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
+                edgeWeight.data()[ij] += fabs(K[eN*nDOF_test_X_trial_element + i*nDOF_trial_element + j]);
+                edgeCount.data()[ij] += 1.0;
+              }
+          }
+      for (int eN=0; eN<nElements_global; eN++)
+        {
+          double r[nDOF_test_element];
+          for (int i=0; i<nDOF_test_element; i++)
+            {
+              const int eN_i = eN*nDOF_test_element + i;
+              r[i] = 0.0;
+              for (int j=0; j<nDOF_trial_element; j++)
+                {
+                  if (j == i)
+                    continue;
+                  const int ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
+                  const double Ke = fabs(K[eN*nDOF_test_X_trial_element + i*nDOF_trial_element + j]);
+                  const double share = (edgeWeight.data()[ij] > 0.0) ? Ke/edgeWeight.data()[ij] : 1.0/edgeCount.data()[ij];
+                  r[i] += share*Espatial.data()[ij];
+                }
+            }
+          // least squares G q = r, G_iI = int_e d w_i / d x_I
+          double A[nSpace][nSpace+1];
+          for (int I=0; I<nSpace; I++)
+            {
+              for (int J=0; J<nSpace; J++)
+                {
+                  A[I][J] = 0.0;
+                  for (int i=0; i<nDOF_test_element; i++)
+                    A[I][J] += gradInt[(eN*nDOF_trial_element + i)*nSpace + I]*gradInt[(eN*nDOF_trial_element + i)*nSpace + J];
+                }
+              A[I][nSpace] = 0.0;
+              for (int i=0; i<nDOF_test_element; i++)
+                A[I][nSpace] += gradInt[(eN*nDOF_trial_element + i)*nSpace + I]*r[i];
+            }
+          for (int I=0; I<nSpace; I++)
+            {
+              int p = I;
+              for (int J=I+1; J<nSpace; J++)
+                if (fabs(A[J][I]) > fabs(A[p][I]))
+                  p = J;
+              for (int J=0; J<=nSpace; J++)
+                std::swap(A[I][J], A[p][J]);
+              for (int J=I+1; J<nSpace; J++)
+                {
+                  const double f = A[J][I]/A[I][I];
+                  for (int L=I; L<=nSpace; L++)
+                    A[J][L] -= f*A[I][L];
+                }
+            }
+          for (int I=nSpace-1; I>=0; I--)
+            {
+              double s = A[I][nSpace];
+              for (int J=I+1; J<nSpace; J++)
+                s -= A[I][J]*element_q.data()[eN*nSpace + J];
+              element_q.data()[eN*nSpace + I] = s/A[I][I];
+            }
+        }
+    }
+
+    // Zalesak limiting of the solute mass S = M c with concentration bounds (Algorithm 3).
+    //   f_ij = dt m_ij (Sdot_i - Sdot_j) - dt nu_ij (c^n_j - c^n_i),  nu_ij = max(0, |Fhat_ij|/2 + d_ij),
+    //   S^{n+1}_i = M^{n+1}_i c^L_i + (1/M_L,i) sum_j alpha_ij f_ij,  c^{n+1}_i = S^{n+1}_i / M^{n+1}_i,
+    // with S^max/min_i = M^{n+1}_i max/min_{j in N_i} c^L_j. Dirichlet nodes keep c_D (R^+- = 1 there).
+    // limitedFluxMatrix_ij = alpha_ij f_ij (row i) for the solute budget.
+    void FCTStep_compatible(arguments_dict& args)
+    {
+      const double dt = args.scalar<double>("dt");
+      const int numDOFs = args.scalar<int>("numDOFs");
+      proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
+      proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+      proteus::pyarray<double>& ML = args.array<double>("ML");
+      proteus::pyarray<double>& MC = args.array<double>("MC");
+      proteus::pyarray<double>& Mn = args.array<double>("Mn");
+      proteus::pyarray<double>& Mnp1 = args.array<double>("Mnp1");
+      proteus::pyarray<double>& cn = args.array<double>("cn");
+      proteus::pyarray<double>& cL = args.array<double>("cL");
+      proteus::pyarray<double>& Fhat = args.array<double>("Fhat");
+      proteus::pyarray<double>& dDispersion = args.array<double>("dDispersion");
+      proteus::pyarray<double>& bc_mask = args.array<double>("bc_mask");
+      proteus::pyarray<double>& Rpos = args.array<double>("Rpos");
+      proteus::pyarray<double>& Rneg = args.array<double>("Rneg");
+      proteus::pyarray<double>& FluxCorrectionMatrix = args.array<double>("FluxCorrectionMatrix");
+      proteus::pyarray<double>& limitedFluxMatrix = args.array<double>("limitedFluxMatrix");
+      proteus::pyarray<double>& c_new = args.array<double>("c_new");
+      std::vector<double> SL(numDOFs), SdotL(numDOFs);
+      for (int i=0; i<numDOFs; i++)
+        {
+          SL[i] = Mnp1.data()[i]*cL.data()[i];
+          SdotL[i] = (SL[i] - Mn.data()[i]*cn.data()[i])/dt;
+        }
+      for (int i=0; i<numDOFs; i++)
+        {
+          double cmax = cL.data()[i], cmin = cL.data()[i], Ppos = 0.0, Pneg = 0.0;
+          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+            {
+              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              cmax = fmax(cmax, cL.data()[j]);
+              cmin = fmin(cmin, cL.data()[j]);
+              double f = 0.0;
+              if (j != i)
+                {
+                  const double nu = fmax(0.0, 0.5*fabs(Fhat.data()[offset]) + dDispersion.data()[offset]);
+                  f = dt*MC.data()[offset]*(SdotL[i] - SdotL[j]) - dt*nu*(cn.data()[j] - cn.data()[i]);
+                }
+              FluxCorrectionMatrix.data()[offset] = f;
+              Ppos += fmax(f, 0.0);
+              Pneg += fmin(f, 0.0);
+            }
+          if (bc_mask.data()[i] == 0.0)
+            {
+              Rpos.data()[i] = 1.0;
+              Rneg.data()[i] = 1.0;
+              continue;
+            }
+          const double Qpos = ML.data()[i]*(Mnp1.data()[i]*cmax - SL[i]);
+          const double Qneg = ML.data()[i]*(Mnp1.data()[i]*cmin - SL[i]);
+          Rpos.data()[i] = (Ppos == 0.0) ? 1.0 : fmax(0.0, fmin(1.0, Qpos/Ppos));
+          Rneg.data()[i] = (Pneg == 0.0) ? 1.0 : fmax(0.0, fmin(1.0, Qneg/Pneg));
+        }
+      for (int i=0; i<numDOFs; i++)
+        {
+          double sum = 0.0;
+          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+            {
+              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              const double f = FluxCorrectionMatrix.data()[offset];
+              double alpha = (f > 0.0) ? fmin(Rpos.data()[i], Rneg.data()[j]) : fmin(Rneg.data()[i], Rpos.data()[j]);
+              if (bc_mask.data()[i] == 0.0 && bc_mask.data()[j] == 0.0)
+                alpha = 0.0;
+              limitedFluxMatrix.data()[offset] = alpha*f;
+              sum += alpha*f;
+            }
+          if (bc_mask.data()[i] == 0.0)
+            c_new.data()[i] = cL.data()[i];
+          else
+            c_new.data()[i] = (SL[i] + sum/ML.data()[i])/Mnp1.data()[i];
+        }
+    }
   };//TADR
 
 inline TADR_base* newTADR(int nSpaceIn,

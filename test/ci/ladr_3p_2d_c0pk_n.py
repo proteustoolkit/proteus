@@ -24,6 +24,7 @@ nny = nnx
 genMesh = True
 triangleOptions = "VApq30Dena%8.8f" % (((L[0]/(nnx-1))**2)/2.0,)
 nLevels = 1
+nLayersOfOverlapForParallel = 2  # face terms; matches the p module's MeshOptions
 
 subgridError = None
 subgridError = ADR.SubgridError(coefficients,nd)
