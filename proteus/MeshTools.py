@@ -3984,7 +3984,7 @@ class TetrahedralMesh(Mesh):
                     elementBoundaryNodesArrayTemp[j] = plex.getTransitiveClosure(face)[0][- self.nNodes_elementBoundary:] - self.nElements_global
                     # print(face, elementBoundaryNodesArrayTemp[j])
                     mask = np.where(~np.isin(elementNodesArrayUnsorted, elementBoundaryNodesArrayTemp[j]))[0]
-                    index = int(elementNodesArrayUnsorted[mask])
+                    index = int(elementNodesArrayUnsorted[mask].item())
                     # print(mask, index)
                     elementNodeList.append(index)
                     j += 1

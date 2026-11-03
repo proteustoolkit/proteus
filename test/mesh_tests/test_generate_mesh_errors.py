@@ -76,3 +76,24 @@ def test_a_dmplex_domain_under_F_says_it_has_no_files(tmp_path, monkeypatch):
     options = MeshTools.MeshOptions(nd=3)
     with pytest.raises(ValueError, match="DMPlex domain has no tetgen files"):
         MeshTools._generateMesh(domain, options, generatePartitionedMeshFromFiles=True)
+
+
+def test_a_dmplex_domain_gives_the_mesh_it_was_built_from(tmp_path, monkeypatch):
+    """The DMPlex importer, round-tripped: a tetrahedral mesh handed to PETSc and read back."""
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    monkeypatch.chdir(tmp_path)
+    source = MeshTools.TetrahedralMesh()
+    source.generateTetrahedralMeshFromRectangularGrid(3, 3, 3, 1.0, 1.0, 1.0)
+    # generateFromPlex reads faces and edges from the DAG, so the plex is interpolated
+    plex = PETSc.DMPlex().createFromCellList(
+        3, source.elementNodesArray.astype(PETSc.IntType), source.nodeArray.copy(),
+        interpolate=True, comm=PETSc.COMM_SELF)
+    mesh = MeshTools._generateMesh(Domain.DMPlexDomain(plex), MeshTools.MeshOptions(nd=3)).meshList[0]
+    np.testing.assert_array_equal(mesh.nodeArray, source.nodeArray)
+    # the same tetrahedra; the order of a tetrahedron's nodes is proteus's (node i
+    # opposite face i), not the cell list's
+    as_sets = lambda cells: sorted(map(tuple, np.sort(cells, axis=1).tolist()))  # noqa: E731
+    assert as_sets(mesh.elementNodesArray) == as_sets(source.elementNodesArray)
+    for count in ("nElementBoundaries_global", "nExteriorElementBoundaries_global",
+                  "nEdges_global"):
+        assert getattr(mesh, count) == getattr(source, count), count
