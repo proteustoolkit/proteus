@@ -64,14 +64,12 @@ opts = Context.Options([
     ("name", "ladr_3p_2d", "name of the test (default is ladr_3p_2d)"),
     ("paper", False, "use the settings of the hybrid CutFEM-IFEM manuscript for every knob below left at\n"
      "        None: immersedSCIFEM_switch=1, immersedSCIFEM_penalty=0 (p=1) / 100 (p=2),\n"
-     "        embeddedPenalty=10*p^2, embeddedGhostPenalty=0.15, tcPinMaskedDofs=False,\n"
+     "        embeddedPenalty=10*p^2, embeddedGhostPenalty=0.15,\n"
      "        tcEdgeFluidSide=True, tcEdgeBoundaryOnly=True. With the default qOrder (6 for p=1,\n"
      "        8 for p=2), test=2.0 nCells=10*2**k gives the structured column of Table 1.\n"
      "        False: the earlier defaults (in brackets below)."),
     ("immersedSCIFEM_switch", None, "switch (0/1) for the SCIFEM interface consistency terms [0]"),
     ("immersedSCIFEM_penalty", None, "coefficient gamma of the interior-penalty stabilization [0]"),
-    ("tcPinMaskedDofs", None, "triply-cut P1 cells: pin solid-side DOFs to the exact solution of their phase\n"
-     "        (ADR.Coefficients triplyCut_pinMaskedDofs) [True]"),
     ("tcEdgeFluidSide", None, "triply-cut cells: one-sided Gamma_f edge correction from the fluid side\n"
      "        (ADR.Coefficients triplyCut_edgeFluidSide) [False]"),
     ("tcEdgeBoundaryOnly", None, "triply-cut cells: keep that correction on exterior edges only\n"
@@ -168,7 +166,6 @@ _knob_defaults = {
     "immersedSCIFEM_penalty": (0.0,   100.0 if _p == 2 else 0.0),
     "embeddedPenalty":        (10.0,  10.0*_p**2),
     "embeddedGhostPenalty":   (0.1,   0.15),
-    "tcPinMaskedDofs":        (True,  False),
     "tcEdgeFluidSide":        (False, True),
     "tcEdgeBoundaryOnly":     (False, True),
 }
@@ -375,6 +372,18 @@ class TrigMMS(AnalyticalSolutions.SteadyState):
             return self.uOfX_inner(x)
         else:
             return self.uOfX_outer(x)
+    def _grad_g(self, x):
+        # grad(d) = interface_normal and grad(t) = interface_tangent (orthonormal coordinates)
+        d = interface_d(x)
+        t = interface_t(x)
+        gd = math.pi*math.cos(math.pi*d)*math.cos(math.pi*t)
+        gt = -math.pi*math.sin(math.pi*d)*math.sin(math.pi*t)
+        return [gd*interface_normal[i] + gt*interface_tangent[i] for i in range(2)]
+    def duOfX_inner(self, x):
+        return [gi/self.betaMinus for gi in self._grad_g(x)]
+    def duOfX_outer(self, x):
+        return [(gi + self.fluxJumpConstant*interface_normal[i])/self.betaPlus
+                for i, gi in enumerate(self._grad_g(x))]
     def solutionJump(self, x):
         # [u] = u_outer - u_inner, the sign convention immersedBoundary_solutionJump_nodes
         # expects in ADR.h (cross-checked against ladr_ss_2d_p.py's LevequeLiExample3, whose
@@ -567,12 +576,8 @@ immersedBoundary_solutionJump = (lambda x, t: ans.solutionJump(x)) if opts.test 
 immersedBoundary_fluxJump = (lambda x, t: ans.fluxJump(x)) if opts.test in (1.0, 2.1) else None
 
 def embeddedBoundary_u(x,t):
-    # Manufactured weak-Dirichlet target on the solid surface. Always the true exact
-    # solution, test=3.0 included: embeddedBoundary_u_inner/_outer below are also read
-    # directly (by name) to pin masked triply-cut DOFs to the true solution, a mechanism
-    # unrelated to Gamma_s's boundary condition type -- see the note in ADR.Coefficients.
-    # test=3.0's Robin target is carried on its own, separate embeddedBoundary_robin_uInfinity*
-    # fields instead of overloading this one.
+    # Manufactured weak-Dirichlet target on the solid surface: the exact solution.
+    # test=3.0's Robin target is carried on its own embeddedBoundary_robin_uInfinity* fields.
     return ans.uOfX(x)
 
 def embeddedBoundary_u_inner(x,t):
@@ -611,7 +616,6 @@ coefficients = ADR.Coefficients(aOfX=aOfX,fOfX=fOfX,velocity=B0_1c[0],nc=1,nd=nd
                                 immersedBoundary_penalty=0.0,
                                 immersedSCIFEM_switch=knobs['immersedSCIFEM_switch'],
                                 immersedSCIFEM_penalty=knobs['immersedSCIFEM_penalty'],
-                                triplyCut_pinMaskedDofs=knobs['tcPinMaskedDofs'],
                                 triplyCut_edgeFluidSide=knobs['tcEdgeFluidSide'],
                                 triplyCut_edgeBoundaryOnly=knobs['tcEdgeBoundaryOnly'],
                                 PG=opts.PG,
