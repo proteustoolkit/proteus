@@ -30,8 +30,12 @@ __all__ = ["needed", "bring_up_to_date"]
 
 def _mesh_of(doc, problem, name, realization, outdir, stem):
     """``(prefix, domain, meshOptions, plan)`` for one output, or None on a box."""
-    if problem["domain"].get("region") is None:
+    region = problem["domain"].get("region")
+    if region is None:
         return None
+    from proteus.ADRProblem import MESH_FILE_FORMATS
+    if region.get("kind") == "file" and region.get("format") in MESH_FILE_FORMATS:
+        return None                  # read, not made
     from proteus import ADRProblem, MeshTools
     from .ymfrun import run_arguments
     _, p, n, _ = ADRProblem.setup(problem, **run_arguments(doc, problem, name, realization))

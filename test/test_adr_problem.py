@@ -4,6 +4,7 @@ The unit tests build the ADR form by hand -- ADRProblem never needs sympy.
 The end-to-end tests go through scripts/ymf_run and need ymf[symbolic].
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -1210,3 +1211,250 @@ def test_an_l_shaped_region_converges_at_second_order(lshape_spec, tmp_path):
     assert "P1/h=0.25/" in archive and "P1/h=0.125/" in archive
     assert "generator_options: VApq30Dena" in archive
     assert "\nymf_state: closed\n" in archive    # every planned output is there
+
+
+def test_a_region_found_by_boundary_tags_is_tested_on_the_flag():
+    """ymf gives a tag region as ``flags`` and no ``where`` (C27 Phase 5, D1):
+    the condition claims the boundary points whose flag is one of them."""
+    from proteus.ADRProblem import _dirichlet, _neumann, _test_text
+    by_tag = {"component": "u", "region": "fixed", "flags": [1, 5], "value": "x + 2*y"}
+    by_position = {"component": "u", "region": "lid", "where": "(abs(y - 1) <= tol)",
+                   "value": "7.0"}
+    getDBC = _dirichlet([by_tag, by_position], 2, 1e-8)
+    assert getDBC([0.25, 0.0, 0.0], 5)([0.25, 0.0, 0.0], 0.0) == 0.25
+    assert getDBC([0.25, 1.0, 0.0], 2)([0.25, 1.0, 0.0], 0.0) == 7.0    # by position
+    assert getDBC([0.25, 0.5, 0.0], 2) is None                         # neither
+    assert getDBC([0.25, 0.5, 0.0], 0) is None                         # interior
+    getDFBC = _neumann([dict(by_tag, value="-1.0")], 2, 1e-8)
+    assert getDFBC([0.0, 0.0, 0.0], 1)([0.0, 0.0, 0.0], 0.0) == -1.0
+    assert getDFBC([0.0, 0.0, 0.0], 3) is None
+    assert _test_text(by_tag) == "flag in [1, 5]"
+    assert _test_text(by_position) == "(abs(y - 1) <= tol)"
+
+
+# --- periodic regions (C27 Phase 5, D3) ------------------------------------------------
+
+NOTCHED = {"kind": "piecewise_linear", "dimension": 2,
+           "vertices": [[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [3.0, 1.0],
+                        [3.0, 0.5], [1.0, 0.5], [1.0, 1.0], [0.0, 1.0]],
+           "segments": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0]],
+           "segment_flags": [1, 2, 3, 3, 3, 3, 4, 5]}
+
+
+def test_a_periodic_region_is_cut_to_h_on_every_segment():
+    cut = ADRProblem.periodic_region(NOTCHED, 0.25)
+    lengths = [numpy.linalg.norm(numpy.subtract(cut["vertices"][b], cut["vertices"][a]))
+               for a, b in cut["segments"]]
+    assert max(lengths) <= 0.25 + 1e-12
+    assert len(cut["segments"]) == 16 + 4 + 4 + 2 + 8 + 2 + 4 + 4   # 4+1+1+.5+2+.5+1+1 m
+    assert len(cut["segment_flags"]) == len(cut["segments"])
+    assert cut["segment_flags"][:16] == [1] * 16                      # the bottom, still 1
+    assert ADRProblem.periodic_region(dict(NOTCHED, dimension=3), 0.25)["dimension"] == 3
+
+
+def test_partners_are_counted_per_axis():
+    nodes = [[0.0, 0.0], [0.0, 0.5], [0.0, 1.0], [4.0, 0.0], [4.0, 1.0], [2.0, 0.3]]
+    assert ADRProblem.periodic_partners(nodes, [0], [0, 0], [4, 1], 1e-8) == {0: 1}
+    nodes.append([4.0, 0.5])
+    assert ADRProblem.periodic_partners(nodes, [0], [0, 0], [4, 1], 1e-8) == {0: 0}
+
+
+def test_a_periodic_region_meshes_without_boundary_points():
+    problem = {"adr": poisson_adr(), "periodic": [{"component": "u", "axes": [0]}],
+               "domain": {"lower": [0, 0], "upper": [4, 1], "region": NOTCHED}}
+    n = ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, h=0.5)
+    assert n.triangleOptions == "VApq30Dena0.12500000Y"
+    assert ADRProblem.mesh_constraint(0.5, 3, boundary_points=False).endswith("Y")
+
+
+# *.ymf is ignored in this repository (run outputs), so the spec lives here
+NOTCHED_PERIODIC_SPEC = '''\
+# A periodic piecewise_linear region (C27 Phase 5, D3): a channel with a notch
+# in its top, periodic along x with period 4. u = sin(πx/2) (1 + y) has a
+# nonzero x-derivative on the periodic faces, so faces that were not paired
+# would leave the natural condition there and an O(1) error.
+model:
+  name: "Poisson in a notched channel, periodic along x"
+  physical_model: {provenance: human_specified, processes: [heat_conduction], assumptions: [steady]}
+  strong_form:
+    provenance: human_specified
+    unknowns: [u]
+    equation_formulation: "Poisson"
+    equations: ["-Δu = f  in Ω"]
+    domain:
+      kind: piecewise_linear
+      dimension: 2
+      vertices: [[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [3.0, 1.0], [3.0, 0.5], [1.0, 0.5], [1.0, 1.0], [0.0, 1.0]]
+      segments: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0]]
+    boundary_regions:
+      - {name: ends, where: "x = 0 or x = 4"}
+      - {name: rest, where: "y = 0 or y = 1 or y = 0.5 or x = 1 or x = 3"}
+    boundary_conditions:
+      - {region: ends, variable: u, type: periodic}
+      - {region: rest, variable: u, type: dirichlet, formula: "sin(πx/2) (1 + y)"}
+    coefficients:
+      f: {formula: "(π²/4) sin(πx/2) (1 + y)"}
+  weak_forms:
+    - label: galerkin
+      provenance: human_specified
+      derivation: "multiply by v, integrate by parts; the periodic faces' terms cancel"
+      solution_spaces: {trial: H1_per, test: H1_per}
+      bilinear: "∫ ∇u·∇v"
+      linear: "∫ f v"
+      stabilization_method: "none"
+solution_paths:
+  analytical:
+    - name: exact
+      provenance: human_specified
+      method: closed_form
+      solution: {formula: "u = sin(πx/2) (1 + y)"}
+  discretizations:
+    - name: P1
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 1}}
+      mesh: {h: [0.2, 0.1]}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+'''
+
+
+def test_a_periodic_region_converges(tmp_path):
+    """The notched channel, periodic along x: P1 at rate 2 against the exact
+    solution, which it could not reach with unpaired faces."""
+    pytest.importorskip("ymf.symbolic")
+    problem = pytest.importorskip("ymf.symbolic.problem")
+    if not hasattr(problem, "periodic_faces_match"):
+        pytest.skip("this ymf predates periodic regions (cekees/ymf#8)")
+    spec = tmp_path / "notched_periodic.ymf"
+    spec.write_text(NOTCHED_PERIODIC_SPEC, encoding="utf-8")
+    out = ymf_run(spec, "--outdir", tmp_path)
+    assert out.returncode == 0, out.stderr[-2000:]
+    table = rows(out.stdout)
+    assert [r[0] for r in table] == ["0.2", "0.1"]
+    assert float(table[1][1]) < 4e-3 and 1.8 < float(table[1][2]) < 2.3
+
+
+# --- file domains (C27 Phase 5, D2 and D3) ---------------------------------------------
+
+def test_a_mesh_files_bounds_are_its_nodes(tmp_path):
+    (tmp_path / "m.node").write_text("3 3 0 1\n1 0 0 0 0\n2 2 1 0 1\n3 1 3 -1 0\n")
+    assert ADRProblem.file_bounds({"format": "tetgen", "path": str(tmp_path / "m")}) == (
+        [0.0, 0.0, -1.0], [2.0, 3.0, 0.0])
+    (tmp_path / "m.2dm").write_text("MESH2D\nND 1 0.5 0 0\nND 2 4 2 0\nE3T 1 1 2 1 1\n")
+    assert ADRProblem.file_bounds({"format": "2dm", "path": str(tmp_path / "m.2dm")}) == (
+        [0.5, 0.0], [4.0, 2.0])
+    with pytest.raises(ValueError, match="gives its bounds in the spec"):
+        ADRProblem.file_bounds({"format": "hex", "path": "m"})
+
+
+def test_a_mesh_file_is_refined_by_levels_not_sized():
+    problem = {"adr": poisson_adr(), "domain": {"lower": [0, 0], "upper": [1, 1],
+               "region": {"kind": "file", "format": "tetgen", "path": "m"}}}
+    n = ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, levels=2)
+    assert n.nLevels == 2
+    with pytest.raises(ValueError, match="already a mesh"):
+        ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, h=0.5)
+
+
+# *.poly and *.ymf are ignored here, so the cube's PLC and the spec live in the test
+CUBE_PLC = """\
+# unit cube, facets marked 1 bottom (z=0), 2 top (z=1), 3 front (y=0), 4 back (y=1), 5 left (x=0), 6 right (x=1)
+8 3 0 1
+1 0 0 0 0
+2 1 0 0 0
+3 1 1 0 0
+4 0 1 0 0
+5 0 0 1 0
+6 1 0 1 0
+7 1 1 1 0
+8 0 1 1 0
+6 1
+1 0 1
+4 1 2 3 4
+1 0 2
+4 5 6 7 8
+1 0 3
+4 1 2 6 5
+1 0 4
+4 4 3 7 8
+1 0 5
+4 1 4 8 5
+1 0 6
+4 2 3 7 6
+0
+0
+"""
+
+CUBE_FILE_SPEC = """\
+model:
+  name: "Poisson in a cube read from tetgen files, conditions by face marker"
+  physical_model: {provenance: human_specified, processes: [heat_conduction], assumptions: [steady]}
+  strong_form:
+    provenance: human_specified
+    unknowns: [u]
+    equation_formulation: "Poisson"
+    equations: ["-Δu = f  in Ω"]
+    domain:
+      kind: file
+      format: tetgen
+      path: cube
+      dimension: 3
+      boundary_tags: {bottom: 1, top: 2, front: 3, back: 4, left: 5, right: 6}
+    boundary_regions:
+      - {name: lids, tags: [bottom, top]}
+      - {name: front, tags: [front]}
+      - {name: back, tags: [back]}
+      - {name: left, tags: [left]}
+      - {name: right, tags: [right]}
+    boundary_conditions:
+      - {region: lids, variable: u, type: dirichlet, formula: "x² + y z"}
+      - {region: front, variable: u, type: neumann, formula: "z"}
+      - {region: back, variable: u, type: neumann, formula: "-z"}
+      - {region: left, variable: u, type: neumann, formula: "2 x"}
+      - {region: right, variable: u, type: neumann, formula: "-2 x"}
+    coefficients:
+      f: {value: -2.0}
+  weak_forms:
+    - label: galerkin
+      provenance: human_specified
+      derivation: "multiply by v, integrate by parts"
+      solution_spaces: {trial: H1, test: H1}
+      bilinear: "∫ ∇u·∇v"
+      linear: "∫ f v"
+      stabilization_method: "none"
+solution_paths:
+  analytical:
+    - name: exact
+      provenance: human_specified
+      method: closed_form
+      solution: {formula: "u = x² + y z"}
+  discretizations:
+    - name: P1
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 1}}
+      mesh: {levels: [1, 2]}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+    - name: P2
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 2}}
+      mesh: {levels: 1}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+"""
+
+
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_a_tetgen_file_domain_with_its_face_markers(tmp_path):
+    """A cube meshed by tetgen beforehand, read as a file domain: conditions
+    by face marker, the bounds from its nodes, refined by levels."""
+    discretizations = pytest.importorskip("ymf.discretizations")
+    if not hasattr(discretizations, "mesh_from_domain"):
+        pytest.skip("this ymf predates file domains (cekees/ymf#8)")
+    (tmp_path / "cubeplc.poly").write_text(CUBE_PLC)
+    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True)
+    for x in ("node", "ele", "face"):
+        os.rename(tmp_path / ("cubeplc.1." + x), tmp_path / ("cube." + x))
+    (tmp_path / "cube.ymf").write_text(CUBE_FILE_SPEC, encoding="utf-8")
+    out = ymf_run(tmp_path / "cube.ymf", "--outdir", tmp_path / "out")
+    assert out.returncode == 0, out.stderr[-2000:]
+    p1, p2 = rows(out.stdout)[:2], rows(out.stdout)[2:]
+    assert [r[0] for r in p1] == ["1", "2"] and 1.8 < float(p1[1][2]) < 2.2
+    assert float(p2[0][1]) < 1e-12          # quadratic: exact, every marker in place

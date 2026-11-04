@@ -172,7 +172,19 @@ def emit(doc, problem, name, realization, outdir, files, key, archive):
         **run_arguments(doc, problem, name, realization))
 
 
-def solve(doc, problem, name, realization, outdir, files, inline, env, mesh=None):
+def with_paths_from(problem, base):
+    """The problem with a file domain's relative path taken from ``base``,
+    the spec's directory. Only the solve sees it: the archive keeps the path
+    as the spec wrote it."""
+    region = problem["domain"].get("region")
+    if not region or region.get("kind") != "file" or os.path.isabs(region["path"]):
+        return problem
+    region = dict(region, path=os.path.join(base, region["path"]))
+    return dict(problem, domain=dict(problem["domain"], region=region))
+
+
+def solve(doc, problem, name, realization, outdir, files, inline, env, mesh=None,
+          base=None):
     """Run one discretization on one realization; return its output record.
 
     ``mesh`` is the prefix of a region's mesh files, already made
@@ -193,7 +205,8 @@ def solve(doc, problem, name, realization, outdir, files, inline, env, mesh=None
     cwd = os.getcwd()
     os.chdir(outdir)
     try:
-        ns, _, errors = ADRProblem.run(problem, name=files, opts=opts, mesh=mesh, **kwargs)
+        ns, _, errors = ADRProblem.run(with_paths_from(problem, base or cwd), name=files,
+                                       opts=opts, mesh=mesh, **kwargs)
     finally:
         os.chdir(cwd)
     solved = problem
@@ -272,6 +285,16 @@ def discard(output, outdir):
 # --- the archive -------------------------------------------------------------------
 
 
+def fixes_mesh(doc):
+    """Whether the spec's domain is a mesh, or a file of one, so that its
+    discretizations give only levels (ymf.discretizations.mesh_from_domain)."""
+    try:
+        from ymf.discretizations import mesh_from_domain
+    except ImportError:                   # a ymf before file domains
+        return False
+    return mesh_from_domain(doc["model"]["strong_form"].get("domain"))
+
+
 def override(doc, names, field, values, flag):
     """Set ``mesh.<field>`` of the named discretizations, as a recorded override."""
     value = values if len(values) > 1 else values[0]
@@ -279,7 +302,7 @@ def override(doc, names, field, values, flag):
         if d["name"] not in names:
             continue
         mesh = d.setdefault("mesh", {})
-        if field == "levels" and not ("cells" in mesh or "h" in mesh):
+        if field == "levels" and not ("cells" in mesh or "h" in mesh) and not fixes_mesh(doc):
             del d["mesh"]
             continue                       # no mesh to refine; reported later
         if mesh.get(field) == value:
@@ -294,7 +317,8 @@ def report(problem, rows):
     """The convergence table of one discretization."""
     names = list(problem["exact"])
     unstructured = any("h" in realization for _, realization, _, _ in rows)
-    print(("      h  " if unstructured else "  cells  ") + "".join("  L2(%s)%s  rate  " % (
+    fixed = not any("h" in r or "cells" in r for _, r, _, _ in rows)   # a mesh file
+    print(("      h  " if unstructured else " levels  " if fixed else "  cells  ") + "".join("  L2(%s)%s  rate  " % (
         n, "*" if n in (problem.get("up_to_constant") or []) else " ") for n in names)
           + "  output" + ("   (* modulo constants)" if problem.get("up_to_constant") else ""))
     previous = None
@@ -304,6 +328,10 @@ def report(problem, rows):
         if "h" in realization:
             size = float(realization["h"]) / refinements
             row = "  %5.3g  " % size
+        elif "cells" not in realization:
+            # the file's own mesh, refined: sizes relative to it
+            size = 1.0 / refinements
+            row = "  %5d  " % int(realization.get("levels", 1))
         else:
             finest = int(realization["cells"]) * refinements
             size = 1.0 / finest
@@ -327,8 +355,12 @@ def blockers(doc, problem, entry):
     from ymf.discretizations import missing
     from proteus.ADRProblem import STABILIZATIONS, linear_solver_choice, parallel_periodic
     name = entry["name"]
+    domain = doc["model"]["strong_form"].get("domain")
     try:
-        lacking = missing(entry)
+        try:
+            lacking = missing(entry, domain)   # what a mesh needs depends on it
+        except TypeError:                      # a ymf before file domains
+            lacking = missing(entry)
     except ValueError as e:                    # an unknown method
         return [str(e)]
     if lacking:
@@ -599,7 +631,8 @@ def _run(args, prog, mesh_only, comm):
             slot = "%s~%d" % (key, n) if n > 1 else key
             output = solve(doc, problem, name, realization, outdir,
                            closure.file_stem(stem, slot), args.inline, env,
-                           mesh=mesh_of.get(key))
+                           mesh=mesh_of.get(key),
+                           base=os.path.dirname(os.path.abspath(args.input)))
             if key not in outputs:
                 outputs[key] = output
                 new.append(key)
