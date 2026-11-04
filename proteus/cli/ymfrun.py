@@ -336,6 +336,12 @@ def blockers(doc, problem, entry):
     if entry.get("method", "mesh") != "mesh":
         return ["%s: Proteus solves method mesh only, and this branch's method is %s"
                 % (name, entry["method"])]
+    if entry.get("subproblems"):
+        # solving the whole model as one system would run a different
+        # discretization under this branch's name
+        return ["%s: split into sub-problems (%s); ymf_run solves the model as one ADR "
+                "system, and mapping sub-problems onto Proteus's models is not wired up yet"
+                % (name, ", ".join(s.get("name", "?") for s in entry["subproblems"]))]
     method = stabilization_of(doc, entry)
     if method not in STABILIZATIONS:
         # running it without would solve a different weak form under this
