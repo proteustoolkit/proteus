@@ -23,10 +23,8 @@ def test_empty_global_mesh_is_a_clear_error(partition, owners):
 
 
 def test_mesh_from_missing_triangle_files(tmp_path):
-    """The path that was hit: the files were never written."""
+    """The path that was hit: the files were never written. Since cekees/proteus#181 the reader says so
+    itself, naming the file, instead of returning an empty mesh for partitionNodes to fail on."""
     mesh = MeshTools.TriangularMesh()
-    mesh.generateFromTriangleFiles(filebase=str(tmp_path / 'never_written'), base=1)
-    with pytest.raises(Exception) as error:
-        mesh.partitionMesh(nLayersOfOverlap=1)
-    assert not isinstance(error.value, IndexError)
-    assert 'empty' in str(error.value)
+    with pytest.raises(OSError, match='never_written.node'):
+        mesh.generateFromTriangleFiles(filebase=str(tmp_path / 'never_written'), base=1)
