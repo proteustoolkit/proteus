@@ -1210,3 +1210,22 @@ def test_an_l_shaped_region_converges_at_second_order(lshape_spec, tmp_path):
     assert "P1/h=0.25/" in archive and "P1/h=0.125/" in archive
     assert "generator_options: VApq30Dena" in archive
     assert "\nymf_state: closed\n" in archive    # every planned output is there
+
+
+def test_a_region_found_by_boundary_tags_is_tested_on_the_flag():
+    """ymf gives a tag region as ``flags`` and no ``where`` (C27 Phase 5, D1):
+    the condition claims the boundary points whose flag is one of them."""
+    from proteus.ADRProblem import _dirichlet, _neumann, _test_text
+    by_tag = {"component": "u", "region": "fixed", "flags": [1, 5], "value": "x + 2*y"}
+    by_position = {"component": "u", "region": "lid", "where": "(abs(y - 1) <= tol)",
+                   "value": "7.0"}
+    getDBC = _dirichlet([by_tag, by_position], 2, 1e-8)
+    assert getDBC([0.25, 0.0, 0.0], 5)([0.25, 0.0, 0.0], 0.0) == 0.25
+    assert getDBC([0.25, 1.0, 0.0], 2)([0.25, 1.0, 0.0], 0.0) == 7.0    # by position
+    assert getDBC([0.25, 0.5, 0.0], 2) is None                         # neither
+    assert getDBC([0.25, 0.5, 0.0], 0) is None                         # interior
+    getDFBC = _neumann([dict(by_tag, value="-1.0")], 2, 1e-8)
+    assert getDFBC([0.0, 0.0, 0.0], 1)([0.0, 0.0, 0.0], 0.0) == -1.0
+    assert getDFBC([0.0, 0.0, 0.0], 3) is None
+    assert _test_text(by_tag) == "flag in [1, 5]"
+    assert _test_text(by_position) == "(abs(y - 1) <= tol)"

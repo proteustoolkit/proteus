@@ -183,6 +183,30 @@ class _Field(object):
         return self.uOfXT(x, 0.0)
 
 
+def _selector(entry):
+    """``select(ns, flag)``: whether one condition claims a boundary point.
+
+    A region found by position carries ``where``, boolean code over the
+    point (None: the whole boundary); a region found by the mesh's boundary
+    tags carries ``flags`` instead, and no ``where``, and claims the points
+    whose boundary flag is one of them.
+    """
+    if "flags" in entry:
+        flags = frozenset(int(f) for f in entry["flags"])
+        return lambda ns, flag: flag in flags
+    if entry["where"] is None:
+        return lambda ns, flag: True
+    code = _compile(entry["where"])
+    return lambda ns, flag: bool(eval(code, _GLOBALS, ns))
+
+
+def _test_text(entry):
+    """The same test as Python source, for :func:`emit_pn`'s files."""
+    if "flags" in entry:
+        return "flag in %r" % (sorted(int(f) for f in entry["flags"]),)
+    return "True" if entry["where"] is None else entry["where"]
+
+
 def _dirichlet(entries, dim, tol):
     """getDBC(x, flag) for one component.
 
@@ -190,8 +214,7 @@ def _dirichlet(entries, dim, tol):
     for the interior; it must return None there, and for boundary nodes
     no entry claims.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]), _value_of(e, dim))
-             for e in entries]
+    tests = [(_selector(e), _value_of(e, dim)) for e in entries]
 
     def getDBC(x, flag):
         if flag == 0:
@@ -201,8 +224,8 @@ def _dirichlet(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, value in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, value in tests:
+            if select(ns, flag):
                 return value
         return None
     return getDBC
@@ -216,8 +239,8 @@ def _robin(entries, dim, tol):
     NumericalFlux.RobinFactory turns that into the flux and its exact
     derivative; see there for why this cannot be a flux boundary condition.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]),
-              _Field(e["alpha"], dim), _Field(e["beta"], dim), _Field(e["g"], dim))
+    tests = [(_selector(e), _Field(e["alpha"], dim), _Field(e["beta"], dim),
+              _Field(e["g"], dim))
              for e in entries]
 
     def get(x, flag):
@@ -226,8 +249,8 @@ def _robin(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, alpha, beta, g in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, alpha, beta, g in tests:
+            if select(ns, flag):
                 return lambda x, t, a=alpha, b=beta, gg=g: (
                     a.uOfXT(x, t), b.uOfXT(x, t), gg.uOfXT(x, t))
         return None
@@ -304,8 +327,7 @@ def _neumann(entries, dim, tol):
     None leaves the face to the natural condition, which for a diffusion
     term is zero flux.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]), _value_of(e, dim))
-             for e in entries]
+    tests = [(_selector(e), _value_of(e, dim)) for e in entries]
 
     def getDFBC(x, flag):
         ns = {"tol": tol, "x": x[0]}
@@ -313,8 +335,8 @@ def _neumann(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, value in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, value in tests:
+            if select(ns, flag):
                 return value
         return None
     return getDFBC
@@ -1172,7 +1194,7 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
         if entries:
             P.append("    %s = %s" % (", ".join(xyz), ", ".join("X[%d]" % k for k in range(dim))))
         for e in entries:
-            test = "True" if e["where"] is None else e["where"]
+            test = _test_text(e)
             P.append("    if %s:   # region %s" % (test, e["region"]))
             P += _supplied_value(e, dim)
         P.append("    return None")
@@ -1233,7 +1255,7 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
               "def getDFBC_%s(X, flag):" % names[i],
               "    %s = %s" % (", ".join(xyz), ", ".join("X[%d]" % k for k in range(dim)))]
         for e in entries:
-            test = "True" if e["where"] is None else e["where"]
+            test = _test_text(e)
             P.append("    if %s:   # region %s" % (test, e["region"]))
             P += _supplied_value(e, dim)
         P += ["    # elsewhere the natural condition: zero diffusive flux",
