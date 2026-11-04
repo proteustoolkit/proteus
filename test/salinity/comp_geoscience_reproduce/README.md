@@ -175,10 +175,10 @@ coupling merged as #150 (1.9.x) / #152 (main). Caveats that apply to every figur
 | figure | transport | TADR scheme | notes |
 |---|---|---|---|
 | Zalesak disk | TADR alone (no flow model) | STAB 2 / 5, FCT on/off | not a coupling figure |
-| MMS T0-T3 | **edge-flux** (Barua) | per `mms_so.py` | flow deck sets `FCT_BND_DIFF=True` |
-| Henry `ref_1` (`iso_combined_FCT_ref_1.png`, low order) | **edge-flux** | STAB 2 + FCT / low order | `FCT_BND_DIFF=True` |
-| Elder | **edge-flux** | STAB 5 (ImplicitEV) | `FCT_BND_DIFF=True` |
-| Simmons UHD | **edge-flux** | per `transport_p.py` | `FCT_BND_DIFF=True` |
+| MMS T0-T3 | **edge-flux** (Barua) | per `mms_so.py` | flow deck sets `FCT_BND_DIFF=True, FCT_BND_KRW=True` |
+| Henry `ref_1` (`iso_combined_FCT_ref_1.png`, low order) | **edge-flux** | STAB 2 + FCT / low order | `FCT_BND_DIFF=True, FCT_BND_KRW=True` |
+| Elder | **edge-flux** | STAB 5 (ImplicitEV) | `FCT_BND_DIFF=True, FCT_BND_KRW=True` |
+| Simmons UHD | **edge-flux** | per `transport_p.py` | `FCT_BND_DIFF=True, FCT_BND_KRW=True` |
 | bioswale | **edge-flux** | per `tranport_p.py` | Richards FCT off |
 | levee density / non-density (Case_D) | **edge-flux** | STAB 2 + FCT | Richards FCT off |
 | levee Case_A-D, Henry `ref_3` reruns (`test/salinity/...`, 2026-11-02) | **compatible** | `STABILIZATION_TYPE='Compatible'` | serial; see `VDFT_COUPLING_COMPARISON_2026-11-04.md` |

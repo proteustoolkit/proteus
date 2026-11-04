@@ -81,7 +81,7 @@ coefficients = Richards.Coefficients(
     STABILIZATION_TYPE=2,
     ENTROPY_TYPE=1,
     LUMPED_MASS_MATRIX=False,
-    FCT=True, FCT_BND_DIFF=True,  # Barua edge-flux runs: boundary routing on (default off since #173)
+    FCT=True, FCT_BND_DIFF=True, FCT_BND_KRW=True,  # Barua edge-flux runs: his FCT boundary block (both off by default since #173)
       # Richards FCT on, as in the UHD L4 runs
     num_fct_iter=0,
     cE=1.0,
