@@ -3,7 +3,8 @@
 proteus reads explicit meshes only as ymf; SMS/ADH files are converted by ymf-import-sms
 (proteustoolkit/ymf-import-sms). The fixtures in ``ymf_meshes/`` were written by it from
 proteus's own SMS fixtures: ``square4x4`` from ``test/poisson_2d/square4x4.3dm`` and ``.bc``
-(NDS node tags), ``square4x4_tagged`` from the same mesh with EGS edge strings tagging its four
+(NDS node tags), stored beside them as ``test/poisson_2d/square4x4.ymf``/``.h5`` so every test
+whose ``p.meshfile`` names ``square4x4`` reads it; ``square4x4_tagged`` from the same mesh with EGS edge strings tagging its four
 sides 1-4 (``square4x4_tagged.bc``), and ``cube_3x3x3`` from the 3DM file of the importer
 tests. Before the in-tree SMS readers were removed, each read was bit-equal to the in-tree
 reader's (the commit that added this file); the reference now is the source file's text.
@@ -38,7 +39,7 @@ def _sms_text(filebase):
 
 def test_a_converted_2d_mesh_is_the_source_file():
     mesh = MeshTools.TriangularMesh()
-    mesh.generateFromYmfFile(os.path.join(YMF, "square4x4"))
+    mesh.generateFromYmfFile(SQUARE_2DM)
     nodes, cells, materials = _sms_text(SQUARE_2DM)
     np.testing.assert_array_equal(mesh.nodeArray, nodes)
     np.testing.assert_array_equal(mesh.elementNodesArray, cells)
@@ -85,7 +86,7 @@ def test_facet_tags_become_element_boundary_tags():
     assert not tags[mesh.interiorElementBoundariesArray].any()
     # the other arrays are those of the untagged file
     untagged = MeshTools.TriangularMesh()
-    untagged.generateFromYmfFile(os.path.join(YMF, "square4x4"))
+    untagged.generateFromYmfFile(SQUARE_2DM)
     np.testing.assert_array_equal(mesh.elementBoundaryNodesArray, untagged.elementBoundaryNodesArray)
 
 
@@ -103,10 +104,11 @@ def test_a_facet_that_is_not_a_boundary_is_refused(tmp_path):
         MeshTools.TriangularMesh().generateFromYmfFile(str(tmp_path / "square4x4_tagged"))
 
 
-@pytest.mark.parametrize("name, nd, counts", [("square4x4", 2, (9, 8)), ("cube_3x3x3", 3, (27, 48))])
-def test_a_ymf_mesh_domain_is_meshed_and_partitioned(name, nd, counts):
+@pytest.mark.parametrize("prefix, nd, counts", [(SQUARE_2DM, 2, (9, 8)),
+                                                (os.path.join(YMF, "cube_3x3x3"), 3, (27, 48))])
+def test_a_ymf_mesh_domain_is_meshed_and_partitioned(prefix, nd, counts):
     """Through _generateMesh, on however many ranks the test runs on; nd comes from the file."""
-    domain = Domain.MeshYmfDomain(os.path.join(YMF, name))
+    domain = Domain.MeshYmfDomain(prefix)
     assert domain.nd == nd
     mlMesh = MeshTools._generateMesh(domain, MeshTools.MeshOptions(nd=nd))
     mesh = mlMesh.meshList[0]
@@ -116,12 +118,14 @@ def test_a_ymf_mesh_domain_is_meshed_and_partitioned(name, nd, counts):
     assert Comm.get().comm.tompi4py().allreduce(int(owned)) == counts[1]
 
 
-def test_an_old_style_meshfile_is_a_ymf_mesh():
+def test_an_old_style_meshfile_is_a_ymf_mesh(tmp_path):
     """A p module's meshfile (setDomainFromPhysics) names a ymf mesh; an SMS file is converted first."""
-    domain = MeshTools._meshFileDomain(os.path.join(YMF, "square4x4"), 2)
+    domain = MeshTools._meshFileDomain(SQUARE_2DM, 2)
     assert isinstance(domain, Domain.MeshYmfDomain) and domain.nd == 2
+    import shutil
+    shutil.copy(SQUARE_2DM + ".3dm", tmp_path)          # an SMS file, not converted
     with pytest.raises(ValueError, match="names no ymf mesh .* ymf-import-sms"):
-        MeshTools._meshFileDomain(SQUARE_2DM, 2)
+        MeshTools._meshFileDomain(str(tmp_path / "square4x4"), 2)
 
 
 def test_write_read_round_trip(tmp_path):
@@ -145,7 +149,7 @@ def test_array_mesh_rejects_bad_connectivity():
 
 def test_a_ymf_mesh_domain_writes_and_reads_as_a_file_domain():
     from proteus import DomainYMF
-    domain = Domain.MeshYmfDomain(os.path.join(YMF, "square4x4"))
+    domain = Domain.MeshYmfDomain(SQUARE_2DM)
     block = DomainYMF.to_ymf(domain)
     assert (block["kind"], block["format"], block["dimension"]) == ("file", "ymf", 2)
     back = DomainYMF.from_ymf(block)
