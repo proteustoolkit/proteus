@@ -22,6 +22,11 @@ def pytest_configure(config):
     A test must not read what another test wrote: tests land on any worker, in
     any order. One that needs a mesh or an earlier run makes it itself.
     """
+    import signal
+    import threading
+    if (threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL):
+        signal.signal(signal.SIGTERM, _end_launches_on_sigterm)
     worker = getattr(config, "workerinput", {}).get("workerid")
     if worker:
         path = os.path.join(os.getcwd(), worker)
@@ -165,6 +170,127 @@ def launched_environment(env):
     return env
 
 
+# A launch that is cut short must take its ranks with it, and under Open MPI 5 it did not. prterun puts every rank in a
+# process group of its own (inside prterun's session), so subprocess.run's timeout, which SIGKILLs prterun alone, left
+# the ranks running, reparented to init (measured on ceds-model: three of three alive after the timeout). A cancelled
+# CI job did the same: on 2026-11-03 a rank of bc_transfers_mpi.py ran for 10 h 43 min on a self-hosted runner after
+# the runner's clean-up had killed its prterun. (Under MPICH every rank takes a session of its own, but dies with its
+# hydra proxy, which stays in the launcher's process group.) So every launch runs in a session of its own, and when it
+# times out, is interrupted or exits non-zero, the launcher's process group and then whatever is left in its session
+# are terminated, then killed. A SIGTERM to the pytest process (a cancelled job) ends the launches still running.
+_ACTIVE_SESSIONS = set()
+
+
+def session_members(sid):
+    """The pids of the processes in session ``sid``, this process excluded."""
+    try:
+        candidates = [int(name) for name in os.listdir('/proc') if name.isdigit()]
+    except OSError:     # macOS: no /proc
+        ps = subprocess.Popen(['ps', '-A', '-o', 'pid='], stdout=subprocess.PIPE, text=True)
+        candidates = [int(pid) for pid in ps.communicate()[0].split()]
+    members = []
+    for pid in candidates:
+        try:
+            if pid != os.getpid() and os.getsid(pid) == sid:
+                members.append(pid)
+        except OSError:
+            pass
+    return members
+
+
+def end_session(sid, process=None, grace=5.0):
+    """Terminate, then kill, process group ``sid`` and every process in session ``sid``.
+
+    ``process`` is the session leader's Popen, reaped as it goes so that its zombie does not
+    count as a survivor. Never acts on this process's own session.
+    """
+    import signal
+    if sid == os.getsid(0):
+        return
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2.0)):
+        try:
+            os.killpg(sid, sig)
+        except OSError:
+            pass
+        for pid in session_members(sid):
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        deadline = time.monotonic() + wait
+        while True:
+            if process is not None:
+                process.poll()
+            left = [pid for pid in session_members(sid)
+                    if process is None or pid != process.pid or process.returncode is None]
+            if not left or time.monotonic() > deadline:
+                break
+            time.sleep(0.1)
+        if not left:
+            return
+
+
+def run_in_own_session(*popenargs, input=None, capture_output=False, timeout=None, check=False, **kwargs):
+    """``subprocess.run``, with the launch in a session of its own that is ended (end_session) if
+    the launch times out, is interrupted or exits non-zero: ranks a dead launcher left go too."""
+    if input is not None:
+        kwargs['stdin'] = subprocess.PIPE
+    if capture_output:
+        kwargs['stdout'] = kwargs['stderr'] = subprocess.PIPE
+    own = kwargs.setdefault('start_new_session', True)
+    stdout = stderr = None
+    with subprocess.Popen(*popenargs, **kwargs) as process:
+        if own:
+            _ACTIVE_SESSIONS.add(process.pid)
+        try:
+            try:
+                stdout, stderr = _communicate(process, input, timeout, own)
+            except subprocess.TimeoutExpired as expired:
+                end_session(process.pid, process) if own else process.kill()
+                try:
+                    expired.stdout, expired.stderr = process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass    # something outside the session still holds the pipes; keep what was read
+                raise
+            except BaseException:
+                end_session(process.pid, process) if own else process.kill()
+                raise
+            if own and process.returncode != 0:
+                end_session(process.pid, process)
+        finally:
+            _ACTIVE_SESSIONS.discard(process.pid)
+    if check and process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, process.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+
+
+def _communicate(process, input, timeout, own):
+    """``process.communicate(input, timeout)``, except that once the launcher has exited, a process
+    it left in its session that still holds the output pipes is not waited for: the session is
+    ended and the output read. (A rank whose launcher died would otherwise hold the launch open
+    until its timeout, or for ever without one.)"""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        step = 1.0 if deadline is None else max(0.0, min(1.0, deadline - time.monotonic()))
+        try:
+            return process.communicate(input, timeout=step)
+        except subprocess.TimeoutExpired:
+            input = None    # sent with the first call; a retry may not pass it again
+            if own and process.poll() is not None:
+                end_session(process.pid, process)
+                return process.communicate(timeout=10)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+
+
+def _end_launches_on_sigterm(signum, frame):
+    import signal
+    for sid in list(_ACTIVE_SESSIONS):
+        end_session(sid, grace=1.0)
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
 @pytest.fixture
 def launch_policy():
     """The launch policy's pieces, for the tests of it (a conftest is not importable under
@@ -172,6 +298,7 @@ def launch_policy():
     import types
     return types.SimpleNamespace(scaled_timeout=scaled_timeout, died_by_signal=died_by_signal,
                                  launched_environment=launched_environment, retrying_run=retrying_run,
+                                 run_in_own_session=run_in_own_session, session_members=session_members,
                                  os=os)
 
 
@@ -233,8 +360,9 @@ def retrying_run(run):
 
 @pytest.fixture(autouse=True)
 def _retry_an_mpi_launch_that_never_started(monkeypatch):
-    """Every ``subprocess.run`` from a test goes through :func:`retrying_run`."""
-    monkeypatch.setattr(subprocess, 'run', retrying_run(subprocess.run))
+    """Every ``subprocess.run`` from a test goes through :func:`retrying_run`, each launch in a
+    session of its own (:func:`run_in_own_session`)."""
+    monkeypatch.setattr(subprocess, 'run', retrying_run(run_in_own_session))
 
 
 @pytest.fixture(autouse=True)

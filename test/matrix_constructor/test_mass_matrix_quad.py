@@ -3,7 +3,6 @@
 Test module for 2D Quadrilateral Meshes
 """
 import proteus.test_utils.TestTools
-from importlib import reload
 from proteus import LinearAlgebraTools
 from proteus import Comm
 
@@ -22,7 +21,6 @@ class TestMassConstruction2D(proteus.test_utils.TestTools.SimulationTest):
 
     def setup_method(self):
         """ Initialize the test problem """
-        reload(sp_mm_2d_THQuad)
         self._setRelativePath()
         
     def teardown_method(self):

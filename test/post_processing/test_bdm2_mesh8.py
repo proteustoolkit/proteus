@@ -8,7 +8,6 @@ import proteus.test_utils.TestTools
 import os
 import sys
 import inspect
-from importlib import reload
 proteus.test_utils.TestTools.addSubFolders( inspect.currentframe() )
 
 from proteus import Profiling
@@ -35,7 +34,6 @@ class TestBDM2Mesh8(object):
 
     def setup_method(self,method):
         """Initialize the test problem. """
-        reload(bt)
         self.transport_obj = bt.ns.modelList[0].levelModelList[0]
         self.bdm2_obj = self.transport_obj.velocityPostProcessor.vpp_algorithms[0]
         self._setRelativePath()

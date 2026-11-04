@@ -48,7 +48,7 @@ def _launch(helper, args, n_ranks):
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, path] + [str(a) for a in args],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
