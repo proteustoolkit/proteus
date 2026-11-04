@@ -1546,3 +1546,28 @@ def test_emitted_pn_files_of_a_file_domain_reproduce_the_output_under_parun(tmp_
     recorded = domain_arrays(output["approximation"], tmp_path / "out")
     assert set(mine) == set(recorded)
     assert all(numpy.array_equal(mine[k], recorded[k]) for k in recorded)
+
+
+def test_ymfrun_knows_which_domains_fix_the_mesh():
+    """A mesh file (or a discrete domain) fixes the mesh, so its discretizations give levels only; a geometry file
+    and a box do not."""
+    pytest.importorskip("ymf.discretizations").mesh_from_domain
+    from proteus.cli import ymfrun
+
+    def doc(domain):
+        return {"model": {"strong_form": {"domain": domain}}}
+    assert ymfrun.fixes_mesh(doc({"kind": "file", "format": "tetgen", "path": "m"}))
+    assert not ymfrun.fixes_mesh(doc({"kind": "file", "format": "gmsh_geo", "path": "m.geo", "h": 0.1}))
+    assert not ymfrun.fixes_mesh(doc({"kind": "box", "lower": [0, 0], "upper": [1, 1]}))
+    assert not ymfrun.fixes_mesh(doc(None))
+
+
+def test_ymfrun_says_why_a_discretization_cannot_close():
+    """ymf's refusals, passed on: an unknown method, and a method ymf has only as a schema."""
+    from proteus.cli import ymfrun
+    doc = {"model": {"strong_form": {"domain": None}}}
+    (why,) = ymfrun.blockers(doc, None, {"name": "a", "method": "bogus"})
+    assert "method 'bogus' is not one of" in why
+    (why,) = ymfrun.blockers(doc, None, {"name": "b", "method": "particle",
+                                         "particle": {"spacing": 0.1, "kernel": "cubic_spline"}})
+    assert why.startswith("b is missing an implementation: method particle")
