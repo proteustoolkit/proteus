@@ -49,7 +49,6 @@ __version__ = '2.0.0.dev'
 #: MeshAdaptPUMI (which needs PUMI built).
 __all__ = ["Archiver",
            "Domain",
-           "InputTranslators",
            "SplitOperator",
            "StepControl",
            "NumericalSolution",
