@@ -1339,11 +1339,42 @@ def test_a_mesh_files_bounds_are_its_nodes(tmp_path):
     (tmp_path / "m.node").write_text("3 3 0 1\n1 0 0 0 0\n2 2 1 0 1\n3 1 3 -1 0\n")
     assert ADRProblem.file_bounds({"format": "tetgen", "path": str(tmp_path / "m")}) == (
         [0.0, 0.0, -1.0], [2.0, 3.0, 0.0])
-    (tmp_path / "m.2dm").write_text("MESH2D\nND 1 0.5 0 0\nND 2 4 2 0\nE3T 1 1 2 1 1\n")
-    assert ADRProblem.file_bounds({"format": "2dm", "path": str(tmp_path / "m.2dm")}) == (
-        [0.5, 0.0], [4.0, 2.0])
+    from proteus import MeshTools
+    nodes = numpy.array([[0.5, 0.0, 0.0], [4.0, 0.0, 0.0], [4.0, 2.0, 0.0], [0.5, 2.0, 0.0]])
+    MeshTools.writeMeshYmf(str(tmp_path / "y"), nodes, numpy.array([[0, 1, 2], [0, 2, 3]], 'i'))
+    for path in (str(tmp_path / "y"), str(tmp_path / "y.ymf")):
+        assert ADRProblem.file_bounds({"format": "ymf", "path": path, "dimension": 2}) == (
+            [0.5, 0.0], [4.0, 2.0])
     with pytest.raises(ValueError, match="gives its bounds in the spec"):
         ADRProblem.file_bounds({"format": "hex", "path": "m"})
+
+
+@pytest.mark.parametrize("fmt", ["2dm", "3dm"])
+def test_an_sms_mesh_file_is_refused_with_the_converter(fmt):
+    """Proteus no longer reads 2dm/3dm (#186); a spec that poses one is told to convert it, at numerics, before
+    the domain is built."""
+    problem = {"adr": poisson_adr(), "domain": {"lower": [0, 0], "upper": [1, 1],
+               "region": {"kind": "file", "format": fmt, "path": "m." + fmt}}}
+    with pytest.raises(ValueError, match="ymf-import-sms"):
+        ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, levels=1)
+
+
+def test_a_periodic_file_domain_is_refused():
+    """Periodic pairing needs the region's segments (periodic_region); a geometry or mesh file has none."""
+    problem = {"adr": poisson_adr(), "periodic": [{"axis": "x"}],
+               "domain": {"lower": [0, 0], "upper": [1, 1],
+                          "region": {"kind": "file", "format": "gmsh_geo", "path": "m.geo"}}}
+    with pytest.raises(ValueError, match="periodic conditions need a piecewise_linear region"):
+        ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, h=0.25)
+
+
+def test_ymfrun_does_not_mesh_a_file_domain():
+    """A geometry file (gmsh_geo) is meshed by the solve with options.he; the mesh step's triangle/tetgen PSLG path
+    (writePoly) would fail on a GMSH_3D_Domain, so ymfmesh skips every file domain, as it skips a box."""
+    from proteus.cli import ymfmesh
+    for fmt in ("gmsh_geo", "tetgen", "ymf"):
+        problem = {"domain": {"region": {"kind": "file", "format": fmt, "path": "m"}}}
+        assert ymfmesh._mesh_of({}, problem, "x", {}, ".", "x") is None, fmt
 
 
 def test_a_mesh_file_is_refined_by_levels_not_sized():

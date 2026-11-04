@@ -33,9 +33,10 @@ def _mesh_of(doc, problem, name, realization, outdir, stem):
     region = problem["domain"].get("region")
     if region is None:
         return None
-    from proteus.ADRProblem import MESH_FILE_FORMATS
-    if region.get("kind") == "file" and region.get("format") in MESH_FILE_FORMATS:
-        return None                  # read, not made
+    if region.get("kind") == "file":
+        # a mesh file is read, not made; a geometry file (gmsh_geo) is meshed by the solve itself, with the
+        # element size setup sets, not through the triangle/tetgen PSLG path below
+        return None
     from proteus import ADRProblem, MeshTools
     from .ymfrun import run_arguments
     _, p, n, _ = ADRProblem.setup(problem, **run_arguments(doc, problem, name, realization))

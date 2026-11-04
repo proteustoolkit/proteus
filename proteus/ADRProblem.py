@@ -674,9 +674,11 @@ def mesh_constraint(h, dim, boundary_points=True):
     raise ValueError("an unstructured mesh needs dimension 2 or 3, not %d" % dim)
 
 
-#: file formats whose file is a mesh (ymf.discretizations.MESH_FILE_FORMATS);
-#: a geometry (gmsh_geo) is meshed by h
-MESH_FILE_FORMATS = ("2dm", "3dm", "hex", "tetgen", "ymf")
+#: file formats whose file is a mesh Proteus reads; a geometry (gmsh_geo) is
+#: meshed by h. SMS/ADH 2dm and 3dm meshes are converted to ymf first
+#: (proteustoolkit/ymf-import-sms): Proteus no longer reads them
+MESH_FILE_FORMATS = ("hex", "tetgen", "ymf")
+CONVERTED_FORMATS = ("2dm", "3dm")
 
 
 def _is_file(region):
@@ -689,7 +691,7 @@ def file_bounds(region):
     A file domain without ``bounds`` is posed with none, and the solver takes
     them from the mesh (C27 Phase 5, D2): here, from the node coordinates
     the file holds, before anything is built from it. Read for tetgen
-    (``<path>.node``) and 2dm/3dm (``ND`` lines); other formats, and a
+    (``<path>.node``) and ymf (the mesh's node array); other formats, and a
     geometry that is not a mesh yet, need ``bounds`` in the spec.
     """
     fmt, path = region["format"], region["path"]
@@ -700,14 +702,13 @@ def file_bounds(region):
         lines = [l for l in lines if l]
         count, dim = int(lines[0][0]), int(lines[0][1])
         rows = [[float(v) for v in l[1:1 + dim]] for l in lines[1:1 + count]]
-    elif fmt in ("2dm", "3dm"):
-        with open(path if os.path.exists(path) else path + "." + fmt) as f:
-            rows = [[float(v) for v in l.split()[2:5]] for l in f if l.startswith("ND ")]
-        if fmt == "2dm":
-            rows = [r[:2] for r in rows]
+    elif fmt == "ymf":
+        prefix = path[:-4] if path.endswith(".ymf") else path
+        dim = int(region.get("dimension", 3))
+        rows = numpy.asarray(MeshTools.readMeshYmf(prefix).nodeArray)[:, :dim].tolist()
     else:
         raise ValueError("a %s file domain gives its bounds in the spec: Proteus reads the "
-                         "bounds only from tetgen, 2dm and 3dm files" % (fmt,))
+                         "bounds only from tetgen and ymf files" % (fmt,))
     if not rows:
         raise ValueError("no nodes in the %s file %s" % (fmt, path))
     nodes = numpy.array(rows)
@@ -821,6 +822,12 @@ def numerics(problem, spaces, cells, time=None, quadrature_order=None,
         n.nnx = n.nny = cells + 1
         if dim == 3:
             n.nnz = cells + 1
+    elif _is_file(region) and region["format"] in CONVERTED_FORMATS:
+        raise ValueError("Proteus does not read %s meshes: convert the file to a ymf mesh with "
+                         "proteustoolkit/ymf-import-sms and pose format: ymf" % (region["format"],))
+    elif _is_file(region) and problem.get("periodic"):
+        raise ValueError("periodic conditions need a piecewise_linear region; a %s file domain "
+                         "cannot pair its faces" % (region["format"],))
     elif _is_file(region) and region["format"] in MESH_FILE_FORMATS:
         if h is not None or cells is not None:
             raise ValueError("a %s file is already a mesh: give its levels only, not "
@@ -1047,7 +1054,8 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
         # the mesh file, before the tolerance and anything else needs them
         lower, upper = file_bounds(region)
         problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
-    if problem.get("periodic") and problem["domain"].get("region") is not None and h:
+    if problem.get("periodic") and problem["domain"].get("region") is not None and h \
+            and not _is_file(problem["domain"]["region"]):
         # no boundary points from the mesher, so cut the faces to h here
         problem = dict(problem, domain=dict(
             problem["domain"], region=periodic_region(problem["domain"]["region"], h)))
