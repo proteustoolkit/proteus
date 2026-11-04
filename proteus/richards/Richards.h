@@ -1,8 +1,11 @@
 #ifndef Richards_H
 #define Richards_H
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <valarray>
+#include <vector>
 #include "CompKernel.h"
 #include "ModelFactory.h"
 #include "../pskRelations.h"
@@ -25,6 +28,38 @@ enum class STABILIZATION : int {
 
 namespace richards
 {
+//A/B switch for the weak-Dirichlet boundary block that feeds the HIGH order FCT flux fH.
+//1 (default) -> fH's boundary block uses a_ext = rho*k_rw*Ks, matching the cell loop's `a`,
+//               so it cancels against fL's boundary block (as_ext scaled by the nodal
+//               upwind k_rw) in fA = fH - fL, exactly as the interior blocks do.
+//0           -> the old behaviour: fH's boundary block uses as_ext = rho*Ks, leaving a
+//               residue in fA of order 1/k_rw times the interior antidiffusion.
+//Read once; only TransportMatrixConsistent depends on it, so FCT=False is unaffected either way.
+inline bool richards_env_on(const char *name)
+{
+  const char *e = std::getenv(name);
+  return (e == nullptr) || (std::strcmp(e, "0") != 0);
+}
+static const bool RICHARDS_FCT_BND_KRW = richards_env_on("RICHARDS_FCT_BND_KRW");
+//Step B: keep the weak-Dirichlet block in its own matrix TB instead of folding it into
+//TransportMatrix where the interior fmax(0,-T_ij) clip mangles it, and apply it
+//identically in the low and the high order flux,
+//  fH_ij = fL_ij = -TB_ij dPhi   (boundary block),
+//so it cancels out of fA: the antidiffusive flux is the interior one alone, antisymmetric,
+//and the limited correction conserves mass.  TB gets NO graph viscosity: one acting on
+//dPhi (gravity included) is an O(1) inconsistency at the boundary rows that only the
+//limiter could remove, and the limiter clips exactly there
+//(test/salinity/mms_coupled/MMS_PLAN.md).
+//The price is that the low order boundary rows are not an M-matrix.
+//RICHARDS_FCT_BND_DIFF=0 restores the old routing (TB folded into TransportMatrix).
+static const bool RICHARDS_FCT_BND_DIFF  = richards_env_on("RICHARDS_FCT_BND_DIFF");
+static const bool RICHARDS_FCT_BND_RESET = richards_env_on("RICHARDS_FCT_BND_RESET");
+//Hand the transport model the water flux this scheme really applies on the exterior
+//boundary instead of the pointwise interior trace -(a/rho)(grad psi - rho_r g).n.  See
+//the consBoundaryFlux comment in calculateResidual_entropy_viscosity for the algebra and
+//for the numbers that motivated it.  RICHARDS_BC_CONS=0 restores the pointwise trace.
+static const bool RICHARDS_BC_CONS       = richards_env_on("RICHARDS_BC_CONS");
+
 //cek todo: revisit entry for mass transport form
 // Power entropy //
 inline double ENTROPY(const double &phi, const double &phiL, const double &phiR)
@@ -62,6 +97,7 @@ public:
   virtual void kth_FCT_step(arguments_dict &args)                        = 0;
   virtual void calculateResidual_entropy_viscosity(arguments_dict &args) = 0;
   virtual void calculateMassMatrix(arguments_dict &args)                 = 0;
+  virtual void calculateEdgeVelocity(arguments_dict &args)               = 0;
 };
 
 template <class CompKernelType, int nSpace, int nQuadraturePoints_element, int nDOF_mesh_trial_element, int nDOF_trial_element, int nDOF_test_element, int nQuadraturePoints_elementBoundary>
@@ -73,6 +109,26 @@ public:
   // Reused by invert() so the m -> u inversion uses the same variable density
   // that built the forward mass.
   std::vector<double> rho_dof_member;
+  // Scratch arrays sized by the GLOBAL DOF count, held as members and resized
+  // in place rather than declared as stack VLAs inside the kernels.
+  //
+  // They used to be `double psi[numDOFs], ...` etc.  numDOFs is global, so on a
+  // refined mesh those are megabytes of automatic storage: at numDOFs = 361501
+  // (Elder 1201x301) the four in calculateResidual_entropy_viscosity are
+  // 4 x 361501 x 8 = 11.6 MB against a default `ulimit -s` of 8 MB, and the
+  // function segfaulted on its very first call with no other symptom.  The
+  // cliff sits at 8 MB/(4 x 8 B) = 262144 DOFs -- below it everything works and
+  // nothing is ever noticed, which is why it only bites after a refinement, and
+  // why a case can run under a scheduler (which usually raises or unlimits the
+  // stack) yet crash on a workstation with identical code.
+  //
+  // resize() only reallocates when the size grows, so after the first call this
+  // costs nothing; the explicit zeroing at each use site is kept because eta and
+  // global_entropy_residual are written only under EV_Stab, and a reused buffer
+  // would otherwise hand the next call the previous one's values.
+  std::vector<double> psi_member, eta_member, global_entropy_residual_member,
+                      boundary_integral_member, cflux_member,
+                      Rpos_member, Rneg_member;
   // Pore size distribution / relative permeability model selected from Python
   // (Coefficients.PSK_type). 0 = van Genuchten-Mualem (default), 1 = Brooks-
   // Corey-Burdine, 2 = Brooks-Corey-Mualem, 3 = Gardner, 4 = Hornung-Messing.
@@ -340,14 +396,23 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     }
   }
 
-  void exteriorNumericalFluxJacobian2(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian)
+  //cfluxJacobian is the SAME IIPG consistency term as fluxJacobian but built from the
+  //relative-permeability-weighted conductivity K = rho*k_rw*Ks instead of the saturated
+  //Ks.  It feeds TransportMatrixConsistent, i.e. the HIGH order flux fH, exactly the way
+  //the cell loop feeds it from `a` while TransportMatrix gets `as`.  Without the split the
+  //boundary block enters fH with weight 1 and enters fL multiplied by the nodal upwind
+  //k_rw, so it does not cancel in fA = fH - fL and leaves a spurious antidiffusive flux
+  //~1/k_rw times the interior one at every weakly imposed Dirichlet row.
+  void exteriorNumericalFluxJacobian2(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian, double &cfluxJacobian)
   {
     if (isDOFBoundary) {
       fluxJacobian = 0.0;
       bfluxJacobian = 0.0;
+      cfluxJacobian = 0.0;
       for (int I = 0; I < nSpace; I++) {
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { 
-          fluxJacobian -= Ks[m] * grad_v[colind[m]] * n[I]; 
+        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) {
+          fluxJacobian -= Ks[m] * grad_v[colind[m]] * n[I];
+          cfluxJacobian -= K[m] * grad_v[colind[m]] * n[I];
         }
       }
       //Dirichlet penalty
@@ -355,6 +420,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     } else {
       fluxJacobian = 0.0;
       bfluxJacobian = 0.0;
+      cfluxJacobian = 0.0;
     }
   }
 
@@ -398,6 +464,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     /////////////////////////////DENSITY COUPLING  >>>> USE rho from mprans model/////////////////////////
     proteus::pyarray<double> &q_rho                                     = args.array<double>("q_rho");
     proteus::pyarray<double> &ebqe_rho                                  = args.array<double>("ebqe_rho");
+    // mu/mu_0 from the transport model: the conductivity at a quadrature point is K_s/mu
+    proteus::pyarray<double> &q_mu                                      = args.array<double>("q_mu");
+    proteus::pyarray<double> &ebqe_mu                                   = args.array<double>("ebqe_mu");
 
     proteus::pyarray<double> &gravity                                    = args.array<double>("gravity");
     proteus::pyarray<double> &alpha                                      = args.array<double>("alpha");
@@ -556,8 +625,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double Kr, dKr, thetaW;
         const double rho_local = q_rho.data()[eN_k];
         const double rho_velocity = std::fabs(rho_local) > 1.0e-12 ? rho_local : rho;
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / q_mu.data()[eN_k];
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_local, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
         q_theta.data()[eN_k] = thetaW;
         double mn_q, dmn_q, fn[nSpace], dfn[nSpace], an[nnz], dan[nnz], asn[nnz], Krn, dKrn, thetaWn;
         if (Theta < 1.0) {
@@ -684,10 +755,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         const double rho_ext = ebqe_rho.data()[ebNE_kb];
         const double rho_velocity_ext = std::fabs(rho_ext) > 1.0e-12 ? rho_ext : rho;
         double Kr, dKr, thetaW_ext, thetaW_bc;
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / ebqe_mu.data()[ebNE_kb];
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, Kr, dKr, thetaW_ext);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, Kr, dKr, thetaW_ext);
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, Kr, dKr, thetaW_bc);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, Kr, dKr, thetaW_bc);
         ebqe_theta.data()[ebNE_kb] = thetaW_ext;
         
         //
@@ -774,6 +847,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     /////////////////////////////DENSITY COUPLING  >>>> USE rho from mprans model/////////////////////////
     proteus::pyarray<double> &q_rho                    = args.array<double>("q_rho");
     proteus::pyarray<double> &ebqe_rho                 = args.array<double>("ebqe_rho");
+    proteus::pyarray<double> &q_mu                     = args.array<double>("q_mu");
+    proteus::pyarray<double> &ebqe_mu                  = args.array<double>("ebqe_mu");
     //////////////////////////////////////////////////////////////////////////////////////////////////////
 
     proteus::pyarray<double> &gravity                   = args.array<double>("gravity");
@@ -859,9 +934,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //
         double Kr, dKr, thetaW;
         //const double rho_local = q_rho.data()[eN_k];
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / q_mu.data()[eN_k];
 
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, q_rho.data()[eN_k], beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
         //
         //calculate time derivatives
         //
@@ -941,11 +1018,13 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //
         double Kr, dKr, thetaW, thetaW_bc;
         const double rho_ext = ebqe_rho.data()[ebNE_kb];
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / ebqe_mu.data()[ebNE_kb];
 
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, Kr, dKr, thetaW);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, Kr, dKr, thetaW);
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, Kr, dKr, thetaW_bc);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, Kr, dKr, thetaW_bc);
         //
         //calculate the flux jacobian
         //
@@ -995,12 +1074,22 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
   // alpha_ij dt (f^H - f^L)_ij, i.e. without the consistent-mass term; read by the transport coupling
   proteus::pyarray<double> &limitedFluxMatrix         = args.array<double>("limitedFluxMatrix");
   proteus::pyarray<double> &limitedSpatialFluxMatrix  = args.array<double>("limitedSpatialFluxMatrix");
+  // OUT: the limited correction applied on each edge (mass*ML), exported to a
+  // coupled transport model; written in pass 2.
+  proteus::pyarray<double> &limitedFlux               = args.array<double>("limitedFlux");
   // flags
   int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
   int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
   int                  fct_pass                  = args.scalar<int>("fct_pass");
   // 1 at DOFs whose low-order predictor is saturated (Coefficients.FCT_SATURATED_LOW_ORDER)
   proteus::pyarray<double> &satLow                    = args.array<double>("satLow");
+  //Bound the WATER CONTENT, not the mass m = theta*rho: a neighbour's low-order
+  //mass is compared at THIS node's density, mLow_j*rho_i/rho_j = theta_j*rho_i.  With
+  //a variable density a heavier neighbour's m exceeds rho_i*theta_s, so bounding m
+  //let the limiter hand node i more water than it can hold; invert() then clipped
+  //it and the water was lost (up to 24% at a node on UHD).  With a uniform density
+  //rho_i/rho_j = 1 and this is the plain mass bound.
+  const bool           rhoBounds                 = rho_dof_member.size() == static_cast<std::size_t>(numDOFs);
 
   //PARALLEL. The limiter is L_ij = min(Rpos_i, Rneg_j), so an owned row i reads the ratio of a column
   //j that may be a ghost, and everything a ratio is built from -- the row's own sparsity, ML, mDotLow,
@@ -1044,8 +1133,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       ////////////////////////
       if (GLOBAL_FCT == 0) {
         if (MONOLITHIC == 0) {
-          mini = fmin(mini, mLow.at(j));
-          maxi = fmax(maxi, mLow.at(j));
+          const double mLow_j = rhoBounds ? mLow.at(j) * (rho_dof_member[i] / rho_dof_member[j]) : mLow.at(j);
+          mini = fmin(mini, mLow_j);
+          maxi = fmax(maxi, mLow_j);
         } else {
           mini = fmin(mini, mn.at(j));
           maxi = fmax(maxi, mn.at(j));
@@ -1118,16 +1208,159 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
       if (MONOLITHIC == 0) {
         ith_Limiter_times_FluxCorrectionMatrix += alpha_fA;
+        limitedFlux.at(ij) = alpha_fA * bc_mask.at(i);
       } else {
         ith_Limiter_times_FluxCorrectionMatrix += alpha_fA + (LUMPED_MASS_MATRIX == 1 ? 0. : 1.) * dt * alpha_dot * MC.at(ij) * (mDot.at(i) - mDot.at(j));
+        limitedFlux.at(ij) = (alpha_fA + (LUMPED_MASS_MATRIX == 1 ? 0. : 1.) * dt * alpha_dot * MC.at(ij) * (mDot.at(i) - mDot.at(j))) * bc_mask.at(i);
       }
       ij += 1;
     } 
     fluxCorrection.at(i) = -ith_Limiter_times_FluxCorrectionMatrix * bc_mask.at(i) / dt;
     limited_solution.at(i) = mLow.at(i) + 1.0 / ML.at(i) * ith_Limiter_times_FluxCorrectionMatrix * bc_mask.at(i);
   }
-  } 
+  }
 }
+
+  //EDGE VELOCITY FOR THE COUPLED TRANSPORT MODEL.  A velocity at the quadrature
+  //points whose nodal fluxes are exactly the water this step moved along the edges,
+  //
+  //  int rho v.grad(w_i) dV = sum_j E_ij,   E_ij = edgeFluxLow_ij + limitedFlux_ij/dt
+  //
+  //(E = fL with FCT off; low order plus the limited correction with FCT on), so a
+  //transport model advecting with v satisfies this model's discrete continuity
+  //equation node by node.  No global solve; element by element:
+  //  1. split E_ij among the elements sharing edge ij with the symmetric weights
+  //     |S^e_ij| / sum_e |S^e_ij|, S^e_ij = int_e rho K_s grad(w_j).grad(w_i) (equal
+  //     shares where every S^e_ij is zero), so f^e_ij = -f^e_ji and
+  //     sum_e f^e_ij = E_ij;
+  //  2. R^e_a = sum_b f^e_ab sums to zero over the element, and on a P1 simplex the
+  //     G_a = int_e grad(w_a) dV span exactly the zero-sum vectors, so one constant
+  //     mass flux q_e solves q_e.G_a = R^e_a for every vertex a;
+  //  3. v = q_e/rho at each quadrature point.
+  //With uniform kr on an acute mesh and no FCT correction, q_e is the element mean
+  //of the Darcy mass flux -rho kr K_s (grad psi - (rho/rho0) g).
+  //
+  //Must run after the Newton solve and FCTStep, since it needs the final
+  //limitedFlux.
+  //
+  //PARALLEL: an owned row's edges and their element stars are all local, so its sum
+  //is exact.  Each edge takes its value from its lower-numbered row, and owned DOFs
+  //are numbered before ghosts, so a ghost row never overrides an owned one and every
+  //element stays antisymmetric.
+  void calculateEdgeVelocity(arguments_dict &args)
+  {
+    proteus::pyarray<double> &mesh_trial_ref             = args.array<double>("mesh_trial_ref");
+    proteus::pyarray<double> &mesh_grad_trial_ref        = args.array<double>("mesh_grad_trial_ref");
+    proteus::pyarray<double> &mesh_dof                   = args.array<double>("mesh_dof");
+    proteus::pyarray<int>    &mesh_l2g                   = args.array<int>("mesh_l2g");
+    proteus::pyarray<double> &dV_ref                     = args.array<double>("dV_ref");
+    proteus::pyarray<double> &u_grad_trial_ref           = args.array<double>("u_grad_trial_ref");
+    int                  nElements_global           = args.scalar<int>("nElements_global");
+    int                  numDOFs                    = args.scalar<int>("numDOFs");
+    int                  NNZ                        = args.scalar<int>("NNZ");
+    proteus::pyarray<int>    &a_rowptr                   = args.array<int>("a_rowptr");
+    proteus::pyarray<int>    &a_colind                   = args.array<int>("a_colind");
+    proteus::pyarray<int>    &elementMaterialTypes       = args.array<int>("elementMaterialTypes");
+    proteus::pyarray<double> &KWs                        = args.array<double>("KWs");
+    proteus::pyarray<double> &q_rho                      = args.array<double>("q_rho");
+    proteus::pyarray<double> &q_mu                       = args.array<double>("q_mu");
+    double               dt                         = args.scalar<double>("dt");
+    proteus::pyarray<double> &edgeFluxLow                = args.array<double>("edgeFluxLow");
+    proteus::pyarray<double> &limitedFlux                = args.array<double>("limitedFlux");
+    proteus::pyarray<int>    &csrRowIndeces_DofLoops     = args.array<int>("csrRowIndeces_DofLoops");
+    proteus::pyarray<int>    &csrColumnOffsets_DofLoops  = args.array<int>("csrColumnOffsets_DofLoops");
+    proteus::pyarray<int>    &csrTransposeIndices        = args.array<int>("csrTransposeIndices");
+    proteus::pyarray<int>    &csrRowIndeces_CellLoops    = args.array<int>("csrRowIndeces_CellLoops");
+    proteus::pyarray<int>    &csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
+    proteus::pyarray<double> &velocity_edge              = args.array<double>("velocity_edge");
+    //step 2 relies on the vertex gradients of a P1 simplex
+    assert(nDOF_trial_element == nSpace + 1);
+
+    //antisymmetric realized edge flux; the lower-numbered row wins
+    std::vector<double> E(NNZ, 0.0);
+    for (int i = 0; i < numDOFs; i++)
+      for (int ij = csrRowIndeces_DofLoops.data()[i]; ij < csrRowIndeces_DofLoops.data()[i + 1]; ij++) {
+        const int j  = csrColumnOffsets_DofLoops.data()[ij];
+        const int ji = csrTransposeIndices.data()[ij];
+        E[ij] = (i <= j) ?  (edgeFluxLow.data()[ij] + limitedFlux.data()[ij] / dt)
+                         : -(edgeFluxLow.data()[ji] + limitedFlux.data()[ji] / dt);
+      }
+    //per edge: sum over its elements of |S^e_ij|, and the number of elements
+    std::vector<double> W_sum(NNZ, 0.0), n_e(NNZ, 0.0);
+    //pass 0 fills W_sum and n_e; pass 1 splits E, solves for q_e and writes v
+    for (int pass = 0; pass < 2; pass++)
+      for (int eN = 0; eN < nElements_global; eN++) {
+        const int mat = elementMaterialTypes.data()[eN];
+        double S[nDOF_test_element][nDOF_trial_element], G[nDOF_test_element][nSpace];
+        for (int a = 0; a < nDOF_test_element; a++) {
+          for (int b = 0; b < nDOF_trial_element; b++) S[a][b] = 0.0;
+          for (int I = 0; I < nSpace; I++) G[a][I] = 0.0;
+        }
+        for (int k = 0; k < nQuadraturePoints_element; k++) {
+          const int eN_k = eN * nQuadraturePoints_element + k;
+          double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x, y, z;
+          double u_grad_trial[nDOF_trial_element * nSpace], as_w[nnz];
+          ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(), mesh_grad_trial_ref.data(), jac, jacDet, jacInv, x, y, z);
+          const double dV = fabs(jacDet) * dV_ref.data()[k];
+          ck.gradTrialFromRef(&u_grad_trial_ref.data()[k * nDOF_trial_element * nSpace], jacInv, u_grad_trial);
+          //the same K_s/mu the residual built T from
+          for (int ii = 0; ii < nnz; ii++) as_w[ii] = q_rho.data()[eN_k] * KWs.data()[mat * nnz + ii] / q_mu.data()[eN_k];
+          for (int a = 0; a < nDOF_test_element; a++) {
+            double grad_w_dV[nSpace];
+            for (int I = 0; I < nSpace; I++) {
+              grad_w_dV[I] = u_grad_trial[a * nSpace + I] * dV;
+              G[a][I] += grad_w_dV[I];
+            }
+            for (int b = 0; b < nDOF_trial_element; b++)
+              S[a][b] += ck.SimpleDiffusionJacobian_weak(a_rowptr.data(), a_colind.data(), as_w, &u_grad_trial[b * nSpace], grad_w_dV);
+          }
+        }
+        double R[nDOF_test_element];
+        for (int a = 0; a < nDOF_test_element; a++) {
+          const int eN_a = eN * nDOF_test_element + a;
+          R[a] = 0.0;
+          for (int b = 0; b < nDOF_trial_element; b++) {
+            if (a == b) continue;
+            const int ab = csrRowIndeces_CellLoops.data()[eN_a] + csrColumnOffsets_CellLoops.data()[eN_a * nDOF_trial_element + b];
+            if (pass == 0) {
+              W_sum[ab] += fabs(S[a][b]);
+              n_e[ab]   += 1.0;
+            } else {
+              const double share = (W_sum[ab] > 0.0) ? fabs(S[a][b]) / W_sum[ab] : 1.0 / n_e[ab];
+              R[a] += share * E[ab];
+            }
+          }
+        }
+        if (pass == 0) continue;
+        //G q = R is consistent (sum_a R_a = 0 = sum_a G_a), so the normal equations
+        //(G^T G) q = G^T R give its exact solution
+        double N[nSpace][nSpace], q[nSpace];
+        for (int I = 0; I < nSpace; I++) {
+          q[I] = 0.0;
+          for (int a = 0; a < nDOF_test_element; a++) q[I] += G[a][I] * R[a];
+          for (int J = 0; J < nSpace; J++) {
+            N[I][J] = 0.0;
+            for (int a = 0; a < nDOF_test_element; a++) N[I][J] += G[a][I] * G[a][J];
+          }
+        }
+        //N is symmetric positive definite, so elimination needs no pivoting
+        for (int I = 0; I < nSpace; I++)
+          for (int J = I + 1; J < nSpace; J++) {
+            const double l = N[J][I] / N[I][I];
+            for (int K = I; K < nSpace; K++) N[J][K] -= l * N[I][K];
+            q[J] -= l * q[I];
+          }
+        for (int I = nSpace - 1; I >= 0; I--) {
+          for (int K = I + 1; K < nSpace; K++) q[I] -= N[I][K] * q[K];
+          q[I] /= N[I][I];
+        }
+        for (int k = 0; k < nQuadraturePoints_element; k++) {
+          const int eN_k = eN * nQuadraturePoints_element + k;
+          for (int I = 0; I < nSpace; I++)
+            velocity_edge.data()[eN_k * nSpace + I] = q[I] / q_rho.data()[eN_k];
+        }
+      }
+  }
 
 
   // Limiter of the fully implicit FCT (Dielmann, Kuzmin & Kees, JNMA), steps 2-5:
@@ -1268,7 +1501,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &max_m_bc                  = args.array<double>("max_m_bc");
     int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
     int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
-    double               Rpos[numDOFs], Rneg[numDOFs];
+    //Heap-backed members, not stack VLAs -- see the declarations in the class body.
+    Rpos_member.assign(numDOFs, 0.0);
+    Rneg_member.assign(numDOFs, 0.0);
+    std::vector<double> &Rpos = Rpos_member;
+    std::vector<double> &Rneg = Rneg_member;
     int                  ij = 0;
 
     //////////////////////////////////////////////////////
@@ -1420,6 +1657,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //////////////////////////////Density Coupling ///////////////////////////////
     proteus::pyarray<double> &q_rho                                     = args.array<double>("q_rho");
     proteus::pyarray<double> &ebqe_rho                                  = args.array<double>("ebqe_rho");
+    proteus::pyarray<double> &q_mu                                      = args.array<double>("q_mu");
+    proteus::pyarray<double> &ebqe_mu                                   = args.array<double>("ebqe_mu");
     proteus::pyarray<double> &gravity                                    = args.array<double>("gravity");
     proteus::pyarray<double> &alpha                                      = args.array<double>("alpha");
     proteus::pyarray<double> &n                                          = args.array<double>("n");
@@ -1504,15 +1743,77 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &dt_times_fH_minus_fL = args.array<double>("dt_times_fH_minus_fL");
     proteus::pyarray<double> &min_m_bc             = args.array<double>("min_m_bc");
     proteus::pyarray<double> &max_m_bc             = args.array<double>("max_m_bc");
+    //weak-Dirichlet block of the transport operator, used only when RICHARDS_FCT_BND_DIFF
+    //is on.  See the flag's comment above.
+    proteus::pyarray<double> &TransportBoundary    = args.array<double>("TransportBoundary");
+    //Step B changes the RESIDUAL (TB unclipped instead of through the fmax clip), so it is
+    //tied to FCT, where it keeps the limited correction conservative; an FCT=False run keeps
+    //the old routing.  Python passes coefficients.FCT here; the env var can still force it
+    //off for an A/B but can never turn it on for an FCT=False run.
+    const bool useBndDiff = (args.scalar<int>("FCT_BND_DIFF") != 0) && RICHARDS_FCT_BND_DIFF;
     // AUX QUANTITIES OF INTEREST
     proteus::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     proteus::pyarray<double> &mn        = args.array<double>("mn");
+    // 1 => rho_nodal holds the transport model's nodal rho(c_i) and replaces the
+    // L2 projection of q_rho below.
+    proteus::pyarray<double> &rho_nodal = args.array<double>("rho_nodal");
+    const int USE_RHO_NODAL = args.scalar<int>("USE_RHO_NODAL");
+    // 1 => rho_nodal_old holds the nodal rho of the previous accepted step, and
+    // the old-time mass mn is evaluated with it (see the DOF loop).
+    proteus::pyarray<double> &rho_nodal_old = args.array<double>("rho_nodal_old");
+    const int USE_RHO_NODAL_OLD = args.scalar<int>("USE_RHO_NODAL_OLD");
+    // NODAL water content theta(psi^n), the theta of mn.  Exported for coupled
+    // transport models.  Not read by this model.
+    proteus::pyarray<double> &thetaW_dof = args.array<double>("thetaW_dof");
     proteus::pyarray<double> &fluxCorrection        = args.array<double>("fluxCorrection");
     proteus::pyarray<double> &limited_solution          = args.array<double>("limited_solution");
     proteus::pyarray<int>    &freeDOFMaterialTypes      = args.array<int>("freeDOFMaterialTypes");
 
     proteus::pyarray<double> &velocity_couple               = args.array<double>("velocity_couple");
     proteus::pyarray<double> &ebqe_velocity_ext_couple      = args.array<double>("ebqe_velocity_ext_couple");
+    // BOUNDARY-FLUX DIAGNOSTIC.  ebqe_flux gets the FULL flux from
+    // exteriorNumericalFlux2, but with useConsistentFlux = false the residual
+    // integrates bflux_ext, which that routine sets to the PENALTY TERM ALONE
+    // (Richards.h:320-321) -- the Darcy consistency term v.n is dropped.  So
+    // ebqe_flux is NOT the flux this scheme applies, and neither is the
+    // velocity_couple trace handed to TADR, which is the consistency term and
+    // nothing else.  Python cannot see bflux_ext at all, so export it, plus the
+    // quadrature weight, and let the diagnostic in Richards.py do the split
+    // exactly instead of estimating it from penalty*(u - bc_u).
+    proteus::pyarray<double> &ebqe_bflux                    = args.array<double>("ebqe_bflux");
+    proteus::pyarray<double> &ebqe_dS                       = args.array<double>("ebqe_dS");
+    // CONSERVATIVE NODAL BOUNDARY FLUX, exported for the transport coupling.
+    // At a boundary DOF i the water flux this scheme applies is the row's
+    // penalty part (bflux, integrated below) PLUS the IIPG consistency rows
+    // that are folded into TransportMatrix (see the exterior loop) and reach
+    // the residual as non-telescoping edge fluxes.  At convergence their sum
+    // equals the flux of the SYMMETRIC interior operator out of node i,
+    //     F_i = sum_j Kr_up max(0, -T^int_ij) dphi_ij,    T^int = T - TB,
+    // i.e. the Hughes consistent flux, which telescopes exactly with the
+    // interior edge fluxes.  The pointwise trace -(a/rho)(grad psi - rho_r g).n
+    // that ebqe_velocity_ext_couple carries is NOT that number: on Simmons SMD
+    // level 4 it reads 0.29x of the corner singularity, 1.5-3x the flux across a
+    // one-cell density jump, and 0.83-0.86x the open-top outflow.  The second
+    // exterior pass at the end of this function therefore replaces the normal
+    // component of the coupled trace by F_i/(rho S_i), the same way the cell
+    // loop builds the interior trace -- no Python post-processing, one extra
+    // sweep over the boundary quadrature points per residual call.  Units are
+    // the residual's (rho-weighted); outward positive.  Only the Theta part is
+    // carried -- Theta is hardwired to 1 in Richards.py.
+    proteus::pyarray<double> &consBoundaryFlux              = args.array<double>("consBoundaryFlux");
+    // OUT: per edge, the low-order water flux into row i from column j on the
+    // INTERIOR (symmetric) part of the transport matrix, same units as the
+    // residual's edge flux.  Antisymmetric by construction, so a coupled
+    // transport model can advect with it and conserve.  Theta part only
+    // (Theta is hardwired to 1).
+    proteus::pyarray<double> &edgeFluxLow                   = args.array<double>("edgeFluxLow");
+    // the interior low-order flux fL_int of edge ij alone (boundary part excluded); read by the
+    // edge-flux TADR path (STABILIZATION_TYPE 2-5) and calculateEdgeVelocity
+    proteus::pyarray<double> &edgeFluxInterior              = args.array<double>("edgeFluxInterior");
+    // IN: nodal water source [mass/(volume time)], added to row i as ML_i*nodalSource_i
+    // (lumped).  Zero unless the deck passes Coefficients(mms_source=...), e.g. the
+    // flow source of a manufactured solution.
+    proteus::pyarray<double> &nodalSource                   = args.array<double>("nodalSource");
     // proteus::pyarray<double> &q_x    = args.array<double>("q_x");
     // proteus::pyarray<double> &ebqe_x = args.array<double>("ebqe_x");
     
@@ -1530,7 +1831,6 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //   boundaryFluxDOF_i<- the boundary integral of row i, positive into the domain
     const int            USE_NODAL_RHO    = args.scalar<int>("USE_NODAL_RHO");
     proteus::pyarray<double> &rho_dof_in       = args.array<double>("rho_dof_in");
-    proteus::pyarray<double> &edgeFluxLow      = args.array<double>("edgeFluxLow");
     proteus::pyarray<double> &boundaryFluxDOF  = args.array<double>("boundaryFluxDOF");
     std::fill(boundaryFluxDOF.begin(), boundaryFluxDOF.end(), 0.0);
     // double Rpos[numDOFs], Rneg[numDOFs];
@@ -1553,6 +1853,19 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     std::vector<double> ML_rho(numDOFs, 0.0);
     std::fill(velocity_couple.data(), velocity_couple.data() + velocity_couple.size(), 0.0);
     std::fill(ebqe_velocity_ext_couple.data(), ebqe_velocity_ext_couple.data() + ebqe_velocity_ext_couple.size(), 0.0);
+    std::fill(consBoundaryFlux.data(), consBoundaryFlux.data() + consBoundaryFlux.size(), 0.0);
+    // rows that own at least one exterior-face quadrature point; only these get
+    // the consBoundaryFlux accumulation in the DOF loop (it needs an extra
+    // closure evaluation per edge, so it is not done on interior rows)
+    std::vector<char> is_bdry_dof(numDOFs, 0);
+    // Bookkeeping for the conservative boundary velocity below: per DOF, the
+    // measure of the weakly imposed (Dirichlet) part of its boundary star and
+    // the flux the prescribed-flux faces already pin there; per boundary
+    // quadrature point, the outward normal, cached so the second pass does not
+    // have to redo the element boundary mapping.
+    std::vector<double> bdryDirichletArea(numDOFs, 0.0);
+    std::vector<double> bdryPrescribedFlux(numDOFs, 0.0);
+    std::vector<double> ebqe_normal_cache(RICHARDS_BC_CONS ? nExteriorElementBoundaries_global * nQuadraturePoints_elementBoundary * nSpace : 0, 0.0);
     
      for (int eN = 0; eN < nElements_global; eN++)
       for (int j = 0; j < nDOF_trial_element; j++) {
@@ -1565,10 +1878,27 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       TransportMatrixConsistent[i]  = 0.;
       TransportMatrixn[i]           = 0.;
       TransportMatrixConsistentn[i] = 0.;
+      TransportBoundary.data()[i]   = 0.;
     }
+    //min/max_m_bc are only ever fmin/fmax'd into below, so without this they would be the
+    //widest window ever seen rather than this step's: a time dependent Dirichlet or a
+    //moving seepage active set would keep loosening the FCT bound and never tighten it.
+    //RICHARDS_FCT_BND_RESET=0 restores the old accumulate-forever behaviour.
+    if (RICHARDS_FCT_BND_RESET)
+      for (int i = 0; i < numDOFs; i++) {
+        min_m_bc.data()[i] =  1.0e10;
+        max_m_bc.data()[i] = -1.0e10;
+      }
 
     // Project quadrature density to nodal DOFs before constructing nodal
     // stabilization potentials so Phi uses a true nodal density field.
+    // With USE_RHO_NODAL the transport model's nodal rho(c_i) is used instead:
+    // lumped mass evaluates storage AT the node, where the value is rho(c_i),
+    // and the projection smooths it.  (Linear EOS: interpolating rho(c_i)
+    // reproduces q_rho exactly, so nodes and quadrature points then agree.)
+    if (USE_RHO_NODAL) {
+      for (int i = 0; i < numDOFs; ++i) rho_dof[i] = rho_nodal.data()[i];
+    } else {
     for (int eN = 0; eN < nElements_global; eN++) {
       const int eN_nDOF_trial_element = eN * nDOF_trial_element;
       for (int k = 0; k < nQuadraturePoints_element; k++) {
@@ -1591,6 +1921,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       if (ML_rho[i] > 0.0) rho_dof[i] /= ML_rho[i];
       else rho_dof[i] = rho;
     }
+    } // USE_RHO_NODAL
     if (USE_NODAL_RHO)
       for (int i = 0; i < numDOFs; ++i) rho_dof[i] = rho_dof_in.data()[i];
     // Cache the projected, salinity-coupled density for use in invert() so
@@ -1598,7 +1929,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     rho_dof_member = rho_dof;
 
     // compute entropy and init global_entropy_residual and boundary_integral
-    double psi[numDOFs], eta[numDOFs], global_entropy_residual[numDOFs], boundary_integral[numDOFs];
+    //Heap-backed members, not stack VLAs -- see the declarations in the class body.
+    psi_member.assign(numDOFs, 0.0);
+    eta_member.assign(numDOFs, 0.0);
+    global_entropy_residual_member.assign(numDOFs, 0.0);
+    boundary_integral_member.assign(numDOFs, 0.0);
+    std::vector<double> &psi                     = psi_member;
+    std::vector<double> &eta                     = eta_member;
+    std::vector<double> &global_entropy_residual = global_entropy_residual_member;
+    std::vector<double> &boundary_integral       = boundary_integral_member;
     for (int i = 0; i < numDOFs; i++) {
       // NODAL ENTROPY //
       if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) //EV stab
@@ -1698,11 +2037,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double Kr, dKr, Krn, dKrn, thetaW, thetaWn;
         const double rho_local = q_rho.data()[eN_k];
         const double rho_velocity = std::fabs(rho_local) > 1.0e-12 ? rho_local : rho;
+        // conductivity K_s/mu with the transported viscosity: T, a and the coupled
+        // velocity below all carry it, the nodal upwind k_r and storage do not
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes[eN] * nnz + ii] / q_mu.data()[eN_k];
 
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_local, beta, gravity.data(), alpha.data()[elementMaterialTypes[eN]], n.data()[elementMaterialTypes[eN]], thetaR.data()[elementMaterialTypes[eN]], thetaSR.data()[elementMaterialTypes[eN]],
-                             &KWs.data()[elementMaterialTypes[eN] * nnz], un, mn, dmn, fn, dfn, an, dan, asn, Krn, dKrn, thetaWn);
+                             KWs_mu, un, mn, dmn, fn, dfn, an, dan, asn, Krn, dKrn, thetaWn);
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_local, beta, gravity.data(), alpha.data()[elementMaterialTypes[eN]], n.data()[elementMaterialTypes[eN]], thetaR.data()[elementMaterialTypes[eN]], thetaSR.data()[elementMaterialTypes[eN]],
-                             &KWs.data()[elementMaterialTypes[eN] * nnz], u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
+                             KWs_mu, u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
         q_theta.data()[eN_k] = thetaW;
 
         // Darcy velocity for coupling should use the direct FE gradient of the
@@ -1817,11 +2160,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double u_ext = 0.0, un_ext, grad_u_ext[nSpace], m_ext = 0.0, dm_ext = 0.0, f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz], as_ext[nnz], 
         mn_ext = 0.0, dmn_ext = 0.0, fn_ext[nSpace], dfn_ext[nSpace], an_ext[nnz], dan_ext[nnz], asn_ext[nnz], flux_ext = 0.0, bflux_ext = 0.0,
                //anb_seepage_flux=0.0, // for flux calculation
-          bc_u_ext = 0.0, bc_grad_u_ext[nSpace], bc_m_ext = 0.0, bc_dm_ext = 0.0, bc_f_ext[nSpace], bc_df_ext[nSpace], bc_a_ext[nnz], bc_da_ext[nnz], bc_as_ext[nnz], jac_ext[nSpace * nSpace], jacDet_ext, jacInv_ext[nSpace * nSpace], boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt, dS, u_test_dS[nDOF_test_element], u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_ext, y_ext, z_ext, xt_ext, yt_ext, zt_ext, integralScaling, G[nSpace * nSpace], G_dd_G, tr_G, fluxJacobian_u_u[nDOF_trial_element], bfluxJacobian_u_u[nDOF_trial_element], fluxJacobian_un_un[nDOF_trial_element];
+          bc_u_ext = 0.0, bc_grad_u_ext[nSpace], bc_m_ext = 0.0, bc_dm_ext = 0.0, bc_f_ext[nSpace], bc_df_ext[nSpace], bc_a_ext[nnz], bc_da_ext[nnz], bc_as_ext[nnz], jac_ext[nSpace * nSpace], jacDet_ext, jacInv_ext[nSpace * nSpace], boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt, dS, u_test_dS[nDOF_test_element], u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_ext, y_ext, z_ext, xt_ext, yt_ext, zt_ext, integralScaling, G[nSpace * nSpace], G_dd_G, tr_G, fluxJacobian_u_u[nDOF_trial_element], bfluxJacobian_u_u[nDOF_trial_element], fluxJacobian_un_un[nDOF_trial_element], cfluxJacobian_u_u[nDOF_trial_element];
         for (int j = 0; j < nDOF_trial_element; j++) {
-          fluxJacobian_u_u[j] = 0.0; bfluxJacobian_u_u[j] = 0.0; fluxJacobian_un_un[j] = 0.0;
+          fluxJacobian_u_u[j] = 0.0; bfluxJacobian_u_u[j] = 0.0; fluxJacobian_un_un[j] = 0.0; cfluxJacobian_u_u[j] = 0.0;
         }
-        //
+        //\
         //calculate the solution and gradients at quadrature points
         //
         //compute information about mapping from reference element to physical element
@@ -1859,13 +2202,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double bc_Kr, bc_dKr,bc_Kr_ext, bc_dKr_ext, bc_Krn, bc_dKrn, thetaW_ext, thetaWn_ext, thetaW_bc_ext;
         const double rho_ext = ebqe_rho.data()[ebNE_kb];
         const double rho_velocity_ext = std::fabs(rho_ext) > 1.0e-12 ? rho_ext : rho;
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / ebqe_mu.data()[ebNE_kb];
 
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, bc_Kr, bc_dKr, thetaW_ext);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u_ext, m_ext, dm_ext, f_ext, df_ext, a_ext, da_ext, as_ext, bc_Kr, bc_dKr, thetaW_ext);
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], un_ext, mn_ext, dmn_ext, fn_ext, dfn_ext, an_ext, dan_ext, asn_ext, bc_Krn, bc_dKrn, thetaWn_ext);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, un_ext, mn_ext, dmn_ext, fn_ext, dfn_ext, an_ext, dan_ext, asn_ext, bc_Krn, bc_dKrn, thetaWn_ext);
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_ext, beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, bc_Kr_ext,bc_dKr_ext, thetaW_bc_ext);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, bc_u_ext, bc_m_ext, bc_dm_ext, bc_f_ext, bc_df_ext, bc_a_ext, bc_da_ext, bc_as_ext, bc_Kr_ext,bc_dKr_ext, thetaW_bc_ext);
         ebqe_theta.data()[ebNE_kb] = thetaW_ext;
         //
         //Calculate Darcy Velocity at external faces
@@ -1918,6 +2263,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         anb_seepage_flux             = seepagefluxcalculator(anb_seepage_flux, isSeepageFace.data()[ebNE], dS, flux_ext);
         anb_seepage_flux_n.data()[0] = anb_seepage_flux;
         ebqe_u.data()[ebNE_kb]       = u_ext;
+        // see the note at the ebqe_bflux declaration: bflux_ext, not flux_ext,
+        // is what the residual below integrates when useConsistentFlux = false
+        ebqe_bflux.data()[ebNE_kb] = useConsistentFlux ? flux_ext : bflux_ext;
+        ebqe_dS.data()[ebNE_kb]    = dS;
+        //the coupled-velocity pass below needs the outward normal, and ebqe here
+        //is hand-built and carries none
+        if (RICHARDS_BC_CONS)
+          for (int I = 0; I < nSpace; I++) ebqe_normal_cache[ebNE_kb_nSpace + I] = normal[I];
         //seed the FCT bounds with the imposed value. min_m_bc/max_m_bc are otherwise left at +-1e10, so
         //Zalesak's bounds at a weakly imposed Dirichlet DOF come only from the neighbours' low order masses
         //and the limiter clamps the boundary layer. theta(bc_u) uses the DOF's own soil and density so the
@@ -1945,6 +2298,24 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           } else {
             elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(bflux_ext, u_test_dS[i]);
           }
+          // see the consBoundaryFlux note: mark the rows the DOF loop must
+          // accumulate the conservative boundary flux for (face DOFs only, the
+          // off-face vertex has a zero trace), and split this DOF's boundary
+          // star into the weakly imposed part, whose flux the conservative pass
+          // rewrites, and the part a flux BC already pins exactly.  isDOFBoundary
+          // is read AFTER the flux call, so a seepage face that just shut counts
+          // as prescribed (zero), which is what the residual got.
+          if (u_test_trace_ref.data()[ebN_local_kb * nDOF_test_element + i] > 1.0e-12) {
+            const int gi = r_l2g.data()[eN * nDOF_test_element + i];
+            is_bdry_dof[gi] = 1;
+            if (isDOFBoundary_u.data()[ebNE_kb])
+              bdryDirichletArea[gi] += u_test_dS[i];
+            else
+              //prescribed: a flux BC, a seepage face that shut, or the
+              //subdomain's artificial boundary -- all three carry bflux_ext
+              //into the residual, and it is zero for the last two
+              bdryPrescribedFlux[gi] += bflux_ext * u_test_dS[i];
+          }
         } //i
         for (int j = 0; j < nDOF_trial_element; j++) {
           if (useConsistentFlux) {
@@ -1954,7 +2325,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           } else {
             exteriorNumericalFluxJacobian2(a_rowptr.data(), a_colind.data(), isDOFBoundary_u.data()[ebNE_kb], normal, as_ext, a_ext, da_ext, grad_u_ext, &u_grad_trial_trace[j * nSpace], df_ext, u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + j],
                                         ebqe_penalty_ext.data()[ebNE_kb], //penalty,
-                                        fluxJacobian_u_u[j],bfluxJacobian_u_u[j]);
+                                        fluxJacobian_u_u[j],bfluxJacobian_u_u[j],cfluxJacobian_u_u[j]);
           }
           //probably need isDOFBoundary_un here
           //exteriorNumericalFluxJacobian(a_rowptr.data(), a_colind.data(), isDOFBoundary_u.data()[ebNE_kb], normal, asn_ext, dan_ext, grad_u_ext, &u_grad_trial_trace[j * nSpace], dfn_ext, u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + j],
@@ -1972,10 +2343,27 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
             } else {
               globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += bfluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrix[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrixConsistent[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
-              TransportMatrixn[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_un_un[j] * u_test_dS[i];
-              TransportMatrixConsistentn[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_un_un[j] * u_test_dS[i];
+              const int ij_eb = csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j];
+              if (useBndDiff) {
+                //Step B: park the boundary block in TB. TransportMatrix/Consistent stay pure
+                //interior, so they keep the symmetry and zero row sums the edge loop relies on.
+                TransportBoundary.data()[ij_eb] += cfluxJacobian_u_u[j] * u_test_dS[i];
+              } else {
+                TransportMatrix[ij_eb] += fluxJacobian_u_u[j] * u_test_dS[i];
+                //also keep the IIPG block on its own, so the DOF loop can recover the
+                //SYMMETRIC interior operator T = TransportMatrix - TransportBoundary for
+                //the conservative boundary flux export (consBoundaryFlux).  Nothing else
+                //reads TransportBoundary when useBndDiff is off, so the residual, the
+                //Jacobian and the FCT=False solution are unchanged by this line.
+                TransportBoundary.data()[ij_eb] += fluxJacobian_u_u[j] * u_test_dS[i];
+                //k_rw-weighted: this array is read ONLY by fH in the edge loop below, so this
+                //line cannot change the residual, the Jacobian or the FCT=False solution.
+                //RICHARDS_FCT_BND_KRW=0 restores the old Ks-based boundary block for an A/B.
+                TransportMatrixConsistent[ij_eb] +=
+                  (RICHARDS_FCT_BND_KRW ? cfluxJacobian_u_u[j] : fluxJacobian_u_u[j]) * u_test_dS[i];
+              }
+              TransportMatrixn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
+              TransportMatrixConsistentn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
             }
           } //j
         } //i
@@ -1991,7 +2379,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     /////////////////////////////////////////////////////////////////
     // NOTE: see NCLS.h for a different but equivalent implementation of this.
     int ij = 0;
-    double cflux[numDOFs];
+    //Heap-backed member, not a stack VLA -- see the declarations in the class body.
+    cflux_member.assign(numDOFs, 0.0);
+    std::vector<double> &cflux = cflux_member;
     for (int i = 0; i < numDOFs; i++) {
       double gi[nSpace], Cij[nSpace], xi[nSpace], etaMaxi, etaMini;
       double solni = u_free_dof_old[i];
@@ -2168,6 +2558,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           ith_flux_term += fL;
           fA -= fL;
         }
+        // new-time low-order flux; on a boundary row it is replaced below by its
+        // interior part (the weak-Dirichlet block is not an edge exchange)
+        double fL_int = fL;
         if (-TransportMatrixn[ij] * delta_phin <= 0.0) {
           evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_i, beta, gravity.data(),
                                alpha.data()[mat_i],
@@ -2187,16 +2580,59 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           fA -= fL;
           fA_CN -= fL_CN;
         }
+        if (useBndDiff) {
+          //Weak-Dirichlet block, kept out of the fmax() clip above and applied identically
+          //in the low and the high order flux, so it never enters fA (see Step B above).
+          const double TB_ij = TransportBoundary.data()[ij];
+          const double f_b   = -Theta * TB_ij * delta_phi;
+          ith_consistent_flux_term += f_b;
+          ith_flux_term           += f_b;
+          if (i != j) {
+            //the low order boundary operator is what the residual and hence Newton sees
+            globalJacobian.data()[ij] -= Theta * (-TB_ij);
+            J_ii                      -= Theta * TB_ij;
+          }
+        }
+        // CONSERVATIVE BOUNDARY FLUX (see the consBoundaryFlux note at the top):
+        // the symmetric part of this row's edge flux, i.e. fL rebuilt on
+        // T^int = T - TB with the same upwind rule.  T^int is symmetric and
+        // dphi antisymmetric, so this flux telescopes exactly against the
+        // interior and is the water node i really exchanges with the domain.
+        // With useBndDiff on TransportMatrix is already pure interior.
+        if (is_bdry_dof[i] && i != j) {
+          const double Tint_ij = TransportMatrix[ij] - (useBndDiff ? 0.0 : TransportBoundary.data()[ij]);
+          double Kr_c = 0.0, dKr_c = 0.0;
+          if (-Tint_ij * delta_phi <= 0.0)
+            evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_i, beta, gravity.data(),
+                                 alpha.data()[mat_i],
+                                 n.data()[mat_i], thetaR.data()[mat_i], thetaSR.data()[mat_i], &KWs.data()[mat_i * nnz], u_free_dof[i], m, dm, f, df, a, da, as, Kr_c, dKr_c, thetaW_tmp);
+          else
+            evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_j, beta, gravity.data(),
+                                 alpha.data()[mat_j],
+                                 n.data()[mat_j], thetaR.data()[mat_j], thetaSR.data()[mat_j], &KWs.data()[mat_j * nnz], u_free_dof[j], m, dm, f, df, a, da, as, Kr_c, dKr_c, thetaW_tmp);
+          fL_int = Theta * Kr_c * fmax(0.0, -Tint_ij) * delta_phi;
+          consBoundaryFlux.data()[i] += fL_int;
+        }
+        edgeFluxInterior.data()[ij] = fL_int;
+        edgeFluxLow.data()[ij] = ith_flux_term - ith_flux_term_before;
         dt_times_fH_minus_fL.data()[ij] = dt * fA;
         //dt_times_fH_minus_fL.data()[ij] = dt * fA_CN;
-        edgeFluxLow.data()[ij] = ith_flux_term - ith_flux_term_before;
         ij += 1;
       }
+      // The nodal source is part of the low-order rate, so the consistent-mass FCT
+      // term built from mDotLow sees it as well as the residual.  It is not an edge
+      // exchange: it stays out of edgeFluxLow, and a coupled transport model finds
+      // it in its nodal boundary flux B_i.
+      ith_flux_term += MLi * nodalSource.data()[i];
       cflux[i] = ith_consistent_flux_term;
       evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_i, beta, gravity.data(),
                            alpha.data()[mat_i],
                            n.data()[mat_i], thetaR.data()[mat_i], thetaSR.data()[mat_i], &KWs.data()[mat_i * nnz], u_free_dof[i], m, dm, f, df, a, da, as, Kr, dKr, thetaW_tmp);
-      evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_i, beta, gravity.data(),
+      // Old-time mass with the OLD density: mn = theta(psi^n)*rho^{n-1}, the mass
+      // the previous step produced.  With the current rho_i here, both levels of
+      // the storage term shared one rho and theta*d(rho)/dt was dropped.
+      const double rho_old_i = USE_RHO_NODAL_OLD ? rho_nodal_old.data()[i] : rho_i;
+      evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, rho_old_i, beta, gravity.data(),
                            alpha.data()[mat_i],
                            n.data()[mat_i], thetaR.data()[mat_i], thetaSR.data()[mat_i], &KWs.data()[mat_i * nnz], u_free_dof_old[i], mn.data()[i], dmn, fn, dfn, an, dan, asn, Krn, dKrn, thetaW_tmp);
       // mDotLow enters the FCT mass antidiffusion MC_ij (mDotLow_i - mDotLow_j). At a strong-Dirichlet
@@ -2204,6 +2640,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       // imposed data instead. (Without this the WRR FCT is only first order on Q1, Hornung-Messing.)
       mDotLow.data()[i] = (bc_mask.data()[i] == 0.0) ? (m - mn.data()[i]) / dt : ith_flux_term / MLi;
       mLow.data()[i] = m;
+      // thetaW_tmp is whatever the LAST evaluateCoefficients left, i.e. the old-time
+      // call immediately above -- so this is theta(psi^n)_i, the partner of mn_i.
+      thetaW_dof.data()[i] = thetaW_tmp;
       globalResidual.data()[i] += bc_mask.data()[i] * (MLi * (m - mn.data()[i]) / dt - ith_flux_term);
       globalJacobian.data()[ii] += bc_mask.data()[i] * (MLi * ((LSCHEME_L > 0.0) ? LSCHEME_L : dm) / dt + J_ii) + (1.0 - bc_mask.data()[i]);
     }
@@ -2212,6 +2651,79 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       for (int i = 0; i < numDOFs; i++) {
         globalResidual.data()[i] += fluxCorrection.data()[i];
       }
+    }
+    ////////////////////////////////////////////////////////////////////////////
+    // CONSERVATIVE BOUNDARY VELOCITY FOR THE COUPLED TRANSPORT MODEL
+    //
+    // The cell loop above hands the transport model a pointwise Darcy trace
+    // -(a/rho)(grad psi - rho_r g); on the boundary that is NOT the water this
+    // scheme moves, because the head is imposed weakly (penalty + IIPG rows in
+    // TransportMatrix).  consBoundaryFlux, assembled in the DOF loop, IS that
+    // water: F_i = sum_j Kr_up max(0,-T^int_ij) dphi_ij, the flux of the
+    // symmetric interior operator out of node i, which telescopes exactly with
+    // the interior edge fluxes and equals bflux_i minus the IIPG rows at
+    // convergence.  Keep the tangential trace, replace the normal component:
+    //
+    //   v.n = (F_i - prescribed part) / (rho S_i)   weakly imposed (Dirichlet)
+    //   v.n = bc_flux / rho                          prescribed flux faces
+    //
+    // interpolated back to the quadrature points with the trace basis, S_i
+    // being the Dirichlet measure of node i.  Faces with neither flag (the
+    // subdomain's artificial boundary with its neighbours) are left alone.
+    // Nothing in the flow model reads this array, so the Richards solution and
+    // its Jacobian are untouched -- this only changes what TADR is told.
+    //
+    // PARALLEL: F_i, S_i and the prescribed part are assembled from this rank's
+    // elements/faces, so they are complete for OWNED rows only.  With the nodal
+    // (vertex) boundary rule both models use -- checkCoupledQuadrature ties them
+    // together -- a boundary quadrature point feeds only its own node's row, so
+    // every value that reaches an owned transport row is complete.  A non-nodal
+    // boundary rule would need the three arrays ghost-summed first.
+    ////////////////////////////////////////////////////////////////////////////
+    if (RICHARDS_BC_CONS) {
+      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+        const int ebN       = exteriorElementBoundariesArray.data()[ebNE],
+                  eN        = elementBoundaryElementsArray.data()[ebN * 2 + 0],
+                  ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
+        for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
+          const int ebNE_kb       = ebNE * nQuadraturePoints_elementBoundary + kb,
+                    ebNE_kb_nSpace = ebNE_kb * nSpace,
+                    ebN_local_kb  = ebN_local * nQuadraturePoints_elementBoundary + kb;
+          const bool isDir = isDOFBoundary_u.data()[ebNE_kb] != 0;
+          //A qp with neither flag is the subdomain's artificial boundary with a
+          //neighbouring rank, not a physical one: leave it alone.  (It only ever
+          //touches ghost nodes, whose transport rows are overwritten by the
+          //scatter, but zeroing a velocity there would be a lie either way.)
+          if (!isDir && !isFluxBoundary_u.data()[ebNE_kb] && !isSeepageFace.data()[ebNE]) continue;
+          double vn_cons = 0.0;
+          if (isDir) {
+            double w_sum = 0.0;
+            for (int i = 0; i < nDOF_test_element; i++) {
+              const double w = u_test_trace_ref.data()[ebN_local_kb * nDOF_test_element + i];
+              if (w <= 1.0e-12) continue;                       //DOF not on this face
+              const int gi = r_l2g.data()[eN * nDOF_test_element + i];
+              if (bdryDirichletArea[gi] <= 0.0) continue;
+              vn_cons += w * (consBoundaryFlux.data()[gi] - bdryPrescribedFlux[gi]) / bdryDirichletArea[gi];
+              w_sum   += w;
+            }
+            if (w_sum <= 1.0e-12) continue;
+            vn_cons /= w_sum;                                   //= 1 with a full face star
+          } else {
+            //not weakly imposed: the residual integrated exactly ebqe_bflux here
+            //(the prescribed flux, or 0 on a seepage face that shut), so that is
+            //the water the transport model must see
+            vn_cons = ebqe_bflux.data()[ebNE_kb];
+          }
+          //the residual's fluxes are rho-weighted; the coupled trace is a Darcy velocity
+          const double rho_ext_c = ebqe_rho.data()[ebNE_kb];
+          vn_cons /= (std::fabs(rho_ext_c) > 1.0e-12 ? rho_ext_c : rho);
+          double vn_old = 0.0;
+          for (int I = 0; I < nSpace; I++)
+            vn_old += ebqe_velocity_ext_couple.data()[ebNE_kb_nSpace + I] * ebqe_normal_cache[ebNE_kb_nSpace + I];
+          for (int I = 0; I < nSpace; I++)
+            ebqe_velocity_ext_couple.data()[ebNE_kb_nSpace + I] += (vn_cons - vn_old) * ebqe_normal_cache[ebNE_kb_nSpace + I];
+        } //kb
+      } //ebNE
     }
 
   }
@@ -2301,6 +2813,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               beta                 = args.scalar<double>("beta");
 
     proteus::pyarray<double> &q_rho                = args.array<double>("q_rho");
+    proteus::pyarray<double> &q_mu                 = args.array<double>("q_mu");
 
     proteus::pyarray<double> &gravity              = args.array<double>("gravity");
     proteus::pyarray<double> &alpha                = args.array<double>("alpha");
@@ -2379,8 +2892,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //
         double Kr, dKr, thetaW;
         //const double rho_local = q_rho.data()[eN_k];
+        double KWs_mu[nnz];
+        for (int ii = 0; ii < nnz; ii++) KWs_mu[ii] = KWs.data()[elementMaterialTypes.data()[eN] * nnz + ii] / q_mu.data()[eN_k];
         evaluateCoefficients(a_rowptr.data(), a_colind.data(), rho, q_rho.data()[eN_k], beta, gravity.data(), alpha.data()[elementMaterialTypes.data()[eN]], n.data()[elementMaterialTypes.data()[eN]], thetaR.data()[elementMaterialTypes.data()[eN]],
-                             thetaSR.data()[elementMaterialTypes.data()[eN]], &KWs.data()[elementMaterialTypes.data()[eN] * nnz], u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
+                             thetaSR.data()[elementMaterialTypes.data()[eN]], KWs_mu, u, m, dm, f, df, a, da, as, Kr, dKr, thetaW);
         //
         //moving mesh
         //

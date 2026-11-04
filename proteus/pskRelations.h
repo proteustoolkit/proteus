@@ -966,7 +966,10 @@ inline void vgm_invert_newton(const double m,
   const double m_vg   = 1.0 - 1.0 / n_vg;
 
   const double psiC0 = -u;
-  if (psiC0 <= 0.0) { return; } //saturated, no inversion
+  //saturated, no inversion -- unless the target mass is BELOW saturation: then a
+  //saturated start psi is simply the wrong branch, and keeping it discards the
+  //limited decrease (the node keeps rho*theta_s and water appears)
+  if (psiC0 <= 0.0 && m >= rho * thetaS * (1.0 - 1.0e-12)) { return; }
   const double rhom0 = rho * std::exp(beta * u);//first guess
   const double thetaW_imp = m / rhom0;
   // Dry limit stated the same way as in vgm_invert_analytic: a cap on psiC, not
