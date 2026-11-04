@@ -1266,6 +1266,56 @@ def test_a_periodic_region_meshes_without_boundary_points():
     assert ADRProblem.mesh_constraint(0.5, 3, boundary_points=False).endswith("Y")
 
 
+# *.ymf is ignored in this repository (run outputs), so the spec lives here
+NOTCHED_PERIODIC_SPEC = '''\
+# A periodic piecewise_linear region (C27 Phase 5, D3): a channel with a notch
+# in its top, periodic along x with period 4. u = sin(πx/2) (1 + y) has a
+# nonzero x-derivative on the periodic faces, so faces that were not paired
+# would leave the natural condition there and an O(1) error.
+model:
+  name: "Poisson in a notched channel, periodic along x"
+  physical_model: {provenance: human_specified, processes: [heat_conduction], assumptions: [steady]}
+  strong_form:
+    provenance: human_specified
+    unknowns: [u]
+    equation_formulation: "Poisson"
+    equations: ["-Δu = f  in Ω"]
+    domain:
+      kind: piecewise_linear
+      dimension: 2
+      vertices: [[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [3.0, 1.0], [3.0, 0.5], [1.0, 0.5], [1.0, 1.0], [0.0, 1.0]]
+      segments: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0]]
+    boundary_regions:
+      - {name: ends, where: "x = 0 or x = 4"}
+      - {name: rest, where: "y = 0 or y = 1 or y = 0.5 or x = 1 or x = 3"}
+    boundary_conditions:
+      - {region: ends, variable: u, type: periodic}
+      - {region: rest, variable: u, type: dirichlet, formula: "sin(πx/2) (1 + y)"}
+    coefficients:
+      f: {formula: "(π²/4) sin(πx/2) (1 + y)"}
+  weak_forms:
+    - label: galerkin
+      provenance: human_specified
+      derivation: "multiply by v, integrate by parts; the periodic faces' terms cancel"
+      solution_spaces: {trial: H1_per, test: H1_per}
+      bilinear: "∫ ∇u·∇v"
+      linear: "∫ f v"
+      stabilization_method: "none"
+solution_paths:
+  analytical:
+    - name: exact
+      provenance: human_specified
+      method: closed_form
+      solution: {formula: "u = sin(πx/2) (1 + y)"}
+  discretizations:
+    - name: P1
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 1}}
+      mesh: {h: [0.2, 0.1]}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+'''
+
+
 def test_a_periodic_region_converges(tmp_path):
     """The notched channel, periodic along x: P1 at rate 2 against the exact
     solution, which it could not reach with unpaired faces."""
@@ -1273,7 +1323,8 @@ def test_a_periodic_region_converges(tmp_path):
     problem = pytest.importorskip("ymf.symbolic.problem")
     if not hasattr(problem, "periodic_faces_match"):
         pytest.skip("this ymf predates periodic regions (cekees/ymf#8)")
-    spec = os.path.join(os.path.dirname(__file__), "notched_periodic.ymf")
+    spec = tmp_path / "notched_periodic.ymf"
+    spec.write_text(NOTCHED_PERIODIC_SPEC, encoding="utf-8")
     out = ymf_run(spec, "--outdir", tmp_path)
     assert out.returncode == 0, out.stderr[-2000:]
     table = rows(out.stdout)
