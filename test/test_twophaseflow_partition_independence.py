@@ -10,9 +10,9 @@ difference over a model's dofs, serial against 2 ranks:
                                                            parallel CLSVOF KSP (1000 iterations at 7e-10), the steps
                                                            fail and are retried; see the note on retries below.
   risingBubble (refinement=1, t=0.05)                     atol 1e-12: CLSVOF and velocity 2.6e-13. The pressure
-                                                           increment, pressure and initial pressure differ by a
-                                                           constant (8.1, -28 and -63 against 1142 Pa): with the
-                                                           constant removed 2.3e-12, 3.9e-14, 2.4e-15.
+                                                           increment, pressure and initial pressure differed by a
+                                                           constant (8.1, -28 and -63 against 1142 Pa); with zero-mean
+                                                           normalization (round 4) 4.0e-12, 4.8e-14, 3.0e-15.
 
 Added in C0 round 4 (same measure; every component of a model now, and dofs matched by x, y and z: before, only the
 last component of RANS2P/RANS3PF was compared and 3D dofs sharing x, y were matched in arbitrary order):
@@ -32,10 +32,11 @@ last component of RANS2P/RANS3PF was compared and 3D dofs sharing x, y were matc
                                                            viscosity normalized over the domain, 5.5e-14.
 
 The deck tolerances are the control for the comparison: the difference follows the tolerance, so a run that agrees at
-a tight one is a partition test. The pressure constant is a real serial/parallel difference, not round-off: in a
-closed tank the pressure is fixed only up to a constant, and serial and parallel fix it differently (PresInc pins
-dof 0 in serial and uses the constant null space in parallel; PressureInitial takes whatever its solver returns), so
-pressure gauges depend on the rank count. That test is marked xfail until a convention is chosen.
+a tight one is a partition test. The pressure constant was a real serial/parallel difference, not round-off: in a
+closed tank the pressure is fixed only up to a constant, and serial and parallel fixed it differently (PresInc pinned
+dof 0 in serial and used the constant null space in parallel; PressureInitial took whatever its solver returned), so
+pressure gauges depended on the rank count. Since round 4 PresInc, Pres and PresInit are shifted to zero integral mean
+when no Dirichlet condition fixes them (proteus.mprans.PressureNormalization), and the pressures agree as they are.
 
 Retries: forcing one CLSVOF failure at the same call in serial and on 2 ranks gives the same answer on both (2.4e-7),
 so recovery is partition-correct; but the retried serial run differs from the unforced one by 16% in velocity at
@@ -154,7 +155,6 @@ def test_rising_bubble_on_two_ranks_is_the_serial_answer_up_to_the_pressure_cons
     assert max(worst.values()) < 1e-10, worst
 
 
-@pytest.mark.xfail(strict=True, reason="serial and parallel fix the pressure constant differently (C0 round 3 finding)")
 def test_rising_bubble_pressure_constant_does_not_depend_on_the_rank_count(rising_bubble):
     serial, parallel, names = rising_bubble
     worst = _differences(serial, parallel, names)

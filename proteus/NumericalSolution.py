@@ -18,6 +18,7 @@ from . import SimTools
 from . import Archiver
 from . import Viewers
 from . import Gauges
+from .mprans import PressureNormalization
 from .Archiver import ArchiveFlags
 from . import Domain
 from .MeshAdaptPUMI import Checkpoint,AdaptHelper
@@ -1142,6 +1143,12 @@ class NS_base(object):  # (HasTraits):
     ##intermodel transfer after a step
     def postStep(self,model):
         for level,levelModel in enumerate(model.levelModelList):
+            if getattr(levelModel.coefficients, "zeroMean", False):
+                # a pressure fixed only up to a constant: zero integral mean, before any model reads it, in the dofs
+                # and in the solver's unknowns the next solve starts from (all of them free: no Dirichlet condition)
+                mean = PressureNormalization.zero_mean(levelModel)
+                if mean:
+                    model.uList[level] -= mean
             postCopy = levelModel.coefficients.postStep(model.stepController.t_model,firstStep=self.firstStep)
             if postCopy is not None and ('copy_uList') in postCopy and postCopy['copy_uList'] == True:
                 for u_ci_lhs,u_ci_rhs in zip(list(self.modelList[postCopy['uList_model']].levelModelList[level].u.values()),list(model.levelModelList[level].u.values())):

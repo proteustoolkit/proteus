@@ -44,6 +44,9 @@ class Coefficients(TC_base):
        a = \frac{\tau (1-\theta_s)}{\rho_f} + \frac{\tau \theta_s}{\rho_s}
        q^t = (1-\theta_s) v_f + \theta_s v_s
     """
+    #: a closed domain fixes this pressure only up to a constant: NumericalSolution.postStep shifts it to zero
+    #: integral mean when no Dirichlet condition fixes it (proteus.mprans.PressureNormalization)
+    zeroMean = True
 
     def __init__(self,
                  rho_f_min=998.0,
