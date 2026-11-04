@@ -111,6 +111,12 @@ def test_a_ymf_mesh_domain_is_meshed_and_partitioned(name, nd, counts):
     assert Comm.get().comm.tompi4py().allreduce(int(owned)) == counts[1]
 
 
+@pytest.mark.parametrize("cls", [Domain.Mesh2DMDomain, Domain.Mesh3DMDomain])
+def test_the_sms_domains_are_deprecated(cls):
+    with pytest.warns(DeprecationWarning, match="convert .* with ymf-import-sms .* MeshYmfDomain"):
+        cls("mesh")
+
+
 def test_a_ymf_mesh_domain_writes_and_reads_as_a_file_domain():
     from proteus import DomainYMF
     domain = Domain.MeshYmfDomain(os.path.join(YMF, "square4x4"))
