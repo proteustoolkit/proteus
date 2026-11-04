@@ -290,6 +290,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  LSCHEME_L=0.0,
                  VG_AIR_ENTRY=0.0,
                  FCT_BND_DIFF=False,
+                 FCT_BND_KRW=False,
                  NONLINEAR_SOLVER=None,
                  LSCHEME_RETRY_ITS=1,
                  LSCHEME_TRIGGER='residual',
@@ -486,6 +487,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # compatible coupling and every existing deck keep their routing; RICHARDS_FCT_BND_DIFF=0 still
         # forces it off.
         self.FCT_BND_DIFF = bool(FCT_BND_DIFF)
+        # FCT_BND_KRW: the consistent boundary block uses K = k_r*K_s instead of K_s (Barua). Off by default; it
+        # moves the pinned test_2_HYDRUS[FCT] values by up to 4.4e-6.
+        self.FCT_BND_KRW = bool(FCT_BND_KRW)
         if NONLINEAR_SOLVER is None:
             NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
         if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
@@ -2294,6 +2298,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # limited correction, so it is tied to FCT.  Gating it here also keeps an FCT=False
         # run byte-identical to the pre-Step-B code.
         argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT) and self.coefficients.FCT_BND_DIFF)
+        argsDict["FCT_BND_KRW"] = int(self.coefficients.FCT_BND_KRW)
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
         # throws on a missing key.  fct_pass=0 keeps that in-kernel call single
