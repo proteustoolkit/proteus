@@ -2629,6 +2629,11 @@ class LevelModel(OneLevelTransport):
             argsDict["phase"] = -1
             self.adr.calculateResidual(argsDict)
             self.scatterDOFArray(theta_dof)
+            if init_M_in_kernel:
+                # phase -1 seeded M = theta*rho(u) from the rank-local porosity projection, which is partial at a
+                # ghost dof: take the owners' values, and do not reseed in the later phases
+                self.scatterDOFArray(self.M_dof)
+                argsDict["init_M_dof"] = 0
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4):
             # edge based stabilization: psi and the normalized entropy residual of a ghost dof come from a
             # truncated graph row and the dissipation of an owned dof reads them. Compute them (phase 0),
@@ -2648,6 +2653,10 @@ class LevelModel(OneLevelTransport):
             argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
             argsDict["phase"] = 1
         self.adr.calculateResidual(argsDict)
+        if self.coefficients.STABILIZATION_TYPE in (2, 3, 4) and not getattr(self, '_use_edge_flux', 0):
+            # without a flow model the explicit branches advance M from each row's own fluid divergence, which is
+            # incomplete on a ghost row; the next step's edge loops read M at ghost columns, so take the owners'
+            self.scatterDOFArray(self.M_low)
         self._logBoundarySoluteFlux()
         # OPTION C: no second residual pass here.  Under the sub-cycled fluid
         # solve this call was needed because the kernel assembled the fluid

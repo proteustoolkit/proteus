@@ -1751,6 +1751,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //the old routing.  Python passes coefficients.FCT here; the env var can still force it
     //off for an A/B but can never turn it on for an FCT=False run.
     const bool useBndDiff = (args.scalar<int>("FCT_BND_DIFF") != 0) && RICHARDS_FCT_BND_DIFF;
+    const bool useBndKrw  = (args.scalar<int>("FCT_BND_KRW") != 0) && RICHARDS_FCT_BND_KRW;
     // AUX QUANTITIES OF INTEREST
     proteus::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     proteus::pyarray<double> &mn        = args.array<double>("mn");
@@ -2360,7 +2361,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
                 //line cannot change the residual, the Jacobian or the FCT=False solution.
                 //RICHARDS_FCT_BND_KRW=0 restores the old Ks-based boundary block for an A/B.
                 TransportMatrixConsistent[ij_eb] +=
-                  (RICHARDS_FCT_BND_KRW ? cfluxJacobian_u_u[j] : fluxJacobian_u_u[j]) * u_test_dS[i];
+                  (useBndKrw ? cfluxJacobian_u_u[j] : fluxJacobian_u_u[j]) * u_test_dS[i];
               }
               TransportMatrixn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
               TransportMatrixConsistentn[ij_eb] += fluxJacobian_un_un[j] * u_test_dS[i];
