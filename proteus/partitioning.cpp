@@ -1911,6 +1911,80 @@ bool readSimplexNodeStars(const std::string& elementFileName, const char* format
   return true;
 }
 
+/* I/O, local: stream a Triangle (nSpace 2) or TetGen (nSpace 3) node file
+   (format names it in the error) and keep the vertices of one subdomain, in
+   its numbering: owned nodes are the new global numbers [ownedBegin,ownedEnd),
+   at subdomain index n-ownedBegin; overlap nodes are the keys of
+   nodes_overlap_global2subdomain, at its values. nodes_old2new gives the new
+   global number of each file node the subdomain touches; other file nodes are
+   skipped. Fills nodeNumbering_subdomain2global, its inverse map, nodeArray
+   (x,y,z, z=0 in 2D) and, when hasVertexMarkers (the caller's reading of the
+   header: a marker, or an attribute taken as one), nodeMaterialTypes from the
+   value after the coordinates. Reads every vertex and keeps O(subdomain) data.
+   Returns false, having said why, if the file cannot be opened. */
+bool readSubdomainVertices(const std::string& vertexFileName, const char* format, int nSpace, int indexBase,
+                           int hasVertexMarkers, const std::map<int,int>& nodes_old2new, int ownedBegin, int ownedEnd,
+                           const std::map<int,int>& nodes_overlap_global2subdomain,
+                           int* nodeNumbering_subdomain2global,
+                           std::map<int,int>& nodeNumbering_global2subdomainMap,
+                           double* nodeArray, int* nodeMaterialTypes)
+{
+  using namespace IOutils;
+  const int vertexDim = 3;
+  std::ifstream vertexFile(vertexFileName.c_str());
+  if (!vertexFile.good())
+    {
+      std::cerr<<"cannot open "<<format<<" node file "
+               <<vertexFileName<<std::endl;
+      return false;
+    }
+  int nSpace_file(nSpace),nNodes_global,hasVertexAttributes_file,hasVertexMarkers_file;
+  vertexFile >> eatcomments >> nNodes_global >> nSpace_file >> hasVertexAttributes_file >> hasVertexMarkers_file >> eatline ;
+  assert(nNodes_global > 0);
+  assert(nSpace_file == nSpace);
+  for (int iv = 0; iv < nNodes_global; iv++)
+    {
+      int nv; double x[3] = {0.0, 0.0, 0.0}; int nodeId(0);
+      vertexFile >> eatcomments >> nv;
+      for (int d = 0; d < nSpace; d++)
+        vertexFile >> x[d];
+      if (hasVertexMarkers > 0)
+        vertexFile >> nodeId;
+      nv -= indexBase;
+      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
+      int nN_global_new = -1;
+      std::map<int,int>::const_iterator old2new = nodes_old2new.find(nv);
+      if (old2new != nodes_old2new.end())
+        nN_global_new = old2new->second;
+      //local
+      if (nN_global_new >= ownedBegin && nN_global_new < ownedEnd)
+        {
+          int nv_subdomain_new = nN_global_new - ownedBegin;
+          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
+          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
+          for (int d = 0; d < vertexDim; d++)
+            nodeArray[vertexDim*nv_subdomain_new + d] = x[d];
+          if (hasVertexMarkers > 0)
+            nodeMaterialTypes[nv_subdomain_new] = nodeId;
+        }
+      //overlap
+      std::map<int,int>::const_iterator overlap = nodes_overlap_global2subdomain.find(nN_global_new);
+      if (overlap != nodes_overlap_global2subdomain.end())
+        {
+          int nv_subdomain_new = overlap->second;
+          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
+          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
+          for (int d = 0; d < vertexDim; d++)
+            nodeArray[vertexDim*nv_subdomain_new + d] = x[d];
+          if (hasVertexMarkers > 0)
+            nodeMaterialTypes[nv_subdomain_new] = nodeId;
+        }
+      vertexFile >> eatline;
+    }//end iv
+  vertexFile.close();
+  return true;
+}
+
 int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, 
                                   Mesh& newMesh, int nNodes_overlap, double memHardLimit)
 {
@@ -1952,7 +2026,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //
   bool failed = false;
   const int simplexDim = 4;
-  const int vertexDim  = 3;
   using namespace IOutils;
   std::string vertexFileName  = std::string(filebase) + ".node" ;
   std::string elementFileName = std::string(filebase) + ".ele" ;
@@ -1995,9 +2068,9 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
                <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
-  //don't need to read anymore from .nodes for now
-  //leaving file open because we'll pick up here to read the node coordinates
-  //after partioning, which just requires topology information
+  //the node coordinates are read after partitioning (readSubdomainVertices),
+  //which just requires topology information
+  vertexFile.close();
   //
   //offsets provide the lower and upper bounds for the global numbering
   //first we just partition the nodes among the MPI ranks, approximately equally, ignoring connectivity
@@ -3591,44 +3664,11 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //
   //now finally finish reading node coordinates and node flags
   //
-  for (int iv = 0; iv < nNodes_global; iv++)
-    {
-      int nv; double x,y,z; int nodeId(0);
-      vertexFile >> eatcomments >> nv >> x >> y >> z;
-      if (hasVertexMarkers > 0)
-        vertexFile >> nodeId;
-      nv -= indexBase;
-      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
-      int nN_global_new = -1;
-      if (nodes_old2new_subdomain_map.find(nv) != nodes_old2new_subdomain_map.end())
-        nN_global_new = nodes_old2new_subdomain_map[nv];
-      //local
-      if (nN_global_new >= nodeOffsets_new[rank] && nN_global_new < nodeOffsets_new[rank+1])
-        {
-          int nv_subdomain_new = nN_global_new - nodeOffsets_new[rank];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = z;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      //overlap
-      if (nodes_overlap.count(nN_global_new) == 1)
-        {
-          int nv_subdomain_new = nodes_overlap_global2subdomainMap[nN_global_new];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = z;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      vertexFile >> eatline;
-    }//end iv
-  vertexFile.close();
+  if (!readSubdomainVertices(vertexFileName, "Tetgen", 3, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
+                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
+                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
+                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
+    MPI_Abort(PROTEUS_COMM_WORLD, 1);
   //done with vertex file (and all file reads at this point)
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
 
@@ -3882,7 +3922,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   bool failed = false;
   const int simplexDim = 3;
-  const int vertexDim  = 3;
   using namespace IOutils;
   std::string vertexFileName  = std::string(filebase) + ".node" ;
   std::string elementFileName = std::string(filebase) + ".ele" ;
@@ -3924,7 +3963,8 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
                <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
-  //don't need to read anymore from nodes for now
+  //the node coordinates are read after partitioning (readSubdomainVertices)
+  vertexFile.close();
 
   //offsets provide the lower and upper bounds for the global numbering
   //first we just partition the nodes approximately equally ignoring connectivity
@@ -4943,44 +4983,11 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   //now finally finish reading node coordinates and node flags
   //
-  for (int iv = 0; iv < nNodes_global; iv++)
-    {
-      int nv; double x,y; int nodeId(0);
-      vertexFile >> eatcomments >> nv >> x >> y;
-      if (hasVertexMarkers > 0)
-        vertexFile >> nodeId;
-      nv -= indexBase;
-      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
-      int nN_global_new = -1;
-      if (nodes_old2new_subdomain_map.find(nv) != nodes_old2new_subdomain_map.end())
-        nN_global_new = nodes_old2new_subdomain_map[nv];
-      //local
-      if (nN_global_new >= nodeOffsets_new[rank] && nN_global_new < nodeOffsets_new[rank+1])
-        {
-          int nv_subdomain_new = nN_global_new - nodeOffsets_new[rank];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = 0.0;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      //overlap
-      if (nodes_overlap.count(nN_global_new) == 1)
-        {
-          int nv_subdomain_new = nodes_overlap_global2subdomainMap[nN_global_new];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = 0.0;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      vertexFile >> eatline;
-    }//end iv
-  vertexFile.close();
+  if (!readSubdomainVertices(vertexFileName, "triangle", 2, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
+                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
+                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
+                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
+    MPI_Abort(PROTEUS_COMM_WORLD, 1);
   ISDestroy(&nodePartitioningIS_new);
   ISDestroy(&nodeNumberingIS_subdomain_old2new);
   //done with vertex file (and all file reads at this point)

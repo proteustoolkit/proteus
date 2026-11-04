@@ -614,3 +614,38 @@ def test_files_reader_node_stars(mesh, size):
             assert np.array_equal(stars[k], np.sort(star[starOffsets[a]:starOffsets[a + 1]])), (r, a)
     with pytest.raises(IOError):
         cpartitioning.readNodeStars(filebase + '_missing', simplexDim, 1, n, 0, n)
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_reader_subdomain_vertices(mesh):
+    """The last read of the parun -F partitioners (Triangle and TetGen): each
+    rank streams the .node file and keeps its owned and overlap vertices in the
+    new numbering. That is the in-memory reader's nodes, permuted. Nodes the
+    subdomain touches without keeping them, and nodes it does not touch, are
+    skipped; without markers the flags are left alone."""
+    from proteus import cpartitioning
+    m = _readMesh(mesh)
+    n = m.nNodes_global
+    nodeArray, flags = np.asarray(m.nodeArray), np.asarray(m.nodeMaterialTypes)
+    filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    nSpace = {'tri': 2, 'tet': 3}[mesh]
+    rng = np.random.default_rng(32)
+    new2old = rng.permutation(n)
+    old2new = np.argsort(new2old)
+    begin, end = n // 3, 2 * n // 3
+    others = np.r_[0:begin, end:n]
+    overlap = np.sort(rng.choice(others, size=n // 10, replace=False))
+    touched = np.r_[begin:end, overlap, rng.choice(np.setdiff1d(others, overlap), size=5, replace=False)]
+    nodes_old2new = {int(new2old[g]): int(g) for g in touched}
+    for markers in (1, 0):
+        s2g, g2s, xyz, mt = cpartitioning.readSubdomainVertices(filebase, nSpace, 1, markers, nodes_old2new,
+                                                                begin, end, overlap.tolist())
+        kept = np.r_[begin:end, overlap]
+        assert np.array_equal(s2g, kept)
+        assert g2s == {int(g): k for k, g in enumerate(kept)}
+        assert np.array_equal(xyz, nodeArray[new2old[kept]])
+        assert np.array_equal(mt, flags[new2old[kept]] if markers else np.zeros(len(kept)))
+    assert flags.any()
+    assert np.array_equal(old2new[new2old], np.arange(n))
+    with pytest.raises(IOError):
+        cpartitioning.readSubdomainVertices(filebase + '_missing', nSpace, 1, 1, nodes_old2new, begin, end, [])

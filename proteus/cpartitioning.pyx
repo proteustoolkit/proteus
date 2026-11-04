@@ -22,6 +22,7 @@ from mpi4py.MPI cimport (Comm,
                          Op)
 from libcpp.vector cimport vector
 from libcpp.set cimport set as cppset
+from libcpp.map cimport map as cppmap
 from libcpp.string cimport string
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
@@ -50,6 +51,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionNodesFromTetgenFiles,
                                    c_partitionNodesFromTriangleFiles,
                                    c_readSimplexNodeStars,
+                                   c_readSubdomainVertices,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
                                    buildQuadraticSubdomain2GlobalMappings_2d,
                                    buildQuadraticSubdomain2GlobalMappings_3d,
@@ -432,6 +434,35 @@ def readNodeStars(object filebase, int simplexDim, int indexBase, int nNodes_glo
     if not c_readSimplexNodeStars(name, b"simplex", simplexDim, indexBase, nNodes_global, begin, end, nElements_global, stars):
         raise IOError("cannot open element file %s" % name.decode())
     return nElements_global, [np.array(sorted(star), dtype=np.intc) for star in stars]
+
+def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVertexMarkers,
+                          object nodes_old2new, int ownedBegin, int ownedEnd, object overlap):
+    """The last read of the parun -F partitioners: filebase.node's vertices for
+    one subdomain, owned new global numbers [ownedBegin,ownedEnd) then the
+    sorted new numbers in overlap. nodes_old2new is a dict from 0-based file
+    node to new global number (the nodes the subdomain touches). Returns
+    (nodeNumbering_subdomain2global, global2subdomain dict, nodeArray (n,3),
+    nodeMaterialTypes), the last zero unless hasVertexMarkers. No MPI."""
+    if not isinstance(filebase, bytes):
+        filebase = filebase.encode()
+    cdef string name = filebase + b'.node'
+    cdef cppmap[int,int] old2new, overlapMap, global2subdomain
+    for k, v in nodes_old2new.items():
+        old2new[k] = v
+    cdef int n = ownedEnd - ownedBegin
+    for g in sorted(overlap):
+        overlapMap[g] = n
+        n += 1
+    cdef np.ndarray[int, ndim=1] subdomain2global = np.full(n, -1, dtype=np.intc)
+    cdef np.ndarray[double, ndim=2] nodeArray = np.zeros((n, 3), dtype=np.double)
+    cdef np.ndarray[int, ndim=1] nodeMaterialTypes = np.zeros(n, dtype=np.intc)
+    if not c_readSubdomainVertices(name, b"simplex", nSpace, indexBase, hasVertexMarkers, old2new,
+                                   ownedBegin, ownedEnd, overlapMap,
+                                   <int*>(subdomain2global.data) if n else NULL, global2subdomain,
+                                   <double*>(nodeArray.data) if n else NULL,
+                                   <int*>(nodeMaterialTypes.data) if n else NULL):
+        raise IOError("cannot open node file %s" % name.decode())
+    return subdomain2global, dict(global2subdomain), nodeArray, nodeMaterialTypes
 
 def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmeshTools.CMesh subdomain_cmesh):
     #the partitioners need the PETSc C library, which petsc4py would have initialized

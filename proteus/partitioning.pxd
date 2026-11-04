@@ -2,6 +2,7 @@
 from libcpp.vector cimport vector
 from libcpp.string cimport string
 from libcpp.set cimport set as cppset
+from libcpp.map cimport map as cppmap
 from libcpp cimport bool as cppbool
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
@@ -65,6 +66,14 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                            int simplexDim, int indexBase,
                                                                            int nNodes_global, int begin, int end,
                                                                            int& nElements_global, vector[cppset[int]]& nodeStar)
+    extern cppbool c_readSubdomainVertices "proteus::readSubdomainVertices" (const string& vertexFileName, const char* format,
+                                                                             int nSpace, int indexBase, int hasVertexMarkers,
+                                                                             const cppmap[int,int]& nodes_old2new,
+                                                                             int ownedBegin, int ownedEnd,
+                                                                             const cppmap[int,int]& nodes_overlap_global2subdomain,
+                                                                             int* nodeNumbering_subdomain2global,
+                                                                             cppmap[int,int]& nodeNumbering_global2subdomainMap,
+                                                                             double* nodeArray, int* nodeMaterialTypes)
     extern int c_partitionNodesFromTriangleFiles "proteus::partitionNodesFromTriangleFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,

@@ -5,6 +5,7 @@
 #include <valarray>
 #include <vector>
 #include <set>
+#include <map>
 #include <cstdlib>
 #include <iterator>
 #include "mpi.h"
@@ -289,6 +290,20 @@ namespace proteus
   extern bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
                                    int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
                                    std::vector<std::set<int> >& nodeStar);
+
+  /* I/O, local: the vertices of one subdomain from a Triangle (nSpace 2) or
+     TetGen (nSpace 3) node file, in the subdomain's numbering: owned new global
+     numbers [ownedBegin,ownedEnd) first, then the overlap (the keys of
+     nodes_overlap_global2subdomain, at its values). nodes_old2new maps the file
+     nodes the subdomain touches to new global numbers. nodeMaterialTypes is
+     written only when hasVertexMarkers. False if the file cannot be opened. */
+  extern bool readSubdomainVertices(const std::string& vertexFileName, const char* format, int nSpace, int indexBase,
+                                    int hasVertexMarkers, const std::map<int,int>& nodes_old2new,
+                                    int ownedBegin, int ownedEnd,
+                                    const std::map<int,int>& nodes_overlap_global2subdomain,
+                                    int* nodeNumbering_subdomain2global,
+                                    std::map<int,int>& nodeNumbering_global2subdomainMap,
+                                    double* nodeArray, int* nodeMaterialTypes);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 
