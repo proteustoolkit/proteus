@@ -154,3 +154,24 @@ def test_a_ymf_mesh_domain_writes_and_reads_as_a_file_domain():
     assert (block["kind"], block["format"], block["dimension"]) == ("file", "ymf", 2)
     back = DomainYMF.from_ymf(block)
     assert isinstance(back, Domain.MeshYmfDomain) and back.meshfile == domain.meshfile
+
+
+def test_an_exterior_boundary_no_facet_names_is_untagged(tmp_path):
+    """With a facet list, an unlisted wall is 0, not the construction's 1 (string 1 is a condition)."""
+    pytest.importorskip("ymf.mesh")
+    from ymf import archive
+    info = MeshTools.readMeshYmf(SQUARE_2DM)
+    edge = np.array([[0, 1]], dtype=np.int32)              # one bottom edge only, tagged 1
+    prefix = str(tmp_path / "one_edge")
+    MeshTools.writeMeshYmf(prefix, info.nodeArray, info.elementNodesArray)
+    domain, _ = archive.read_ymf(prefix + ".ymf")
+    space = domain["times"][0]["spaces"]["Spatial_Domain"]
+    space["facets"] = archive.facets(
+        archive.topology("Polyline", 1, archive.data_item_for(edge, inline=True), nodes_per_element=2),
+        archive.data_item_for(np.array([1], dtype=np.int32), inline=True))
+    archive.write_ymf(domain, prefix + ".ymf")
+    mesh = MeshTools.TriangularMesh()
+    mesh.generateFromYmfFile(prefix)
+    exterior = mesh.exteriorElementBoundariesArray
+    tags = mesh.elementBoundaryMaterialTypes[exterior]
+    assert sorted(tags.tolist()) == [0] * (len(exterior) - 1) + [1]

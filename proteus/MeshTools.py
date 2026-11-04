@@ -7305,8 +7305,11 @@ def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
     """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of ``prefix.ymf``, if it has one.
 
     Each facet (its node numbers, as in the file) names an element boundary of
-    the mesh; that boundary takes the facet's tag. Boundaries the list does not
-    name keep the tag the mesh construction gave them. A facet that is not a
+    the mesh; that boundary takes the facet's tag. An exterior boundary the
+    list does not name is untagged, 0 (ymf's convention), not the 1 the mesh
+    construction gives every exterior boundary: a converter numbers its
+    boundary strings from 1, so a default 1 would put every unlisted wall into
+    the first string's condition. A facet that is not a
     boundary of the mesh is an error, as is a facet list read with a ymf too
     old to check it: its validation would drop the list without a word.
     """
@@ -7329,6 +7332,7 @@ def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
     boundary = dict((tuple(sorted(row)), ebN)
                     for ebN, row in enumerate(mesh.elementBoundaryNodesArray.tolist()))
     k = mesh.elementBoundaryNodesArray.shape[1]
+    mesh.elementBoundaryMaterialTypes[mesh.exteriorElementBoundariesArray] = 0
     for row, tag in zip(nodes[:, :k].tolist(), tags.tolist()):
         try:
             ebN = boundary[tuple(sorted(row))]
