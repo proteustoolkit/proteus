@@ -72,6 +72,16 @@ class Trig(AnalyticalSolutions.SteadyState):
     def uOfX(self, x):
         d = interface_d(x)
         return self.g(x)/mua if d <= 0.0 else (self.g(x) + opts.fluxJump*d)/mub
+    def duOfX(self, x):
+        # grad(d) = (-m, 1)/L and grad(t) = (1, m)/L
+        d, t = interface_d(x), interface_t(x)
+        gd = math.pi*math.cos(math.pi*d)*math.cos(math.pi*t)
+        gt = -math.pi*math.sin(math.pi*d)*math.sin(math.pi*t)
+        nrm, tan = (-_m/_L, 1.0/_L), (1.0/_L, _m/_L)
+        gg = [gd*nrm[i] + gt*tan[i] for i in range(2)]
+        if d <= 0.0:
+            return [gi/mua for gi in gg]
+        return [(gg[i] + opts.fluxJump*nrm[i])/mub for i in range(2)]
 
 if opts.test == 1.0:
     ans = PiecewiseLinear()
