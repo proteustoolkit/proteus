@@ -1030,6 +1030,30 @@ def with_kept_dof_diagonals(problem):
     return problem
 
 
+def _refuse_positions_on_untagged_walls(problem):
+    """Refuse Dirichlet conditions found by position on a ymf mesh with untagged exterior walls.
+
+    A facet list that leaves exterior walls untagged gives them flag 0, and Proteus passes flag 0 for the
+    interior too, so getDBC cannot tell those walls from the interior: a condition selected by ``where``
+    would silently not be imposed there, and the wall would get zero flux. Until the flags carry
+    exteriority, such a condition has to select its walls by their tags.
+    """
+    region = problem["domain"].get("region")
+    if not (_is_file(region) and region.get("format") == "ymf"):
+        return
+    by_position = sorted(set(e["region"] for e in problem.get("dirichlet") or [] if "flags" not in e))
+    if not by_position:
+        return
+    path = region["path"]
+    untagged = MeshTools.ymfUntaggedExteriorFacets(path[:-4] if path.endswith(".ymf") else path)
+    if untagged:
+        raise ValueError(
+            "Dirichlet regions %s are found by position, but %s leaves %d exterior facets untagged (flag 0), "
+            "which Proteus cannot tell from the interior: the condition would not be imposed on them. Select "
+            "those walls by their tags (boundary_regions: tags), or tag every exterior facet in the mesh"
+            % (", ".join(by_position), path, untagged))
+
+
 def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
           levels=1, tolerance=None, max_iterations=None, h=None,
           linear_solver=None, petsc_options=None, mesh=None):
@@ -1054,6 +1078,7 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
         # the mesh file, before the tolerance and anything else needs them
         lower, upper = file_bounds(region)
         problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
+    _refuse_positions_on_untagged_walls(problem)
     if problem.get("periodic") and problem["domain"].get("region") is not None and h \
             and not _is_file(problem["domain"]["region"]):
         # no boundary points from the mesher, so cut the faces to h here

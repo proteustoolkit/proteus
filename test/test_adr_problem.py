@@ -1489,3 +1489,26 @@ def test_a_tetgen_file_domain_with_its_face_markers(tmp_path):
     p1, p2 = rows(out.stdout)[:2], rows(out.stdout)[2:]
     assert [r[0] for r in p1] == ["1", "2"] and 1.8 < float(p1[1][2]) < 2.2
     assert float(p2[0][1]) < 1e-12          # quadratic: exact, every marker in place
+
+
+def test_dirichlet_by_position_is_refused_on_untagged_ymf_walls(tmp_path):
+    """Untagged exterior facets of a ymf mesh get flag 0, which getDBC cannot tell from the interior: a condition
+    found by position would silently not be imposed there. Refused, naming the regions; by tags, or on a fully
+    tagged mesh, it stands."""
+    pytest.importorskip("ymf.mesh")
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_tests"))
+    try:
+        import test_ymf_mesh_domain as ymf_mesh
+    finally:
+        sys.path.pop(0)
+    partial = ymf_mesh._one_tagged_edge(tmp_path)
+
+    def problem(path, entry):
+        return {"domain": {"region": {"kind": "file", "format": "ymf", "path": path}},
+                "dirichlet": [dict(entry, component="u")]}
+    by_position = {"region": "inlet", "where": "x < tol"}
+    with pytest.raises(ValueError, match=r"Dirichlet regions inlet are found by position.*7 exterior facets"):
+        ADRProblem._refuse_positions_on_untagged_walls(problem(partial, by_position))
+    ADRProblem._refuse_positions_on_untagged_walls(problem(partial + ".ymf", {"region": "inlet", "flags": [1]}))
+    ADRProblem._refuse_positions_on_untagged_walls(
+        problem(os.path.join(ymf_mesh.YMF, "square4x4_tagged"), by_position))

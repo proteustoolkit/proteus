@@ -7301,6 +7301,36 @@ def ymfMeshTopology(prefix, MeshTag=YMF_MESH_SPACE):
     domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
     return domain["times"][0]["spaces"][MeshTag]["topology"]["type"]
 
+def ymfUntaggedExteriorFacets(prefix, MeshTag=YMF_MESH_SPACE):
+    """How many exterior facets of the mesh in ``prefix.ymf`` its facet list leaves untagged (or tags 0).
+
+    Those boundaries get flag 0 (:func:`_applyYmfFacetTags`), which a boundary condition selected by
+    position cannot tell from the interior. A mesh with no facet list has none: every exterior boundary
+    keeps the construction's flag 1.
+    """
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    space = domain["times"][0]["spaces"][MeshTag]
+    if "facets" not in space:
+        return 0
+    base = os.path.dirname(os.path.abspath(prefix + '.ymf'))
+    info = readMeshYmf(prefix, MeshTag)
+    elements = np.asarray(info.elementNodesArray)
+    k = {"Triangle": 2, "Tri_6": 2, "Tetrahedron": 3, "Tet_10": 3}[space["topology"]["type"]]
+    vertices = elements[:, :k + 1]
+    faces = {}
+    for drop in range(k + 1):
+        for row in np.delete(vertices, drop, axis=1).tolist():
+            key = tuple(sorted(row))
+            faces[key] = faces.get(key, 0) + 1
+    exterior = set(key for key, count in faces.items() if count == 1)
+    facets = space["facets"]
+    nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
+    nodes = nodes.reshape(facets["topology"]["number_of_elements"], -1)[:, :k]
+    tags = np.asarray(ymf_archive.load_array(facets["tags"]["data_item"], base)).reshape(-1)
+    tagged = set(tuple(sorted(row)) for row, tag in zip(nodes.tolist(), tags.tolist()) if tag != 0)
+    return len(exterior - tagged)
+
 def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
     """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of ``prefix.ymf``, if it has one.
 

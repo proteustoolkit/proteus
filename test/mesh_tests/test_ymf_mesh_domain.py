@@ -175,3 +175,27 @@ def test_an_exterior_boundary_no_facet_names_is_untagged(tmp_path):
     exterior = mesh.exteriorElementBoundariesArray
     tags = mesh.elementBoundaryMaterialTypes[exterior]
     assert sorted(tags.tolist()) == [0] * (len(exterior) - 1) + [1]
+
+
+def _one_tagged_edge(tmp_path):
+    """square4x4 (8 triangles, 8 exterior edges) with a facet list that tags one bottom edge only."""
+    from ymf import archive
+    info = MeshTools.readMeshYmf(SQUARE_2DM)
+    edge = np.array([[0, 1]], dtype=np.int32)
+    prefix = str(tmp_path / "one_edge")
+    MeshTools.writeMeshYmf(prefix, info.nodeArray, info.elementNodesArray)
+    domain, _ = archive.read_ymf(prefix + ".ymf")
+    space = domain["times"][0]["spaces"]["Spatial_Domain"]
+    space["facets"] = archive.facets(
+        archive.topology("Polyline", 1, archive.data_item_for(edge, inline=True), nodes_per_element=2),
+        archive.data_item_for(np.array([1], dtype=np.int32), inline=True))
+    archive.write_ymf(domain, prefix + ".ymf")
+    return prefix
+
+
+def test_the_untagged_exterior_facets_are_counted(tmp_path):
+    """What ADRProblem refuses position-based Dirichlet conditions on: exterior facets left at flag 0."""
+    pytest.importorskip("ymf.mesh")
+    assert MeshTools.ymfUntaggedExteriorFacets(os.path.join(YMF, "square4x4_tagged")) == 0
+    assert MeshTools.ymfUntaggedExteriorFacets(SQUARE_2DM) == 0      # no facet list: every wall keeps flag 1
+    assert MeshTools.ymfUntaggedExteriorFacets(_one_tagged_edge(tmp_path)) == 7
