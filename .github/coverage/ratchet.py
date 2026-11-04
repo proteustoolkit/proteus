@@ -15,6 +15,11 @@ recorded has no floor and is reported, not checked; a module that is gone is
 reported too. --partial (one of the measured suites is missing) prints
 the tables and the drops but never fails. --write-floors rewrites floors.json
 from this report, keeping every floor that is higher than today's value.
+
+A floor may instead be a string: the module is measured and listed with that
+reason, but not checked (a module waiting for its first test, or one excluded
+until a campaign decides its fate). --write-floors leaves those entries as
+they are; turning one into a number is a reviewed edit.
 """
 import argparse
 import json
@@ -70,20 +75,22 @@ def tolerance(statements):
 
 
 def compare(modules, floors):
-    drops, rises, new = [], [], []
+    drops, rises, new, unchecked = [], [], [], []
     for name, (statements, covered) in sorted(modules.items()):
         now = percent(statements, covered)
         if name not in floors:
             new.append((name, statements, now))
+        elif isinstance(floors[name], str):
+            unchecked.append((name, statements, now, floors[name]))
         elif now < floors[name] - tolerance(statements):
             drops.append((name, statements, floors[name], now))
         elif now >= floors[name] + 1.0:
             rises.append((name, statements, floors[name], now))
     gone = sorted(set(floors) - set(modules))
-    return drops, rises, new, gone
+    return drops, rises, new, unchecked, gone
 
 
-def tables(modules, drops, rises, new, gone, partial, worst=40):
+def tables(modules, drops, rises, new, unchecked, gone, partial, worst=40):
     out = []
     statements = sum(s for s, _ in modules.values())
     covered = sum(c for _, c in modules.values())
@@ -114,6 +121,10 @@ def tables(modules, drops, rises, new, gone, partial, worst=40):
         out.append('\n### At least a point above the floor (raise it with `--write-floors`)\n')
         out.append('| module | statements | floor | now |\n|---|---:|---:|---:|')
         out += ['| `%s` | %d | %.1f%% | %.1f%% |' % r for r in rises]
+    if unchecked:
+        out.append('\n### Measured, not checked\n')
+        out.append('| module | statements | covered | why |\n|---|---:|---:|---|')
+        out += ['| `%s` | %d | %.1f%% | %s |' % u for u in unchecked]
     if new:
         out.append('\n### No floor yet\n')
         out += ['- `%s`: %d statements, %.1f%%' % n for n in new]
@@ -126,11 +137,14 @@ def tables(modules, drops, rises, new, gone, partial, worst=40):
 def write_floors(path, modules, floors):
     merged = dict(floors)
     for name, (statements, covered) in modules.items():
+        if isinstance(floors.get(name), str):
+            continue
         today = math.floor(10.0 * percent(statements, covered)) / 10.0
         merged[name] = max(today, floors.get(name, 0.0))
     with open(path, 'w') as f:
         f.write('{\n')
-        f.write(',\n'.join('  %s: %.1f' % (json.dumps(name), merged[name]) for name in sorted(merged)))
+        f.write(',\n'.join('  %s: %s' % (json.dumps(name), json.dumps(merged[name]) if isinstance(merged[name], str)
+                                          else '%.1f' % merged[name]) for name in sorted(merged)))
         f.write('\n}\n')
 
 
@@ -146,8 +160,8 @@ def main(argv=None):
     if os.path.exists(args.floors):
         with open(args.floors) as f:
             floors = json.load(f)
-    drops, rises, new, gone = compare(modules, floors)
-    sys.stdout.write(tables(modules, drops, rises, new, gone, args.partial))
+    drops, rises, new, unchecked, gone = compare(modules, floors)
+    sys.stdout.write(tables(modules, drops, rises, new, unchecked, gone, args.partial))
     # a report whose module names do not match the floors' checks nothing, and would pass
     if floors and not args.write_floors and len(set(floors) & set(modules)) < len(floors) // 2:
         sys.stderr.write('only %d of %d floors name a module in this report (first module: %s): '
