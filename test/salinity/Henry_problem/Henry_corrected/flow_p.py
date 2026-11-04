@@ -19,7 +19,7 @@ lengthScale   = 1.0     #m
 timeScale     = 1.0     #d #1.0/sqrt(g*lengthScale)
 
 
-Kx            = 0.01244
+Kx            = 0.01  # m/s; Henry a = Q/(eps K d) = 6.6e-5/(0.025*0.01*1) = 0.263
 Kz            = Kx
 thetaS1       = 0.35   # porosity
 thetaR1       = 0.0

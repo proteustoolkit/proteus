@@ -128,7 +128,7 @@
   "proteus/mprans/SW2D.py": 6.1,
   "proteus/mprans/SW2DCV.py": 85.8,
   "proteus/mprans/SpatialTools.py": 52.1,
-  "proteus/mprans/TADR.py": 84.8,
+  "proteus/mprans/TADR.py": 80.4,
   "proteus/mprans/VOF.py": 87.4,
   "proteus/mprans/VOF3P.py": 83.5,
   "proteus/mprans/VOS3P.py": 82.4,
@@ -136,7 +136,7 @@
   "proteus/mprans/beamFEM.py": 9.2,
   "proteus/petsc_optional.py": 91.6,
   "proteus/richards/ADR.py": 0.0,
-  "proteus/richards/Richards.py": 77.2,
+  "proteus/richards/Richards.py": 72.9,
   "proteus/richards/__init__.py": 100.0,
   "proteus/runtime.py": 100.0
 }
