@@ -509,7 +509,8 @@ coefficients = RandomFieldCoefficients(
     STABILIZATION_TYPE=2,
     ENTROPY_TYPE=1,
     LUMPED_MASS_MATRIX=False,
-    FCT=RICHARDS_FCT,
+    FCT=RICHARDS_FCT, FCT_BND_DIFF=True,  # Barua edge-flux runs: boundary routing on (default off since #173)
+    
     num_fct_iter=0,
     cE=1.0,
     uL=0.0,
