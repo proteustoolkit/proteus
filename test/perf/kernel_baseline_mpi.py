@@ -51,90 +51,13 @@ rank, size = comm.rank(), comm.size()
 mpi = comm.comm.tompi4py()
 perf_counter = time.perf_counter
 
-# --------------------------------------------------------------------------------------------
-# accounting
-# --------------------------------------------------------------------------------------------
-phase_stack = ['(outside)']
-passes = {}    # (phase path, pass name) -> [calls, seconds, bytes]
-phases = {}    # phase path -> [calls, seconds]
-
-
-def nbytes_of(args, kwargs):
-    n = 0
-    for a in args:
-        if isinstance(a, np.ndarray):
-            n += a.nbytes
-    for a in kwargs.values():
-        if isinstance(a, np.ndarray):
-            n += a.nbytes
-    return n
-
-
-def wrap_pass(f, key):
-    def wrapper(*args, **kwargs):
-        nb = nbytes_of(args, kwargs)
-        t = perf_counter()
-        try:
-            return f(*args, **kwargs)
-        finally:
-            dt = perf_counter() - t
-            s = passes.setdefault((phase_stack[-1], key), [0, 0.0, 0])
-            s[0] += 1
-            s[1] += dt
-            s[2] += nb
-    wrapper.__name__ = getattr(f, '__name__', key)
-    return wrapper
-
-
-def wrap_module(mod, label):
-    """Every public callable of a Cython kernel module becomes a timed, byte-counted pass."""
-    for name in dir(mod):
-        if name.startswith('_'):
-            continue
-        f = getattr(mod, name)
-        if not callable(f) or isinstance(f, type):
-            continue
-        setattr(mod, name, wrap_pass(f, label + '.' + name))
-
-
-def wrap_phase(owner, name, label):
-    """A method becomes a phase: passes made inside it are attributed to it."""
-    f = getattr(owner, name)
-
-    def wrapper(*args, **kwargs):
-        path = phase_stack[-1] + '/' + label if phase_stack[-1] != '(outside)' else label
-        phase_stack.append(path)
-        t = perf_counter()
-        try:
-            return f(*args, **kwargs)
-        finally:
-            dt = perf_counter() - t
-            phase_stack.pop()
-            s = phases.setdefault(path, [0, 0.0])
-            s[0] += 1
-            s[1] += dt
-    setattr(owner, name, wrapper)
-
-
-class phase(object):
-    def __init__(self, label):
-        self.label = label
-
-    def __enter__(self):
-        phase_stack.append(self.label)
-        self.t = perf_counter()
-
-    def __exit__(self, *exc):
-        dt = perf_counter() - self.t
-        phase_stack.pop()
-        s = phases.setdefault(self.label, [0, 0.0])
-        s[0] += 1
-        s[1] += dt
-
-
-def reset():
-    passes.clear()
-    phases.clear()
+# accounting: test/perf/accounting.py, shared with model_baseline_mpi.py
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import accounting as acc  # noqa: E402
+from accounting import (phase, wrap_module, wrap_phase, reset, c_time_under,  # noqa: E402
+                        load_ceilings)
+passes, phases = acc.passes, acc.phases
 
 
 def rss_mb():
@@ -208,18 +131,7 @@ def reduce_max(x):
 
 
 def collect():
-    """Phase and pass tables, max over ranks of every time (bytes and calls from the max rank)."""
-    keys = sorted(set(sum(mpi.allgather(list(phases)), [])))
-    ph = {}
-    for k in keys:
-        calls, secs = phases.get(k, [0, 0.0])
-        ph[k] = {'calls': reduce_max(calls), 'seconds': reduce_max(secs)}
-    keys = sorted(set(sum(mpi.allgather(list(passes)), [])))
-    ps = {}
-    for k in keys:
-        calls, secs, nb = passes.get(k, [0, 0.0, 0])
-        ps[k] = {'calls': reduce_max(calls), 'seconds': reduce_max(secs), 'bytes': reduce_max(nb)}
-    return ph, ps
+    return acc.collect(mpi)
 
 
 def c_time_under(path, ps):
@@ -360,11 +272,13 @@ def main(argv):
     opts = parse(argv)
     ceilings = load_ceilings(opts['ceilings'], size)
     results = [run_one(opts, nn, ceilings) for nn in opts['nn']]
+    if rank == 0 and acc.perf_gate.ctl is not None:
+        print("PERFGATE pass=%s calls_counted=%d" % (acc.perf_gate.pattern, acc.perf_gate.calls))
     if rank == 0:
         out = opts['out'] or 'baseline_%s_%s_%d.json' % (opts['kind'], platform.node().split('.')[0], size)
         with open(out, 'w') as f:
             json.dump({'host': platform.node(), 'date': time.strftime('%Y-%m-%d'), 'results': results}, f,
-                      indent=1, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
+                      indent=1, default=acc.json_default)
         print('wrote', out)
 
 
