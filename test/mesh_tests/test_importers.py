@@ -321,3 +321,57 @@ def test_the_ifiss_grid_transcription_is_the_unit_square():
 def test_a_nurbs_box_is_meshed():
     MeshTools.MultilevelNURBSMesh(3, 3, 3, 1, 1, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
                                   refinementLevels=1)
+
+
+# --------------------------------------------------------------------------
+# ADH test cases from the XMS Wiki, opt-in: their terms are not stated, so they
+# are not in the repository. Download and unzip any of them (URLs in
+# importers/adh/README.md) into one directory and set PROTEUS_ADH_TEST_FILES to it.
+# --------------------------------------------------------------------------
+
+ADH_FILES = os.environ.get("PROTEUS_ADH_TEST_FILES")
+needs_adh_files = pytest.mark.skipif(
+    not ADH_FILES, reason="PROTEUS_ADH_TEST_FILES does not name a directory of ADH test cases")
+BAYOU_SORREL_SHA256 = "0e8fac7b763f0eabd23b5165f3249563909cd8e93829c2662e0b494fe649821d"
+
+
+def _adh_case(name):
+    """``name``.3dm under PROTEUS_ADH_TEST_FILES (searched recursively), without its suffix."""
+    for root, _, files in os.walk(ADH_FILES):
+        if name + ".3dm" in files:
+            return os.path.join(root, name)
+    pytest.skip("%s.3dm is not under %s" % (name, ADH_FILES))
+
+
+@needs_adh_files
+def test_both_readers_read_the_chl_bayou_sorrel_mesh():
+    """CHL's Bayou Sorrel case (ADH-bayousorrel.zip, 2007): 13,325 triangles, two materials."""
+    import hashlib
+    filebase = _adh_case("bayousorrel")
+    with open(filebase + ".3dm", "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == BAYOU_SORREL_SHA256, \
+            "not the bayousorrel.3dm these numbers were measured on"
+    mesh = _compare_2d_readers(filebase)
+    assert (mesh.nNodes_global, mesh.nElements_global, mesh.nElementBoundaries_global,
+            mesh.nExteriorElementBoundaries_global) == (7040, 13325, 20368, 761)
+    # materials 1 and 2 in the file, read with the index base taken off
+    assert np.bincount(mesh.elementMaterialTypes).tolist() == [13307, 18]
+    x = mesh.nodeArray[mesh.elementNodesArray]
+    a, b = x[:, 1, :2] - x[:, 0, :2], x[:, 2, :2] - x[:, 0, :2]
+    assert 0.5 * np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum() == pytest.approx(106107.769609)
+
+
+@needs_adh_files
+def test_both_readers_agree_on_every_downloaded_2d_adh_mesh():
+    """Whatever cases are in the directory: readMeshADH and read2DM see one mesh."""
+    found = []
+    for root, _, files in os.walk(ADH_FILES):
+        for name in sorted(files):
+            if name.endswith(".3dm"):
+                with open(os.path.join(root, name)) as f:
+                    if f.readline().split()[:1] != ["MESH2D"]:
+                        continue
+                found.append(name)
+                _compare_2d_readers(os.path.join(root, name[:-len(".3dm")]))
+    if not found:
+        pytest.skip("no MESH2D .3dm file under %s" % (ADH_FILES,))
