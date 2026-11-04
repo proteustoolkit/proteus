@@ -162,7 +162,10 @@ coupling merged as #150 (1.9.x) / #152 (main). Caveats that apply to every figur
 - **Coupling.** The decks were written against Arnob's edge-flux coupling (`ee42e519`, `303ed387`), not the compatible coupling on
   this line; a deck that sets a knob this line does not have will fail or behave differently. The comparison of the two is in the
   VDFT handoff of 2026-11-04.
-- **TADR FCT is not partition independent** (above); the 64/90-rank Henry, Elder and UHD FCT figures went through that path. The
-  fix is requested on main (C0 round 4); 1.9.x does not get it.
+- **TADR FCT partition dependence** (above) is a property of the branch the figures ran on, not of main: main's `TADR.FCTStep`
+  scatters uLow, the nodal porosity, Rpos/Rneg and the limited solution since C0 rounds 2-3 (#1321-#1324, #1333). Zalesak,
+  STAB 5, FCT: serial vs 2 / 4 ranks 3.6e-11 / 3.5e-11, mass 3.3e-13 / 3.8e-13 relative; with those scatters off, 0.49 / 0.52
+  (cekees/proteus#184, 4ae279b9). The 64/90-rank Henry, Elder and UHD figures should be rerun on main; 1.9.x does not carry
+  the scatters (2.0-only rule), so on 1.9.x run them serially or accept the defect.
 - **Left out:** every generated figure (`*.png`, `*.pdf`), the crops of the published Simmons figure (`plot_fig8.py` uses them only
   when present; they are not ours to redistribute) and `mms_coupled_subsection.tex` (manuscript text, which lives in Overleaf).
