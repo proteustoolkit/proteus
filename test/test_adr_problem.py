@@ -4,6 +4,7 @@ The unit tests build the ADR form by hand -- ADRProblem never needs sympy.
 The end-to-end tests go through scripts/ymf_run and need ymf[symbolic].
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -1330,3 +1331,130 @@ def test_a_periodic_region_converges(tmp_path):
     table = rows(out.stdout)
     assert [r[0] for r in table] == ["0.2", "0.1"]
     assert float(table[1][1]) < 4e-3 and 1.8 < float(table[1][2]) < 2.3
+
+
+# --- file domains (C27 Phase 5, D2 and D3) ---------------------------------------------
+
+def test_a_mesh_files_bounds_are_its_nodes(tmp_path):
+    (tmp_path / "m.node").write_text("3 3 0 1\n1 0 0 0 0\n2 2 1 0 1\n3 1 3 -1 0\n")
+    assert ADRProblem.file_bounds({"format": "tetgen", "path": str(tmp_path / "m")}) == (
+        [0.0, 0.0, -1.0], [2.0, 3.0, 0.0])
+    (tmp_path / "m.2dm").write_text("MESH2D\nND 1 0.5 0 0\nND 2 4 2 0\nE3T 1 1 2 1 1\n")
+    assert ADRProblem.file_bounds({"format": "2dm", "path": str(tmp_path / "m.2dm")}) == (
+        [0.5, 0.0], [4.0, 2.0])
+    with pytest.raises(ValueError, match="gives its bounds in the spec"):
+        ADRProblem.file_bounds({"format": "hex", "path": "m"})
+
+
+def test_a_mesh_file_is_refined_by_levels_not_sized():
+    problem = {"adr": poisson_adr(), "domain": {"lower": [0, 0], "upper": [1, 1],
+               "region": {"kind": "file", "format": "tetgen", "path": "m"}}}
+    n = ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, levels=2)
+    assert n.nLevels == 2
+    with pytest.raises(ValueError, match="already a mesh"):
+        ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, h=0.5)
+
+
+# *.poly and *.ymf are ignored here, so the cube's PLC and the spec live in the test
+CUBE_PLC = """\
+# unit cube, facets marked 1 bottom (z=0), 2 top (z=1), 3 front (y=0), 4 back (y=1), 5 left (x=0), 6 right (x=1)
+8 3 0 1
+1 0 0 0 0
+2 1 0 0 0
+3 1 1 0 0
+4 0 1 0 0
+5 0 0 1 0
+6 1 0 1 0
+7 1 1 1 0
+8 0 1 1 0
+6 1
+1 0 1
+4 1 2 3 4
+1 0 2
+4 5 6 7 8
+1 0 3
+4 1 2 6 5
+1 0 4
+4 4 3 7 8
+1 0 5
+4 1 4 8 5
+1 0 6
+4 2 3 7 6
+0
+0
+"""
+
+CUBE_FILE_SPEC = """\
+model:
+  name: "Poisson in a cube read from tetgen files, conditions by face marker"
+  physical_model: {provenance: human_specified, processes: [heat_conduction], assumptions: [steady]}
+  strong_form:
+    provenance: human_specified
+    unknowns: [u]
+    equation_formulation: "Poisson"
+    equations: ["-Δu = f  in Ω"]
+    domain:
+      kind: file
+      format: tetgen
+      path: cube
+      dimension: 3
+      boundary_tags: {bottom: 1, top: 2, front: 3, back: 4, left: 5, right: 6}
+    boundary_regions:
+      - {name: lids, tags: [bottom, top]}
+      - {name: front, tags: [front]}
+      - {name: back, tags: [back]}
+      - {name: left, tags: [left]}
+      - {name: right, tags: [right]}
+    boundary_conditions:
+      - {region: lids, variable: u, type: dirichlet, formula: "x² + y z"}
+      - {region: front, variable: u, type: neumann, formula: "z"}
+      - {region: back, variable: u, type: neumann, formula: "-z"}
+      - {region: left, variable: u, type: neumann, formula: "2 x"}
+      - {region: right, variable: u, type: neumann, formula: "-2 x"}
+    coefficients:
+      f: {value: -2.0}
+  weak_forms:
+    - label: galerkin
+      provenance: human_specified
+      derivation: "multiply by v, integrate by parts"
+      solution_spaces: {trial: H1, test: H1}
+      bilinear: "∫ ∇u·∇v"
+      linear: "∫ f v"
+      stabilization_method: "none"
+solution_paths:
+  analytical:
+    - name: exact
+      provenance: human_specified
+      method: closed_form
+      solution: {formula: "u = x² + y z"}
+  discretizations:
+    - name: P1
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 1}}
+      mesh: {levels: [1, 2]}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+    - name: P2
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 2}}
+      mesh: {levels: 1}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+"""
+
+
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_a_tetgen_file_domain_with_its_face_markers(tmp_path):
+    """A cube meshed by tetgen beforehand, read as a file domain: conditions
+    by face marker, the bounds from its nodes, refined by levels."""
+    discretizations = pytest.importorskip("ymf.discretizations")
+    if not hasattr(discretizations, "mesh_from_domain"):
+        pytest.skip("this ymf predates file domains (cekees/ymf#8)")
+    (tmp_path / "cubeplc.poly").write_text(CUBE_PLC)
+    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True)
+    for x in ("node", "ele", "face"):
+        os.rename(tmp_path / ("cubeplc.1." + x), tmp_path / ("cube." + x))
+    (tmp_path / "cube.ymf").write_text(CUBE_FILE_SPEC, encoding="utf-8")
+    out = ymf_run(tmp_path / "cube.ymf", "--outdir", tmp_path / "out")
+    assert out.returncode == 0, out.stderr[-2000:]
+    p1, p2 = rows(out.stdout)[:2], rows(out.stdout)[2:]
+    assert [r[0] for r in p1] == ["1", "2"] and 1.8 < float(p1[1][2]) < 2.2
+    assert float(p2[0][1]) < 1e-12          # quadratic: exact, every marker in place

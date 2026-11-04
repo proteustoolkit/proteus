@@ -24,6 +24,8 @@ Nothing here imports sympy: the symbolic work happened in the front end,
 and this module only compiles and evaluates the code strings it was given.
 """
 
+import os
+
 import numpy
 
 from proteus import (FemTools, LinearAlgebraTools, LinearSolvers, MeshTools,
@@ -672,6 +674,46 @@ def mesh_constraint(h, dim, boundary_points=True):
     raise ValueError("an unstructured mesh needs dimension 2 or 3, not %d" % dim)
 
 
+#: file formats whose file is a mesh (ymf.discretizations.MESH_FILE_FORMATS);
+#: a geometry (gmsh_geo) is meshed by h
+MESH_FILE_FORMATS = ("2dm", "3dm", "hex", "tetgen", "ymf")
+
+
+def _is_file(region):
+    return region is not None and region.get("kind") == "file"
+
+
+def file_bounds(region):
+    """``(lower, upper)``: the bounding box of a mesh file's nodes.
+
+    A file domain without ``bounds`` is posed with none, and the solver takes
+    them from the mesh (C27 Phase 5, D2): here, from the node coordinates
+    the file holds, before anything is built from it. Read for tetgen
+    (``<path>.node``) and 2dm/3dm (``ND`` lines); other formats, and a
+    geometry that is not a mesh yet, need ``bounds`` in the spec.
+    """
+    fmt, path = region["format"], region["path"]
+    rows = []
+    if fmt == "tetgen":
+        with open(path + ".node") as f:
+            lines = [l.split("#")[0].split() for l in f]
+        lines = [l for l in lines if l]
+        count, dim = int(lines[0][0]), int(lines[0][1])
+        rows = [[float(v) for v in l[1:1 + dim]] for l in lines[1:1 + count]]
+    elif fmt in ("2dm", "3dm"):
+        with open(path if os.path.exists(path) else path + "." + fmt) as f:
+            rows = [[float(v) for v in l.split()[2:5]] for l in f if l.startswith("ND ")]
+        if fmt == "2dm":
+            rows = [r[:2] for r in rows]
+    else:
+        raise ValueError("a %s file domain gives its bounds in the spec: Proteus reads the "
+                         "bounds only from tetgen, 2dm and 3dm files" % (fmt,))
+    if not rows:
+        raise ValueError("no nodes in the %s file %s" % (fmt, path))
+    nodes = numpy.array(rows)
+    return nodes.min(axis=0).tolist(), nodes.max(axis=0).tolist()
+
+
 def periodic_region(region, h):
     """A 2-D region with every boundary segment cut into pieces of length <= h.
 
@@ -772,12 +814,21 @@ def numerics(problem, spaces, cells, time=None, quadrature_order=None,
     q = quadrature_order or min(2 * max(orders) + 2, 5 if dim == 3 else 8)
     n.elementQuadrature = Quadrature.SimplexGaussQuadrature(dim, q)
     n.elementBoundaryQuadrature = Quadrature.SimplexGaussQuadrature(dim - 1, q)
-    if problem["domain"].get("region") is None:
+    region = problem["domain"].get("region")
+    if region is None:
         if cells is None or h is not None:
             raise ValueError("a box is meshed by cells per side, not h")
         n.nnx = n.nny = cells + 1
         if dim == 3:
             n.nnz = cells + 1
+    elif _is_file(region) and region["format"] in MESH_FILE_FORMATS:
+        if h is not None or cells is not None:
+            raise ValueError("a %s file is already a mesh: give its levels only, not "
+                             "cells or h" % (region["format"],))
+    elif _is_file(region):
+        if h is None or cells is not None:
+            raise ValueError("a %s file is meshed by h, its element size"
+                             % (region["format"],))
     else:
         if h is None or cells is not None:
             raise ValueError("a piecewise_linear region is meshed by h, its "
@@ -990,6 +1041,12 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if solver != "superlu" and not any(f == "DG" for f, _ in spaces.values()):
         # Dirichlet DOFs will be kept (see keeps_dirichlet_dofs)
         problem = with_kept_dof_diagonals(problem)
+    region = problem["domain"].get("region")
+    if _is_file(region) and problem["domain"].get("lower") is None:
+        # posing follows meshing for this kind alone: the bounds come from
+        # the mesh file, before the tolerance and anything else needs them
+        lower, upper = file_bounds(region)
+        problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
     if problem.get("periodic") and problem["domain"].get("region") is not None and h:
         # no boundary points from the mesher, so cut the faces to h here
         problem = dict(problem, domain=dict(
@@ -1012,6 +1069,12 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
         options.nLayersOfOverlapForParallel = n.nLayersOfOverlapForParallel
         options.genMesh = mesh is None
         p.domain.polyfile = name if mesh is None else mesh
+        if _is_file(region):
+            # read from (or, for a geometry, made beside) the file itself
+            path = os.path.abspath(region["path"])
+            p.domain.polyfile = path[:-4] if path.endswith(".geo") else path
+            if region["format"] not in MESH_FILE_FORMATS:
+                options.he = float(h)
     if problem.get("periodic"):
         n.periodicDirichletConditions = p.periodicDirichletConditions
     keep = keeps_dirichlet_dofs(n, spaces)
@@ -1099,8 +1162,9 @@ def run(problem, spaces, cells, time=None, name="adr", stabilization="none",
 
 def write_poly(p):
     """Write a region domain's <polyfile>.poly, the mesh generator's input,
-    on rank 0 (a box needs none)."""
-    if p.domain is None:
+    on rank 0 (a box needs none, nor does a file domain: it is read)."""
+    if p.domain is None or not hasattr(p.domain, "writePoly") or getattr(
+            p.domain, "meshfile", None) is not None or hasattr(p.domain, "geofile"):
         return
     from proteus import Comm
     comm = Comm.get()
