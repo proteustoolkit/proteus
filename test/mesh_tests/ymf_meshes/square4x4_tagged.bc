@@ -1,0 +1,18 @@
+#test bc for reading in node material types
+NDS 1 1
+NDS 4 1
+NDS 9 1
+NDS 2 2
+NDS 3 2
+NDS 8 2
+NDS 5 3
+NDS 6 3
+NDS 7 3
+EGS 1 2 1
+EGS 1 4 4
+EGS 2 5 1
+EGS 4 9 4
+EGS 5 6 2
+EGS 6 7 2
+EGS 7 8 3
+EGS 8 9 3

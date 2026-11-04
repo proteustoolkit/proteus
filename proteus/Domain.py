@@ -1048,6 +1048,27 @@ class Mesh3DMDomain(D_base):
         self.meshfile=fileprefix
 
 
+class MeshYmfDomain(D_base):
+    """
+    2D or 3D domains from a ymf mesh, ``fileprefix.ymf`` and ``fileprefix.h5``
+
+    The file a converter (``ymf-import-<code>``) or :func:`MeshTools.writeMeshYmf`
+    writes: one space ``Spatial_Domain`` of triangles or tetrahedra, with node
+    and element material types and, optionally, a facet list whose tags become
+    the element boundary tags. ``nd`` is read from the file when not given.
+    """
+    def __init__(self,fileprefix,nd=None):
+        if nd is None:
+            from .MeshTools import ymfMeshTopology
+            topology = ymfMeshTopology(fileprefix)
+            nd = {"Triangle": 2, "Tetrahedron": 3}.get(topology)
+            if nd is None:
+                raise ValueError("%s.ymf holds a %s mesh; MeshYmfDomain reads triangles and tetrahedra"
+                                 % (fileprefix, topology))
+        D_base.__init__(self,nd,name=fileprefix)
+        self.meshfile=fileprefix
+
+
 class MeshHexDomain(D_base):
     """
     3D domains from Hex mesh files

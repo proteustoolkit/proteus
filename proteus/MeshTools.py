@@ -4102,6 +4102,22 @@ class TetrahedralMesh(Mesh):
         cmeshTools.allocateGeometricInfo_tetrahedron(self.cmesh)
         cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
         self.buildFromC(self.cmesh)
+    def generateFromArrays(self,nodes,elements,nodeMaterialTypes=None,elementMaterialTypes=None):
+        """Build the mesh from arrays of node coordinates and zero-based element nodes"""
+        from . import cmeshTools
+        self.cmesh = cmeshTools.CMesh()
+        cmeshTools.generateFromArrays(self.cmesh,nodes,elements,nodeMaterialTypes,elementMaterialTypes)
+        cmeshTools.allocateGeometricInfo_tetrahedron(self.cmesh)
+        cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
+        self.buildFromC(self.cmesh)
+    def generateFromYmfFile(self,prefix):
+        """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
+        info = readMeshYmf(prefix)
+        if info.elementTopologyName != 'Tetrahedron':
+            raise ValueError("%s.ymf holds a %s mesh, not tetrahedra" % (prefix, info.elementTopologyName))
+        self.generateFromArrays(info.nodeArray,info.elementNodesArray,
+                                info.nodeMaterialTypes,info.elementMaterialTypes)
+        _applyYmfFacetTags(self, prefix)
     def writeTetgenFiles(self,filebase,base):
         from . import cmeshTools
         cmeshTools.writeTetgenFiles(self.cmesh,filebase,base)
@@ -5259,9 +5275,11 @@ class TriangularMesh(Mesh):
     def generateFromYmfFile(self,prefix):
         """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
         info = readMeshYmf(prefix)
-        assert info.elementTopologyName == 'Triangle', info.elementTopologyName
+        if info.elementTopologyName != 'Triangle':
+            raise ValueError("%s.ymf holds a %s mesh, not triangles" % (prefix, info.elementTopologyName))
         self.generateFromArrays(info.nodeArray,info.elementNodesArray,
                                 info.nodeMaterialTypes,info.elementMaterialTypes)
+        _applyYmfFacetTags(self, prefix)
 
     def generateFrom2DMFile(self,filebase,base=1):
         from .import cmeshTools
@@ -7413,6 +7431,48 @@ def readMeshYmf(prefix, MeshTag=YMF_MESH_SPACE, verbose=0):
     domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
     return _readMeshFromDomain(domain, prefix + '.h5', MeshTag=MeshTag, verbose=verbose)
 
+def ymfMeshTopology(prefix, MeshTag=YMF_MESH_SPACE):
+    """The topology type (``Triangle``, ``Tetrahedron``, ...) of the mesh in ``prefix.ymf``"""
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    return domain["times"][0]["spaces"][MeshTag]["topology"]["type"]
+
+def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
+    """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of ``prefix.ymf``, if it has one.
+
+    Each facet (its node numbers, as in the file) names an element boundary of
+    the mesh; that boundary takes the facet's tag. Boundaries the list does not
+    name keep the tag the mesh construction gave them. A facet that is not a
+    boundary of the mesh is an error, as is a facet list read with a ymf too
+    old to check it: its validation would drop the list without a word.
+    """
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    if "facets" not in domain["times"][0]["spaces"][MeshTag]:
+        return
+    try:
+        from ymf.mesh import check_facets
+    except ImportError:
+        raise ImportError("%s.ymf has a facet list, which this ymf cannot read; "
+                          "install a ymf with ymf.mesh" % (prefix,))
+    space = ymf_archive.validate_domain(domain)["times"][0]["spaces"][MeshTag]
+    base = os.path.dirname(os.path.abspath(prefix + '.ymf'))
+    check_facets(space, base)
+    facets = space["facets"]
+    nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
+    nodes = nodes.reshape(facets["topology"]["number_of_elements"], -1)
+    tags = np.asarray(ymf_archive.load_array(facets["tags"]["data_item"], base)).reshape(-1)
+    boundary = dict((tuple(sorted(row)), ebN)
+                    for ebN, row in enumerate(mesh.elementBoundaryNodesArray.tolist()))
+    k = mesh.elementBoundaryNodesArray.shape[1]
+    for row, tag in zip(nodes[:, :k].tolist(), tags.tolist()):
+        try:
+            ebN = boundary[tuple(sorted(row))]
+        except KeyError:
+            raise ValueError("%s.ymf: facet %s is not an element boundary of the mesh" % (prefix, row))
+        mesh.elementBoundaryMaterialTypes[ebN] = tag
+    logEvent("Tagged %d element boundaries from the facets of %s.ymf" % (len(tags), prefix))
+
 def convert2DMToYmf(filebase, prefix=None, base=1):
     """Convert the XMS 2DM triangle mesh ``filebase.3dm`` to a ymf mesh, ``prefix.ymf`` and ``prefix.h5``
 
@@ -8960,6 +9020,23 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                                      nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                      parallelPartitioningType=meshOptions.parallelPartitioningType)
         logEvent("Generating %i-level mesh from coarse 3DM mesh" % (meshOptions.nLevels,))
+        mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
+                                              nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                              parallelPartitioningType=meshOptions.parallelPartitioningType)
+    elif isinstance(domain, Domain.MeshYmfDomain):
+        if domain.nd == 2:
+            mesh = TriangularMesh()
+            mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
+                                              nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                              parallelPartitioningType=meshOptions.parallelPartitioningType)
+        else:
+            mesh = TetrahedralMesh()
+            mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
+                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
+        logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (domain.meshfile,))
+        mesh.generateFromYmfFile(domain.meshfile)
+        logEvent("Generating %i-level mesh from coarse ymf mesh" % (meshOptions.nLevels,))
         mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)

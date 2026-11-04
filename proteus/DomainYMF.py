@@ -88,6 +88,7 @@ _FILE_FORMATS = {
     "Mesh3DMDomain": "3dm",
     "MeshHexDomain": "hex",
     "MeshTetgenDomain": "tetgen",
+    "MeshYmfDomain": "ymf",
 }
 
 #: Classes holding a live object, which no document can carry.
