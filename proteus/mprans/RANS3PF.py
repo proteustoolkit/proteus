@@ -758,7 +758,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 perStep += [(name, 1) for name in ("particle_surfaceAreaHistory", "particle_forceHistory",
                                                    "particle_pforceHistory", "particle_vforceHistory",
                                                    "particle_momentHistory")]
-            self.openHistoryFiles(perStep)
+            if self.legacyHistoryFiles:
+                self.openHistoryFiles(perStep)
 
     def openHistoryFiles(self, perStep):
         """Open timeHistory.txt and the per-step history files ((name, rows per step) pairs) as attributes of the
@@ -948,6 +949,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def evaluate(self, t, c):
         pass
 
+    #: write the legacy history files (timeHistory.txt, forceHistory_p/_v.txt, momentHistory.txt,
+    #: wettedAreaHistory.txt, particle_*History.txt); proteus.Gauges.BoundaryIntegralGauges replaces them. On by default
+    #: for one release, then off, then removed (force-history gauge plan, decision 3, 2026-11-04)
+    legacyHistoryFiles = True
+
     #: what preStep and postStep leave on the level model for the next step: the entropy residual of the
     #: last step, the two previous solutions (for the extrapolated star velocity), dt, the first-step flag,
     #: and the velocity at the quadrature points as it was after the last step and before it; and on the
@@ -1134,7 +1140,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                         dof = self.model.offset[ci] + self.model.stride[ci]*ci_fg_dof
                         if self.model.isActiveDOF[dof] < 0.5:
                             self.model.u[ci].dof[ci_g_dof] = vel_at_xyz[ci]
-        if self.model.comm.isMaster():
+        if self.model.comm.isMaster() and self.legacyHistoryFiles:
             self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
             self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[-1],))
             self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))

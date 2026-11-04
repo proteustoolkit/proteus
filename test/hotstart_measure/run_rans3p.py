@@ -148,11 +148,13 @@ if os.environ.get("HS_DUMP_START"):  # the state a hot run starts stepping from,
     _NS.restoreSolverState = _restore_and_dump
 
 if os.environ.get("HS_GAUGES"):  # gauges on the momentum model: their files continue across the hot start
-    from proteus.Gauges import PointGauges, LineIntegralGauges  # noqa: E402
+    from proteus.Gauges import PointGauges, LineIntegralGauges, BoundaryIntegralGauges  # noqa: E402
     nList[0].auxiliaryVariables = [
         PointGauges(gauges=((("u", "v"), ((0.5, 0.25, 0.0),)),), fileName="gauge_every_step.csv"),
         PointGauges(gauges=((("u",), ((0.7, 0.5, 0.0),)),), sampleRate=0.012, fileName="gauge_sampled.csv"),
-        LineIntegralGauges(gauges=((("u",), (((0.2, 0.1, 0.0), (0.2, 0.9, 0.0)),)),), fileName="gauge_line.csv")]
+        LineIntegralGauges(gauges=((("u",), (((0.2, 0.1, 0.0), (0.2, 0.9, 0.0)),)),), fileName="gauge_line.csv"),
+        BoundaryIntegralGauges(tags=[1, 2, 3, 4], moment_points={"1": (0.5, 0.5, 0.0)},
+                               fileName="gauge_boundary_integrals.csv")]
 ns = proteus.NumericalSolution.NS_base(so, pList, nList, sList, opts)
 ns.calculateSolution(so.name)
 if os.environ.get("HS_DUMP"):

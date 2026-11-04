@@ -27,8 +27,22 @@ for f in (glob.glob(os.path.join(SRC, "*")) if SO else [os.path.join(SRC, DECK)]
 from proteus import NonlinearSolvers, SplitOperator
 from proteus import NumericalSolution as NS
 
+def boundary_integral_gauges(pList, nList):
+    """BIGAUGES=flags (comma list): a BoundaryIntegralGauges of every quantity on those flags, with a moment point on
+    the first, attached to the RANS2P/RANS3PF model; it writes boundary_integrals.csv."""
+    from proteus.Gauges import BoundaryIntegralGauges
+    for p, n in zip(pList, nList):
+        if type(p.coefficients).__module__ in ("proteus.mprans.RANS2P", "proteus.mprans.RANS3PF"):
+            flags = [int(f) for f in os.environ["BIGAUGES"].split(",")]
+            gauge = BoundaryIntegralGauges(tags=flags, moment_points={str(flags[0]): (0.1, 0.2, 0.0)},
+                                           fileName="boundary_integrals.csv")
+            n.auxiliaryVariables = list(getattr(n, "auxiliaryVariables", [])) + [gauge]
+
+
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
+    if os.environ.get("BIGAUGES"):
+        boundary_integral_gauges(pList, nList)
     if os.environ.get("ATOL"):
         atol = float(os.environ["ATOL"])
         for n in nList:

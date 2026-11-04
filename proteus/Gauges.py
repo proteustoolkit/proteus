@@ -1205,3 +1205,154 @@ class Gauges(AV_base):
             m.multAdd(dofsVec, self.lineIntegralGaugesVec, self.lineIntegralGaugesVec)
 
         self.outputRow(time)
+
+class BoundaryIntegralGauges(AV_base):
+    """Boundary integrals of a flow model (RANS2P, RANS3PF) per boundary tag, written to one CSV file.
+
+    The flow model's kernel integrates, per boundary flag and over owned faces, the wetted area, the pressure and
+    viscous forces and the moment about a point, and reduces them over the ranks (they need the in-step fluxes, which
+    an archive cannot reproduce). This gauge only reads them, after each accepted system step, so a failed and
+    retried step writes no row, and a hot start keeps the rows up to the restart instant (open_history_file).
+
+    :param tags: {name: boundary flag} (a ymf region tag that maps to a flag > 0), or a list of flags (named by
+        their number).
+    :param quantities: any of wetted_area, force_pressure, force_viscous, force (their sum), moment.
+    :param moment_points: {name: point} about which the moment is reported; a tag without one uses the flow
+        coefficients' barycenter of its flag (where the kernel takes moments). M_point = M_b + (b - point) x F.
+    :param sampleRate: as for PointGauges (0: every step; otherwise the grid first sample + k * sampleRate).
+    :param units: {quantity: units} overriding the SI defaults (per unit depth in 2D).
+    :param fileName: the CSV file, in Profiling.logDir: a header row, then one row per sample, tag, quantity and
+        component: time, tag, quantity, component, units, value.
+    """
+    QUANTITIES = ("wetted_area", "force_pressure", "force_viscous", "force", "moment")
+
+    def __init__(self, tags, quantities=QUANTITIES, moment_points=None, sampleRate=0, activeTime=None, units=None,
+                 fileName="boundary_integral_gauges.csv"):
+        AV_base.__init__(self)
+        if not isinstance(tags, dict):
+            tags = OrderedDict((str(flag), flag) for flag in tags)
+        for name, flag in tags.items():
+            if int(flag) <= 0:
+                raise ValueError("boundary integral gauge tag %r: flag %r is not a boundary condition flag (> 0)"
+                                 % (name, flag))
+        for quantity in quantities:
+            if quantity not in self.QUANTITIES:
+                raise ValueError("unknown boundary integral quantity %r; available: %s" % (quantity, self.QUANTITIES))
+        self.tags = OrderedDict((name, int(flag)) for name, flag in tags.items())
+        self.quantities = tuple(quantities)
+        self.moment_points = {name: np.array(p, 'd') for name, p in (moment_points or {}).items()}
+        unknown = set(self.moment_points) - set(self.tags)
+        if unknown:
+            raise ValueError("moment points for tags that are not gauged: %s" % sorted(unknown))
+        self.sampleRate = sampleRate
+        self.activeTime = activeTime
+        self.units = dict(units or {})
+        self.fileName = fileName
+        self.file = None
+        self.resumed = False
+        self.resumeTime = None
+        self.first_output = None
+        self.last_output = None
+        self.next_output = None
+
+    def attachModel(self, model, ar):
+        self.model = model
+        lm = model.levelModelList[-1]
+        self.coefficients = lm.coefficients
+        for name in ("wettedAreas", "netForces_p", "netForces_v", "netMoments"):
+            if not hasattr(self.coefficients, name):
+                raise ValueError("BoundaryIntegralGauges needs a flow model with per-flag boundary integrals "
+                                 "(RANS2P, RANS3PF), not %s" % type(lm).__name__)
+        nFlags = self.coefficients.wettedAreas.shape[0]
+        for name, flag in self.tags.items():
+            if flag >= nFlags:
+                raise ValueError("boundary integral gauge tag %r: no boundary has flag %d (largest %d)"
+                                 % (name, flag, nFlags - 1))
+        self.nd = lm.nSpace_global
+        self.timeIntegration = lm.timeIntegration
+        self.comm = Comm.get()
+        default = {"wetted_area": "m^2" if self.nd == 3 else "m",
+                   "force_pressure": "N" if self.nd == 3 else "N/m",
+                   "force_viscous": "N" if self.nd == 3 else "N/m",
+                   "force": "N" if self.nd == 3 else "N/m",
+                   "moment": "N*m" if self.nd == 3 else "N"}
+        default.update(self.units)
+        self.units = default
+        if self.comm.isMaster():
+            self.fileName = os.path.join(Profiling.logDir, self.fileName)
+            self.file, self.resumed = open_history_file(self.fileName)
+            if not self.resumed:
+                self.file.write("time,tag,quantity,component,units,value\n")
+                self.file.flush()
+        on_hot_start(self.resumeAt)
+        return self
+
+    def resumeAt(self, t):
+        """Hot start from t: keep the rows up to t, sample on the grid of the run this one continues."""
+        times = keep_rows_up_to(self.file, t) if self.comm.isMaster() and self.resumed else None
+        times = self.comm.comm.tompi4py().bcast(times, root=0)
+        if times is None:
+            return
+        self.resumeTime = t
+        if times:
+            self.first_output = times[0]
+            self.last_output = times[-1]
+            Gauges.advanceSampleGrid(self, times[-1])
+
+    def calculate_init(self):
+        """Nothing: the boundary integrals are computed by the flow model's residual, so none exist at t0."""
+        pass
+
+    def calculate_initial_solution(self):
+        pass
+
+    def values(self, name, flag):
+        """(quantity, components, values) of one tag, as the flow model left them in its last residual."""
+        c = self.coefficients
+        Fp, Fv = c.netForces_p[flag, :self.nd], c.netForces_v[flag, :self.nd]
+        components = ("x", "y", "z")[:self.nd]
+        out = []
+        for quantity in self.quantities:
+            if quantity == "wetted_area":
+                out.append((quantity, ("",), [c.wettedAreas[flag]]))
+            elif quantity == "force_pressure":
+                out.append((quantity, components, Fp))
+            elif quantity == "force_viscous":
+                out.append((quantity, components, Fv))
+            elif quantity == "force":
+                out.append((quantity, components, Fp + Fv))
+            elif quantity == "moment":
+                M = np.array(c.netMoments[flag, :], 'd')
+                if name in self.moment_points:
+                    b = np.zeros(3)
+                    b[:len(c.barycenters[flag])] = c.barycenters[flag]
+                    F = np.zeros(3)
+                    F[:self.nd] = Fp + Fv
+                    point = np.zeros(3)
+                    point[:len(self.moment_points[name])] = self.moment_points[name]
+                    M = M + np.cross(b - point, F)
+                if self.nd == 3:
+                    out.append((quantity, components, M))
+                else:
+                    out.append((quantity, ("z",), M[2:3]))
+        return out
+
+    def calculate(self):
+        time = self.timeIntegration.tLast
+        if self.resumeTime is not None and _at_or_before(time, self.resumeTime):
+            return
+        if self.activeTime is not None and (self.activeTime[0] > time or self.activeTime[1] < time):
+            return
+        if not Gauges.sampleDue(self, time):
+            return
+        if self.comm.isMaster():
+            rows = []
+            for name, flag in self.tags.items():
+                for quantity, components, values in self.values(name, flag):
+                    for component, value in zip(components, values):
+                        rows.append("%25.15e,%s,%s,%s,%s,%25.15e\n" % (time, name, quantity, component,
+                                                                         self.units[quantity], value))
+            self.file.write("".join(rows))
+            self.file.flush()
+        self.last_output = time
+        Gauges.advanceSampleGrid(self, time)

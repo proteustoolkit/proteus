@@ -770,7 +770,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             if self.nParticles:
                 perStep += [(name, 1) for name in ("particle_forceHistory", "particle_pforceHistory",
                                                    "particle_vforceHistory", "particle_momentHistory")]
-            self.openHistoryFiles(perStep)
+            if self.legacyHistoryFiles:
+                self.openHistoryFiles(perStep)
         self.comm = comm
     def openHistoryFiles(self, perStep):
         """Open timeHistory.txt and the per-step history files ((name, rows per step) pairs) as attributes of the
@@ -956,6 +957,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
 
     #: what postStep leaves for the next step that the solution does not determine: dt of the last step, the
     #: active elements, and the internal particle solver's state (the ball_* arrays it advances in postStep)
+    #: write the legacy history files (timeHistory.txt, forceHistory_p/_v.txt, momentHistory.txt,
+    #: wettedAreaHistory.txt, particle_*History.txt); proteus.Gauges.BoundaryIntegralGauges replaces them. On by default
+    #: for one release, then off, then removed (force-history gauge plan, decision 3, 2026-11-04)
+    legacyHistoryFiles = True
+
     def state(self):
         m = getattr(self, "model", None)
         if m is None or not hasattr(m, "isActiveElement_last"):
@@ -980,7 +986,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.model.dt_last = self.model.timeIntegration.dt
         self.model.q['dV_last'][:] = self.model.q['dV']
         self.model.isActiveElement_last[:] = self.model.isActiveElement
-        if self.comm.isMaster():
+        if self.comm.isMaster() and self.legacyHistoryFiles:
             # logEvent("wettedAreas\n"+
             #          repr(self.wettedAreas[:]) +
             #          "\nForces_p\n" +

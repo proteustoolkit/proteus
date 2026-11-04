@@ -159,3 +159,42 @@ def test_rising_bubble_pressure_constant_does_not_depend_on_the_rank_count(risin
     serial, parallel, names = rising_bubble
     worst = _differences(serial, parallel, names)
     assert max(worst[n] for n in PRESSURES if n in worst) < 1e-10, worst
+
+
+def _boundary_integrals(path):
+    """{(tag, quantity, component): [(time, value)]} from a BoundaryIntegralGauges file."""
+    lines = open(path).read().splitlines()
+    assert lines[0] == "time,tag,quantity,component,units,value"
+    series = {}
+    for line in lines[1:]:
+        t, tag, quantity, component, units, value = [x.strip() for x in line.split(",")]
+        series.setdefault((tag, quantity, component), []).append((float(t), float(value)))
+    return {k: numpy.array(v) for k, v in series.items()}
+
+
+BOUNDARY_INTEGRAL_CASES = {
+    # measured: damBreak (RANS3PF) 1.2e-11, damBreakLevelSet (RANS2P) 1.8e-11, the largest on values near 1e-18
+    "damBreak-rans3pf": dict(DECK="damBreak.py", OPTS="he=0.1", FT=0.1, ATOL=1e-12, BIGAUGES="1,2,3,4"),
+    "damBreakLevelSet-rans2p": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1", FT=0.5, ATOL=1e-10, MAXITS=1000,
+                                    BIGAUGES="1,2,3,4"),
+}
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("case", sorted(BOUNDARY_INTEGRAL_CASES))
+def test_boundary_integral_gauges_on_two_ranks_are_the_serial_ones(tmp_path, case):
+    """Every tag, quantity (wetted area, pressure, viscous and total force, moment about a declared point) and
+    component of a BoundaryIntegralGauges file, serial against 2 ranks."""
+    options = BOUNDARY_INTEGRAL_CASES[case]
+    _field(1, tmp_path / "1", **options)
+    _field(2, tmp_path / "2", **options)
+    serial = _boundary_integrals(str(tmp_path / "1" / "boundary_integrals.csv"))
+    parallel = _boundary_integrals(str(tmp_path / "2" / "boundary_integrals.csv"))
+    assert sorted(serial) == sorted(parallel)
+    quantities = set(k[1] for k in serial)
+    assert quantities == {"wetted_area", "force_pressure", "force_viscous", "force", "moment"}
+    for key, s in serial.items():
+        p = parallel[key]
+        assert s.shape == p.shape and numpy.allclose(s[:, 0], p[:, 0], rtol=1e-12, atol=0), key
+        assert numpy.abs(s[:, 1] - p[:, 1]).max() <= 1e-9 * max(numpy.abs(s[:, 1]).max(), 1.0), key
+

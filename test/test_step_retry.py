@@ -57,7 +57,7 @@ def _worst(a, b):
 
 
 CASES = {
-    "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10),
+    "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10, BIGAUGES="1,2,3,4"),
     "fillingTank-pressureIncrement": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="pressureIncrement", FAILAT=10),
     "damBreakLevelSet-vof": dict(DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT=5),
     "rising_bubble_rans3p-mcorr3p": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
@@ -94,6 +94,16 @@ def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, case):
         numpy.testing.assert_array_equal(times, numpy.loadtxt(accepted))
         forces = numpy.loadtxt(os.path.join(str(tmp_path / "forced"), "forceHistory_p.txt"))
         assert forces.shape[0] % len(times) == 0
+    # a boundary integral gauge writes one sample per accepted step, the replay's values (measured 2.4e-13)
+    gauge = os.path.join(str(tmp_path / "forced"), "boundary_integrals.csv")
+    if os.path.exists(gauge):
+        rows = [line.split(",") for line in open(gauge).read().splitlines()[1:]]
+        replayed = [line.split(",") for line in open(os.path.join(str(tmp_path / "replay"),
+                                                                  "boundary_integrals.csv")).read().splitlines()[1:]]
+        assert [r[:5] for r in rows] == [r[:5] for r in replayed]
+        assert len(set(float(r[0]) for r in rows)) == len(numpy.atleast_1d(numpy.loadtxt(accepted)))
+        values, values_replayed = (numpy.array([float(r[5]) for r in x]) for x in (rows, replayed))
+        assert numpy.abs(values - values_replayed).max() <= 1e-10 * max(numpy.abs(values).max(), 1.0)
 
 
 @pytest.mark.parametrize("case", ["fillingTank-clsvof", "damBreakLevelSet-vof"])

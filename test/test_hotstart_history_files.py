@@ -25,7 +25,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 driver = os.path.join(here, "hotstart_measure", "run_rans3p.py")
 STEPS, STOP = 14, 8
 FILES = ("timeHistory.txt", "forceHistory_p.txt", "forceHistory_v.txt", "momentHistory.txt", "wettedAreaHistory.txt",
-         "gauge_every_step.csv", "gauge_sampled.csv", "gauge_line.csv")
+         "gauge_every_step.csv", "gauge_sampled.csv", "gauge_line.csv", "gauge_boundary_integrals.csv")
 
 
 def _run(outdir, mode):
