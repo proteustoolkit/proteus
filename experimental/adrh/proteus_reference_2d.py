@@ -9,7 +9,7 @@ boundary flux acts on a face that is part pond and part not, which this driver d
 
 What is compared, each over `steps` fixed steps of 0.35 d / steps, on the mesh proteus wrote to its archive (richards_nd.py reads the nodes and elements back):
 Galerkin, the K-upwinded low-order scheme (proteus's STABILIZATION_TYPE=2), the semi-implicit (post-step) FCT and the implicit FCT, with and without the lens, and at several beta. Proteus's
-semi-implicit FCT vetoes any step whose head correction exceeds 1 m (RICHARDS_FCT_DU_MAX); run_proteus lifts it.
+semi-implicit FCT vetoes any step whose head correction exceeds 1 m (Richards.Coefficients FCT_DU_MAX); the patched deck lifts it.
 
 --steady compares the 1D Celia deck run to a steady state (the interior starts on the line between the boundary heads, psi = -1 below and -3 above, T = 200 d) with the
 exact steady compressible column of richards_nd_test.compressible_exact, for proteus's Galerkin and K-upwinded low-order schemes and for richards_nd.py's K-upwinded scheme.
@@ -66,7 +66,10 @@ LevelModelType = Richards.LevelModel""", 1)
     s = s.replace("coefficients = Richards.Coefficients(nd,", "coefficients = LensCoefficients(nd,", 1)
     s = s.replace("beta=0.0001,", "beta=ct.BETA,", 1)
     s = s.replace("STABILIZATION_TYPE=2,#0 for galerkin, 2 for Low-order monotone and FCT", "STABILIZATION_TYPE=ct.STABILIZATION_TYPE,", 1)
-    s = s.replace("FCT=False,#True,", "FCT=ct.FCT,\n                                     FCT_TYPE=ct.FCT_TYPE,\n                                     forceStrongConditions=True,", 1)
+    # Richards.FCTStep (semi-implicit FCT, Newton invert, i.e. every 2D deck) throws the limited step away and keeps the low-order head
+    # whenever the correction moves any node's head by more than 1 m, which a dry node's moisture content does by metres. Lift the cap
+    # (FCT_DU_MAX) or the FCT cases below are the low-order scheme.
+    s = s.replace("FCT=False,#True,", "FCT=ct.FCT,\n                                     FCT_TYPE=ct.FCT_TYPE,\n                                     FCT_DU_MAX=1e30,\n                                     forceStrongConditions=True,", 1)
     s = s.replace("x[0] >= L[0]/3.0", "x[0] >= L[0]/3.0 - %g" % TOL).replace("x[0] <= 2.0*L[0]/3.0", "x[0] <= 2.0*L[0]/3.0 + %g" % TOL)
     open(p, 'w').write(s)
     p = os.path.join(dst, 're_vgm_sand_10x10m_2d_c0p1_n.py'); s = open(p).read()
@@ -91,10 +94,6 @@ def run_proteus(work, bin_dir, context):
         if f.endswith('.h5'):
             os.remove(os.path.join(work, f))
     env = dict(os.environ); env.pop('PYTHONPATH', None); env['PATH'] = bin_dir + os.pathsep + env['PATH']
-    # Richards.FCTStep (semi-implicit FCT, Newton invert, i.e. every 2D deck) throws the limited step away and keeps the low-order head whenever
-    # the correction moves any node's head by more than 1 m, which a dry node's moisture content does by metres. Lift the cap or the FCT cases below
-    # are the low-order scheme.
-    env['RICHARDS_FCT_DU_MAX'] = '1e30'
     r = subprocess.run(['parun', 're_vgm_sand_10x10m_2d_p.py', 're_vgm_sand_10x10m_2d_c0p1_n.py', '-C', context, '-l', '1'], cwd=work, env=env,
                        capture_output=True, text=True)
     if r.returncode != 0:

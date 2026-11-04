@@ -2314,9 +2314,9 @@ inline
           /////////////////////////////////////////////
           // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
           /////////////////////////////////////////////
-          // DMP diagnostic, enabled with TADR_DMP_DBG=1 (off by default, and
-          // the branch is a single bool test when off).
-          static const bool TADR_DMP_DBG = (std::getenv("TADR_DMP_DBG") != nullptr);
+          // DMP diagnostic, Coefficients(diagnostics=("dmp",)) (off by default,
+          // and the branch is a single bool test when off).
+          const bool TADR_DMP_DBG = args.scalar<int>("DMP_DIAGNOSTICS") != 0;
           // total lines emitted over the whole run, so the first violation is
           // captured and the log does not explode over ~12000 substeps x 64 ranks
           static int dbg_budget = 40;
@@ -2349,7 +2349,7 @@ inline
               // u = m/M a convex combination.
               double ith_flux_term_fluid = 0;
               double ith_low_order_dissipative_term_fluid = 0;
-              // --- DMP diagnostic accumulators (TADR_DMP_DBG=1) ---
+              // --- DMP diagnostic accumulators (diagnostics "dmp") ---
               // gamma_ij = dLow_ij - T_ij - D_ij is the coefficient of
               // (w_j - w_i) in the low-order update.  The update is a convex
               // combination iff every gamma_ij >= 0 AND

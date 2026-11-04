@@ -1,7 +1,6 @@
 from __future__ import division
 from builtins import range
 #from past.utils import old_div
-import os
 import proteus
 from .cRichards import *
 import numpy as np
@@ -17,13 +16,23 @@ import proteus.Transport
 import proteus.TransportCoefficients
 #from proteus.NonlinearSolvers import Newton
 
-#: RICHARDS_BC_DBG=1 logs the exterior-boundary water-flux decomposition once
-#: per time step; see LevelModel._logBoundaryFluxSplit.  Off by default:
-#: the reduction is a pair of MPI allreduces per step.
-_BC_DBG = os.environ.get("RICHARDS_BC_DBG", "0") not in ("0", "false", "False")
-#: RICHARDS_EDGE_DBG=1 checks the per-edge water fluxes exported to a coupled
-#: transport model once per accepted step; see LevelModel._logEdgeFluxExport.
-_EDGE_DBG = os.environ.get("RICHARDS_EDGE_DBG", "0") not in ("0", "false", "False")
+#: Coefficients(diagnostics=...): the run-time diagnostics a Richards model can log, each off by default since
+#: it costs MPI reductions every step or call.
+DIAGNOSTICS = {
+    "boundary_flux": "the exterior-boundary water-flux decomposition, once per step (LevelModel._logBoundaryFluxSplit)",
+    "edge_flux": "the per-edge water fluxes exported to a coupled transport model, once per accepted step "
+                 "(LevelModel._logEdgeFluxExport), and the nodal flux of the rebuilt edge velocity",
+    "fct": "the FCT step's limiter statistics and the veto on a large correction",
+}
+
+
+def _diagnostics(names):
+    """The validated set of diagnostic names."""
+    names = frozenset([names] if isinstance(names, str) else names)
+    unknown = sorted(names - set(DIAGNOSTICS))
+    if unknown:
+        raise ValueError("unknown Richards diagnostics %s; known: %s" % (unknown, sorted(DIAGNOSTICS)))
+    return names
 
 
 class ThetaScheme(TimeIntegration.BackwardEuler):
@@ -59,7 +68,7 @@ class ThetaScheme(TimeIntegration.BackwardEuler):
         # runs only when the whole system step is accepted, so a retried sequence
         # cannot advance it.
         t = self.transport
-        if _EDGE_DBG:
+        if "edge_flux" in t.coefficients.diagnostics:
             t._logEdgeFluxExport()
         if t.use_rho_nodal:
             t.rho_nodal_old[:] = t.rho_nodal
@@ -293,6 +302,14 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  VG_AIR_ENTRY=0.0,
                  FCT_BND_DIFF=False,
                  FCT_BND_KRW=False,
+                 # FCT: reset the boundary bounds min_m_bc/max_m_bc every call (False: accumulate them forever)
+                 FCT_BND_RESET=True,
+                 # hand a coupled transport model the boundary water flux the scheme applies (False: the
+                 # pointwise interior trace)
+                 BC_CONS=True,
+                 # FCT: the largest max-norm change of the limited solution before the step falls back to the
+                 # high-order one; None is 1 with the Newton inversion of the PSK, otherwise no cap
+                 FCT_DU_MAX=None,
                  NONLINEAR_SOLVER=None,
                  LSCHEME_RETRY_ITS=1,
                  LSCHEME_TRIGGER='residual',
@@ -311,9 +328,15 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  # mms_source(x, t) -> [mass/(volume time)] at the mesh nodes x,
                  # evaluated in preStep, e.g. the flow source of a manufactured
                  # solution.  None leaves it zero.
-                 mms_source=None):
+                 mms_source=None,
+                 # run-time diagnostics, all off by default; names in DIAGNOSTICS
+                 diagnostics=(),
+                 # with diagnostics 'fct': the height above which nodes are reported as the top layer
+                 fct_diagnostics_zcut=9.5):
         self.VMS=VMS
         self.mms_source = mms_source
+        self.diagnostics = _diagnostics(diagnostics)
+        self.fct_diagnostics_zcut = float(fct_diagnostics_zcut)
         if density_model is None:
             density_model = DENSITY_MODEL
         self.density_model = density_model
@@ -486,12 +509,14 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.VG_AIR_ENTRY = float(VG_AIR_ENTRY)
         # FCT_BND_DIFF: with FCT, route the weak-Dirichlet block of the transport operator unclipped and
         # identically in the low- and high-order fluxes (Barua's edge-flux coupling). Off by default so the
-        # compatible coupling and every existing deck keep their routing; RICHARDS_FCT_BND_DIFF=0 still
-        # forces it off.
+        # compatible coupling and every existing deck keep their routing.
         self.FCT_BND_DIFF = bool(FCT_BND_DIFF)
         # FCT_BND_KRW: the consistent boundary block uses K = k_r*K_s instead of K_s (Barua). Off by default; it
         # moves the pinned test_2_HYDRUS[FCT] values by up to 4.4e-6.
         self.FCT_BND_KRW = bool(FCT_BND_KRW)
+        self.FCT_BND_RESET = bool(FCT_BND_RESET)
+        self.BC_CONS = bool(BC_CONS)
+        self.FCT_DU_MAX = None if FCT_DU_MAX is None else float(FCT_DU_MAX)
         if NONLINEAR_SOLVER is None:
             NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
         if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
@@ -1138,7 +1163,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.ebqe[('advectiveFlux_bc',0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary),'d')
         self.ebqe[('advectiveFlux',0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary),'d')
         self.ebqe[('penalty')] = np.zeros((self.mesh.nExteriorElementBoundaries_global,self.nElementBoundaryQuadraturePoints_elementBoundary),'d')
-        # BOUNDARY-FLUX DIAGNOSTIC, see RICHARDS_BC_DBG in getResidual.  ('bflux',0)
+        # BOUNDARY-FLUX DIAGNOSTIC, see diagnostics "boundary_flux" in getResidual.  ('bflux',0)
         # is the piece of the boundary flux the residual actually integrates;
         # ('advectiveFlux',0) is the full one.  Their difference is the Darcy
         # consistency term, which is what TADR is handed as velocity_couple.
@@ -1303,7 +1328,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #The entropy-viscosity kernel fills it and then uses it to set the normal
         #component of the coupled boundary velocity it hands the transport model,
         #all inside calculateResidual_entropy_viscosity -- see the consBoundaryFlux
-        #comment there.  It is kept here for the RICHARDS_BC_DBG probe.
+        #comment there.  It is kept here for the "boundary_flux" diagnostic.
         self.consBoundaryFlux = np.zeros(self.u[0].dof.shape, 'd')
         #nodal water source, filled by Coefficients.preStep when the deck sets
         #mms_source; zero otherwise
@@ -1642,9 +1667,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.fctCorrectionApplied = True
 
     def FCTStep(self):
-        # at function top: a local `import os` further down would otherwise make `os`
-        # local to the whole scope and UnboundLocalError the conservation log below
-        import os
         if self.coefficients.FCT_TYPE == 'implicit':
             return self.ImplicitFCTStep()
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()
@@ -1708,10 +1730,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # CONSERVATION.  sum_i ML_i*(mLim_i - mLow_i) = sum_ij alpha_ij F_ij, which cancels
         # pairwise iff F_ij = -F_ji.  The weak-Dirichlet block is unsymmetric (IIPG has no
         # transpose term), so with it folded into TransportMatrix the boundary edges do NOT
-        # cancel and the limiter creates mass; RICHARDS_FCT_BND_DIFF keeps it out of F
+        # cancel and the limiter creates mass; FCT_BND_DIFF keeps it out of F
         # entirely, and this should drop to round-off.
         # Rank-local, so ghosts pollute it: read it off a serial run.
-        if os.environ.get("RICHARDS_FCT_DBG"):
+        if "fct" in self.coefficients.diagnostics:
             _d = float(np.sum(self.ML * (limited_solution - self.mLow)))
             _m = float(np.sum(self.ML * self.mLow))
             logEvent("[FCT-CONS] sum ML*(mLim-mLow) = %+.6e  rel = %+.3e  (rank-local)"
@@ -1727,7 +1749,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             _za = self.mesh.nodeArray
             if _za is not None and _za.shape[0] >= _R.shape[0]:
                 _z = _za[:_R.shape[0], 1]
-                _top = _z > float(os.environ.get("RICHARDS_FCT_ZCUT", "9.5"))
+                _top = _z > self.coefficients.fct_diagnostics_zcut
                 _bulk = ~_top
                 def _st(mask):
                     if not np.any(mask):
@@ -1758,10 +1780,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # this must match USE_NEWTON_INVERT in invert().
         use_newton_invert = (self.coefficients.FCT == 1 and self.coefficients.nd > 1
                              and self.coefficients.PSK_type != 3)
-        # RICHARDS_FCT_DU_MAX overrides the cap (use a huge value to disable it)
-        # so the veto can be tested without editing the source.
-        DU_INF_MAX = float(os.environ.get("RICHARDS_FCT_DU_MAX",
-                                          1.0 if use_newton_invert else np.inf))
+        # Coefficients(FCT_DU_MAX=...) overrides the cap (use a huge value to disable it)
+        DU_INF_MAX = self.coefficients.FCT_DU_MAX
+        if DU_INF_MAX is None:
+            DU_INF_MAX = 1.0 if use_newton_invert else np.inf
         # The veto has to be ONE decision for the whole domain: taken rank-locally
         # it can leave one subdomain on the limited solution and its neighbour on
         # the high order one, i.e. two different schemes inside the same step.
@@ -1770,7 +1792,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # branch that is only entered when an env var is set.
         rejected_local = (not np.isfinite(du_inf)) or (du_inf > DU_INF_MAX)
         rejected = self.comm.globalMax(1.0 if rejected_local else 0.0) > 0.0
-        if os.environ.get("RICHARDS_FCT_DBG"):
+        if "fct" in self.coefficients.diagnostics:
             # untouched = DOFs the invert handed back bitwise unchanged, i.e. the
             # limited mass was silently dropped there (one of the u = u_prev
             # exits in vgm_invert_newton / a zero limiter correction).
@@ -2308,6 +2330,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # run byte-identical to the pre-Step-B code.
         argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT) and self.coefficients.FCT_BND_DIFF)
         argsDict["FCT_BND_KRW"] = int(self.coefficients.FCT_BND_KRW)
+        argsDict["FCT_BND_RESET"] = int(self.coefficients.FCT_BND_RESET)
+        argsDict["BC_CONS"] = int(self.coefficients.BC_CONS)
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
         # throws on a missing key.  fct_pass=0 keeps that in-kernel call single
@@ -2436,7 +2460,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         return (eN < nE_owned)
 
     def _logEdgeFluxExport(self):
-        """RICHARDS_EDGE_DBG=1: check the per-edge water fluxes exported to a
+        """Diagnostics "edge_flux": check the per-edge water fluxes exported to a
         coupled transport model, once per accepted step.
 
             E_ij = dt*edgeFluxLow_ij + limitedFlux_ij   (water into i from j)
@@ -2516,7 +2540,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_CellLoops"] = self.csrColumnOffsets[(0, 0)]
         argsDict["velocity_edge"] = self.q[('velocity_edge',0)]
         self.richards.calculateEdgeVelocity(argsDict)
-        if _EDGE_DBG:
+        if "edge_flux" in self.coefficients.diagnostics:
             # the property the velocity is built for: on every owned row the
             # nodal flux of rho*v equals the row sum of E
             nFree = len(rowptr) - 1
@@ -2532,7 +2556,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                      "max|E|=%.3e" % (self.timeIntegration.t, err, e_max))
 
     def _logBoundaryFluxSplit(self):
-        """RICHARDS_BC_DBG=1: decompose the exterior boundary water flux.
+        """Diagnostics "boundary_flux": decompose the exterior boundary water flux.
 
         Richards imposes its Dirichlet head by PENALTY.  exteriorNumericalFlux2
         (Richards.h:306-334) returns
@@ -2547,7 +2571,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         flux - bflux = rho * (pointwise Darcy trace . n) exactly, this logs that
         gap without needing the boundary normals.
 
-        Since RICHARDS_BC_CONS the kernel no longer hands TADR that pointwise
+        With BC_CONS the kernel no longer hands TADR that pointwise
         trace: it hands it consBoundaryFlux/(rho S_i) per node.  The last field
         is that conservative total (owned boundary DOFs), which storage-free
         saturated flow forces to ~0 net.
@@ -2555,7 +2579,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         Printed once per time step (not per Newton iteration).  Sign convention
         is the outward normal: positive leaves the domain.
         """
-        if not _BC_DBG:
+        if "boundary_flux" not in self.coefficients.diagnostics:
             return
         t = self.timeIntegration.t
         if getattr(self, '_bc_dbg_t', None) == t:
