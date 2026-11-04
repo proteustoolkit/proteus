@@ -1065,6 +1065,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
   proteus::pyarray<double> &dt_times_fH_minus_fL      = args.array<double>("dt_times_fH_minus_fL");
   proteus::pyarray<double> &min_m_bc                  = args.array<double>("min_m_bc");
   proteus::pyarray<double> &max_m_bc                  = args.array<double>("max_m_bc");
+  proteus::pyarray<double> &thetaR                    = args.array<double>("thetaR");
+  proteus::pyarray<double> &thetaSR                   = args.array<double>("thetaSR");
+  proteus::pyarray<int>    &freeDOFMaterialTypes      = args.array<int>("freeDOFMaterialTypes");
   proteus::pyarray<double> &fluxCorrection            = args.array<double>("fluxCorrection");
   //owned by Python so they survive between the two passes below
   proteus::pyarray<double> &Rpos                      = args.array<double>("Rpos");
@@ -1157,6 +1160,19 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       // update ij
       ij += 1;
     } // j-loop
+
+    //Cap the bounds at what node i can hold, rho_i*[theta_r, theta_s] of its own soil.  The
+    //neighbour bound above is rho_i*max_j theta_j, and in a layered soil theta_j can lie in a
+    //soil with a larger theta_s: the limiter then handed node i more water than its retention
+    //curve can take, invert() clipped it at theta_s, and the water was lost (4.4% of the fluid
+    //on the bioswale, nil with one theta_s).  mLow_i is kept inside the cap so the bounds stay
+    //feasible where compressible storage (beta > 0) has already put it above rho_i*theta_s.
+    if (rhoBounds && GLOBAL_FCT == 0 && MONOLITHIC == 0) {
+      const int    mat_i = freeDOFMaterialTypes.at(i);
+      const double rho_i = rho_dof_member[i];
+      mini = fmax(mini, fmin(rho_i * thetaR.at(mat_i), mLow.at(i)));
+      maxi = fmin(maxi, fmax(rho_i * (thetaR.at(mat_i) + thetaSR.at(mat_i)), mLow.at(i)));
+    }
 
     ///////////////////////
     // COMPUTE Q VECTORS //
@@ -2368,6 +2384,36 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             }
           } //j
         } //i
+        //Step B Jacobian, dK part.  TB_ij = int -(K grad(w_j)).n w_i dS with K = a_ext(psi_h),
+        //so row i's boundary term Theta*sum_j TB_ij*dphi_ij also depends on psi through K.
+        //The edge loop sees TB only as assembled numbers and adds Theta*TB_ij alone; the
+        //derivative of K needs da_ext and the trace w_k at this quadrature point, so it is
+        //added here:  d/du_k = Theta * sum_q w_k w_i dS * sum_j G_j dphi_ij,
+        //G_j = -(dK grad(w_j)).n, with dphi_ij built exactly as in the edge loop.
+        if (useBndDiff && !useConsistentFlux && isDOFBoundary_u.data()[ebNE_kb]) {
+          for (int i = 0; i < nDOF_test_element; i++) {
+            const int eN_i = eN * nDOF_test_element + i;
+            const int gi   = r_l2g.data()[eN_i];
+            double dK_flux = 0.0;
+            for (int j = 0; j < nDOF_trial_element; j++) {
+              const int gj = r_l2g.data()[eN_nDOF_trial_element + j];
+              double G_j = 0.0;
+              for (int I = 0; I < nSpace; I++)
+                for (int m = a_rowptr.data()[I]; m < a_rowptr.data()[I + 1]; m++)
+                  G_j -= da_ext[m] * u_grad_trial_trace[j * nSpace + a_colind.data()[m]] * normal[I];
+              const double rho_edge = 0.5 * (rho_dof[gi] + rho_dof[gj]);
+              double dphi = u_free_dof[gj] - u_free_dof[gi];
+              for (int I = 0; I < nSpace; I++)
+                dphi -= (rho_edge / rho) * gravity.data()[I] * (mesh_dof.data()[gj * 3 + I] - mesh_dof.data()[gi * 3 + I]);
+              dK_flux += G_j * dphi;
+            }
+            for (int k = 0; k < nDOF_trial_element; k++) {
+              const int ebN_i_k = ebN * 4 * nDOF_test_X_trial_element + i * nDOF_trial_element + k;
+              globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_k]] +=
+                bc_mask.data()[gi] * Theta * dK_flux * u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + k] * u_test_dS[i];
+            }
+          }
+        }
       } //kb
       for (int i = 0; i < nDOF_test_element; i++) {
           int eN_i = eN * nDOF_test_element + i;
