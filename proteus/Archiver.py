@@ -175,11 +175,23 @@ class AR_base(object):
         or write the ``.ymf`` only at close, from the HDF5 metadata.
     ``driver``
         how the ``.h5`` is used: ``"mpio"`` (the default), every rank
-        writing its part of one file through parallel HDF5; or
-        ``"serial"``, one file that master alone opens and writes, the
-        other ranks sending it their arrays. The serial driver needs no
-        parallel HDF5 and gives the same file; it costs the gather. A
-        serial-driver archive cannot be hot started on several ranks.
+        writing its part of one file through parallel HDF5; ``"serial"``,
+        one file that master alone opens and writes, the other ranks
+        sending it their arrays (no parallel HDF5 needed, the same file,
+        at the cost of the gather; such an archive cannot be hot started
+        on several ranks); or ``"per-rank"``, every rank writing its own
+        ``<filename>_p<rank>.h5`` with plain HDF5 and no communication at
+        all. Per-rank files hold per-rank datasets, so this driver sets
+        ``global_sync`` off.
+    ``document``
+        with per-rank files, where the grids are described: ``"global"``
+        (the default), one ``<filename>.ymf`` whose every step is a spatial
+        collection of the ranks' grids, each referencing its rank's file
+        (the roster's layout B: one thing to open, built by master from
+        the gathered grids); or ``"per-rank"``, one ``<filename>_p<rank>.ymf``
+        per rank, each step a single grid, each rank writing its own with
+        no collective step and no single point of failure (layout C). The
+        single-file drivers take ``"global"`` only.
     ``includeLog``
         carry the run's log, and proteus's version and command line,
         in the ``.ymf`` under ``extra: proteus``.
@@ -188,14 +200,14 @@ class AR_base(object):
         (``values`` on every data item), which is then self-contained.
         For problems small enough to want that.
 
-    ======================  ===========  ======  ==========  ======
-    mode                    incremental  driver  includeLog  inline
-    ======================  ===========  ======  ==========  ======
-    ``"without-a-net"``     off          mpio    off         off
-    ``"split"`` (default)   on           mpio    off         off
-    ``"kitchen-sink"``      on           mpio    on          off
-    ``"ymf-only"``          on           --      off         on
-    ======================  ===========  ======  ==========  ======
+    ======================  ===========  ======  ========  ==========  ======
+    mode                    incremental  driver  document  includeLog  inline
+    ======================  ===========  ======  ========  ==========  ======
+    ``"without-a-net"``     off          mpio    global    off         off
+    ``"split"`` (default)   on           mpio    global    off         off
+    ``"kitchen-sink"``      on           mpio    global    on          off
+    ``"ymf-only"``          on           --      global    off         on
+    ======================  ===========  ======  ========  ==========  ======
 
     *Without a net* is the ``.h5`` alone during the run, the ``.ymf``
     derived from it at close -- and derivable again by ``gatherTimes``,
@@ -203,7 +215,10 @@ class AR_base(object):
     current at every step; the problem's own ``.ymf`` specification, the
     third file of that mode, is the ``pro`` command's. *Kitchen sink* adds
     the log and the run's provenance to the document. *Ymf only* is one
-    file.
+    file. The driver and document switches combine with any mode:
+    ``driver="per-rank"`` with ``document="global"`` or ``"per-rank"`` are
+    the two per-rank-file layouts, and ``driver="serial"`` the one for a
+    build without parallel HDF5.
     """
     #: Names for combinations of the switches; see the class docstring.
     MODES = {
@@ -213,7 +228,12 @@ class AR_base(object):
         "ymf-only":      {"inline": True},
     }
     #: The HDF5 drivers an archive can be opened with.
-    DRIVERS = ("mpio", "serial")
+    DRIVERS = ("mpio", "serial", "per-rank")
+    #: Where the grids of per-rank files are described.
+    DOCUMENTS = ("global", "per-rank")
+    #: HDF5 root attribute recording the document layout (:data:`DOCUMENTS`), so
+    #: a reader of a per-rank file knows whether its steps are single grids.
+    DOCUMENT_ATTR = "ymf_archive_document"
 
     def __init__(self,dataDir,filename,
                  useTextArchive=False,
@@ -225,6 +245,7 @@ class AR_base(object):
                  mode=None,
                  incremental=None,
                  driver=None,
+                 document=None,
                  includeLog=None,
                  inline=None):
         comm=Comm.get()
@@ -241,10 +262,12 @@ class AR_base(object):
         self._liveYmfWarned = False
         self.global_sync = global_sync
         switches = self.resolve_mode(mode, incremental=incremental, driver=driver,
-                                     includeLog=includeLog, inline=inline)
+                                     document=document, includeLog=includeLog,
+                                     inline=inline)
         self.mode = switches["mode"]
         self.writeIncrementalYmf = switches["incremental"]
         self.driver = switches["driver"]
+        self.document = switches["document"]
         self.includeLog = switches["includeLog"]
         self.inline = switches["inline"]
         #the arrays of an inline archive, by dataset name, on master; and
@@ -259,6 +282,12 @@ class AR_base(object):
             raise ValueError(
                 "a serial-driver archive is written by master alone, so the other "
                 "ranks cannot read it: hot start or read it with the mpio driver")
+        if self.driver == "per-rank" and self.global_sync:
+            #a global array cannot span files: per-rank files hold per-rank
+            #datasets, which is what global_sync off means
+            logEvent("Archive %s: per-rank files hold per-rank datasets; "
+                     "global_sync is off" % (filename,), level=2)
+            self.global_sync = False
         if self.inline:
             #no file: the "reference" every data item carries is the dataset
             #name, which allGatherIncremental replaces with the values
@@ -272,11 +301,14 @@ class AR_base(object):
                 mode = "r"
             else:
                 mode = "w"
-            self.hdfFilename=filename+".h5"
+            if self.driver == "per-rank":
+                self.hdfFilename = "%s_p%d.h5" % (filename, self.rank)
+            else:
+                self.hdfFilename=filename+".h5"
             path = os.path.join(self.dataDir,self.hdfFilename)
             if self.driver == "mpio":
                 self.hdfFile=h5py.File(path, mode, driver="mpio", comm = comm_world)
-            elif self.comm.isMaster():
+            elif self.driver == "per-rank" or self.comm.isMaster():
                 self.hdfFile=h5py.File(path, mode)
             else:
                 self.hdfFile=None
@@ -311,8 +343,8 @@ class AR_base(object):
         if mode not in cls.MODES:
             raise ValueError("archive mode %r is not one of %s"
                              % (mode, ", ".join(sorted(cls.MODES))))
-        resolved = {"incremental": True, "driver": "mpio", "includeLog": False,
-                    "inline": False}
+        resolved = {"incremental": True, "driver": "mpio", "document": "global",
+                    "includeLog": False, "inline": False}
         resolved.update(cls.MODES[mode])
         for name, value in switches.items():
             if name not in resolved:
@@ -322,8 +354,33 @@ class AR_base(object):
         if resolved["driver"] not in cls.DRIVERS:
             raise ValueError("archive driver %r is not one of %s"
                              % (resolved["driver"], ", ".join(cls.DRIVERS)))
+        if resolved["document"] not in cls.DOCUMENTS:
+            raise ValueError("archive document %r is not one of %s"
+                             % (resolved["document"], ", ".join(cls.DOCUMENTS)))
+        if resolved["document"] == "per-rank" and resolved["driver"] != "per-rank":
+            raise ValueError(
+                "a per-rank document describes a per-rank file: document='per-rank' "
+                "needs driver='per-rank', not %r" % (resolved["driver"],))
+        if resolved["inline"] and resolved["driver"] != "mpio":
+            raise ValueError("an inline (ymf-only) archive has no .h5, so it takes no driver")
         resolved["mode"] = mode
         return resolved
+
+    @property
+    def writesDocument(self):
+        """Whether this rank writes a ``.ymf``: master, or every rank for per-rank documents."""
+        return self.document == "per-rank" or self.comm.isMaster()
+
+    @property
+    def uniformSteps(self):
+        """Whether a step of this rank's document is one grid (not a spatial collection)."""
+        return self.global_sync or self.document == "per-rank"
+
+    def documentPath(self):
+        """This rank's ``.ymf``: ``<filename>.ymf``, or ``<filename>_p<rank>.ymf`` per rank."""
+        if self.document == "per-rank":
+            return os.path.join(self.dataDir, "%s_p%d.ymf" % (self.filename, self.rank))
+        return os.path.join(self.dataDir, self.filename + ".ymf")
 
     @property
     def writesDatasets(self):
@@ -347,7 +404,10 @@ class AR_base(object):
         only complete at close).
         """
         import sys
-        provenance = {"ranks": self.size, "archive_mode": self.mode}
+        provenance = {"ranks": self.size, "archive_mode": self.mode,
+                      "archive_driver": self.driver}
+        if self.document == "per-rank":
+            provenance["rank"] = self.rank
         try:
             from proteus import __version__
             provenance["version"] = str(__version__)
@@ -547,6 +607,13 @@ class AR_base(object):
         #records nothing, so there it *is* inferred -- see _v1_grids.
         recorded = self.hdfFile.attrs.get(self.GLOBAL_SYNC_ATTR)
         global_sync = self.global_sync if recorded is None else bool(int(recorded))
+        #a per-rank document's steps are single grids whatever the dataset
+        #layout: its file describes one subdomain
+        document = self.hdfFile.attrs.get(self.DOCUMENT_ATTR)
+        if isinstance(document, bytes):
+            document = document.decode("utf-8")
+        if document == "per-rank":
+            global_sync = True
 
         #Time outside, space inside: walk the steps outermost, and let each
         #collection's grid join the instant at its time (add_*_step with a
@@ -754,7 +821,7 @@ class AR_base(object):
         at close from the HDF5 file, and the steps already in the archive
         matter more than this one.
         """
-        path = os.path.join(self.dataDir, self.filename + ".ymf")
+        path = self.documentPath()
         try:
             from ymf.archive import append_step, new_domain, write_ymf
             if not self._liveYmfStarted:
@@ -767,7 +834,7 @@ class AR_base(object):
             #run killed here has the whole instant or none of it.
             instants = []
             for _, name, t, grids in live_steps:
-                if self.global_sync:
+                if self.uniformSteps:
                     g = grids[0]
                     space = {"topology": g["topology"],
                              "geometry": g["geometry"],
@@ -815,14 +882,14 @@ class AR_base(object):
             logEvent("Text archive %s: no grid metadata to write"
                      % (self.filename,))
             return
-        ymf_path = os.path.join(self.dataDir, self.filename + ".ymf")
+        ymf_path = self.documentPath()
         write_ymf(domain, ymf_path, extra=self._document_extra(with_log=True))
         logEvent("Wrote YMF archive %s (ymf2xmf %s writes an .xmf for viewers)"
                  % (ymf_path, os.path.basename(ymf_path)))
 
     def close(self):
         logEvent("Closing Archive")
-        if self.comm.isMaster() and not self.readOnly:
+        if self.writesDocument and not self.readOnly:
             self.gatherAndWriteTimes()
         if self.hdfFile is not None:
             self.hdfFile.close()
@@ -875,7 +942,15 @@ class AR_base(object):
                 c.name for c in Domain)
             self.hdfFile.attrs[self.GLOBAL_SYNC_ATTR] = \
                 1 if self.global_sync else 0
+            self.hdfFile.attrs[self.DOCUMENT_ATTR] = self.document
 
+        #who holds this step's grids, and writes them: with one file, master
+        #gathers the ranks' grids (or holds the one global grid); with
+        #per-rank files every rank records its own grid in its own file, and
+        #for a global document master gathers them as well, to describe the
+        #spatial collection the ranks' files make up
+        gather = (not self.global_sync) and (
+            self.driver != "per-rank" or self.document == "global")
         live_steps = []
         for i, TemporalGridCollection in enumerate(Domain):
             local_grid = TemporalGridCollection.grid
@@ -892,13 +967,17 @@ class AR_base(object):
             t = TemporalGridCollection.time
             TimeAttrib = repr(t)
 
-            #the step's grids, on master: one per rank, or the one global grid
-            if not self.global_sync:
-                grid_dicts = comm_world.gather(local_grid)
-                n_rows = self.size
+            #the grids this rank records: the step's, on master (one per
+            #rank, or the one global grid); its own, on a rank with its own
+            #file
+            if gather:
+                gathered = comm_world.gather(local_grid)
             else:
-                grid_dicts = [local_grid] if self.comm.isMaster() else None
-                n_rows = 1
+                gathered = None
+            if self.comm.isMaster():
+                grid_dicts = gathered if gather else [local_grid]
+            else:
+                grid_dicts = [local_grid] if self.driver == "per-rank" else None
             if self.inline:
                 #no file: master replaces every dataset reference with the
                 #values it was handed and keeps the step in the document
@@ -909,10 +988,11 @@ class AR_base(object):
                                        t, grid_dicts))
                 continue
             payloads = ([dump_grid(g).encode("utf-8") for g in grid_dicts]
-                        if self.comm.isMaster() else [])
+                        if grid_dicts is not None else [])
 
             #every rank must create the dataset with the same width, so agree
             #on it collectively. Each rank contributes the length it knows.
+            #(Per-rank files need no agreement; the allreduce is harmless.)
             local_width = max((len(pl) for pl in payloads), default=0)
             width = comm_world.allreduce(local_width, op=MPI.MAX)
             width = max(int(width), 1)
@@ -920,15 +1000,16 @@ class AR_base(object):
             dataset_name = self._metadata_dataset_name(
                 TemporalGridCollection.name, self.n_datasets)
             if self.hdfFile is not None:
+                n_rows = len(payloads) if self.driver == "per-rank" else (
+                    self.size if gather else 1)
                 grid_data = self._dataset(dataset_name, (n_rows,),
                                           '|S'+str(width))
                 grid_data.attrs['Time'] = TimeAttrib
-                if self.comm.isMaster():
-                    for j, payload in enumerate(payloads):
-                        grid_data[j] = payload
-            if self.comm.isMaster() and self.hdfFile is not None:
-                #master already holds this step's grids, so the running
-                #document costs no extra read and no extra parse
+                for j, payload in enumerate(payloads):
+                    grid_data[j] = payload
+            if self.writesDocument and self.hdfFile is not None:
+                #the writer of a document already holds its step's grids, so
+                #the running document costs no extra read and no extra parse
                 live_steps.append((i, TemporalGridCollection.name,
                                    t, grid_dicts))
         self.n_datasets += 1
@@ -957,6 +1038,9 @@ class AR_base(object):
         the arrays are gathered to master, which writes (or keeps) them.
         """
         comm_world = self.comm.comm.tompi4py()
+        if self.driver == "per-rank":
+            self._store(name, numpy.asarray(data))
+            return
         if self.driver == "mpio" and not self.inline:
             metadata = comm_world.allgather((name,data.shape,data.dtype))
             for i,m in enumerate(metadata):
@@ -973,8 +1057,15 @@ class AR_base(object):
 
         With the mpio driver the dataset is created collectively and every
         rank writes its slice. With the serial driver, or inline, the
-        slices are gathered to master and assembled there.
+        slices are gathered to master and assembled there. Per-rank files
+        cannot hold a global array, which is why that driver turns
+        global_sync off.
         """
+        if self.driver == "per-rank":
+            raise RuntimeError(
+                "a global array (%s) cannot be written across per-rank files; "
+                "the per-rank driver turns global_sync off, so this is a writer "
+                "that ignored ar.global_sync" % (name,))
         if self.driver == "mpio" and not self.inline:
             dataset = self._dataset(name, tuple([offsets[-1]]+list(data.shape[1:])),
                                     data.dtype)
@@ -1277,8 +1368,13 @@ def readArchiveDomain(filename, dataDir='.'):
     import h5py
 
     base = os.path.join(dataDir, filename)
+    hdfFilename = filename + ".h5"
+    if not os.path.exists(base + ".h5") and os.path.exists(base + "_p0.h5"):
+        #per-rank files with a global document: master's file holds the
+        #gathered grids of every rank
+        base, hdfFilename = base + "_p0", filename + "_p0.h5"
     archive = AR_base.__new__(AR_base)
-    archive.hdfFilename = filename + ".h5"
+    archive.hdfFilename = hdfFilename
     archive.global_sync = True          # overridden by the recorded value
     archive.archived_domain = None
     archive._liveYmfStarted = False
