@@ -501,6 +501,47 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
+      # A cancelled job can leave MPI ranks running on a self-hosted runner. At the end of a job the runner ends the
+      # processes that carry the job's RUNNER_TRACKING_ID, from one list made once; on 2026-11-03 (cekees/proteus run
+      # 41700828360, ceds-model-2) that list held a prterun and not the rank it forked a moment later, and the rank, in
+      # a process group of its own, ran for 10 h 43 min. (test/conftest.py ends a launch's ranks when the launch times
+      # out or fails, but a cancelled pytest may not get that far.) This step runs after the tests, cancelled or not,
+      # and repeats the sweep until it finds nothing: every process with this job's id, except this step's shell and
+      # its ancestors, is terminated, then killed.
+      - name: End processes this job left (self-hosted Linux)
+        if: always() && runner.os == 'Linux' && runner.environment == 'self-hosted'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e +o pipefail
+          id="$RUNNER_TRACKING_ID"
+          [ -n "$id" ] || { echo "no RUNNER_TRACKING_ID; nothing to do"; exit 0; }
+          keep=" $$ "
+          p=$$
+          while [ "$p" -gt 1 ] 2>/dev/null; do
+            p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)
+            [ -n "$p" ] || break
+            keep="$keep$p "
+          done
+          ended=0
+          for round in 1 2 3 4 5; do
+            found=""
+            for f in $(grep -lsxz "RUNNER_TRACKING_ID=$id" /proc/[0-9]*/environ); do
+              pid=${f#/proc/}; pid=${pid%/environ}
+              case "$keep" in *" $pid "*) continue ;; esac
+              kill -0 "$pid" 2>/dev/null && found="$found $pid"
+            done
+            [ -z "$found" ] && break
+            echo "round $round, ending:$found"
+            ps -o pid,ppid,etime,args -p "$(echo $found | tr ' ' ',')" 2>/dev/null | cut -c1-200
+            kill -TERM $found 2>/dev/null
+            sleep 3
+            kill -KILL $found 2>/dev/null
+            sleep 1
+            ended=$((ended + $(echo $found | wc -w)))
+          done
+          echo "ended $ended process(es) left by this job"
+
   # The coverage ratchet (C3.7). The two suites of the coverage leg are measured separately; this combines them, publishes
   # the per-subpackage and per-module tables in the run's summary, and fails if a module's statement coverage fell below
   # its floor in .github/coverage/floors.json (recorded from main at 9fca0b95, proteustoolkit run 41631333572, main
