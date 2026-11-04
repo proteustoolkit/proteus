@@ -65,6 +65,7 @@ namespace proteus
   {
     //The base class defining the interface
   public:
+    std::valarray<double> Rpos, Rneg;
     std::valarray<double> FluxCorrectionMatrix;
     std::valarray<double> TransportMatrix, DiffusionMatrix, TransposeTransportMatrix;
     // USE_EDGE_VELOCITY: A_ij = int w_j (rho v).grad(w_i) and its transpose A_ji,
@@ -3862,14 +3863,14 @@ inline
     for (int i=0; i<numDOFs; i++)
       {
         double ith_Limiter_times_FluxCorrectionMatrix = 0.;
-        double Rposi = Rpos.data()[i], Rnegi = Rneg.data()[i];
+        double Rposi = Rpos[i], Rnegi = Rneg[i];
         const double lumped_volume = lumped_mass_matrix.data()[i];
         for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
           {
             assert(offset == ij); // (CSR matrix consistency
             int j = csrColumnOffsets_DofLoops.data()[offset];
             double Lij = 1;
-            Lij = ((FluxCorrectionMatrix[ij]>0) ? fmin(Rposi,Rneg.data()[j]) : fmin(Rnegi,Rpos.data()[j]));
+            Lij = ((FluxCorrectionMatrix[ij]>0) ? fmin(Rposi,Rneg[j]) : fmin(Rnegi,Rpos[j]));
             ith_Limiter_times_FluxCorrectionMatrix += Lij * FluxCorrectionMatrix[ij];
             ij+=1;
           }

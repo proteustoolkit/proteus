@@ -1828,7 +1828,6 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //   boundaryFluxDOF_i<- the boundary integral of row i, positive into the domain
     const int            USE_NODAL_RHO    = args.scalar<int>("USE_NODAL_RHO");
     proteus::pyarray<double> &rho_dof_in       = args.array<double>("rho_dof_in");
-    proteus::pyarray<double> &edgeFluxLow      = args.array<double>("edgeFluxLow");
     proteus::pyarray<double> &boundaryFluxDOF  = args.array<double>("boundaryFluxDOF");
     std::fill(boundaryFluxDOF.begin(), boundaryFluxDOF.end(), 0.0);
     // double Rpos[numDOFs], Rneg[numDOFs];
