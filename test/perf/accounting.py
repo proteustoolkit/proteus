@@ -13,6 +13,7 @@ by :func:`collect`.
 import json
 import os
 import platform
+import sys
 import time
 
 import numpy as np
@@ -59,17 +60,51 @@ class PerfGate(object):
     to a substring of the pass name (``updateDiffusionJacobian_weak_sd``); the gate then
     counts every call of the matching passes and records how many it counted. perf's
     totals divided by :attr:`calls` are the events per call. Off unless all three are set.
+
+    perf's counting window is per perf process, and every rank runs the matching passes. On
+    more than one rank there are two correct set-ups:
+
+    * one perf per rank: put ``{rank}`` in both fifo paths (``ctl.{rank}``), make the fifos for
+      every rank, and start a perf per rank (``mpiexec -n N perf stat ... --control
+      fifo:ctl.$RANK,ack.$RANK -- python ...``, with the launcher's rank variable); each rank
+      gates its own perf;
+    * one perf on rank 0 only (``mpiexec -n 1 perf stat ... -- python ... : -n N-1 python ...``):
+      with plain paths only rank 0 opens the fifos and gates, and a warning says that perf must
+      be counting rank 0 alone.
+
+    :meth:`counts` gathers the calls each rank counted, which is what the totals divide by.
     """
     def __init__(self):
         self.pattern = os.environ.get('PROTEUS_PERF_PASS')
+        self.ctl_path = os.environ.get('PROTEUS_PERF_CTL')
+        self.ack_path = os.environ.get('PROTEUS_PERF_ACK')
+        self.on = bool(self.pattern and self.ctl_path and self.ack_path)
+        self.per_rank = self.on and '{rank}' in self.ctl_path and '{rank}' in self.ack_path
         self.ctl = self.ack = None
+        self.rank = None
         self.calls = 0
-        if self.pattern and os.environ.get('PROTEUS_PERF_CTL') and os.environ.get('PROTEUS_PERF_ACK'):
-            self.ctl = open(os.environ['PROTEUS_PERF_CTL'], 'w', buffering=1)
-            self.ack = open(os.environ['PROTEUS_PERF_ACK'], 'r')
+
+    def open(self, rank, size):
+        """Open the fifos this rank gates (called on the first matching pass, when MPI is up)."""
+        self.rank = rank
+        if self.per_rank:
+            self.ctl = open(self.ctl_path.format(rank=rank), 'w', buffering=1)
+            self.ack = open(self.ack_path.format(rank=rank), 'r')
+        elif rank == 0:
+            if size > 1:
+                sys.stderr.write(
+                    "PERFGATE: %d ranks share one fifo pair, so only rank 0 gates; perf must count rank 0 alone "
+                    "(mpiexec -n 1 perf stat ... : -n %d python ...), or put {rank} in PROTEUS_PERF_CTL and "
+                    "PROTEUS_PERF_ACK for one perf per rank\n" % (size, size - 1))
+            self.ctl = open(self.ctl_path, 'w', buffering=1)
+            self.ack = open(self.ack_path, 'r')
+
+    def _rank_and_size(self):
+        from mpi4py import MPI
+        return MPI.COMM_WORLD.rank, MPI.COMM_WORLD.size
 
     def matches(self, key):
-        return self.ctl is not None and self.pattern in key
+        return self.on and self.pattern in key
 
     def _send(self, word):
         self.ctl.write(word + '\n')
@@ -77,11 +112,19 @@ class PerfGate(object):
         self.ack.readline()
 
     def enable(self):
-        self._send('enable')
-        self.calls += 1
+        if self.rank is None:
+            self.open(*self._rank_and_size())
+        if self.ctl is not None:
+            self._send('enable')
+            self.calls += 1
 
     def disable(self):
-        self._send('disable')
+        if self.ctl is not None:
+            self._send('disable')
+
+    def counts(self, mpi):
+        """The calls each rank counted (collective), or None when the gate is off."""
+        return mpi.allgather(self.calls) if self.on else None
 
 
 perf_gate = PerfGate()

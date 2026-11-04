@@ -264,8 +264,9 @@ def main(argv):
               't_build': ph['build']['seconds'], 't_solve': ph['solve']['seconds'],
               'phases': ph, 'passes': {'%s | %s' % k: v for k, v in ps.items()},
               'warmup': int(opts['warmup']), 'superlu': opts['superlu'], 'newton': newton}
-    if rank == 0 and acc.perf_gate.ctl is not None:
-        print("PERFGATE pass=%s calls_counted=%d" % (acc.perf_gate.pattern, acc.perf_gate.calls))
+    counted = acc.perf_gate.counts(mpi)
+    if rank == 0 and counted is not None:
+        print("PERFGATE pass=%s calls_counted_per_rank=%s" % (acc.perf_gate.pattern, ",".join(map(str, counted))))
     if rank == 0:
         report(result, ph, ps)
         report_newton(result)
