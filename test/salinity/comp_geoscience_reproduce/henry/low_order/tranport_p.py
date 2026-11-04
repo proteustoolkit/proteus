@@ -124,3 +124,11 @@ def getzeroMassAdvectiveFluxBCs(x,tag):
 fluxBoundaryConditions = {0:'setFlow'}
 advectiveFluxBoundaryConditions ={0:getzeroMassAdvectiveFluxBCs}
 diffusiveFluxBoundaryConditions ={0:{0:getzeroMassDiffusiveFluxBCs}}#{0:{0:getzeroBCs}}#{0:{0:getzeroMassDiffusiveFluxBCs}}
+
+# Conservation, bounds and cost measures of the run (vdft_metrics.json in the run
+# directory); run.sh copies the helper next to the deck.  Changes nothing in the solution.
+try:
+    import vdft_metrics
+    vdft_metrics.install(coefficients)
+except ImportError:
+    pass

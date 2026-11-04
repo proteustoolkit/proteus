@@ -91,3 +91,35 @@ figure (`plot_fig8.py` uses them only when present; they are not ours to redistr
 | levee Case_A-D, Henry `ref_3` reruns (`test/salinity/...`, 2026-11-02) | **compatible** | STAB 2 + FCT | `'Compatible'` (serial) |
 
 The comparison of the two transports is in `VDFT_COUPLING_COMPARISON_2026-11-04.md` (local note, cekees).
+
+## Reruns and run measures (2026-11-04)
+
+- **The run scripts set `RICHARDS_EDGE_VELOCITY=1`.** That is the coupling the manuscript describes: Richards
+  reconstructs q_e element by element from its realized edge exchanges, and TADR assembles its edge fluxes from that
+  velocity. `henry`, `bioswale` and `levee_density` did not set it before.
+- **Common script options:**
+  - PETSc options go through `-P`;
+  - `PROTEUS_ENV` picks the conda env;
+  - `PROTEUS_SRC=<checkout built in place>` runs that build instead of the env's installed one.
+- **`vdft_metrics.py`** is copied next to each coupled deck. Each transport `_p.py` calls `vdft_metrics.install(coefficients)`.
+  It changes nothing in the solution and writes `vdft_metrics.json` in the run directory, with:
+  - the paper's MB error;
+  - drift (carried M against the flow model's accepted mass);
+  - the flow-balance error: the flow model's fluid change minus the time-integrated physical boundary inflow, split into
+    the Newton residual and the head-recovery parts;
+  - the c range;
+  - steps, Newton iterations of each model, wall time and ranks.
+
+  The definitions are in the module docstring. The MMS decks have sources and are not hooked.
+- **`henry/henry_metrics.py`** computes the Henry errors of Table `tab:henry_results`:
+  - the lumped-mass L², over the whole domain and over x ≤ 1.8 m;
+  - L^∞ and its location;
+  - the bottom intercepts of the 10/50/90% isochlors against the reference.
+- **Rerun on 2026-11-04** with these decks and scripts (TADR STAB 5 + edge velocity), on the 1.9.x port
+  cekees/proteus#174 @ `6c8fa657`: Henry (4 ranks), bioswale (2) and levee (4 per run). The published figures from these
+  folders were made with TADR STAB 2 and are replaced in the manuscript by these runs.
+  - The levee runs reproduce the paper's step counts: 2905/988, against 2906/985 in the paper.
+  - **Bioswale: the carried M departs from the flow model's accepted mass** by 3% once the storage zone saturates
+    (~0.16 d) and by 75% once the box saturates (0.43–0.50 d). The flow model's head state still balances its inflow
+    (5e-6). See `[TADR-EDGE]` in the log. The cause is the saturated-node head recovery: a node whose predictor is
+    saturated keeps psi^L. It is not β: with β = 0 the drift is 153%.

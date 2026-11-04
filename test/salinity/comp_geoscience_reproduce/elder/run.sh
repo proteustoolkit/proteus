@@ -22,7 +22,7 @@ DECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="${1:-$DECK/run}"
 mkdir -p "$RUN"
 cp "$DECK"/{domain_elder,flow_n,flow_n_base,flow_p,tranport_n,tranport_n_base,tranport_p,ls_CCS_so,plot_isochlors_velocity}.py \
-   "$DECK"/Elder_2d.poly "$DECK"/petsc.options.superlu "$RUN"/
+   "$DECK"/petsc.options.superlu "$DECK/../vdft_metrics.py" "$RUN"/
 cd "$RUN"
 
 source ~/miniforge3/etc/profile.d/conda.sh

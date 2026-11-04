@@ -28,7 +28,7 @@ set -u
 DECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$(mkdir -p "${1:-$DECK/run_uhd}" && cd "${1:-$DECK/run_uhd}" && pwd)"
 cp "$DECK"/{cases,domain_simmons,flow_n,flow_p,k0_field,penetration_height,simmons_so,transport_n,transport_p}.py \
-   "$DECK"/petsc.options.superlu "$RUN"/
+   "$DECK"/petsc.options.superlu "$DECK/../vdft_metrics.py" "$RUN"/
 ln -sfn "$DECK/data" "$RUN/data"
 cd "$RUN"
 
