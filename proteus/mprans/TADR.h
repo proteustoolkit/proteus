@@ -737,6 +737,11 @@ inline
       // the later phases take those values (the owned ones are the numbers this rank computed).
       proteus::pyarray<double>& theta_dof = args.array<double>("theta_dof");
       
+      // the entropy normalization is over the domain: accumulate it over owned elements and hand it out with each
+      // element's viscosities, so that in parallel the caller can reduce it over the ranks and recompute q_numDiff_u
+      int nElements_owned = args.scalar<int>("nElements_owned");
+      proteus::pyarray<double>& entropy_stats = args.array<double>("entropy_stats");
+      proteus::pyarray<double>& element_viscosity = args.array<double>("element_viscosity");
       double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
       const double eps_rho = (rho_s - rho_f)/rho_f;
       const double zL_mass = uL + eps_rho*uL*uL;
@@ -861,7 +866,13 @@ inline
               // dof; form it again from the owners' theta (ImplicitEV takes rho from the EOS and is unaffected)
               if (STABILIZATION_TYPE != STABILIZATION::ImplicitEV)
                 rho_dof_proj[i] = fmax(M_dof.data()[i], 1.0e-14)/theta_dof_proj[i];
-              m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*u_dof_old.data()[i];
+              // the conservative variable at t^n is the CARRIED storage times u^n, as formed
+              // before the phase split.  theta*rho equals it for the explicit branches
+              // (rho = M/theta), but not for ImplicitEV, whose rho is the EOS rho(u^n) while M
+              // carries the flow model's rho(u^{n-1})*theta: ImplicitEV recovers u^n as
+              // m_dof/M, which theta*rho(u^n)*u^n inflates by rho(u^n)/rho(u^{n-1}) wherever
+              // the density just rose (UHD level 0: u up to 1.042).
+              m_dof[i] = fmax(M_dof.data()[i], 1.0e-14)*u_dof_old.data()[i];
             }
           // compute entropy and init global_entropy_residual and boundary_integral
           psi.resize(numDOFs,0.0);
@@ -1131,10 +1142,13 @@ inline
                   maxEntRes[eN] = fmax(maxEntRes[eN],fabs(entRes));
 
                   // Quantities for normalization factor //
-                  meanEntropy += EPOWER(u,0,1)*dV;
-                  meanOmega += dV;
-                  maxEntropy = fmax(maxEntropy,EPOWER(u,0,1));
-                  minEntropy = fmin(minEntropy,EPOWER(u,0,1));
+                  if (eN < nElements_owned)
+                    {
+                      meanEntropy += EPOWER(u,0,1)*dV;
+                      meanOmega += dV;
+                      maxEntropy = fmax(maxEntropy,EPOWER(u,0,1));
+                      minEntropy = fmin(minEntropy,EPOWER(u,0,1));
+                    }
 
                   // artificial compression
                   double hK=elementDiameter.data()[eN]/degree_polynomial;
@@ -2057,12 +2071,18 @@ inline
         }//ebNE
       if (STABILIZATION_TYPE==STABILIZATION::TaylorGalerkinEV)
         {
+          entropy_stats[0] = meanEntropy;
+          entropy_stats[1] = meanOmega;
+          entropy_stats[2] = maxEntropy;
+          entropy_stats[3] = minEntropy;
           meanEntropy /= meanOmega;
           double norm_factor = fmax(fabs(maxEntropy - meanEntropy), fabs(meanEntropy-minEntropy));
           for(int eN=0;eN<nElements_global;eN++)
             {
               double hK=elementDiameter.data()[eN]/degree_polynomial;
               double linear_viscosity = cMax*hK*maxVel[eN];
+              element_viscosity[2*eN] = linear_viscosity;
+              element_viscosity[2*eN+1] = cE*hK*hK*maxEntRes[eN];
               double entropy_viscosity = cE*hK*hK*maxEntRes[eN]/norm_factor;
               for  (int k=0;k<nQuadraturePoints_element;k++)
                 {

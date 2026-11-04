@@ -407,6 +407,26 @@ def test_shell_without_a_model(tmp_path):
     assert "no model loaded: load('model_so.py') first" in out.stderr
 
 
+def test_a_discretization_split_into_sub_problems_is_not_run_as_one_system(tmp_path):
+    """ymf lets a discretization split the model into sub-problems (C42). Until
+    those are mapped onto Proteus's models, ymf_run refuses the branch rather
+    than solve the whole model as one system under its name."""
+    pytest.importorskip("ymf.symbolic")
+    pytest.importorskip("strictyaml")
+    from ymf.schema import load_ymf
+    from ymf.symbolic import adr_problem
+    from proteus.cli.ymfrun import blockers
+    (tmp_path / "poisson.ymf").write_text(POISSON_SPEC, encoding="utf-8")
+    doc = load_ymf(tmp_path / "poisson.ymf")
+    problem = adr_problem(doc)
+    entry = doc["solution_paths"]["discretizations"][0]
+    entry["mesh"] = {"cells": 4}
+    assert blockers(doc, problem, entry) == []
+    entry["subproblems"] = [{"name": "first"}, {"name": "second"}]
+    (reason,) = blockers(doc, problem, entry)
+    assert "split into sub-problems (first, second)" in reason
+
+
 @pytest.mark.skipif(shutil.which("triangle") is None, reason="triangle not on PATH")
 def test_emitted_region_files_mesh_with_pro_msh(tmp_path):
     pytest.importorskip("ymf.symbolic")
@@ -1267,3 +1287,26 @@ def test_a_missing_spec_is_an_argument_error(tmp_path):
     out = pro("run", "nothere.ymf", cwd=tmp_path)
     assert out.returncode == 2 and "nothere.ymf: no such file" in out.stderr
     assert "Traceback" not in out.stderr
+
+
+@pytest.mark.skipif(shutil.which("parun") is None, reason="parun not on PATH")
+def test_run_archive_options_reach_the_archive(tmp_path):
+    """--archive-mode, --archive-driver and --archive-document are pro run's too."""
+    from ymf.archive import read_ymf
+    sources = [os.path.join(HERE, "ci", f)
+               for f in ("adr.py", "ladr_2d_p.py", "ladr_2d_n.py")]
+    for s in sources:
+        shutil.copy(s, tmp_path)
+    ran = pro("run", "--archive-mode", "kitchen-sink", "--archive-driver", "serial",
+              "ladr_2d_p.py", "ladr_2d_n.py", cwd=tmp_path)
+    assert ran.returncode == 0, ran.stderr[-2000:]
+    _, extra = read_ymf(tmp_path / "ladr_2d.ymf")
+    provenance = extra["proteus"]
+    assert provenance["archive_mode"] == "kitchen-sink"
+    assert provenance["archive_driver"] == "serial"
+    assert "log" in provenance and "command" in provenance
+    # the document layout is refused where it makes no sense, by name
+    ran = pro("run", "--archive-document", "per-rank", "ladr_2d_p.py", "ladr_2d_n.py",
+              cwd=tmp_path)
+    assert ran.returncode != 0
+    assert "document='per-rank' needs driver='per-rank'" in ran.stderr

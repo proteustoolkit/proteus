@@ -225,6 +225,32 @@ class RKEV(proteus.TimeIntegration.SSP):
             assert self.timeOrder == 1
         logEvent("FE method finished", level=4)
 
+    #: an SSP step goes through its stages in place: the stage counter, the stage values and the transport's
+    #: *_dof_old arrays (the solution each stage starts from) change during a step, and so does dLow, which
+    #: choose_dt computes from the step's initial state for the first stage; a failed step that is retried
+    #: (NumericalSolution.restoreSystemStepState) must put them back. At a step boundary they are what the last
+    #: step left, which a hot start restores too
+    def state(self):
+        st = {"lstage": int(self.lstage)}
+        for ci in range(self.nc):
+            st["u_dof_last_%d" % ci] = self.u_dof_last[ci].copy()
+            st["u_dof_lstage_%d" % ci] = self.u_dof_lstage[ci].copy()
+        for name, v in vars(self.transport).items():
+            if (name.endswith("_dof_old") or name == "dLow") and isinstance(v, np.ndarray):
+                st["transport_" + name] = v.copy()
+        return st
+
+    def set_state(self, state):
+        self.lstage = int(state["lstage"])
+        for ci in range(self.nc):
+            self.u_dof_last[ci][:] = state["u_dof_last_%d" % ci]
+            self.u_dof_lstage[ci][:] = state["u_dof_lstage_%d" % ci]
+        for key, v in state.items():
+            if key.startswith("transport_"):
+                a = getattr(self.transport, key[len("transport_"):], None)
+                if isinstance(a, np.ndarray):
+                    a[:] = v
+
     def initializeTimeHistory(self, resetFromDOF=True):
         """
         Push necessary information into time history arrays

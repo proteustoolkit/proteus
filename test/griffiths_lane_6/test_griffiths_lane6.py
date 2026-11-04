@@ -9,7 +9,6 @@ This module solves equations of the form
   \nabla \cdot \left( a(x) \nabla u \right) = f(x)
 
 """
-from importlib import reload
 from proteus import NumericalSolution, default_s, default_so
 import os
 import numpy as np
@@ -55,10 +54,8 @@ class TestRichards(object):
     def test_richards(self,opts,use_strong_constraints=False):
         pList = [re_gl_6_3d_p]
         nList = [re_gl_6_3d_n]
-        reload(default_so)
         so = default_so
         so.name = pList[0].name = "richards"
-        reload(default_s)
         so.sList=[default_s]
         opts.gatherArchive=True
         ns = NumericalSolution.NS_base(so,pList,nList,so.sList,opts)
@@ -79,10 +76,8 @@ class TestRichards(object):
     def test_elastoplastic(self,opts,use_strong_constraints=False):
         pList = [sm_gl_6_3d_p]
         nList = [sm_gl_6_3d_n]
-        reload(default_so)
         so = default_so
         so.name = pList[0].name = "elastoplastic"
-        reload(default_s)
         so.sList=[default_s]
         opts.gatherArchive=True
         try:

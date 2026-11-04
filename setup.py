@@ -1166,7 +1166,7 @@ def setup_given_extensions(extensions):
                         'proteus/CompKernel.h'
                        ]),
          ],
-          scripts = ['scripts/parun','scripts/gf2poly','scripts/gatherArchives.py','scripts/qtm','scripts/waves2xmf','scripts/povgen.py',
+          scripts = ['scripts/parun','scripts/gatherArchives.py','scripts/qtm','scripts/waves2xmf','scripts/povgen.py',
                      'scripts/velocity2xmf','scripts/run_script_garnet','scripts/run_script_diamond',
 
                      'scripts/run_script_lonestar','scripts/run_script_ranger','scripts/run_script_mpiexec','scripts/gatherTimes','scripts/clearh5.py',

@@ -22,6 +22,7 @@ from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistent
 from proteus.mprans.cTADR import cTADR_base
 
 from . import cArgumentsDict
+from proteus.mprans import EntropyViscosity
 
 #: TADR_BC_DBG=1 logs the exterior-boundary solute-flux split once per time
 #: step; see LevelModel._logBoundarySoluteFlux.  Off by default: the reduction
@@ -2622,6 +2623,10 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
         theta_dof = np.zeros(self.u[0].dof.shape, 'd')
         argsDict["theta_dof"] = theta_dof
+        if getattr(self, "_entropyViscosityArrays", None) is None:
+            self._entropyViscosityArrays = EntropyViscosity.arrays(self.mesh.nElements_global)
+        argsDict["nElements_owned"] = self.mesh.nElements_owned
+        argsDict["entropy_stats"], argsDict["element_viscosity"] = self._entropyViscosityArrays
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5):
             # the projected nodal porosity of a ghost dof is partial; take the owners' (phase -1)
             argsDict["psi_dof"] = np.zeros(self.u[0].dof.shape, 'd')
@@ -2653,6 +2658,8 @@ class LevelModel(OneLevelTransport):
             argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
             argsDict["phase"] = 1
         self.adr.calculateResidual(argsDict)
+        if self.coefficients.STABILIZATION_TYPE == 1:
+            EntropyViscosity.reduce_numDiff(self.comm, *self._entropyViscosityArrays, self.shockCapturing.numDiff[0])
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4) and not getattr(self, '_use_edge_flux', 0):
             # without a flow model the explicit branches advance M from each row's own fluid divergence, which is
             # incomplete on a ghost row; the next step's edge loops read M at ghost columns, so take the owners'

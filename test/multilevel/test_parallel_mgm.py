@@ -55,7 +55,7 @@ def _run(n_levels, smoother, n_ranks, cycles=3, components=1, all_components=Fal
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper,
                              str(n_levels), smoother, str(cycles), '3', str(components)],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
     for line in result.stdout.splitlines():
         if line.startswith('RESULT'):

@@ -1367,7 +1367,8 @@ class LevelModel(OneLevelTransport):
             self.scatterDOFArray(global_entropy_residual_dof)
             argsDict["phase"] = 1
             self.calculateResidual(argsDict)
-        
+        # a ghost node is marked only by the cut elements this rank has; RDLS freezes the marked nodes
+        self.scatterDOFArray(self.interface_locator)
         self.quantDOFs[:] = self.interface_locator
 
         if self.forceStrongConditions:

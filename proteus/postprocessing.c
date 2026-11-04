@@ -3632,10 +3632,10 @@ void getElementBoundaryBDM1velocityValuesLagrangeRep(int nElements_global,
 	      for (k = 0; k < nSpace+1; k++)
 		{
 		  j = k*nSpace+ id; /*id*(nSpace+1) + k;*/
-		  ebq_velocity[eN*ebN*nQuadraturePoints_elementBoundary*nSpace 
-			+ nBoundaries_Element*nQuadraturePoints_elementBoundary*nSpace + iq*nSpace + id] +=
-		    ebq_v[eN*nBoundaries_Element*nQuadraturePoints_elementBoundary*nDOF_trial_element 
-			+ ebN*nQuadraturePoints_elementBoundary*iq*nDOF_trial_element + k]
+		  ebq_velocity[eN*nBoundaries_Element*nQuadraturePoints_elementBoundary*nSpace
+			+ ebN*nQuadraturePoints_elementBoundary*nSpace + iq*nSpace + id] +=
+		    ebq_v[eN*nBoundaries_Element*nQuadraturePoints_elementBoundary*nDOF_trial_element
+			+ ebN*nQuadraturePoints_elementBoundary*nDOF_trial_element + iq*nDOF_trial_element + k]
 		    *
 		    p1_velocity_dofs[eN*nVDOF_element + j];
 		}/*k*/ 
