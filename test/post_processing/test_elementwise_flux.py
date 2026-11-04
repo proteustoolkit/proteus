@@ -11,7 +11,6 @@ import inspect
 
 proteus.test_utils.TestTools.addSubFolders( inspect.currentframe() )
 
-from importlib import reload
 from proteus import Profiling
 from proteus import Comm
 comm = Comm.get()
@@ -34,7 +33,6 @@ class TestElementwiseFlux2D(object):
 
     def setup_method(self,method):
         """Initialize the test problem. """
-        reload(bt)
         self.transport_obj = bt.ns.modelList[0].levelModelList[0]
         self.bdm2_obj = self.transport_obj.velocityPostProcessor.vpp_algorithms[0]
         self._setRelativePath()

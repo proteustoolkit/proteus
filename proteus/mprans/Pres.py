@@ -41,6 +41,9 @@ class Coefficients(TC_base):
 
        p^{k+1} - p^{k} - phi^{k+1} + \nabla\cdot(\mu \mathbf{u}^{k+1}) = 0
     """
+    #: a closed domain fixes this pressure only up to a constant: NumericalSolution.postStep shifts it to zero
+    #: integral mean when no Dirichlet condition fixes it (proteus.mprans.PressureNormalization)
+    zeroMean = True
 
     def __init__(self,
                  modelIndex=None,

@@ -80,9 +80,12 @@ RANK_SCRIPT = textwrap.dedent(
     ar = Archiver.XdmfArchive(datadir, "mpitest", global_sync=global_sync,
                               hotStart=hot,
                               mode=os.environ.get("MODE") or None,
-                              driver=os.environ.get("DRIVER") or None)
+                              driver=os.environ.get("DRIVER") or None,
+                              document=os.environ.get("DOCUMENT") or None)
     if os.environ.get("NO_INCREMENTAL") == "1":
         ar.writeIncrementalYmf = False
+    # the per-rank driver turns global_sync off: write what the archive is
+    global_sync = ar.global_sync
     if hot:
         # what NumericalSolution does: continue after the archive's last step
         # (or, for HOT_START=back, from the first step of two: the second
@@ -167,19 +170,20 @@ RANK_SCRIPT = textwrap.dedent(
 
 def run_ranks(tmp_path, n_ranks, global_sync, hot_start=False,
               skip_close=False, incremental=True, mode=None, driver=None,
-              with_log=False, name="archive"):
+              document=None, with_log=False, name="archive"):
     """Run the rank script under mpiexec (directly only if there is none).
 
     ``hot_start`` continues the archive an earlier call wrote, for one
-    more step, the way a hot-started run does. ``mode`` and ``driver`` are
-    the archive's; ``with_log`` opens a proteus log first, as a run does.
+    more step, the way a hot-started run does. ``mode``, ``driver`` and
+    ``document`` are the archive's; ``with_log`` opens a proteus log
+    first, as a run does.
     """
     datadir = str(tmp_path / name)
     env = dict(os.environ, GLOBAL_SYNC="1" if global_sync else "0",
                DATADIR=datadir, HOT_START=("back" if hot_start == "back" else "1") if hot_start else "0",
                SKIP_CLOSE="1" if skip_close else "0",
                NO_INCREMENTAL="0" if incremental else "1",
-               MODE=mode or "", DRIVER=driver or "",
+               MODE=mode or "", DRIVER=driver or "", DOCUMENT=document or "",
                WITH_LOG="1" if with_log else "0")
     # More ranks than cores (3 on a 2-core CI runner): Open MPI refuses
     # unless told it may oversubscribe -- OMPI_MCA_* for Open MPI 4,
@@ -810,8 +814,10 @@ def test_an_ymf_without_append_step_costs_the_document_not_the_run(tmp_path):
     import ymf.archive
 
     live = types.SimpleNamespace(dataDir=str(tmp_path), filename="skew",
-                                 global_sync=True, _liveYmfStarted=False,
-                                 _liveYmfWarned=False)
+                                 global_sync=True, uniformSteps=True,
+                                 documentPath=lambda: str(tmp_path / "skew.ymf"),
+                                 _document_extra=lambda with_log: None,
+                                 _liveYmfStarted=False, _liveYmfWarned=False)
     step = [(0, "Grid", 0.0, [{"topology": {}, "geometry": {}}])]
 
     saved = ymf.archive.append_step
@@ -973,3 +979,118 @@ def test_ymf_only_streams_its_steps_too(tmp_path):
     domain, _ = read_ymf(os.path.join(datadir, "mpitest.ymf"))
     assert len(archive_collections(domain)[0]["data"]) == 2
     assert "values" in archive_collections(domain)[0]["data"][1]["geometry"]["data_item"]
+
+
+# --------------------------------------------------------------------------
+# every combination of the switches: the archive is whole
+# --------------------------------------------------------------------------
+
+
+def check_archive(datadir, n_ranks, global_sync, driver, document):
+    """Every document the run left describes arrays that are there.
+
+    The integrity check the combinations share: each document validates,
+    has every collection's two steps in the expected shape (one grid, or
+    one per rank), and every data item names a dataset that exists in the
+    file it says, with the dimensions it declares; and the archive can be
+    rebuilt from the HDF5 alone.
+    """
+    from ymf.archive import YmfArchiveError, load_array, read_ymf, validate_domain
+    from proteus.Archiver import readArchiveDomain
+
+    if document == "per-rank":
+        documents = ["mpitest_p%d.ymf" % r for r in range(n_ranks)]
+        files = ["mpitest_p%d.h5" % r for r in range(n_ranks)]
+    else:
+        documents = ["mpitest.ymf"]
+        files = (["mpitest_p%d.h5" % r for r in range(n_ranks)] if driver == "per-rank"
+                 else ["mpitest.h5"])
+    assert sorted(os.listdir(datadir)) == sorted(documents + files + ["mpitest.log"] * 0)
+    grids_per_step = (1 if global_sync or document == "per-rank" else n_ranks)
+    referenced = set()
+    for doc in documents:
+        domain, extra = read_ymf(os.path.join(datadir, doc))
+        validate_domain(domain)
+        (collection,) = archive_collections(domain)
+        assert len(collection["data"]) == 2, doc
+        for step in collection["data"]:
+            grids = step.get("spatial_collection", [step])
+            assert len(grids) == grids_per_step, (doc, step.get("time"))
+            for grid in grids:
+                for owner in [grid["topology"], grid["geometry"]] + grid["attributes"]:
+                    item = owner["data_item"]
+                    assert item["format"] == "HDF", item
+                    file_name, dataset = item["data"].split(":/")
+                    assert file_name in files, item["data"]
+                    referenced.add(file_name)
+                    array = load_array(item, datadir)       # the dataset exists
+                    assert array.size == np.prod(item["dimensions"]), item["data"]
+        assert extra["proteus"]["archive_driver"] == driver
+    if document == "per-rank" and n_ranks > 1:
+        # no file holds the whole domain: rank 0's must not be taken for it (gatherTimes would write rank 0 only)
+        with pytest.raises(ValueError, match="per-rank archive"):
+            readArchiveDomain("mpitest", datadir)
+    if driver == "per-rank" and document == "global":
+        # the ranks' grids reference every rank's file, and the document
+        # is derivable from master's file alone
+        assert referenced == set(files)
+        rebuilt = readArchiveDomain("mpitest", datadir)
+        assert len(archive_collections(rebuilt)[0]["data"]) == 2
+        (grids,) = [s["spatial_collection"] for s in archive_collections(rebuilt)[0]["data"][:1]]
+        assert len(grids) == n_ranks
+
+
+SINGLE_FILE = [(d, g) for d in ("mpio", "serial") for g in (True, False)]
+
+
+@pytest.mark.parametrize("n_ranks", [1, 2, 3])
+@pytest.mark.parametrize("driver,global_sync", SINGLE_FILE)
+def test_every_single_file_layout_leaves_a_whole_archive(tmp_path, n_ranks, driver, global_sync):
+    datadir = run_ranks(tmp_path, n_ranks, global_sync, driver=driver)
+    check_archive(datadir, n_ranks, global_sync, driver, "global")
+
+
+@pytest.mark.parametrize("n_ranks", [1, 2, 3])
+@pytest.mark.parametrize("document", ["global", "per-rank"])
+def test_every_per_rank_file_layout_leaves_a_whole_archive(tmp_path, n_ranks, document):
+    """Layouts B (one global document) and C (one document per rank)."""
+    datadir = run_ranks(tmp_path, n_ranks, True, driver="per-rank", document=document)
+    check_archive(datadir, n_ranks, False, "per-rank", document)
+
+
+def test_per_rank_files_hold_per_rank_datasets():
+    """The per-rank driver turns global_sync off: a global array cannot span files."""
+    from proteus.Archiver import AR_base
+
+    assert AR_base.resolve_mode(driver="per-rank")["document"] == "global"
+    with pytest.raises(ValueError, match="document='per-rank' needs driver='per-rank'"):
+        AR_base.resolve_mode(driver="mpio", document="per-rank")
+    with pytest.raises(ValueError, match="archive document 'spread'"):
+        AR_base.resolve_mode(document="spread")
+    with pytest.raises(ValueError, match="takes no driver"):
+        AR_base.resolve_mode("ymf-only", driver="serial")
+
+
+def test_a_per_rank_document_is_the_running_document_of_its_rank(tmp_path):
+    """Layout C's documents are appended a step at a time like the global one."""
+    from ymf.archive import read_ymf
+
+    datadir = run_ranks(tmp_path, 2, True, driver="per-rank", document="per-rank",
+                        skip_close=True)
+    for r in range(2):
+        domain, extra = read_ymf(os.path.join(datadir, "mpitest_p%d.ymf" % r))
+        assert len(archive_collections(domain)[0]["data"]) == 2
+        assert extra["proteus"]["rank"] == r
+        assert "spatial_collection" not in archive_collections(domain)[0]["data"][0]
+
+
+def test_per_rank_files_hot_start(tmp_path):
+    """Each rank continues its own file; no collective read is needed."""
+    from ymf.archive import read_ymf
+
+    run_ranks(tmp_path, 2, True, driver="per-rank", document="global")
+    datadir = run_ranks(tmp_path, 2, True, driver="per-rank", document="global", hot_start=True)
+    domain, _ = read_ymf(os.path.join(datadir, "mpitest.ymf"))
+    assert [s["time"] for s in archive_collections(domain)[0]["data"]] == [0.0, 0.5, 1.0]
+    check_steps = archive_collections(domain)[0]["data"]
+    assert all(len(s["spatial_collection"]) == 2 for s in check_steps)

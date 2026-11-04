@@ -57,7 +57,7 @@ def _run(smoother, n_ranks):
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper, smoother],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     for line in result.stdout.splitlines():
         if line.startswith('RESULT'):
@@ -100,6 +100,6 @@ def test_starbilu_is_refused_in_parallel():
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', '2', sys.executable, helper, 'StarBILU'],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=300)
     assert result.returncode != 0
     assert 'cannot be used in parallel' in result.stdout + result.stderr

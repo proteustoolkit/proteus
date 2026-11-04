@@ -4,6 +4,8 @@
 #include <string>
 #include <valarray>
 #include <vector>
+#include <set>
+#include <map>
 #include <cstdlib>
 #include <iterator>
 #include "mpi.h"
@@ -252,12 +254,84 @@ namespace proteus
   extern int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nNodes_overlap,
                             const int* nodeOwners=NULL, const int* nodeWeights=NULL);
 
+  /* The local part of partitionNodes: rank's part of the partition given the
+     owner of every node. No MPI, so any rank's subdomain can be computed in one
+     process. See partitioning.cpp. */
+  /* The default partition of n entities: contiguous near-equal chunks in input
+     order, as offsets (size+1). Plain C++. */
+  extern std::valarray<int> defaultChunkOffsets(int n, int size);
+
+  /* Rows begin..end-1 of the node graph (each node's sorted star) in CSR form:
+     a rank's slice of what the graph partitioner partitions. Plain C++. */
+  extern void nodeGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+
+  /* MPI and PETSc: every node's owner from MatPartitioning, gathered on every
+     rank. Collective. */
+  extern std::vector<int> graphNodeOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                          const std::valarray<int>& nodeOffsets_old, const int* nodeWeights);
+
+  extern int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
+                                 const std::vector<int>& nodeOwner, StageTimer* timer=NULL);
+
+  /* partitionNodesLocal's ownership rules, given the owner of every node:
+     an element and an element boundary belong to the lowest rank owning one of
+     their nodes, an edge to the owner of its end with the lower new number.
+     Entities no rank reaches get the owner size. */
+  extern std::vector<int> elementOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
+  extern std::vector<int> elementBoundaryOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
+  extern std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
+                                                   const std::vector<int>& nodeNumbering_global_old2new);
+
   extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit);
+
+  /* I/O, no MPI: stream a Triangle or TetGen .ele file (simplexDim nodes per
+     element) and return the star of each node in [begin,end) and the element
+     count. False if the file cannot be opened. */
+  extern bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
+                                   int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
+                                   std::vector<std::set<int> >& nodeStar);
+
+  /* I/O, local: the vertices of one subdomain from a Triangle (nSpace 2) or
+     TetGen (nSpace 3) node file, in the subdomain's numbering: owned new global
+     numbers [ownedBegin,ownedEnd) first, then the overlap (the keys of
+     nodes_overlap_global2subdomain, at its values). nodes_old2new maps the file
+     nodes the subdomain touches to new global numbers. nodeMaterialTypes is
+     written only when hasVertexMarkers. False if the file cannot be opened. */
+  extern bool readSubdomainVertices(const std::string& vertexFileName, const char* format, int nSpace, int indexBase,
+                                    int hasVertexMarkers, const std::map<int,int>& nodes_old2new,
+                                    int ownedBegin, int ownedEnd,
+                                    const std::map<int,int>& nodes_overlap_global2subdomain,
+                                    int* nodeNumbering_subdomain2global,
+                                    std::map<int,int>& nodeNumbering_global2subdomainMap,
+                                    double* nodeArray, int* nodeMaterialTypes);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);
+
+  /* partitionElementsLocal's ownership rules, given the owner of every
+     element: a node, an element boundary and an edge belong to the lowest rank
+     owning an element that contains them (for an edge, both its nodes).
+     Entities no rank reaches get the owner size. */
+  extern std::vector<int> nodeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+  extern std::vector<int> elementBoundaryOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+  extern std::vector<int> edgeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size);
+
+  /* Rows begin..end-1 of the element graph (each element's neighbours across its
+     boundaries, sorted) in CSR form. Plain C++. */
+  extern void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+
+  /* MPI and PETSc: every element's owner from MatPartitioning, gathered on every
+     rank. Collective. */
+  extern std::vector<int> graphElementOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                             const std::valarray<int>& elementOffsets_old);
+
+  /* The local part of partitionElements: rank's part of the partition given the
+     owner of every element. No MPI. Renumbers the global mesh in place, as
+     partitionElements does. See partitioning.cpp. */
+  extern int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap,
+                                    const std::vector<int>& elementOwner, StageTimer* timer=NULL);
 
   extern int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
                                                        const int *elementOffsets_subdomain_owned,

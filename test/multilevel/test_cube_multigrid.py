@@ -35,7 +35,7 @@ def _run(kind, n_levels, mode, n_ranks, nn=3):
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper,
                              kind, str(nn), str(n_levels), mode],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
     for line in result.stdout.splitlines():
         if line.startswith('RESULT'):

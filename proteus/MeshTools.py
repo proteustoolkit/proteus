@@ -3918,7 +3918,7 @@ class TetrahedralMesh(Mesh):
                     elementBoundaryNodesArrayTemp[j] = plex.getTransitiveClosure(face)[0][- self.nNodes_elementBoundary:] - self.nElements_global
                     # print(face, elementBoundaryNodesArrayTemp[j])
                     mask = np.where(~np.isin(elementNodesArrayUnsorted, elementBoundaryNodesArrayTemp[j]))[0]
-                    index = int(elementNodesArrayUnsorted[mask])
+                    index = int(elementNodesArrayUnsorted[mask].item())
                     # print(mask, index)
                     elementNodeList.append(index)
                     j += 1
@@ -8334,21 +8334,23 @@ def msh2simplex(fileprefix, nd):
     logEvent('msh2simplex: finished converting .msh to simplex files')
 
 def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
+    meshOptions = chooseMeshOptions(physics, numerics)
     try:
-        meshOptions = getMeshOptions(physics.domain)
-        assert(not (meshOptions.genMesh == True and
-                    meshOptions.nn == None and 
-                    meshOptions.nnx  == None and
-                    meshOptions.nny == None and
-                    meshOptions.nnz == None and
-                    meshOptions.triangleOptions == None and
-                    meshOptions.use_plex == False))
-        mlMesh = _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
-    except:
-        meshOptions = numerics
-        meshOptions.genMesh = physics.genMesh
-        mlMesh = _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
-    return mlMesh
+        return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
+    except Exception as first:
+        if meshOptions is numerics:
+            raise
+        # Old-style input: domain options that cannot mesh this domain (a box
+        # with triangle options but no node counts, say) mesh with the n module
+        # instead, as they always have. If that fails too, the first error is
+        # the one that explains the failure, so it is the one raised.
+        logEvent("Meshing with the domain's MeshOptions failed (%s: %s); meshing with the n module"
+                 % (type(first).__name__, first), level=1)
+        numerics.genMesh = physics.genMesh
+        try:
+            return _generateMesh(physics.domain, numerics, generatePartitionedMeshFromFiles, numerics)
+        except Exception:
+            raise first
 
 def chooseMeshOptions(physics, numerics):
     """The options :func:`generateMesh` meshes with.
@@ -8522,6 +8524,38 @@ def meshFiles(domain, meshOptions):
                 "optional": [prefix + e for e in (".neigh", ".edge")]}
     return None
 
+def _runMesher(cmd):
+    """Run a mesh generator through the shell and return its output.
+
+    A generator that is missing (exit 127 from the shell) or refuses its input
+    raises here, with its output, instead of leaving no mesh files for a reader
+    to fail on later.
+    """
+    result = run(cmd, shell=True, capture_output=True, encoding='utf-8')
+    if result.returncode != 0:
+        raise RuntimeError("mesh generator failed with exit status %d: %s\n%s%s"
+                           % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
+    return result.stdout
+
+def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
+    """:func:`writeMeshFiles` on rank 0 when ``needed`` there; a failure raises on every rank.
+
+    The other ranks go on to read rank 0's files, so an exception on rank 0
+    alone would leave them waiting for it forever.
+    """
+    failure = None
+    if comm.isMaster() and needed:
+        try:
+            writeMeshFiles(domain, meshOptions)
+        except Exception as error:
+            failure = error
+    message = comm.comm.tompi4py().bcast(
+        None if failure is None else "%s: %s" % (type(failure).__name__, failure), root=0)
+    if failure is not None:
+        raise failure
+    if message is not None:
+        raise RuntimeError("mesh generation failed on rank 0: " + message)
+
 def writeMeshFiles(domain, meshOptions):
     """Run the mesh generator for a PSLG or PLC domain.
 
@@ -8538,7 +8572,7 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Running gmsh to generate 2D mesh for "+name, level=1)
                 gmsh_cmd = "time gmsh {0:s} -v 10 -2 -o {1:s} -format msh2".format(fileprefix+".geo", fileprefix+".msh")
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
-                run(gmsh_cmd, shell=True)
+                run(gmsh_cmd, shell=True, check=True)
                 logEvent("Done running gmsh; converting to triangle")
             else:
                 logEvent("Using "+fileprefix+".msh to convert to triangle")
@@ -8549,7 +8583,7 @@ def writeMeshFiles(domain, meshOptions):
             logEvent("Calling Triangle to generate 2D mesh for "+name)
             tricmd = "triangle -{0} -e {1}.poly".format(meshOptions.triangleOptions, fileprefix)
             logEvent("Calling triangle on rank 0 with command %s" % (tricmd,))
-            logEvent(run(tricmd, shell=True,capture_output=True, encoding='utf-8').stdout)
+            logEvent(_runMesher(tricmd))
             logEvent("Done running triangle")
             run("mv {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
             run("mv {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)
@@ -8564,12 +8598,12 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Running gmsh to generate 3D mesh for "+name, level=1)
                 gmsh_cmd = "time gmsh {0:s} -v 10 -3 -o {1:s} -format msh2".format(fileprefix+'.geo', domain.geofile+'.msh')
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
-                run(gmsh_cmd, shell=True)
+                run(gmsh_cmd, shell=True, check=True)
                 logEvent("Done running gmsh; converting to tetgen")
             else:
                 logEvent("Using "+domain.geofile+".msh to convert to tetgen")
             msh2simplex(fileprefix=fileprefix, nd=3)
-            logEvent(run("tetgen -Vfeen {0:s}.ele".format(fileprefix), shell=True,capture_output=True,text=True).stdout)
+            logEvent(_runMesher("tetgen -Vfeen {0:s}.ele".format(fileprefix)))
         else:
             logEvent("Running tetgen to generate 3D mesh for "+name, level=1)
             run("rm -f {0:s}.ele".format(fileprefix), shell=True)
@@ -8579,7 +8613,7 @@ def writeMeshFiles(domain, meshOptions):
             run("rm -f {0:s}.edge".format(fileprefix), shell=True)
             tetcmd = "tetgen -{0} {1}.poly".format(meshOptions.triangleOptions, fileprefix)
             logEvent("Calling tetgen on rank 0 with command %s" % (tetcmd,))
-            logEvent(run(tetcmd, shell=True,capture_output=True, encoding='utf-8').stdout)
+            logEvent(_runMesher(tetcmd))
             logEvent("Done running tetgen")
         run("mv {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
         run("mv {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)
@@ -8841,7 +8875,7 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                                           parallelPartitioningType=meshOptions.parallelPartitioningType)
         else:
             logEvent("Generating coarse global mesh from Tetgen files")
-            mesh.generateFromTetgenFiles(domain.polyfile, nbase,parallel = comm.size() > 1)
+            mesh.generateFromTetgenFiles(domain.meshfile, nbase,parallel = comm.size() > 1)
             logEvent("Generating partitioned %i-level mesh from coarse global Tetgen mesh" % (meshOptions.nLevels,))
             mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                                   nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
@@ -8954,14 +8988,13 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
         # run mesher
         if domainMeshOptions.use_gmsh is True:
             fileprefix = domain.geofile
-            if comm.isMaster() and (not (os.path.exists(fileprefix+".ele") and
-                                         os.path.exists(fileprefix+".node") and
-                                         os.path.exists(fileprefix+".edge"))):
-                writeMeshFiles(domain, meshOptions)
+            _writeMeshFilesOnMaster(comm, domain, meshOptions,
+                                    comm.isMaster() and (not (os.path.exists(fileprefix+".ele") and
+                                                              os.path.exists(fileprefix+".node") and
+                                                              os.path.exists(fileprefix+".edge"))))
         else:
             fileprefix = domain.polyfile
-            if comm.isMaster() and meshOptions.genMesh:
-                writeMeshFiles(domain, meshOptions)
+            _writeMeshFilesOnMaster(comm, domain, meshOptions, comm.isMaster() and meshOptions.genMesh)
         comm.barrier()
         assert fileprefix is not None, 'did not find mesh file name'
         # convert mesh to proteus format
@@ -8988,11 +9021,11 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             fileprefix = domain.geofile
         else:
             fileprefix = domain.polyfile
-        if comm.rank() == 0 and (meshOptions.genMesh or (
-                not (os.path.exists(fileprefix+".ele") and
-                     os.path.exists(fileprefix+".node") and
-                     os.path.exists(fileprefix+".face")))):
-            writeMeshFiles(domain, meshOptions)
+        _writeMeshFilesOnMaster(comm, domain, meshOptions,
+                                comm.rank() == 0 and (meshOptions.genMesh or (
+                                    not (os.path.exists(fileprefix+".ele") and
+                                         os.path.exists(fileprefix+".node") and
+                                         os.path.exists(fileprefix+".face")))))
         comm.barrier()
         logEvent("Initializing mesh and MultilevelMesh")
         nbase = 1
@@ -9026,12 +9059,10 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                            nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                            parallelPartitioningType=meshOptions.parallelPartitioningType)
         if generatePartitionedMeshFromFiles:
-            logEvent("Generating partitioned mesh from Tetgen files")
-            if("f" not in meshOptions.triangleOptions or "ee" not in meshOptions.triangleOptions):
-                sys.exit("ERROR: Remake the mesh with the `f` flag and `ee` flags in triangleOptions.")
-            mlMesh.generatePartitionedMeshFromTetgenFiles(fileprefix, nbase,mesh,meshOptions.nLevels,
-                                                          nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                          parallelPartitioningType=meshOptions.parallelPartitioningType)
+            raise ValueError(
+                "generatePartitionedMeshFromFiles (-F) partitions a mesh read from tetgen files, "
+                "and a DMPlex domain has no tetgen files: run without -F, which builds the mesh "
+                "from the DMPlex and partitions it in memory")
         else:
             logEvent("Generating coarse global mesh from Plex")
             # mesh.generateFromTetgenFiles(fileprefix, nbase,parallel = comm.size() > 1)

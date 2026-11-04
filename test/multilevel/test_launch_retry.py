@@ -20,7 +20,7 @@ if count < int(sys.argv[2]):
 def _run(tmp_path, failures, message):
     counter = tmp_path / 'count'
     result = subprocess.run([sys.executable, '-c', SCRIPT, str(counter), str(failures), message],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, timeout=120)
     return result, int(counter.read_text())
 
 

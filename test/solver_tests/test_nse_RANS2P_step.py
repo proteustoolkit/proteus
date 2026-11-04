@@ -20,7 +20,6 @@ import pytest
 
 proteus.test_utils.TestTools.addSubFolders( inspect.currentframe() )
 from proteus import (defaults, default_p, default_n)
-from importlib import reload
 import_modules = os.path.join(os.path.dirname(__file__),'import_modules')
 def load_simulation(context_options_str=None):
     """
@@ -36,13 +35,9 @@ def load_simulation(context_options_str=None):
     """
     from proteus import Context
     from proteus import default_s
-    reload(PETSc)
     # what reload(iproteus) did: start PETSc again (which sets options_left,
     # after a test cleared it) and set the procID openLog needs
     Profiling.procID = runtime.init().rank()
-    reload(default_p)
-    reload(default_n)
-    reload(default_s)
     Profiling.openLog("proteus.log",11)
     Profiling.verbose=True
     Context.contextOptionsString=context_options_str

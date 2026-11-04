@@ -1,4 +1,5 @@
 import proteus
+from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 from proteus import Profiling
 import numpy as np
 from proteus.Transport import OneLevelTransport
@@ -751,17 +752,27 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.barycenters = np.zeros((nBoundariesMax, 3), 'd')
         comm = Comm.get()
         if comm.isMaster():
-            self.timeHistory = open(os.path.join(proteus.Profiling.logDir, "timeHistory.txt"), "w")
-            self.wettedAreaHistory = open(os.path.join(proteus.Profiling.logDir, "wettedAreaHistory.txt"), "w")
-            self.forceHistory_p = open(os.path.join(proteus.Profiling.logDir, "forceHistory_p.txt"), "w")
-            self.forceHistory_v = open(os.path.join(proteus.Profiling.logDir, "forceHistory_v.txt"), "w")
-            self.momentHistory = open(os.path.join(proteus.Profiling.logDir, "momentHistory.txt"), "w")
+            # the histories postStep writes: one time and one row (the last boundary flag, the particles) per step
+            perStep = [(name, 1) for name in ("wettedAreaHistory", "forceHistory_p", "forceHistory_v", "momentHistory")]
             if self.nParticles:
-                self.particle_surfaceAreaHistory = open(os.path.join(proteus.Profiling.logDir, "particle_surfaceAreaHistory.txt"), "w")
-                self.particle_forceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_forceHistory.txt"), "w")
-                self.particle_pforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_pforceHistory.txt"), "w")
-                self.particle_vforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_vforceHistory.txt"), "w")
-                self.particle_momentHistory = open(os.path.join(proteus.Profiling.logDir, "particle_momentHistory.txt"), "w")
+                perStep += [(name, 1) for name in ("particle_surfaceAreaHistory", "particle_forceHistory",
+                                                   "particle_pforceHistory", "particle_vforceHistory",
+                                                   "particle_momentHistory")]
+            if self.legacyHistoryFiles:
+                self.openHistoryFiles(perStep)
+
+    def openHistoryFiles(self, perStep):
+        """Open timeHistory.txt and the per-step history files ((name, rows per step) pairs) as attributes of the
+        same names. On a hot start the files of the run this one continues are kept, cut back to the steps at or
+        before the restart instant (proteus.Gauges.open_history_file)."""
+        logDir = proteus.Profiling.logDir
+        self.timeHistory, resumed = open_history_file(os.path.join(logDir, "timeHistory.txt"))
+        for name, rows in perStep:
+            setattr(self, name, open_history_file(os.path.join(logDir, name + ".txt"))[0])
+        if resumed:
+            members = [(getattr(self, name), rows) for name, rows in perStep]
+            on_hot_start(lambda t: keep_steps_up_to(self.timeHistory, members, t))
+
     # initialize so it can run as single phase
 
     def initializeElementQuadrature(self, t, cq):
@@ -938,10 +949,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def evaluate(self, t, c):
         pass
 
+    #: write the legacy history files (timeHistory.txt, forceHistory_p/_v.txt, momentHistory.txt,
+    #: wettedAreaHistory.txt, particle_*History.txt); proteus.Gauges.BoundaryIntegralGauges replaces them. On by default
+    #: for one release, then off, then removed (force-history gauge plan, decision 3, 2026-11-04)
+    legacyHistoryFiles = True
+
     #: what preStep and postStep leave on the level model for the next step: the entropy residual of the
     #: last step, the two previous solutions (for the extrapolated star velocity), dt, the first-step flag,
-    #: and the velocity at the quadrature points as it was after the last step and before it. A hot start
-    #: rebuilds them from the restart state, which is not the state the archived step ended with.
+    #: and the velocity at the quadrature points as it was after the last step and before it; and on the
+    #: coefficients the boundary velocity of the last step (ebqe_velocity_last), which PresInc's postStep sets
+    #: and the next step reads as its star velocity. A hot start rebuilds them from the restart state, which is
+    #: not the state the archived step ended with.
     _state_model_arrays = ("entropyResidualPerNode", "u_dof_old", "v_dof_old", "w_dof_old",
                            "u_dof_old_old", "v_dof_old_old", "w_dof_old_old")
     _state_q_arrays = (('velocity', 0), ('velocityOld', 0))
@@ -956,6 +974,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 st[name] = getattr(m, name).copy()
         for key in self._state_q_arrays:
             st["q_%s_%d" % key] = m.q[key].copy()
+        if hasattr(self, "ebqe_velocity_last"):
+            st["coef_ebqe_velocity_last"] = self.ebqe_velocity_last.copy()
         return st
 
     def set_state(self, state):
@@ -967,6 +987,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 getattr(m, name)[:] = state[name]
         for key in self._state_q_arrays:
             m.q[key][:] = state["q_%s_%d" % key]
+        if "coef_ebqe_velocity_last" in state:
+            self.ebqe_velocity_last[:] = state["coef_ebqe_velocity_last"]
 
     def preStep(self, t, firstStep=False):
         if firstStep:
@@ -1118,7 +1140,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                         dof = self.model.offset[ci] + self.model.stride[ci]*ci_fg_dof
                         if self.model.isActiveDOF[dof] < 0.5:
                             self.model.u[ci].dof[ci_g_dof] = vel_at_xyz[ci]
-        if self.model.comm.isMaster():
+        if self.model.comm.isMaster() and self.legacyHistoryFiles:
             self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
             self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[-1],))
             self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[-1, :]))

@@ -6,6 +6,7 @@
 #include "engine.h"
 #include "richards.h"
 #include "lowOrder.h"
+#include "vof.h"
 #include <stdexcept>
 #include <string>
 
@@ -429,5 +430,52 @@ PYBIND11_MODULE(adrh_proto, m)
   });
   m.def("coupled2", [](Arr xn, Arr u, py::object uold, Arr qp, Arr qw, double t, double dt) {
     return run<adrh::Coupled2, 3>(adrh::Coupled2(), xn, u, uold, qp, qw, t, dt);
+  });
+  // VOF (vof.h): the SUPG element kernel and the upwind exterior faces, P1 in 2 or 3 dimensions. Element-local inputs:
+  // xn (nE, nS+1, 3), u (nE, nS+1); per point fields (nE, nQ, nS+1) = velocity and porosity, beta (nE, nQ) the BDF history,
+  // numDiffLast (nE, nQ); h (nE). Returns R (nE, nD), J (nE, nD, nD), numDiff (nE, nQ), cfl (nE, nQ).
+  using IArrV = py::array_t<int, py::array::c_style | py::array::forcecast>;
+  m.def("vof_supg", [](int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr numDiffLast, Arr h,
+                       double alpha, double sc_c, double sc_uref, double sc_beta, double sc_drop_time) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::VOFCoefficients<nS>;
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
+      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
+      double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
+      const double *X = xn.data(), *U = u.data(), *F = fields.data(), *B = beta.data(), *NL = numDiffLast.data(), *H = h.data();
+      {
+        py::gil_scoped_release release;
+        for (int eN = 0; eN < nE; ++eN)
+          adrh::scalarSUPGElement<C, S>(C(), P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), F + eN * nQ * C::nFields,
+                                        B + eN * nQ, NL + eN * nQ, H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
+      }
+      return py::make_tuple(R, J, nd_, cfl);
+    });
+  });
+  // exterior faces: per face f the element-local xn (nF, nD, 3), u (nF, nD), the local face number faceLocal (nF); xi (nD, nQf, nS)
+  // the face points of each local face in reference coordinates, qwf (nQf); per point fields (nF, nQf, nS+1), isDirichlet, g,
+  // isFlux, gflux (nF, nQf). Returns R (nF, nD), J (nF, nD, nD), flux and the upwinded trace (nF, nQf).
+  m.def("vof_faces", [](int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi, Arr qwf, Arr fields, IArrV isDirichlet, Arr g,
+                        IArrV isFlux, Arr gflux) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::VOFCoefficients<nS>;
+      const int nF = xn.shape(0), nQf = qwf.shape(0);
+      py::array_t<double> R({nF, nD}), J({nF, nD, nD}), flux({nF, nQf}), uUp({nF, nQf});
+      double *Rp = R.mutable_data(), *Jp = J.mutable_data();
+      for (int i = 0; i < nF * nD; ++i) Rp[i] = 0.0;
+      for (int i = 0; i < nF * nD * nD; ++i) Jp[i] = 0.0;
+      const int *fl = faceLocal.data();
+      for (int f = 0; f < nF; ++f)
+        adrh::scalarUpwindFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS, qwf.data(),
+                                     fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf, g.data() + f * nQf,
+                                     isFlux.data() + f * nQf, gflux.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
+                                     flux.mutable_data() + f * nQf, uUp.mutable_data() + f * nQf);
+      return py::make_tuple(R, J, flux, uUp);
+    });
   });
 }
