@@ -1807,6 +1807,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // transport model can advect with it and conserve.  Theta part only
     // (Theta is hardwired to 1).
     proteus::pyarray<double> &edgeFluxLow                   = args.array<double>("edgeFluxLow");
+    // the interior low-order flux fL_int of edge ij alone (boundary part excluded); read by the
+    // edge-flux TADR path (STABILIZATION_TYPE 2-5) and calculateEdgeVelocity
+    proteus::pyarray<double> &edgeFluxInterior              = args.array<double>("edgeFluxInterior");
     // IN: nodal water source [mass/(volume time)], added to row i as ML_i*nodalSource_i
     // (lumped).  Zero unless the deck passes Coefficients(mms_source=...), e.g. the
     // flow source of a manufactured solution.
@@ -2610,7 +2613,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           fL_int = Theta * Kr_c * fmax(0.0, -Tint_ij) * delta_phi;
           consBoundaryFlux.data()[i] += fL_int;
         }
-        edgeFluxLow.data()[ij] = fL_int;
+        edgeFluxInterior.data()[ij] = fL_int;
+        edgeFluxLow.data()[ij] = ith_flux_term - ith_flux_term_before;
         dt_times_fH_minus_fL.data()[ij] = dt * fA;
         //dt_times_fH_minus_fL.data()[ij] = dt * fA_CN;
         ij += 1;

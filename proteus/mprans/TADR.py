@@ -1664,7 +1664,7 @@ class LevelModel(OneLevelTransport):
             ok = 0
             # every edge-based branch: ImplicitEV and the explicit 2/3/4
             if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
-                    and np.shape(getattr(vModel, 'edgeFluxLow', None)) == np.shape(self.edgeFlux)):
+                    and np.shape(getattr(vModel, 'edgeFluxInterior', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
                 r_t, c_t, _ = self.MC_global.getCSRrepresentation()
                 ok = int(np.array_equal(r_f, r_t) and np.array_equal(c_f, c_t))
@@ -1709,7 +1709,7 @@ class LevelModel(OneLevelTransport):
             # with the edge velocity the kernel assembles edgeFlux from q_v and
             # writes nodalBoundaryFlux from M_low itself
             if not self._use_edge_velocity:
-                self.edgeFlux[:] = (vModel.timeIntegration.dt*vModel.edgeFluxLow
+                self.edgeFlux[:] = (vModel.timeIntegration.dt*vModel.edgeFluxInterior
                                     + vModel.limitedFlux)/dt
                 self.nodalBoundaryFlux[:] = (self.ML*dM/dt
                                              - np.add.reduceat(self.edgeFlux, rowptr[:-1]))
