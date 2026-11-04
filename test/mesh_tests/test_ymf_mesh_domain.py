@@ -1,13 +1,14 @@
-"""MeshYmfDomain: a mesh a converter wrote, read without the in-tree format readers (C7.1 step E).
+"""MeshYmfDomain: a mesh a converter wrote, read as ymf (C7.1 step E).
 
-The fixtures in ``ymf_meshes/`` were written by ymf-import-sms (proteustoolkit/ymf-import-sms)
-from proteus's own SMS fixtures: ``square4x4`` from ``test/poisson_2d/square4x4.3dm`` and
-``.bc`` (NDS node tags), ``square4x4_tagged`` from the same mesh with EGS edge strings tagging
-its four sides 1-4 (``square4x4_tagged.bc``), and ``cube_3x3x3`` from the 3DM file of the
-importer tests. Each is compared with what the in-tree reader builds from the source file.
+proteus reads explicit meshes only as ymf; SMS/ADH files are converted by ymf-import-sms
+(proteustoolkit/ymf-import-sms). The fixtures in ``ymf_meshes/`` were written by it from
+proteus's own SMS fixtures: ``square4x4`` from ``test/poisson_2d/square4x4.3dm`` and ``.bc``
+(NDS node tags), ``square4x4_tagged`` from the same mesh with EGS edge strings tagging its four
+sides 1-4 (``square4x4_tagged.bc``), and ``cube_3x3x3`` from the 3DM file of the importer
+tests. Before the in-tree SMS readers were removed, each read was bit-equal to the in-tree
+reader's (the commit that added this file); the reference now is the source file's text.
 """
 import os
-import warnings
 
 import numpy as np
 import pytest
@@ -23,26 +24,30 @@ SQUARE_2DM = os.path.join(os.path.dirname(HERE), "poisson_2d", "square4x4")
 SQUARE_NODE_TAGS = [1, 2, 2, 1, 3, 3, 3, 2, 1]
 
 
-def _in_tree_square():
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        mesh = MeshTools.TriangularMesh()
-        mesh.generateFrom2DMFile(SQUARE_2DM)
-    mesh.nodeMaterialTypes[:] = SQUARE_NODE_TAGS
-    return mesh
+def _sms_text(filebase):
+    """Nodes, zero-based triangles and (material - 1) straight from an SMS file's E3T/ND cards."""
+    nodes, cells, materials = [], [], []
+    for words in (line.split() for line in open(filebase + ".3dm")):
+        if words and words[0] == "E3T":
+            cells.append([int(w) - 1 for w in words[2:5]])
+            materials.append(int(words[5]) - 1)
+        elif words and words[0] == "ND":
+            nodes.append([float(w) for w in words[2:5]])
+    return np.array(nodes), np.array(cells), np.array(materials)
 
 
-ARRAYS = ("nodeArray", "elementNodesArray", "elementMaterialTypes", "nodeMaterialTypes",
-          "elementBoundaryNodesArray", "elementBoundaryElementsArray",
-          "exteriorElementBoundariesArray", "edgeNodesArray", "elementBoundaryMaterialTypes")
-
-
-def test_a_converted_2d_mesh_is_the_mesh_the_2dm_reader_builds():
+def test_a_converted_2d_mesh_is_the_source_file():
     mesh = MeshTools.TriangularMesh()
     mesh.generateFromYmfFile(os.path.join(YMF, "square4x4"))
-    in_tree = _in_tree_square()
-    for key in ARRAYS:
-        np.testing.assert_array_equal(getattr(mesh, key), getattr(in_tree, key), err_msg=key)
+    nodes, cells, materials = _sms_text(SQUARE_2DM)
+    np.testing.assert_array_equal(mesh.nodeArray, nodes)
+    np.testing.assert_array_equal(mesh.elementNodesArray, cells)
+    np.testing.assert_array_equal(mesh.elementMaterialTypes, materials)
+    assert mesh.nodeMaterialTypes.tolist() == SQUARE_NODE_TAGS
+    assert (mesh.nElementBoundaries_global, mesh.nExteriorElementBoundaries_global) == (16, 8)
+    # untagged: the construction's tags, 1 outside and 0 inside
+    assert set(mesh.elementBoundaryMaterialTypes[mesh.exteriorElementBoundariesArray]) == {1}
+    assert not mesh.elementBoundaryMaterialTypes[mesh.interiorElementBoundariesArray].any()
 
 
 def test_a_converted_3d_mesh_is_the_mesh_the_3dm_reader_builds():
@@ -111,10 +116,31 @@ def test_a_ymf_mesh_domain_is_meshed_and_partitioned(name, nd, counts):
     assert Comm.get().comm.tompi4py().allreduce(int(owned)) == counts[1]
 
 
-@pytest.mark.parametrize("cls", [Domain.Mesh2DMDomain, Domain.Mesh3DMDomain])
-def test_the_sms_domains_are_deprecated(cls):
-    with pytest.warns(DeprecationWarning, match="convert .* with ymf-import-sms .* MeshYmfDomain"):
-        cls("mesh")
+def test_an_old_style_meshfile_is_a_ymf_mesh():
+    """A p module's meshfile (setDomainFromPhysics) names a ymf mesh; an SMS file is converted first."""
+    domain = MeshTools._meshFileDomain(os.path.join(YMF, "square4x4"), 2)
+    assert isinstance(domain, Domain.MeshYmfDomain) and domain.nd == 2
+    with pytest.raises(ValueError, match="names no ymf mesh .* ymf-import-sms"):
+        MeshTools._meshFileDomain(SQUARE_2DM, 2)
+
+
+def test_write_read_round_trip(tmp_path):
+    nodes = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [1., 1., 0.]])
+    elements = np.array([[0, 1, 2], [1, 3, 2]])
+    prefix = str(tmp_path / 'two')
+    MeshTools.writeMeshYmf(prefix, nodes, elements,
+                           nodeMaterialTypes=[3, 0, 0, 4], elementMaterialTypes=[7, 8])
+    info = MeshTools.readMeshYmf(prefix)
+    assert np.array_equal(info.nodeArray, nodes)
+    assert np.array_equal(info.elementNodesArray, elements)
+    assert list(info.nodeMaterialTypes) == [3, 0, 0, 4]
+    assert list(info.elementMaterialTypes) == [7, 8]
+
+
+def test_array_mesh_rejects_bad_connectivity():
+    from proteus import cmeshTools
+    with pytest.raises(ValueError, match="outside"):
+        cmeshTools.generateFromArrays(cmeshTools.CMesh(), np.zeros((3, 3)), [[0, 1, 3]])
 
 
 def test_a_ymf_mesh_domain_writes_and_reads_as_a_file_domain():

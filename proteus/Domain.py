@@ -1030,41 +1030,6 @@ class TriangulatedSurfaceDomain(D_base):
         raise UserWarning("Xdmf output not implemented")
 
 
-def _warnConvertSMS(kind, fileprefix):
-    import warnings
-    warnings.warn(
-        "%s is deprecated and will be removed: convert %s with ymf-import-sms "
-        "(ymf-import-sms %s -o %s) and use MeshYmfDomain(%r)"
-        % (kind, fileprefix, fileprefix, fileprefix, fileprefix),
-        DeprecationWarning, stacklevel=3)
-
-
-class Mesh2DMDomain(D_base):
-    """
-    2D domains from ADH mesh files
-
-    .. deprecated:: 2.0
-       Convert the mesh with ``ymf-import-sms`` and use :class:`MeshYmfDomain`.
-    """
-    def __init__(self,fileprefix):
-        _warnConvertSMS("Mesh2DMDomain", fileprefix)
-        D_base.__init__(self,2,name=fileprefix)
-        self.meshfile=fileprefix
-
-
-class Mesh3DMDomain(D_base):
-    """
-    3D domains from ADH mesh files
-
-    .. deprecated:: 2.0
-       Convert the mesh with ``ymf-import-sms`` and use :class:`MeshYmfDomain`.
-    """
-    def __init__(self,fileprefix):
-        _warnConvertSMS("Mesh3DMDomain", fileprefix)
-        D_base.__init__(self,3,name=fileprefix)
-        self.meshfile=fileprefix
-
-
 class MeshYmfDomain(D_base):
     """
     2D or 3D domains from a ymf mesh, ``fileprefix.ymf`` and ``fileprefix.h5``
