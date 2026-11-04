@@ -115,12 +115,9 @@ class Test2DStokesOnQuads(object):
         pass
 
     def setup_method(self,method):
-        from importlib import reload
         from proteus import runtime
         runtime.start()
         opts = runtime.RunOptions()
-        reload(stokes_2d_p)
-        reload(stokes_2d_n)
         pList = [stokes_2d_p]
         nList = [stokes_2d_n]
         so = default_so

@@ -360,6 +360,11 @@ namespace proteus
 	proteus::pyarray<double>& isActiveR = args.array<double>("isActiveR");
 	proteus::pyarray<double>& isActiveDOF = args.array<double>("isActiveDOF");
 	proteus::pyarray<int>& isActiveElement = args.array<int>("isActiveElement");
+        // the entropy normalization is over the domain: accumulate it over owned elements and hand it out with each
+        // element's viscosities, so that in parallel the caller can reduce it over the ranks and recompute q_numDiff_u
+        int nElements_owned = args.scalar<int>("nElements_owned");
+        proteus::pyarray<double>& entropy_stats = args.array<double>("entropy_stats");
+        proteus::pyarray<double>& element_viscosity = args.array<double>("element_viscosity");
         double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
         maxVel.resize(nElements_global, 0.0);
         maxEntRes.resize(nElements_global, 0.0);
@@ -581,10 +586,13 @@ namespace proteus
                     maxEntRes[eN] = fmax(maxEntRes[eN],fabs(entRes));
 
                     // Quantities for normalization factor //
-                    meanEntropy += ENTROPY(u,0,1)*dV;
-                    meanOmega += dV;
-                    maxEntropy = fmax(maxEntropy,ENTROPY(u,0,1));
-                    minEntropy = fmin(minEntropy,ENTROPY(u,0,1));
+                    if (eN < nElements_owned)
+                      {
+                        meanEntropy += ENTROPY(u,0,1)*dV;
+                        meanOmega += dV;
+                        maxEntropy = fmax(maxEntropy,ENTROPY(u,0,1));
+                        minEntropy = fmin(minEntropy,ENTROPY(u,0,1));
+                      }
 
                     // artificial compression
                     double hK=elementDiameter.data()[eN]/degree_polynomial;
@@ -1227,12 +1235,18 @@ namespace proteus
           }//ebNE
         if (STABILIZATION_TYPE==1)
           {
+            entropy_stats[0] = meanEntropy;
+            entropy_stats[1] = meanOmega;
+            entropy_stats[2] = maxEntropy;
+            entropy_stats[3] = minEntropy;
             meanEntropy /= meanOmega;
             double norm_factor = fmax(fabs(maxEntropy - meanEntropy), fabs(meanEntropy-minEntropy));
             for(int eN=0;eN<nElements_global;eN++)
               {
                 double hK=elementDiameter.data()[eN]/degree_polynomial;
                 double linear_viscosity = cMax*hK*maxVel[eN];
+                element_viscosity[2*eN] = linear_viscosity;
+                element_viscosity[2*eN+1] = cE*hK*hK*maxEntRes[eN];
                 double entropy_viscosity = cE*hK*hK*maxEntRes[eN]/norm_factor;
                 for  (int k=0;k<nQuadraturePoints_element;k++)
                   {

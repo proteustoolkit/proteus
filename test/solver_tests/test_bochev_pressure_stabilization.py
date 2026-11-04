@@ -3,7 +3,6 @@
 
 import proteus.test_utils.TestTools as TestTools
 from proteus import Profiling, NumericalSolution
-from importlib import reload
 Profiling.logLevel = 7
 Profiling.verbose = True
 

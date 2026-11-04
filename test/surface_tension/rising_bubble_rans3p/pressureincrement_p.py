@@ -15,7 +15,9 @@ coefficients=PresInc.Coefficients(rho_f_min = (1.0-1.0e-8)*rho_1,
                                   nd = nd,
                                   modelIndex=PINC_model,
                                   fluidModelIndex=V_model,
-                                  fixNullSpace=True,
+                                  # the increment is determined up to a constant only in a closed tank: with
+                                  # the top open its Dirichlet condition fixes it, and a pin would change it
+                                  fixNullSpace=not openTop,
                                   nullSpace='NoNullSpace')#'ConstantNullSpace')
 
 #pressure increment should be zero on any pressure dirichlet boundaries

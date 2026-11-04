@@ -243,12 +243,12 @@ check:
 	${PROTEUS_PREFIX}/bin/python3 -c "print('hello world')"
 	@echo "************************"
 	@echo "Proteus Partition Test"
-	source ${PROTEUS_PREFIX}/bin/proteus_env.sh; ${PROTEUS_PREFIX}/bin/python3 proteus/tests/ci/test_meshPartitionFromTetgenFiles.py
+	source ${PROTEUS_PREFIX}/bin/proteus_env.sh; ${PROTEUS_PREFIX}/bin/python3 test/ci/test_meshPartitionFromTetgenFiles.py
 	@echo "************************"
 
 	@echo "************************"
 	@echo "Parallel Proteus Partition Test"
-	source ${PROTEUS_PREFIX}/bin/proteus_env.sh; mpirun -np 4 ${PROTEUS_PYTHON} proteus/tests/ci/test_meshPartitionFromTetgenFiles.py
+	source ${PROTEUS_PREFIX}/bin/proteus_env.sh; mpirun -np 4 ${PROTEUS_PYTHON} test/ci/test_meshPartitionFromTetgenFiles.py
 	@echo "************************"
 
 check_simmetrix:
@@ -295,11 +295,11 @@ test: check
 	@echo "**************************************************************************"
 	@echo "Running basic test suite"
 ifeq (${PROTEUS_ARCH},darwin)
-	-MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v proteus/tests -m ${TEST_MARKER} --ignore proteus/tests/solver_tests --ignore proteus/tests/POD --ignore proteus/tests/MeshAdaptPUMI --ignore=proteus/tests/matrix_constructor --ignore=proteus/tests/MoveMeshMonitor --ignore-glob='proteus/tests/periodic/*test_periodic.py' --ignore=proteus/tests/solver_tests/test_nse_RANS2P_step.py --cov=proteus
+	-MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v test -m ${TEST_MARKER} --ignore test/solver_tests --ignore test/POD --ignore test/MeshAdaptPUMI --ignore=test/matrix_constructor --ignore=test/MoveMeshMonitor --ignore-glob='test/periodic/*test_periodic.py' --ignore=test/solver_tests/test_nse_RANS2P_step.py --cov=proteus
 	@echo "Basic tests complete "
 	@echo "************************************"
 else
-	-source ${PROTEUS_PREFIX}/bin/proteus_env.sh; MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v proteus/tests -m ${TEST_MARKER} --ignore proteus/tests/POD --ignore proteus/tests/MeshAdaptPUMI --ignore=proteus/tests/solver_tests/test_nse_RANS2P_step.py --cov=proteus
+	-source ${PROTEUS_PREFIX}/bin/proteus_env.sh; MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v test -m ${TEST_MARKER} --ignore test/POD --ignore test/MeshAdaptPUMI --ignore=test/solver_tests/test_nse_RANS2P_step.py --cov=proteus
 	@echo "Basic tests complete "
 	@echo "************************************"
 endif
@@ -313,7 +313,7 @@ test-conda: check
 	@echo "you should install git-lfs or try 'make lfs', passing all tests is needed"
 	@echo "**************************************************************************"
 	@echo "Running basic test suite"
-	-MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v proteus/tests -m ${TEST_MARKER} --ignore proteus/tests/POD --ignore proteus/tests/MeshAdaptPUMI --cov=proteus
+	-MPLBACKEND=Agg py.test -n ${N} --dist=loadfile --forked -v test -m ${TEST_MARKER} --ignore test/POD --ignore test/MeshAdaptPUMI --cov=proteus
 	@echo "Basic tests complete "
 	@echo "************************************"
 

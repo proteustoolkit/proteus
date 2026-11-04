@@ -51,10 +51,8 @@ class Test_ibm(object):
 
 
     def example_setting(self, opts, pre_setting):
-        from importlib import reload
         Context.contextOptionsString = pre_setting
         from . import cylinder_so as my_so
-        reload(my_so)
         opts.gatherArchive = True        
         pList=[]
         nList=[]
@@ -66,8 +64,6 @@ class Test_ibm(object):
                 importlib.import_module("."+nModule, __package__))
             if pList[-1].name == None:
                 pList[-1].name = pModule
-            reload(pList[-1])  # Serious error
-            reload(nList[-1])
 
         if my_so.sList == []:
             for i in range(len(my_so.pnList)):

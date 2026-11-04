@@ -3,7 +3,6 @@
 Test module for 2D Quadrilateral Meshes
 """
 import proteus.test_utils.TestTools
-from importlib import reload
 from proteus import LinearAlgebraTools, LinearSolvers
 from proteus import Comm
 
@@ -40,7 +39,6 @@ class TestMassConstruction2D(proteus.test_utils.TestTools.SimulationTest):
 
     def test_1(self):
         """ An initial test of the coefficient class. """
-        reload(mm_2d_C0P1)
         self.mass_matrix_object = mm_2d_C0P1.ns
         self.mass_matrix_object.modelList[0].levelModelList[0].calculateCoefficients()
         rowptr, colind, nzval = self.mass_matrix_object.modelList[0].levelModelList[0].jacobian.getCSRrepresentation()
@@ -62,7 +60,6 @@ class TestMassConstruction2D(proteus.test_utils.TestTools.SimulationTest):
 
     def test_2(self):
         """ Tests the attachMassOperator function in one-level-transport """
-        reload(mm_2d_C0P1)
         self.mass_matrix_object = mm_2d_C0P1.ns
         mm = self.mass_matrix_object.modelList[0].levelModelList[0]
         op_constructor = LinearSolvers.OperatorConstructor_oneLevel(mm)
@@ -75,7 +72,6 @@ class TestMassConstruction2D(proteus.test_utils.TestTools.SimulationTest):
 
     def test_3(self):
         """ Tests mass matrix construction for TH elements. """
-        reload(mm_2d_TH)
         self.mass_matrix_object = mm_2d_TH.ns
         self.mass_matrix_object.modelList[0].levelModelList[0].calculateCoefficients()
         rowptr, colind, nzval = self.mass_matrix_object.modelList[0].levelModelList[0].jacobian.getCSRrepresentation()
