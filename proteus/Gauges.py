@@ -1068,7 +1068,16 @@ class Gauges(AV_base):
         (first_output is that run's first sample), writing nothing more at or before t. Collective over gaugeComm."""
         times = None
         if self.gaugeComm.rank == 0 and self.resumed:
-            times = keep_rows_up_to(self.file, t)
+            header = self.headerLine()
+            self.file.seek(0)
+            if self.file.readline() == header:
+                times = keep_rows_up_to(self.file, t)
+            else:
+                # the file was written for other gauges (locations, lines or fields changed): its rows would sit
+                # under the wrong labels, so start it over with this run's header
+                logEvent("Gauges: %s holds other gauges than this run's; starting it over" % (self.fileName,), 1)
+                _rewrite(self.file, [header])
+                times = []
         times = self.gaugeComm.bcast(times, root=0)
         if times is None:
             return
@@ -1083,26 +1092,30 @@ class Gauges(AV_base):
 
         return self.timeIntegration.tLast
 
+    def headerLine(self):
+        """The CSV header line of this gauge's file (on gaugeComm rank 0)."""
+        parts = ["%10s" % ('time',)]
+        if self.isPointGauge or self.isLineGauge:
+            for field in self.fields:
+                for quantity in self.globalMeasuredQuantities[field]:
+                    location, gaugeProc, quantityID = quantity
+                    parts.append(",%12s [%9.5g %9.5g %9.5g]" % (field, location[0], location[1], location[2]))
+                    if len(location) > 3:
+                        # a discontinuous field: the value in the element before or after the location
+                        parts.append(" (%s)" % ("before" if location[3] < 0 else "after",))
+        elif self.isLineIntegralGauge:
+            for line in self.lines:
+                parts.append(",%12s [%9.5g %9.5g %9.5g] - [%9.5g %9.5g %9.5g]" % (
+                    line[0], line[1][0][0], line[1][0][1], line[1][0][2],
+                             line[1][1][0], line[1][1][1], line[1][1][2]))
+        return "".join(parts) + "\n"
+
     def outputHeader(self):
         """ Outputs a single header for a CSV style file to self.file"""
 
         assert self.isGaugeOwner
         if self.gaugeComm.rank == 0:
-            self.file.write("%10s" % ('time',))
-            if self.isPointGauge or self.isLineGauge:
-                for field in self.fields:
-                    for quantity in self.globalMeasuredQuantities[field]:
-                        location, gaugeProc, quantityID = quantity
-                        self.file.write(",%12s [%9.5g %9.5g %9.5g]" % (field, location[0], location[1], location[2]))
-                        if len(location) > 3:
-                            # a discontinuous field: the value in the element before or after the location
-                            self.file.write(" (%s)" % ("before" if location[3] < 0 else "after",))
-            elif self.isLineIntegralGauge:
-                for line in self.lines:
-                    self.file.write(",%12s [%9.5g %9.5g %9.5g] - [%9.5g %9.5g %9.5g]" % (
-                        line[0], line[1][0][0], line[1][0][1], line[1][0][2],
-                                 line[1][1][0], line[1][1][1], line[1][1][2]))
-            self.file.write('\n')
+            self.file.write(self.headerLine())
 
     def outputRow(self, time):
         """ Outputs a single row of currently calculated gauge data to self.file"""

@@ -26,5 +26,7 @@ def reduce_numDiff(comm, entropy_stats, element_viscosity, q_numDiff_u):
     minEntropy = mpi.allreduce(entropy_stats[3], op=MPI.MIN)
     meanEntropy = total[0] / total[1]
     norm_factor = max(abs(maxEntropy - meanEntropy), abs(meanEntropy - minEntropy))
-    numDiff = np.minimum(element_viscosity[:, 0], element_viscosity[:, 1] / norm_factor)
+    # as the kernels' fmin: a uniform entropy gives norm_factor 0, and 0/0 (NaN) or x/0 (inf) keeps the linear one
+    with np.errstate(divide='ignore', invalid='ignore'):
+        numDiff = np.fmin(element_viscosity[:, 0], element_viscosity[:, 1] / norm_factor)
     q_numDiff_u[:] = numDiff[:, None]

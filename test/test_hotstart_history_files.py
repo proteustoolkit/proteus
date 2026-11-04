@@ -93,3 +93,34 @@ def test_open_history_file_keeps_a_file_only_on_a_hot_start(history):
     f.write("new\n")
     f.close()
     assert resumed and open(path).read() == "old\nnew\n"
+
+
+def _point_gauge(f, location):
+    """A point gauge on one location of field u, enough for headerLine and resumeAt on one rank."""
+    g = Gauges.Gauges.__new__(Gauges.Gauges)
+    g.file, g.fileName, g.resumed = f, "point_gauges.csv", True
+    g.gaugeComm = Gauges.MPI.COMM_SELF
+    g.isPointGauge, g.isLineGauge, g.isLineIntegralGauge = True, False, False
+    g.fields = ["u"]
+    g.globalMeasuredQuantities = {"u": [(location, 0, 0)]}
+    g.first_output = g.last_output = g.resumeTime = None
+    g.advanceSampleGrid = lambda t: None
+    return g
+
+
+def test_a_hot_start_keeps_a_file_written_for_the_same_gauges():
+    probe = _point_gauge(_file(""), (0.5, 0.5, 0.0))
+    header = probe.headerLine()
+    g = _point_gauge(_file(header + "0.0, 1\n0.1, 2\n0.2, 3\n"), (0.5, 0.5, 0.0))
+    g.resumeAt(0.1)
+    assert g.file.getvalue() == header + "0.0, 1\n0.1, 2\n"
+    assert (g.first_output, g.last_output, g.resumeTime) == (0.0, 0.1, 0.1)
+
+
+def test_a_hot_start_with_other_gauges_starts_the_file_over():
+    """A moved gauge keeps the file name: its old rows would sit under the wrong labels."""
+    old = _point_gauge(_file(""), (0.5, 0.5, 0.0)).headerLine()
+    g = _point_gauge(_file(old + "0.0, 1\n0.1, 2\n"), (0.25, 0.5, 0.0))
+    g.resumeAt(0.1)
+    assert g.file.getvalue() == g.headerLine() != old
+    assert (g.first_output, g.last_output, g.resumeTime) == (None, None, 0.1)
