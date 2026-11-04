@@ -1,0 +1,111 @@
+name: pytest ways (weekly)
+
+# C3.3: the suite must pass however pytest runs it, not only the way the per-pull-request workflow does (sdist.yml:
+# -n auto --dist load, file order). A test that reads another test's files, leaves state in a module or in PETSc's
+# options database, or depends on running first, passes there until the scheduler changes, and then fails on an
+# unrelated pull request. That property regresses silently and cheaply, so it gets a weekly canary, not a per-PR gate:
+# one linux-64 leg, the committed lock, and the suite run six ways. A scheduled run that fails opens an issue (or
+# comments on the one already open). `load` is the control: if it fails too, the failure is not about the way.
+on:
+  schedule:
+    - cron: '41 3 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  way:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # one process, file order: no worker isolation at all
+          - way: serial
+            args: -p no:xdist
+          # one process, a random order (pytest-randomly, seeded by the run number so a failure can be replayed)
+          - way: serial-random
+            args: -p no:xdist
+            random: true
+          # the per-PR way, as the control
+          - way: load
+            args: -n auto --dist load
+          # the per-PR way, in a random order
+          - way: load-random
+            args: -n auto --dist load
+            random: true
+          # every test of a file on one worker, in file order
+          - way: loadfile
+            args: -n auto --dist loadfile
+          # every test in its own forked process (how CI ran before cekees/proteus#57)
+          - way: forked
+            args: -n auto --dist load --forked
+    name: ${{ matrix.way }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the committed lock
+        shell: bash
+        run: |
+          cp environment-openmpi-dev.yml environment-ci.yml
+          sed -i "s/^name: .*/name: proteus-dev/" environment-ci.yml
+
+      - name: Set up conda environment with PETSc/MPI/HDF5
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          environment-file: environment-ci.yml
+          activate-environment: proteus-dev
+
+      - name: Build and install proteus
+        shell: bash -l {0}
+        run: |
+          pip install build "pytest-randomly>=3.16,<4"
+          # --no-isolation for the reason given in sdist.yml (conda-forge pip 26.2.2 build _1)
+          python -m build --sdist --no-isolation
+          pip install dist/proteus-*.tar.gz
+
+      - name: Run the suite (${{ matrix.way }})
+        shell: bash -l {0}
+        run: |
+          export MPLBACKEND=AGG OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONFAULTHANDLER=1
+          export PROTEUS_TEST_TIMEOUT_SCALE=auto OMPI_MCA_pml=ob1
+          mkdir test_output && cd test_output
+          # pytest-randomly is installed, so it is on unless switched off
+          ORDER=(-p no:randomly)
+          [ "${{ matrix.random }}" = true ] && ORDER=(--randomly-seed=${{ github.run_number }})
+          # the same directories sdist.yml ignores (manuscript decks, not tests), and the two FSI IBM simulations,
+          # which sdist.yml runs in a job of their own and which say nothing about test isolation
+          python -m pytest -v --import-mode=importlib --durations=20 ${{ matrix.args }} "${ORDER[@]}" \
+            --ignore=../test/richards/bio2d --ignore=../test/richards/bio2d_FCT \
+            --ignore=../test/richards/Raingarden --ignore=../test/richards/Tracy_convergence \
+            --ignore=../test/richards/WRR_input_files --ignore=../test/richards/WRR_draft \
+            --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_sdf \
+            --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_ball \
+            ../test
+
+  report:
+    needs: way
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          title="Weekly pytest-ways canary failed"
+          body="The suite failed in at least one way on $(date -u +%F) (seed ${{ github.run_number }} for the random orders): $RUN_URL. If the \`load\` job failed as well, the failure is not about the way the suite ran."
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

@@ -49,6 +49,11 @@ class RunOptions:
     subdomainArchives: bool = False
     #: synchronize archive metadata globally (parun -n clears it)
     global_sync: bool = True
+    #: the archive's mode, driver and document layout (--archive-mode,
+    #: --archive-driver, --archive-document); None is Archiver's default
+    archiveMode: str = None
+    archiveDriver: str = None
+    archiveDocument: str = None
     #: restart from the archive (-H)
     hotStart: bool = False
     #: what a hot start continues (--hot-start-mode): "continue" resumes the

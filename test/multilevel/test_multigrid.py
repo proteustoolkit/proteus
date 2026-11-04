@@ -206,7 +206,7 @@ def test_parvec_duplicate_keeps_ghost_layout_under_mpi(n_ranks):
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
 
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.count('GHOST_DUPLICATE_OK') == n_ranks, (
         result.stdout + result.stderr)

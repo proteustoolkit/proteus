@@ -230,7 +230,13 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install build
-          python -m build --sdist
+          # Fork overlay: --no-isolation. conda-forge's pip 26.2.2 build _1 (2026-11-02 16:39 UTC) drops the bundled
+          # cacert.pem and makes certifi.where() return sys.prefix/ssl/cacert.pem. python -m build installs the build
+          # requirements with `pip --python <isolated venv>`, which runs pip inside the venv, where that file does not
+          # exist: FileNotFoundError in truststore's load_verify_locations on every leg that resolves the new build
+          # (the legs that turn the file's pip =24.0 into a floor). The sdist needs no isolated env; the next step still
+          # installs it with default build isolation, through pip run from this env, which finds the bundle.
+          python -m build --sdist --no-isolation
 
       - name: Install sdist with default build isolation
         shell: bash -l {0}
@@ -389,6 +395,7 @@ jobs:
           # Tracy_convergence and bio2d are untracked right now, so their
           # --ignore is a no-op until they are committed; pytest does not
           # error on an --ignore path that does not exist.
+          # test/run_like_ci.sh and pytest-ways.yml repeat these lists and the FSI deselection below; change all three.
           IGNORE_ARGS=(
             --ignore=../test/richards/bio2d
             --ignore=../test/richards/bio2d_FCT
@@ -456,9 +463,11 @@ jobs:
           # package is what runs, and [tool.coverage.paths] reports it as the
           # checkout's files. Every interpreter the tests start (parun, the
           # helpers under mpiexec) measures itself too ([tool.coverage.run]
-          # patch = subprocess), and pytest-cov combines them all.
+          # patch = subprocess), and pytest-cov combines them all. Both suites
+          # are measured; the coverage job below combines the two and checks
+          # every module against its floor (.github/coverage/floors.json).
           COV_ARGS=()
-          if [ "${{ matrix.leg.coverage }}" = yes ] && [ "${{ matrix.suite }}" != fsi ]; then
+          if [ "${{ matrix.leg.coverage }}" = yes ]; then
             # an absolute path: each xdist worker runs in test_output/<worker id>
             COV_ARGS=(--cov=proteus --cov-config="$GITHUB_WORKSPACE/pyproject.toml"
                       --cov-report=xml:coverage.xml --cov-report=html:htmlcov
@@ -466,7 +475,7 @@ jobs:
           fi
           if [ "${{ matrix.suite }}" = fsi ]; then
             python -m pytest -v -n 2 --dist load --import-mode=importlib \
-              --durations=5 "${FSI_IBM_TESTS[@]/#/../}"
+              --durations=5 "${COV_ARGS[@]}" "${FSI_IBM_TESTS[@]/#/../}"
           else
             python -m pytest -v -n auto --dist load --import-mode=importlib \
               --durations=30 "${COV_ARGS[@]}" "${DESELECT_ARGS[@]}" "${IGNORE_ARGS[@]}" \
@@ -478,12 +487,115 @@ jobs:
         shell: bash
         run: cat "$RUNNER_TEMP/runner_load.txt" || true
 
+      # The main suite's artifact keeps its name; the FSI suite's gets a suffix. Each carries the raw data
+      # (.coverage, hence include-hidden-files) for the coverage job to combine.
       - name: Keep the coverage report
-        if: always() && matrix.leg.coverage == 'yes' && matrix.suite != 'fsi'
+        if: always() && matrix.leg.coverage == 'yes'
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.leg.os }}-py${{ matrix.leg.python }}
+          name: coverage-${{ matrix.leg.os }}-py${{ matrix.leg.python }}${{ matrix.suite == 'fsi' && '-fsi' || '' }}
           path: |
+            test_output/.coverage
             test_output/coverage.xml
             test_output/htmlcov
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      # A cancelled job can leave MPI ranks running on a self-hosted runner. At the end of a job the runner ends the
+      # processes that carry the job's RUNNER_TRACKING_ID, from one list made once; on 2026-11-03 (cekees/proteus run
+      # 41700828360, ceds-model-2) that list held a prterun and not the rank it forked a moment later, and the rank, in
+      # a process group of its own, ran for 10 h 43 min. (test/conftest.py ends a launch's ranks when the launch times
+      # out or fails, but a cancelled pytest may not get that far.) This step runs after the tests, cancelled or not,
+      # and repeats the sweep until it finds nothing: every process with this job's id, except this step's shell and
+      # its ancestors, is terminated, then killed.
+      - name: End processes this job left (self-hosted Linux)
+        if: always() && runner.os == 'Linux' && runner.environment == 'self-hosted'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e +o pipefail
+          id="$RUNNER_TRACKING_ID"
+          [ -n "$id" ] || { echo "no RUNNER_TRACKING_ID; nothing to do"; exit 0; }
+          keep=" $$ "
+          p=$$
+          while [ "$p" -gt 1 ] 2>/dev/null; do
+            p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)
+            [ -n "$p" ] || break
+            keep="$keep$p "
+          done
+          ended=0
+          for round in 1 2 3 4 5; do
+            found=""
+            for f in $(grep -lsxz "RUNNER_TRACKING_ID=$id" /proc/[0-9]*/environ); do
+              pid=${f#/proc/}; pid=${pid%/environ}
+              case "$keep" in *" $pid "*) continue ;; esac
+              kill -0 "$pid" 2>/dev/null && found="$found $pid"
+            done
+            [ -z "$found" ] && break
+            echo "round $round, ending:$found"
+            ps -o pid,ppid,etime,args -p "$(echo $found | tr ' ' ',')" 2>/dev/null | cut -c1-200
+            kill -TERM $found 2>/dev/null
+            sleep 3
+            kill -KILL $found 2>/dev/null
+            sleep 1
+            ended=$((ended + $(echo $found | wc -w)))
+          done
+          echo "ended $ended process(es) left by this job"
+
+  # The coverage ratchet (C3.7). The two suites of the coverage leg are measured separately; this combines them, publishes
+  # the per-subpackage and per-module tables in the run's summary, and fails if a module's statement coverage fell below
+  # its floor in .github/coverage/floors.json (recorded from main at 9fca0b95, proteustoolkit run 41631333572, main
+  # suite only, 52.5% of 87,237 statements). Lowering a floor is a reviewed edit in the pull request that lowers it;
+  # raising them is `python .github/coverage/ratchet.py coverage.xml .github/coverage/floors.json --write-floors` on a
+  # combined report. It waits for the whole matrix, so its result arrives with the last leg's.
+  coverage:
+    needs: build-and-test
+    if: always() && needs.build-and-test.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch the main suite's coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-ubuntu-latest-py3.12.5
+          path: cov/main
+      - name: Fetch the FSI suite's coverage data
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-ubuntu-latest-py3.12.5-fsi
+          path: cov/fsi
+      - name: Combine and check against the floors
+        shell: bash
+        run: |
+          pip install -q "coverage>=7.10"
+          PARTIAL=()
+          DATA=()
+          for suite in main fsi; do
+            if [ -f "cov/$suite/.coverage" ]; then
+              cp "cov/$suite/.coverage" ".coverage.$suite"
+              DATA+=(".coverage.$suite")
+            else
+              echo "::warning::no coverage data from the $suite suite; the floors are reported, not enforced"
+              PARTIAL=(--partial)
+            fi
+          done
+          [ ${#DATA[@]} -gt 0 ] || { echo "::error::no coverage data at all"; exit 1; }
+          # [tool.coverage.paths] maps the runner's site-packages/proteus onto this checkout's proteus/
+          coverage combine --rcfile=pyproject.toml "${DATA[@]}"
+          coverage xml --rcfile=pyproject.toml -i -o coverage.xml
+          coverage html --rcfile=pyproject.toml -i -d htmlcov
+          python .github/coverage/ratchet.py coverage.xml .github/coverage/floors.json "${PARTIAL[@]}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the combined report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-combined
+          path: |
+            coverage.xml
+            htmlcov
           if-no-files-found: warn

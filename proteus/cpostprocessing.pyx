@@ -556,7 +556,7 @@ def getElementBoundaryBDM1velocityValuesLagrangeRep(np.ndarray elementBoundaryEl
                                                            ebq_velocity.shape[1],
                                                            ebq_velocity.shape[2],
                                                            ebq_velocity.shape[3],
-                                                           ebq_v.shape[2],
+                                                           ebq_v.shape[3], # shape functions per element; shape[2] is the face quadrature points
                                                            nVDOFs_element,
                                                            <int*>(elementBoundaryElementsArray.data),
                                                            <int*>(exteriorElementBoundariesArray.data), #/*need the correct mapping here */

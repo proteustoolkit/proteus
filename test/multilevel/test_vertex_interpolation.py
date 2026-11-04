@@ -157,7 +157,7 @@ def test_distributed_vertex_prolongation_on_the_subdomain_meshes(kind, n_ranks):
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper, kind],
-                            capture_output=True, text=True, env=env)
+                            capture_output=True, text=True, env=env, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.count('VERTEX_PROLONGATION_OK') == n_ranks, result.stdout + result.stderr
 

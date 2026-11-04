@@ -2,7 +2,6 @@
 import os
 import proteus
 import sys
-from importlib import reload
 from proteus import Profiling, default_s
 from proteus import Comm
 from proteus import Context
@@ -52,7 +51,6 @@ class Test_rans2p(object):
         Context.contextOptionsString = pre_setting
 
         from . import cylinder_so as my_so
-        reload(my_so)
         opts.gatherArchive = True
         
         pList=[]
@@ -65,8 +63,6 @@ class Test_rans2p(object):
                 importlib.import_module(nModule))
             if pList[-1].name == None:
                 pList[-1].name = pModule
-            reload(pList[-1])  # Serious error
-            reload(nList[-1])
 
         if my_so.sList == []:
             for i in range(len(my_so.pnList)):

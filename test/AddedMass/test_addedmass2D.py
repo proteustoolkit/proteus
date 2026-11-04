@@ -5,9 +5,8 @@ from proteus import runtime
 import unittest
 import numpy as np
 import numpy.testing as npt
-from importlib import import_module, reload
+from importlib import import_module
 from petsc4py import PETSc
-reload(PETSc)
 modulepath = os.path.dirname(os.path.abspath(__file__))
 
 class TestAddedMass2D(unittest.TestCase):

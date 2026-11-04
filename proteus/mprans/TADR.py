@@ -21,6 +21,7 @@ from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistent
 from proteus.mprans.cTADR import cTADR_base
 
 from . import cArgumentsDict
+from proteus.mprans import EntropyViscosity
 
 class SubgridError(SGE_base):
     def __init__(self, coefficients, nd):
@@ -1807,6 +1808,10 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
         theta_dof = np.zeros(self.u[0].dof.shape, 'd')
         argsDict["theta_dof"] = theta_dof
+        if getattr(self, "_entropyViscosityArrays", None) is None:
+            self._entropyViscosityArrays = EntropyViscosity.arrays(self.mesh.nElements_global)
+        argsDict["nElements_owned"] = self.mesh.nElements_owned
+        argsDict["entropy_stats"], argsDict["element_viscosity"] = self._entropyViscosityArrays
         if self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5):
             # the projected nodal porosity of a ghost dof is partial; take the owners' (phase -1)
             argsDict["psi_dof"] = np.zeros(self.u[0].dof.shape, 'd')
@@ -1833,6 +1838,8 @@ class LevelModel(OneLevelTransport):
             argsDict["global_entropy_residual_dof"] = np.zeros(self.u[0].dof.shape, 'd')
             argsDict["phase"] = 1
         self.adr.calculateResidual(argsDict)
+        if self.coefficients.STABILIZATION_TYPE == 1:
+            EntropyViscosity.reduce_numDiff(self.comm, *self._entropyViscosityArrays, self.shockCapturing.numDiff[0])
 
         
 

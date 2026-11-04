@@ -3,7 +3,6 @@
 Test module for clsvof with rans2p
 """
 import proteus
-from importlib import reload
 from proteus import Profiling, default_s
 from proteus import Comm
 comm = Comm.get()
@@ -30,15 +29,6 @@ class TestCLSVOFWithRans2p(object):
     def teardown_class(cls):
         pass
     
-    def reload_modules(self):
-        reload(default_so)
-        reload(multiphase)
-        reload(multiphase_so)
-        reload(clsvof_p)
-        reload(clsvof_n)
-        reload(twp_navier_stokes_p)
-        reload(twp_navier_stokes_n)
-        
     def setup_method(self,method):
         self._scriptdir = os.path.dirname(__file__)
         
@@ -61,8 +51,6 @@ class TestCLSVOFWithRans2p(object):
     # from this checkout; baseline was regenerated from this simulation's
     # own output rather than independently validated.
     def test_2D_multiphase(self, opts):
-        # RELOAD MODULES
-        self.reload_modules()
         pnList = [(twp_navier_stokes_p, twp_navier_stokes_n),
                   (clsvof_p,               clsvof_n)]
         self.so = multiphase_so

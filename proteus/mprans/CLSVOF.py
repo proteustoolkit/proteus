@@ -188,9 +188,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         return copyInstructions
 
     #: what postStep leaves for the next step: the previous solution and velocity, the lagged norm factor and the
-    #: interface locator copied for output. A failed system step that is retried after this model's postStep ran
-    #: must start from the values before it (NumericalSolution.restoreSystemStepState).
-    _state_model_arrays = ("u_dof_old", "quantDOFs")
+    #: interface locator copied for output; and the interface locator itself, which a failed solve leaves set and
+    #: the frozen-interface loop of the next solve reads before the kernel recomputes it. A failed system step that
+    #: is retried must start from the values before it (NumericalSolution.restoreSystemStepState).
+    _state_model_arrays = ("u_dof_old", "quantDOFs", "interface_locator")
 
     def state(self):
         m = getattr(self, "model", None)

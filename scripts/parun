@@ -169,9 +169,15 @@ parser.add_option("--archive-mode",
 parser.add_option("--archive-driver",
                   dest="archiveDriver",
                   type="choice",
-                  choices=["mpio", "serial"],
+                  choices=["mpio", "serial", "per-rank"],
                   default=None,
-                  help="""how the .h5 is written: mpio (every rank, through parallel HDF5; the default) or serial (master alone, the other ranks sending it their arrays; needs no parallel HDF5)""")
+                  help="""how the .h5 is written: mpio (every rank, through parallel HDF5; the default), serial (one file, master alone, the other ranks sending it their arrays; needs no parallel HDF5) or per-rank (each rank its own <name>_p<rank>.h5, no communication; implies -n)""")
+parser.add_option("--archive-document",
+                  dest="archiveDocument",
+                  type="choice",
+                  choices=["global", "per-rank"],
+                  default=None,
+                  help="""with per-rank files, where the grids are described: global (one <name>.ymf whose steps are spatial collections of the ranks' grids; the default) or per-rank (one <name>_p<rank>.ymf per rank, each step a single grid)""")
 parser.add_option("-H","--hotStart",
                   dest="hotStart",
                   action="store_true",

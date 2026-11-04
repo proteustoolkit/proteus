@@ -361,6 +361,8 @@ cpdef void generateFromTriangleFiles(CMesh cmesh,
 
     cdef int failed
     failed = cppm.readTriangleMesh(cmesh.mesh,filebase.encode('utf8'),base);
+    if failed:
+        raise IOError("could not read a triangle mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_triangle(cmesh.mesh);
     failed = cppm.readTriangleElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
@@ -411,6 +413,8 @@ cpdef void generateFromTetgenFiles(CMesh cmesh,
                                   int base):
     cdef int failed
     failed = cppm.readTetgenMesh(cmesh.mesh,filebase.encode('utf8'),base);
+    if failed:
+        raise IOError("could not read a tetgen mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh);
     failed = cppm.readTetgenElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
@@ -419,6 +423,8 @@ cpdef void generateFromTetgenFilesParallel(CMesh cmesh,
                                           int base):
     cdef int failed
     failed = cppm.readTetgenMesh(cmesh.mesh,filebase.encode('utf8'),base);
+    if failed:
+        raise IOError("could not read a tetgen mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh);
     failed = cppm.readTetgenElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
