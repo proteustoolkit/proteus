@@ -345,10 +345,9 @@ def test_an_unknown_diagnostic_is_refused(model):
     assert module._diagnostics("boundary_flux") == frozenset(["boundary_flux"])
 
 
-@pytest.mark.xfail(strict=True, reason="ImplicitEV (TADR STABILIZATION_TYPE 5) with Richards' semi-implicit FCT "
-                                       "does not keep a constant concentration: c = 0.5 reaches about 550 by 10 d "
-                                       "(1748 with FCT_BND_DIFF); types 2-4 keep it to round-off")
 def test_levee_implicit_ev_with_flow_fct(levee_deck):
+    """ImplicitEV (type 5) with Richards' semi-implicit FCT keeps c0 = cin = 0.5. Before a8508bdc the phase split
+    re-formed m_dof = theta rho(u^n) u^n while M carried rho(u^{n-1}): c reached about 550 by 10 d here."""
     domain, rp, rn, tp, tn, so = levee_deck
     rp.coefficients.FCT = True
     rp.coefficients.FCT_TYPE = 'semi-implicit'
