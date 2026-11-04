@@ -57,7 +57,8 @@ static const bool RICHARDS_FCT_BND_RESET = richards_env_on("RICHARDS_FCT_BND_RES
 //Hand the transport model the water flux this scheme really applies on the exterior
 //boundary instead of the pointwise interior trace -(a/rho)(grad psi - rho_r g).n.  See
 //the consBoundaryFlux comment in calculateResidual_entropy_viscosity for the algebra and
-//for the numbers that motivated it.  RICHARDS_BC_CONS=0 restores the pointwise trace.
+//for the numbers that motivated it.  Opt-in: Coefficients(BC_CONS=True), off by default;
+//RICHARDS_BC_CONS=0 still forces it off.
 static const bool RICHARDS_BC_CONS       = richards_env_on("RICHARDS_BC_CONS");
 
 //cek todo: revisit entry for mass transport form
@@ -1768,6 +1769,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //off for an A/B but can never turn it on for an FCT=False run.
     const bool useBndDiff = (args.scalar<int>("FCT_BND_DIFF") != 0) && RICHARDS_FCT_BND_DIFF;
     const bool useBndKrw  = (args.scalar<int>("FCT_BND_KRW") != 0) && RICHARDS_FCT_BND_KRW;
+    //Coefficients(BC_CONS=...), off by default; the environment variable can still force it off
+    const bool bcCons = (args.scalar<int>("BC_CONS") != 0) && RICHARDS_BC_CONS;
     // AUX QUANTITIES OF INTEREST
     xt::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     xt::pyarray<double> &mn        = args.array<double>("mn");
@@ -1882,7 +1885,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // have to redo the element boundary mapping.
     std::vector<double> bdryDirichletArea(numDOFs, 0.0);
     std::vector<double> bdryPrescribedFlux(numDOFs, 0.0);
-    std::vector<double> ebqe_normal_cache(RICHARDS_BC_CONS ? nExteriorElementBoundaries_global * nQuadraturePoints_elementBoundary * nSpace : 0, 0.0);
+    std::vector<double> ebqe_normal_cache(bcCons ? nExteriorElementBoundaries_global * nQuadraturePoints_elementBoundary * nSpace : 0, 0.0);
     
      for (int eN = 0; eN < nElements_global; eN++)
       for (int j = 0; j < nDOF_trial_element; j++) {
@@ -2286,7 +2289,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         ebqe_dS.data()[ebNE_kb]    = dS;
         //the coupled-velocity pass below needs the outward normal, and ebqe here
         //is hand-built and carries none
-        if (RICHARDS_BC_CONS)
+        if (bcCons)
           for (int I = 0; I < nSpace; I++) ebqe_normal_cache[ebNE_kb_nSpace + I] = normal[I];
         //seed the FCT bounds with the imposed value. min_m_bc/max_m_bc are otherwise left at +-1e10, so
         //Zalesak's bounds at a weakly imposed Dirichlet DOF come only from the neighbours' low order masses
@@ -2727,7 +2730,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // every value that reaches an owned transport row is complete.  A non-nodal
     // boundary rule would need the three arrays ghost-summed first.
     ////////////////////////////////////////////////////////////////////////////
-    if (RICHARDS_BC_CONS) {
+    if (bcCons) {
       for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
         const int ebN       = exteriorElementBoundariesArray.data()[ebNE],
                   eN        = elementBoundaryElementsArray.data()[ebN * 2 + 0],

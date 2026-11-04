@@ -291,6 +291,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  VG_AIR_ENTRY=0.0,
                  FCT_BND_DIFF=False,
                  FCT_BND_KRW=False,
+                 # hand a coupled transport model the boundary water flux the scheme applies instead of the
+                 # pointwise interior trace; off by default, so existing coupled decks keep the trace
+                 BC_CONS=False,
                  NONLINEAR_SOLVER=None,
                  LSCHEME_RETRY_ITS=1,
                  LSCHEME_TRIGGER='residual',
@@ -490,6 +493,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # FCT_BND_KRW: the consistent boundary block uses K = k_r*K_s instead of K_s (Barua). Off by default; it
         # moves the pinned test_2_HYDRUS[FCT] values by up to 4.4e-6.
         self.FCT_BND_KRW = bool(FCT_BND_KRW)
+        self.BC_CONS = bool(BC_CONS)
         if NONLINEAR_SOLVER is None:
             NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
         if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
@@ -2306,6 +2310,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # run byte-identical to the pre-Step-B code.
         argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT) and self.coefficients.FCT_BND_DIFF)
         argsDict["FCT_BND_KRW"] = int(self.coefficients.FCT_BND_KRW)
+        argsDict["BC_CONS"] = int(self.coefficients.BC_CONS)
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
         # throws on a missing key.  fct_pass=0 keeps that in-kernel call single
@@ -2453,7 +2458,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         rows = np.repeat(np.arange(nFree), np.diff(rowptr))
         both_owned = (rows < no) & (colind < no)
         asym = np.abs(E + E[self.csrTransposeIndices])[both_owned]
-        m_new = self.mAccepted if self.fctCorrectionApplied else self.mLow
+        m_new = self.acceptedMass()
         dM = self.ML*(m_new - self.mn)
         B = dM - np.add.reduceat(E, rowptr[:-1])
         bnode = np.zeros(nFree, bool)
@@ -2934,6 +2939,14 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if self.coefficients.exportTransportFluxes:
             self.exportTransportFluxes()
 
+    def acceptedMass(self):
+        """The mass of the step just accepted: the limited mass when the semi-implicit FCT applied its
+        correction (mAccepted); otherwise mLow, which the implicit FCT's final solve also leaves its
+        accepted mass in, and which without FCT is the solution."""
+        if self.fctCorrectionApplied and self.coefficients.FCT_TYPE != 'implicit':
+            return self.mAccepted
+        return self.mLow
+
     def exportTransportFluxes(self):
         """Realized fluid exchanges of the step just accepted, for the compatible transport.
 
@@ -2972,12 +2985,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if self.fctCorrectionApplied:
             Eraw += self.limitedFluxMatrix / dt
             Esp_raw += self.limitedSpatialFluxMatrix / dt
-            if self.coefficients.FCT_TYPE == 'implicit':
-                m_new = self.mLow[:nFree].copy()
-            else:
-                m_new = self.mAccepted[:nFree].copy()
-        else:
-            m_new = self.mLow[:nFree].copy()
+        m_new = self.acceptedMass()[:nFree].copy()
         m_old = self.mn[:nFree].copy()
         E = 0.5 * (Eraw - Eraw[T])
         Esp = 0.5 * (Esp_raw - Esp_raw[T])
