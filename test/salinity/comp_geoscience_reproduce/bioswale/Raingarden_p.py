@@ -98,7 +98,8 @@ for i in range(nMediaTypes+1):
     #    KsTypes[i,:]    = [dimensionless_conductivity4,dimensionless_conductivity4]#m/d?
 
 galerkin = False
-useSeepageFace = True
+#no-flux drain, as in test/richards/WRR_input_files/bio2d
+useSeepageFace = False
 
 def getSeepageFace(flag):
     if useSeepageFace:
@@ -123,10 +124,13 @@ coefficients = Richards.Coefficients(nd,
                                      density=dimensionless_density,
                                      beta=0.0001,
                                      diagonal_conductivity=True,
-                                     STABILIZATION_TYPE=0,
+                                     # the paper figure's deck used 0 and FCT off;
+                                     # TADR STAB 5 takes its fluid mass and edge
+                                     # fluxes from a STAB 2 Richards
+                                     STABILIZATION_TYPE=2,
                                      ENTROPY_TYPE=1,
                                      LUMPED_MASS_MATRIX= False ,
-                                     FCT=False ,#True,
+                                     FCT=True, FCT_BND_DIFF=True, FCT_BND_KRW=True,  # Barua edge-flux runs: his FCT boundary block (both off by default since #173)
                                      num_fct_iter=0,
                                      # FOR ENTROPY VISCOSITY
                                      cE=1.0,
@@ -145,6 +149,7 @@ galerkin = False
 G=[3.0,5.0,1.0]
 
 pondingPressure= 0.5
+initialPressureHead= -3.0 #m, uniform, as in bio2d (its HYDRUS reference starts from it)
 def getDBC_2D_Richards_Shock(x,flag):
     if x[1] == L[1]:
         if (x[0] >= L[0]/3.0 and
@@ -166,7 +171,7 @@ class ShockIC_2D_Richards:
         if bc != None:
             return bc(x,t)
         else:
-            return x[1]*dimensionless_gravity[1]*dimensionless_density
+            return initialPressureHead
 
 initialConditions  = {0:ShockIC_2D_Richards()}
 

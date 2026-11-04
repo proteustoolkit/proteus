@@ -11,7 +11,12 @@ parallel= True
 
 multilevelNonlinearSolver  = Newton
 #if coefficients.STABILIZATION_TYPE  ['Galerkin', 'VMS']: #SUPG
-if coefficients.STABILIZATION_TYPE in  [0,1]: #SUPG
+if coefficients.STABILIZATION_TYPE == 5: # ImplicitEV: implicit, Newton + BE
+    levelNonlinearSolver = Newton
+    fullNewtonFlag = True
+    updateJacobian = True
+    timeIntegration = BackwardEuler_cfl
+elif coefficients.STABILIZATION_TYPE in  [0,1]: #SUPG
     levelNonlinearSolver = Newton
     maxLineSearches = 0
     fullNewtonFlag = True

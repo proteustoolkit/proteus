@@ -21,9 +21,9 @@ if not galerkin:
     timeIntegration = Richards.ThetaScheme
 timeOrder = 1
 #stepController = Min_dt_controller
-nonlinearIterationsFloor = 4
-nonlinearIterationsCeil  = 8 # 8
-dtNLgrowFactor = 1.25 #2
+nonlinearIterationsFloor = 10
+nonlinearIterationsCeil  = 20 # 8
+dtNLgrowFactor = 2
 dtNLreduceFactor = 0.5
 dtNLfailureReduceFactor = 0.5
 useInitialGuessPredictor= True
@@ -70,8 +70,8 @@ tolFac = 0.0
 
 nl_atol_res = 1.0e-8
 
-maxNonlinearIts = 30#1001
-maxLineSearches =0
+maxNonlinearIts = 50#1001
+maxLineSearches = 5
 
 matrix = SparseMatrix
 

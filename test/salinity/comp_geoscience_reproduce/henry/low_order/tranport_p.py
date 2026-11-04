@@ -63,7 +63,7 @@ coefficients = MyCoefficients(
     checkMass=checkMass,
     FCT=False,
     LUMPED_MASS_MATRIX=True,
-    STABILIZATION_TYPE=2,  # 4=Kuzmin FCT (DMP-preserving at high Pe)
+    STABILIZATION_TYPE=5,  # ImplicitEV (the paper figure's deck: 2); 4=Kuzmin FCT (DMP-preserving at high Pe)
     diagonal_conductivity= True,
     ENTROPY_TYPE='POWER',
     cE=0.1, cK=1.0, physicalDiffusion=0.0,

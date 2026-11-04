@@ -57,7 +57,7 @@ coefficients = MyCoefficients(
     FCT=True,
     LUMPED_MASS_MATRIX=True,
     forceStrongConditions=True,
-    STABILIZATION_TYPE=2,
+    STABILIZATION_TYPE=5,  # ImplicitEV; the paper figure's deck used 2
     diagonal_conductivity= True,
     ENTROPY_TYPE='LOG',
     cE=0.1, cK=1.0, physicalDiffusion=0.0,

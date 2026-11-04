@@ -64,7 +64,7 @@ coefficients = Richards.Coefficients(
     STABILIZATION_TYPE=2,
     ENTROPY_TYPE=1,
     LUMPED_MASS_MATRIX=False,
-    FCT=False,
+    FCT=True, FCT_BND_DIFF=True, FCT_BND_KRW=True,  # Barua edge-flux runs: his FCT boundary block (both off by default since #173)
     num_fct_iter=0,
     cE=1.0,
     uL=0.0,

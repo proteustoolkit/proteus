@@ -77,8 +77,7 @@ coefficients = Richards.Coefficients(nd,
                                      STABILIZATION_TYPE=2,
                                      ENTROPY_TYPE=1,
                                      LUMPED_MASS_MATRIX= False ,
-                                     FCT=True, FCT_BND_DIFF=True, FCT_BND_KRW=True,  # Barua edge-flux runs: his FCT boundary block (both off by default since #173)
-                                     #True,
+                                     FCT=False,  # low order: FCT off in Richards as well as TADR
                                      num_fct_iter=0,
                                      # FOR ENTROPY VISCOSITY
                                      cE=1.0,
