@@ -1,6 +1,9 @@
 # A type of -*- python -*- file
 from libcpp.vector cimport vector
 from libcpp.string cimport string
+from libcpp.set cimport set as cppset
+from libcpp.map cimport map as cppmap
+from libcpp cimport bool as cppbool
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
 
@@ -33,16 +36,54 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                            int nNodes_overlap,
                                                            const int* nodeOwners,
                                                            const int* nodeWeights);
+    extern int c_partitionNodesLocal "proteus::partitionNodesLocal" (mesh.Mesh& mesh,
+                                                                     int rank,
+                                                                     int size,
+                                                                     int nNodes_overlap,
+                                                                     const vector[int]& nodeOwner)
+    extern void c_nodeGraphRows "proteus::nodeGraphRows" (const mesh.Mesh& mesh, int begin, int end,
+                                                          vector[int]& offsets, vector[int]& neighbors)
+    extern void c_elementGraphRows "proteus::elementGraphRows" (const mesh.Mesh& mesh, int begin, int end,
+                                                                vector[int]& offsets, vector[int]& neighbors)
+    extern vector[int] c_nodeOwnersFromElementOwners "proteus::nodeOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
+    extern vector[int] c_elementBoundaryOwnersFromElementOwners "proteus::elementBoundaryOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
+    extern vector[int] c_edgeOwnersFromElementOwners "proteus::edgeOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
+    extern vector[int] c_elementOwnersFromNodeOwners "proteus::elementOwnersFromNodeOwners" (const mesh.Mesh& mesh,
+                                                                                             const vector[int]& nodeOwner,
+                                                                                             int size)
+    extern vector[int] c_elementBoundaryOwnersFromNodeOwners "proteus::elementBoundaryOwnersFromNodeOwners" (const mesh.Mesh& mesh,
+                                                                                                             const vector[int]& nodeOwner,
+                                                                                                             int size)
+    extern vector[int] c_edgeOwnersFromNodeOwners "proteus::edgeOwnersFromNodeOwners" (const mesh.Mesh& mesh,
+                                                                                       const vector[int]& nodeOwner,
+                                                                                       const vector[int]& nodeNumbering_global_old2new)
     extern int c_partitionNodesFromTetgenFiles "proteus::partitionNodesFromTetgenFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap,
                                                                                          double memHardLimit);
+    extern cppbool c_readSimplexNodeStars "proteus::readSimplexNodeStars" (const string& elementFileName, const char* format,
+                                                                           int simplexDim, int indexBase,
+                                                                           int nNodes_global, int begin, int end,
+                                                                           int& nElements_global, vector[cppset[int]]& nodeStar)
+    extern cppbool c_readSubdomainVertices "proteus::readSubdomainVertices" (const string& vertexFileName, const char* format,
+                                                                             int nSpace, int indexBase, int hasVertexMarkers,
+                                                                             const cppmap[int,int]& nodes_old2new,
+                                                                             int ownedBegin, int ownedEnd,
+                                                                             const cppmap[int,int]& nodes_overlap_global2subdomain,
+                                                                             int* nodeNumbering_subdomain2global,
+                                                                             cppmap[int,int]& nodeNumbering_global2subdomainMap,
+                                                                             double* nodeArray, int* nodeMaterialTypes)
     extern int c_partitionNodesFromTriangleFiles "proteus::partitionNodesFromTriangleFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap);
 
+    extern int c_partitionElementsLocal "proteus::partitionElementsLocal" (mesh.Mesh& mesh,
+                                                                           int rank,
+                                                                           int size,
+                                                                           int nElements_overlap,
+                                                                           const vector[int]& elementOwner)
     extern int c_partitionElements "proteus::partitionElements" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                  mesh.Mesh& mesh,
                                                                  int nElements_overlap,
