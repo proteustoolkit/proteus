@@ -1229,3 +1229,53 @@ def test_a_region_found_by_boundary_tags_is_tested_on_the_flag():
     assert getDFBC([0.0, 0.0, 0.0], 3) is None
     assert _test_text(by_tag) == "flag in [1, 5]"
     assert _test_text(by_position) == "(abs(y - 1) <= tol)"
+
+
+# --- periodic regions (C27 Phase 5, D3) ------------------------------------------------
+
+NOTCHED = {"kind": "piecewise_linear", "dimension": 2,
+           "vertices": [[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [3.0, 1.0],
+                        [3.0, 0.5], [1.0, 0.5], [1.0, 1.0], [0.0, 1.0]],
+           "segments": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0]],
+           "segment_flags": [1, 2, 3, 3, 3, 3, 4, 5]}
+
+
+def test_a_periodic_region_is_cut_to_h_on_every_segment():
+    cut = ADRProblem.periodic_region(NOTCHED, 0.25)
+    lengths = [numpy.linalg.norm(numpy.subtract(cut["vertices"][b], cut["vertices"][a]))
+               for a, b in cut["segments"]]
+    assert max(lengths) <= 0.25 + 1e-12
+    assert len(cut["segments"]) == 16 + 4 + 4 + 2 + 8 + 2 + 4 + 4   # 4+1+1+.5+2+.5+1+1 m
+    assert len(cut["segment_flags"]) == len(cut["segments"])
+    assert cut["segment_flags"][:16] == [1] * 16                      # the bottom, still 1
+    assert ADRProblem.periodic_region(dict(NOTCHED, dimension=3), 0.25)["dimension"] == 3
+
+
+def test_partners_are_counted_per_axis():
+    nodes = [[0.0, 0.0], [0.0, 0.5], [0.0, 1.0], [4.0, 0.0], [4.0, 1.0], [2.0, 0.3]]
+    assert ADRProblem.periodic_partners(nodes, [0], [0, 0], [4, 1], 1e-8) == {0: 1}
+    nodes.append([4.0, 0.5])
+    assert ADRProblem.periodic_partners(nodes, [0], [0, 0], [4, 1], 1e-8) == {0: 0}
+
+
+def test_a_periodic_region_meshes_without_boundary_points():
+    problem = {"adr": poisson_adr(), "periodic": [{"component": "u", "axes": [0]}],
+               "domain": {"lower": [0, 0], "upper": [4, 1], "region": NOTCHED}}
+    n = ADRProblem.numerics(problem, {"u": ("CG", 1)}, None, h=0.5)
+    assert n.triangleOptions == "VApq30Dena0.12500000Y"
+    assert ADRProblem.mesh_constraint(0.5, 3, boundary_points=False).endswith("Y")
+
+
+def test_a_periodic_region_converges(tmp_path):
+    """The notched channel, periodic along x: P1 at rate 2 against the exact
+    solution, which it could not reach with unpaired faces."""
+    pytest.importorskip("ymf.symbolic")
+    problem = pytest.importorskip("ymf.symbolic.problem")
+    if not hasattr(problem, "periodic_faces_match"):
+        pytest.skip("this ymf predates periodic regions (cekees/ymf#8)")
+    spec = os.path.join(os.path.dirname(__file__), "notched_periodic.ymf")
+    out = ymf_run(spec, "--outdir", tmp_path)
+    assert out.returncode == 0, out.stderr[-2000:]
+    table = rows(out.stdout)
+    assert [r[0] for r in table] == ["0.2", "0.1"]
+    assert float(table[1][1]) < 4e-3 and 1.8 < float(table[1][2]) < 2.3

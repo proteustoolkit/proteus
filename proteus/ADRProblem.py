@@ -655,17 +655,87 @@ def keeps_dirichlet_dofs(n, spaces):
             and not any(f == "DG" for f, _ in spaces.values()))
 
 
-def mesh_constraint(h, dim):
+def mesh_constraint(h, dim, boundary_points=True):
     """triangle's (2-D) or tetgen's (3-D) options for element size ``h``.
 
     Proteus's own convention, as in its models: a maximum triangle area of
     h**2/2 or tetrahedron volume of h**3/6 (the right simplex with legs h).
+    ``boundary_points=False`` adds ``Y``: the generator puts no points on the
+    boundary beyond those it was given, which a periodic region needs (see
+    :func:`periodic_region`).
     """
+    y = "" if boundary_points else "Y"
     if dim == 2:
-        return "VApq30Dena%8.8f" % (h ** 2 / 2.0,)
+        return "VApq30Dena%8.8f%s" % (h ** 2 / 2.0, y)
     if dim == 3:
-        return "VApq1.35q12feena%e" % (h ** 3 / 6.0,)
+        return "VApq1.35q12feena%e%s" % (h ** 3 / 6.0, y)
     raise ValueError("an unstructured mesh needs dimension 2 or 3, not %d" % dim)
+
+
+def periodic_region(region, h):
+    """A 2-D region with every boundary segment cut into pieces of length <= h.
+
+    A periodic region (ymf poses one only when its two faces are
+    translations of each other) needs a mesh in which every node on one face
+    has its translated partner on the other. triangle with ``Y`` adds no
+    boundary points (see :func:`mesh_constraint`), so the boundary nodes are
+    exactly the region's vertices; cutting each segment into equal pieces
+    gives the two faces translated nodes, and the boundary the resolution
+    ``h`` would otherwise have given it. A new vertex takes its segment's flag.
+    A 3-D region is returned unchanged: tetgen's ``Y`` keeps the facets'
+    own vertices, and the partner check (:func:`periodic_partners`) says if
+    that is not enough.
+    """
+    if int(region.get("dimension", 2)) != 2:
+        return region
+    import math
+    vertices = [list(map(float, v)) for v in region["vertices"]]
+    flags = list(region.get("vertex_flags") or [])
+    segment_flags = list(region.get("segment_flags") or [])
+    segments, new_flags = [], []
+    for k, (a, b) in enumerate(region["segments"]):
+        pa, pb = vertices[a], vertices[b]
+        pieces = max(1, int(math.ceil(math.dist(pa, pb) / float(h) - 1e-12)))
+        chain = [a]
+        for j in range(1, pieces):
+            vertices.append([pa[i] + (pb[i] - pa[i]) * j / pieces for i in range(2)])
+            if flags:
+                flags.append(segment_flags[k] if segment_flags else flags[a])
+            chain.append(len(vertices) - 1)
+        chain.append(b)
+        for u, v in zip(chain[:-1], chain[1:]):
+            segments.append([u, v])
+            if segment_flags:
+                new_flags.append(segment_flags[k])
+    out = dict(region, vertices=vertices, segments=segments)
+    if segment_flags:
+        out["segment_flags"] = new_flags
+    if flags:
+        out["vertex_flags"] = flags
+    return out
+
+
+def periodic_partners(nodes, axes, lower, upper, tol):
+    """``{axis: unmatched}``: nodes on a periodic face with no partner on the other.
+
+    The key function (:func:`_periodic`) gives a node and its translated
+    copy one degree of freedom; a node without a copy is simply not merged,
+    and the solution is then not periodic there, silently. So after meshing
+    every node on the lower face must have one on the upper face at the
+    same position along the other axes (to 1e-8, as the keys are rounded),
+    and the other way round.
+    """
+    nodes = numpy.asarray(nodes)
+    out = {}
+    for a in axes:
+        others = [i for i in range(nodes.shape[1]) if i != a]
+
+        def keys(on):
+            return {tuple(round(float(v), 8) for v in p[others]) for p in nodes[on]}
+        low = keys(numpy.abs(nodes[:, a] - lower[a]) <= tol)
+        high = keys(numpy.abs(nodes[:, a] - upper[a]) <= tol)
+        out[a] = len(low ^ high)
+    return out
 
 
 def numerics(problem, spaces, cells, time=None, quadrature_order=None,
@@ -712,7 +782,8 @@ def numerics(problem, spaces, cells, time=None, quadrature_order=None,
         if h is None or cells is not None:
             raise ValueError("a piecewise_linear region is meshed by h, its "
                              "element size, not by cells")
-        n.triangleOptions = mesh_constraint(float(h), dim)
+        n.triangleOptions = mesh_constraint(float(h), dim,
+                                            boundary_points=not problem.get("periodic"))
     # nLevels > 1: the box mesh above is the coarsest, refined uniformly
     # levels-1 times; the solution of record is on the finest.
     n.nLevels = int(levels)
@@ -919,6 +990,10 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if solver != "superlu" and not any(f == "DG" for f, _ in spaces.values()):
         # Dirichlet DOFs will be kept (see keeps_dirichlet_dofs)
         problem = with_kept_dof_diagonals(problem)
+    if problem.get("periodic") and problem["domain"].get("region") is not None and h:
+        # no boundary points from the mesher, so cut the faces to h here
+        problem = dict(problem, domain=dict(
+            problem["domain"], region=periodic_region(problem["domain"]["region"], h)))
     p = physics(problem, name)
     n = numerics(problem, spaces, cells, time, stabilization=stabilization,
                  coefficients=p.coefficients, levels=levels,
@@ -1001,6 +1076,22 @@ def run(problem, spaces, cells, time=None, name="adr", stabilization="none",
         so.systemStepControllerType = SplitOperator.Sequential_FixedStep
         so.dt_system_fixed = system["dt_system_fixed"]
     ns = NumericalSolution.NS_base(so, [p], [n], so.sList, opts)
+    if problem.get("periodic") and problem["domain"].get("region") is not None:
+        # a node without its partner is simply not merged, silently
+        lower, upper = problem["domain"]["lower"], problem["domain"]["upper"]
+        axes = sorted({a for e in problem["periodic"] for a in e["axes"]})
+        tol = 1e-8 * max(u - l for u, l in zip(upper, lower))
+        mesh = ns.mlMesh_nList[0].meshList[-1]
+        nodes = mesh.nodeArray[:mesh.nNodes_global, :len(lower)]
+        unmatched = {a: k for a, k in periodic_partners(nodes, axes, lower, upper, tol).items()
+                     if k}
+        if unmatched:
+            raise ValueError(
+                "periodic region: %s node%s on the periodic faces %s no partner on the "
+                "opposite face (%s); the mesh does not pair the faces"
+                % (sum(unmatched.values()), "" if sum(unmatched.values()) == 1 else "s",
+                   "has" if sum(unmatched.values()) == 1 else "have",
+                   ", ".join("axis %s: %d" % ("xyz"[a], k) for a, k in unmatched.items())))
     ns.calculateSolution(name)
     model = ns.modelList[0].levelModelList[-1]
     return ns, model, l2_errors(model, problem, so.tnList[-1])
