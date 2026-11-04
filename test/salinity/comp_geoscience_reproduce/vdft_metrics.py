@@ -38,6 +38,16 @@ Measures (sums over owned DOFs, then MPI reductions):
   storage against the flow model's accepted mass (TADR's [TADR-EDGE] sum).  Equal to the
   accumulated ``flow_recovery`` up to the last step.
 * ``c_min``, ``c_max``: over all owned nodes and accepted steps.
+* ``vpp_*``: the defect an element-conservative post-processed velocity (RT0/BDM1, divergence
+  piecewise constant and equal to the element storage rate) would have against the lumped
+  nodal storage the transport carries.  Its vertex moments are
+  ``int q.grad v_i = sum_{e ni i} S_e/(d+1)``, so they miss ``M_L,i mdot_i`` by
+  ``D_i = sum_j mt_ij (mdot_i - mdot_j)``, ``mt_ij = sum_{e ni i,j} |e|/(d+1)^2``.
+  ``vpp_defect_rel`` is ``int sum|D_i| dt`` over ``int sum|M_L,i mdot_i| dt``;
+  ``vpp_solute`` (``vpp_solute_abs``) the time-integrated ``sum c_i D_i`` (``sum c_i |D_i|``) over
+  the current solute mass: the solute such a velocity would create in the cancelled form.
+  Over owned nodes without a transport Dirichlet condition; exact in serial runs only (ghost
+  rows of the limited mass are incomplete).  A prediction, not a run.
 * ``steps``, ``newton_flow``, ``newton_transport`` (Jacobian evaluations, rejected steps
   included), ``wall_s``, ``ranks``.
 """
@@ -94,7 +104,8 @@ def install(coefficients):
               drift=0.0, c_min=np.inf, c_max=-np.inf, mb_error=None,
               mb_flux=None, mb_history=None, fluid_mass=None, fluid_mass_0=None,
               t=None, t_wall0=time.time(), ranks=None, edge_flux=None,
-              mask0_rows=None, notes=[])
+              mask0_rows=None, vpp_D_abs=0.0, vpp_store_abs=0.0, vpp_cD=0.0, vpp_cabsD=0.0,
+              vpp_defect_rel=None, vpp_solute=None, vpp_solute_abs=None, notes=[])
     prev = {'m_new': None, 't': None}
     # Swap the instance's class rather than binding closures to it: proteus deep-copies the
     # p-module's coefficients, and a closure would keep acting on the original object.
@@ -171,6 +182,9 @@ def _update(coefficients, st, prev):
     u = np.asarray(m.u[0].dof)[:no]
     st['c_min'] = min(st['c_min'], _gmin(u.min()))
     st['c_max'] = max(st['c_max'], _gmax(u.max()))
+    # full arrays: ghost rows of the limited mass are incomplete in parallel, so the VPP
+    # defect is exact in serial runs only
+    _vpp(m, st, prev, (np.asarray(v.mAccepted if fct else v.mLow) - np.asarray(v.mn))/dt, u, dt, no)
     cs = getattr(m, 'continuityStats', None)
     if cs:
         st['mb_error'] = cs.get('total_frac')
@@ -187,3 +201,47 @@ def _update(coefficients, st, prev):
         with open(tmp, "w") as f:
             json.dump(out, f, indent=1, default=float)
         os.replace(tmp, _OUT)
+
+
+def _vpp(m, st, prev, mdot, u, dt, no):
+    """storage-distribution defect of an element-conservative velocity (see module docstring)"""
+    if 'vpp_geo' not in prev:
+        mesh = m.mesh
+        en = np.asarray(mesh.elementNodesArray)
+        x = np.asarray(mesh.nodeArray)
+        d = en.shape[1] - 1
+        if d == 2:
+            a, b, c = x[en[:, 0], :2], x[en[:, 1], :2], x[en[:, 2], :2]
+            vol = 0.5*np.abs((b[:, 0]-a[:, 0])*(c[:, 1]-a[:, 1]) - (c[:, 0]-a[:, 0])*(b[:, 1]-a[:, 1]))
+        else:
+            p = [x[en[:, k], :3] for k in range(4)]
+            vol = np.abs(np.einsum('ij,ij->i', p[1]-p[0], np.cross(p[2]-p[0], p[3]-p[0])))/6.0
+        nn = x.shape[0]
+        ML = np.zeros(nn)
+        for k in range(d+1):
+            np.add.at(ML, en[:, k], vol/(d+1))
+        keep = np.ones(no, bool)
+        try:
+            for dof in m.dirichletConditions[0].DOFBoundaryConditionsDict.keys():
+                if dof < no:
+                    keep[dof] = False
+        except Exception:
+            pass
+        prev['vpp_geo'] = (en, vol, d, ML, keep)
+    en, vol, d, ML, keep = prev['vpp_geo']
+    md = np.zeros(ML.shape[0])
+    md[:len(mdot)] = mdot
+    w = vol/(d+1)**2*md[en].sum(axis=1)
+    y = np.zeros(ML.shape[0])
+    for k in range(d+1):
+        np.add.at(y, en[:, k], w)
+    D = (ML*md - y)[:no][keep]
+    uu = u[keep]
+    st['vpp_D_abs'] += dt*_gsum(np.abs(D).sum())
+    st['vpp_store_abs'] += dt*_gsum(np.abs(ML[:no][keep]*md[:no][keep]).sum())
+    st['vpp_cD'] += dt*_gsum((uu*D).sum())
+    st['vpp_cabsD'] += dt*_gsum((uu*np.abs(D)).sum())
+    st['vpp_defect_rel'] = st['vpp_D_abs']/max(st['vpp_store_abs'], 1e-300)
+    solute = abs(_gsum((np.asarray(m.ML)[:no]*np.asarray(m.M_dof)[:no]*u).sum())) or 1e-300
+    st['vpp_solute'] = st['vpp_cD']/solute
+    st['vpp_solute_abs'] = st['vpp_cabsD']/solute
