@@ -866,7 +866,13 @@ inline
               // dof; form it again from the owners' theta (ImplicitEV takes rho from the EOS and is unaffected)
               if (STABILIZATION_TYPE != STABILIZATION::ImplicitEV)
                 rho_dof_proj[i] = fmax(M_dof.data()[i], 1.0e-14)/theta_dof_proj[i];
-              m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*u_dof_old.data()[i];
+              // the conservative variable at t^n is the CARRIED storage times u^n, as formed
+              // before the phase split.  theta*rho equals it for the explicit branches
+              // (rho = M/theta), but not for ImplicitEV, whose rho is the EOS rho(u^n) while M
+              // carries the flow model's rho(u^{n-1})*theta: ImplicitEV recovers u^n as
+              // m_dof/M, which theta*rho(u^n)*u^n inflates by rho(u^n)/rho(u^{n-1}) wherever
+              // the density just rose (UHD level 0: u up to 1.042).
+              m_dof[i] = fmax(M_dof.data()[i], 1.0e-14)*u_dof_old.data()[i];
             }
           // compute entropy and init global_entropy_residual and boundary_integral
           psi.resize(numDOFs,0.0);
