@@ -1290,6 +1290,25 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if region is None:
         P += ["# the old-style box: domain None, with L and x0, hands nnx/nny/nnz to the mesher",
               "domain = None"]
+    elif _is_file(region):
+        # as setup builds it: the file's absolute path, read (or, for a geometry, meshed by he) where it lies;
+        # nothing is written beside it
+        options = MeshTools.getMeshOptions(p.domain)
+        absolute = dict(region, path=os.path.abspath(region["path"]))
+        P += ["# a %s file domain, %s from %s" % (
+                  region["format"], "read" if region["format"] in MESH_FILE_FORMATS else "meshed",
+                  absolute["path"]),
+              "from proteus import DomainYMF, MeshTools",
+              "domain = DomainYMF.from_ymf(%s)" % pprint.pformat(absolute, width=72).replace(
+                  "\n", "\n" + " " * len("domain = DomainYMF.from_ymf(")),
+              "domain.name = name",
+              "domain.polyfile = %r" % p.domain.polyfile,
+              "meshOptions = MeshTools.getMeshOptions(domain)",
+              "meshOptions.nLevels = %d" % options.nLevels,
+              "meshOptions.genMesh = %r" % options.genMesh]
+        if region["format"] not in MESH_FILE_FORMATS:
+            P.append("meshOptions.he = %r" % options.he)
+        P.append("# the bounding box: the scale of the boundary tolerance")
     else:
         options = MeshTools.getMeshOptions(p.domain)
         P += ["# a piecewise_linear region: %s meshes it from %s.poly, written here"

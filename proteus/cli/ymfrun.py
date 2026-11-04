@@ -163,11 +163,12 @@ def run_arguments(doc, problem, name, realization):
             "petsc_options": solver.get("petsc_options")}
 
 
-def emit(doc, problem, name, realization, outdir, files, key, archive):
-    """Write the p, n and so files of one output; return their paths."""
+def emit(doc, problem, name, realization, outdir, files, key, archive, base=None):
+    """Write the p, n and so files of one output; return their paths. A file domain's relative path is
+    taken from ``base``, the spec's directory, as :func:`solve` takes it."""
     from proteus import ADRProblem
     return ADRProblem.emit_pn(
-        problem, name=files, directory=outdir,
+        with_paths_from(problem, base or os.getcwd()), name=files, directory=outdir,
         header="Output %s of %s." % (key, os.path.basename(archive)),
         **run_arguments(doc, problem, name, realization))
 
@@ -660,7 +661,8 @@ def _run(args, prog, mesh_only, comm):
                 if "refused" in status:
                     continue
                 paths = emit(doc, problem, name, realization, outdir,
-                             closure.file_stem(stem, key), key, archive)
+                             closure.file_stem(stem, key), key, archive,
+                             base=os.path.dirname(os.path.abspath(args.input)))
                 print("  %s: %s" % (key.split("/")[-1], ", ".join(map(os.path.basename, paths))))
 
     if root:

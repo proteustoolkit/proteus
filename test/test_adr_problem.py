@@ -1512,3 +1512,37 @@ def test_dirichlet_by_position_is_refused_on_untagged_ymf_walls(tmp_path):
     ADRProblem._refuse_positions_on_untagged_walls(problem(partial + ".ymf", {"region": "inlet", "flags": [1]}))
     ADRProblem._refuse_positions_on_untagged_walls(
         problem(os.path.join(ymf_mesh.YMF, "square4x4_tagged"), by_position))
+
+
+def test_emitted_pn_files_of_a_file_domain_reproduce_the_output_under_parun(tmp_path):
+    """--emit-pn on a tetgen file domain, the spec's path relative and ymfrun started elsewhere: the files read the
+    mesh from its absolute path, write no .poly, and parun on them gives the recorded output bitwise."""
+    discretizations = pytest.importorskip("ymf.discretizations")
+    if not hasattr(discretizations, "mesh_from_domain"):
+        pytest.skip("this ymf predates file domains (cekees/ymf#8)")
+    import numpy
+    (tmp_path / "cubeplc.poly").write_text(CUBE_PLC)
+    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True)
+    for x in ("node", "ele", "face"):
+        os.rename(tmp_path / ("cubeplc.1." + x), tmp_path / ("cube." + x))
+    (tmp_path / "cube.ymf").write_text(CUBE_FILE_SPEC, encoding="utf-8")
+    out = ymf_run(tmp_path / "cube.ymf", "--outdir", tmp_path / "out", "--emit-pn")
+    assert out.returncode == 0, out.stderr[-2000:]
+    from ymf import closure
+    from ymf.archive import domain_arrays, read_ymf
+    _, outputs, _ = closure.load(tmp_path / "out" / "cube.archive.ymf")
+    key, output = sorted(outputs.items())[0]
+    stem = closure.file_stem("cube", key)
+    p_text = (tmp_path / "out" / (stem + "_p.py")).read_text()
+    assert "writePoly" not in p_text and repr(str(tmp_path / "cube")) in p_text
+    work = tmp_path / "pn"
+    work.mkdir()
+    for suffix in ("_p", "_n", "_so"):
+        (work / (stem + suffix + ".py")).write_text((tmp_path / "out" / (stem + suffix + ".py")).read_text())
+    parun = os.path.join(os.path.dirname(sys.executable), "parun")
+    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
+    mine = domain_arrays(read_ymf(work / (stem + "_pn.ymf"))[0], work)
+    recorded = domain_arrays(output["approximation"], tmp_path / "out")
+    assert set(mine) == set(recorded)
+    assert all(numpy.array_equal(mine[k], recorded[k]) for k in recorded)
