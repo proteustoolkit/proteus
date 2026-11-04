@@ -857,6 +857,10 @@ inline
           for (int i=0; i<numDOFs; i++)
             {
               theta_dof_proj[i] = theta_dof.data()[i];
+              // rho = M/theta was formed above from the rank-local projection, which is partial at a ghost
+              // dof; form it again from the owners' theta (ImplicitEV takes rho from the EOS and is unaffected)
+              if (STABILIZATION_TYPE != STABILIZATION::ImplicitEV)
+                rho_dof_proj[i] = fmax(M_dof.data()[i], 1.0e-14)/theta_dof_proj[i];
               m_dof[i] = theta_dof_proj[i]*rho_dof_proj[i]*u_dof_old.data()[i];
             }
           // compute entropy and init global_entropy_residual and boundary_integral
