@@ -1030,21 +1030,24 @@ class TriangulatedSurfaceDomain(D_base):
         raise UserWarning("Xdmf output not implemented")
 
 
-class Mesh2DMDomain(D_base):
+class MeshYmfDomain(D_base):
     """
-    2D domains from ADH mesh files
-    """
-    def __init__(self,fileprefix):
-        D_base.__init__(self,2,name=fileprefix)
-        self.meshfile=fileprefix
+    2D or 3D domains from a ymf mesh, ``fileprefix.ymf`` and ``fileprefix.h5``
 
-
-class Mesh3DMDomain(D_base):
+    The file a converter (``ymf-import-<code>``) or :func:`MeshTools.writeMeshYmf`
+    writes: one space ``Spatial_Domain`` of triangles or tetrahedra, with node
+    and element material types and, optionally, a facet list whose tags become
+    the element boundary tags. ``nd`` is read from the file when not given.
     """
-    3D domains from ADH mesh files
-    """
-    def __init__(self,fileprefix):
-        D_base.__init__(self,3,name=fileprefix)
+    def __init__(self,fileprefix,nd=None):
+        if nd is None:
+            from .MeshTools import ymfMeshTopology
+            topology = ymfMeshTopology(fileprefix)
+            nd = {"Triangle": 2, "Tetrahedron": 3}.get(topology)
+            if nd is None:
+                raise ValueError("%s.ymf holds a %s mesh; MeshYmfDomain reads triangles and tetrahedra"
+                                 % (fileprefix, topology))
+        D_base.__init__(self,nd,name=fileprefix)
         self.meshfile=fileprefix
 
 

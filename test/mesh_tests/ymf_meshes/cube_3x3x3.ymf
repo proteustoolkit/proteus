@@ -1,0 +1,48 @@
+ymf_archive_version: 2
+domain:
+  times:
+  - time: 0.0
+    spaces:
+      Spatial_Domain:
+        topology:
+          type: Tetrahedron
+          number_of_elements: 48
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [48, 4]
+            data: cube_3x3x3.h5:/elements
+        geometry:
+          type: XYZ
+          data_item:
+            format: HDF
+            data_type: Float
+            precision: 8
+            dimensions: [27, 3]
+            data: cube_3x3x3.h5:/nodes
+        attributes:
+        - name: nodeMaterialTypes
+          attribute_type: Scalar
+          center: Node
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [27]
+            data: cube_3x3x3.h5:/nodeMaterialTypes
+        - name: elementMaterialTypes
+          attribute_type: Scalar
+          center: Cell
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [48]
+            data: cube_3x3x3.h5:/elementMaterialTypes
+        provenance:
+          tool: ymf-import-sms
+          version: 0.1.0.dev0
+          files:
+          - name: cube_3x3x3.3dm
+            sha256: 49a5132ebcd68b9a995ebd8feef8783e245ba73d1bd1c6b3d27decc367c7bbf6

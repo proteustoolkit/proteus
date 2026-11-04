@@ -1,0 +1,69 @@
+ymf_archive_version: 2
+domain:
+  times:
+  - time: 0.0
+    spaces:
+      Spatial_Domain:
+        topology:
+          type: Triangle
+          number_of_elements: 8
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [8, 3]
+            data: square4x4_tagged.h5:/elements
+        geometry:
+          type: XYZ
+          data_item:
+            format: HDF
+            data_type: Float
+            precision: 8
+            dimensions: [9, 3]
+            data: square4x4_tagged.h5:/nodes
+        attributes:
+        - name: nodeMaterialTypes
+          attribute_type: Scalar
+          center: Node
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [9]
+            data: square4x4_tagged.h5:/nodeMaterialTypes
+        - name: elementMaterialTypes
+          attribute_type: Scalar
+          center: Cell
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [8]
+            data: square4x4_tagged.h5:/elementMaterialTypes
+        facets:
+          topology:
+            type: Polyline
+            number_of_elements: 8
+            data_item:
+              format: HDF
+              data_type: Int
+              precision: 4
+              dimensions: [8, 2]
+              data: square4x4_tagged.h5:/facets
+            nodes_per_element: 2
+          tags:
+            data_item:
+              format: HDF
+              data_type: Int
+              precision: 4
+              dimensions: [8]
+              data: square4x4_tagged.h5:/facetTags
+          view: global
+        provenance:
+          tool: ymf-import-sms
+          version: 0.1.0.dev0
+          files:
+          - name: square4x4_tagged.3dm
+            sha256: 15c52d69f9d4e595e44b0ba7ce5095516d1e62fb8bc593721dbf6fe96e78c201
+          - name: square4x4_tagged.bc
+            sha256: 1621f80dbfa715c31fac8d3825dbfcd6b26b0eec4c104892a315ac0e3cf074b2

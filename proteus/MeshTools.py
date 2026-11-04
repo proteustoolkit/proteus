@@ -3310,36 +3310,6 @@ class MultilevelRectangularGrid(MultilevelMesh):
         self.elementChildren.append(childrenDict)
 
 
-def _readADHMeshCards(path, cellCard, nCellNodes, adhBase=1):
-    """The cells and nodes of an ADH/SMS mesh file (``.3dm``, ``.2dm``), read by card.
-
-    Returns the node numbers of each ``cellCard`` line (``E3T`` or ``E4T``),
-    shifted to base 0, and a :class:`Node` per ``ND`` line, ordered by node
-    number. The cards a mesh written by SMS or by another tool may also carry
-    (``MESH2D``/``MESH3D``, ``MESHNAME``, nodestrings ``NS``, parameter blocks,
-    ``END``) and blank lines are skipped, wherever they sit.
-    """
-    cells = []
-    nodes = []
-    with open(path, 'r') as meshIn:
-        for line in meshIn:
-            columns = line.split()
-            if not columns:
-                continue
-            if columns[0] == cellCard:
-                cells.append([int(c) - adhBase for c in columns[2:2+nCellNodes]])
-            elif columns[0] == 'ND':
-                nodes.append(Node(int(columns[1]) - adhBase,
-                                  float(columns[2]),
-                                  float(columns[3]),
-                                  float(columns[4])))
-    nodes.sort(key=lambda n: n.N)
-    if [n.N for n in nodes] != list(range(len(nodes))):
-        raise ValueError("%s: ND cards must number the nodes %d..%d without gaps"
-                         % (path, adhBase, adhBase + len(nodes) - 1))
-    logEvent("Read %d %s cells and %d nodes from %s" % (len(cells), cellCard, len(nodes), path))
-    return cells, nodes
-
 class TetrahedralMesh(Mesh):
     """A mesh of tetrahedra.
 
@@ -3603,53 +3573,6 @@ class TetrahedralMesh(Mesh):
             self.nodeDict[node] = node
         return node
 
-    def readMeshADH(self,filename,adhBase=1):
-        cells, self.nodeList = _readADHMeshCards(filename+'.3dm', 'E4T', 4, adhBase)
-        self.nodeDict = dict((n,n) for n in self.nodeList)
-        tets = []
-        tetEdges=set()
-        tetTriangles=set()
-        logEvent("Reading "+str(filename)+" and building node lists for tetrahedra,triangles, and edges")
-        for nodeNumbers in cells:
-            nodeNumbers.sort()
-            tets.append(array.array('i',nodeNumbers))
-            tetTriangles.update([(nodeNumbers[1],nodeNumbers[2],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[2],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[1],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[1],nodeNumbers[2])])
-            tetEdges.update([(nodeNumbers[0],nodeNumbers[1]),
-                             (nodeNumbers[0],nodeNumbers[2]),
-                             (nodeNumbers[0],nodeNumbers[3]),
-                             (nodeNumbers[1],nodeNumbers[2]),
-                             (nodeNumbers[1],nodeNumbers[3]),
-                             (nodeNumbers[2],nodeNumbers[3])])
-        print("Number of tetrahedra:"+str(len(tets)))
-        print("Number of triangles :"+str(len(tetTriangles)))
-        print("Number of edges     :"+str(len(tetEdges)))
-        print("Number of nodes     :"+str(len(self.nodeList)))
-        print("Number of objects   :"+str(len(tetEdges)+len(tetTriangles)+len(tets)+len(self.nodeList)))
-        print("Building edge list")
-        self.edgeList =[Edge(edgeNumber=eN,nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]]]) \
-                        for eN,nN in enumerate(tetEdges)]
-        print("Building edge dict")
-        self.edgeDict = dict([(e.nodes,e) for e in self.edgeList])
-        print("Building triangle list")
-        self.triangleList =[Triangle(triangleNumber=tN,nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]],self.nodeList[nN[2]]],edgeDict=self.edgeDict) \
-                            for tN,nN in enumerate(tetTriangles)]
-        print("Building triangle dict")
-        self.triangleDict = dict([(t.nodes,t) for t in self.triangleList])
-        print("Building tetredron list")
-        self.tetrahedronList = [Tetrahedron(tetrahedronNumber=TN,
-                                            nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]],self.nodeList[nN[2]],self.nodeList[nN[3]]],
-                                            edgeDict=self.edgeDict,
-                                            triangleDict=self.triangleDict) \
-                                for TN,nN in enumerate(tets)]
-        self.elementList = self.tetrahedronList
-        self.elementBoundaryList = self.triangleList
-        print("Building tetrahedron dict")
-        self.tetrahedronDict = dict([(T.nodes,T) for T in self.tetrahedronList])
-        print("Building boundary maps")
-        self.buildBoundaryMaps()
     def writeMeshXdmf(self,ar,name='',t=0.0,init=False,meshChanged=False,tCount=0, EB=False):
         #print "Warning mwf hack for EB printing for tet writeMeshXdmf for now"
         #EB = True
@@ -4106,13 +4029,22 @@ class TetrahedralMesh(Mesh):
             cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
         self.buildFromC(self.cmesh)
         logEvent(memory("calling buildFromC"),level=4)
-    def generateFrom3DMFile(self,filebase,base=1):
+    def generateFromArrays(self,nodes,elements,nodeMaterialTypes=None,elementMaterialTypes=None):
+        """Build the mesh from arrays of node coordinates and zero-based element nodes"""
         from . import cmeshTools
         self.cmesh = cmeshTools.CMesh()
-        cmeshTools.generateFrom3DMFile(self.cmesh,filebase,base)
+        cmeshTools.generateFromArrays(self.cmesh,nodes,elements,nodeMaterialTypes,elementMaterialTypes)
         cmeshTools.allocateGeometricInfo_tetrahedron(self.cmesh)
         cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
         self.buildFromC(self.cmesh)
+    def generateFromYmfFile(self,prefix):
+        """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
+        info = readMeshYmf(prefix)
+        if info.elementTopologyName != 'Tetrahedron':
+            raise ValueError("%s.ymf holds a %s mesh, not tetrahedra" % (prefix, info.elementTopologyName))
+        self.generateFromArrays(info.nodeArray,info.elementNodesArray,
+                                info.nodeMaterialTypes,info.elementMaterialTypes)
+        _applyYmfFacetTags(self, prefix)
     def writeTetgenFiles(self,filebase,base):
         from . import cmeshTools
         cmeshTools.writeTetgenFiles(self.cmesh,filebase,base)
@@ -5270,17 +5202,11 @@ class TriangularMesh(Mesh):
     def generateFromYmfFile(self,prefix):
         """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
         info = readMeshYmf(prefix)
-        assert info.elementTopologyName == 'Triangle', info.elementTopologyName
+        if info.elementTopologyName != 'Triangle':
+            raise ValueError("%s.ymf holds a %s mesh, not triangles" % (prefix, info.elementTopologyName))
         self.generateFromArrays(info.nodeArray,info.elementNodesArray,
                                 info.nodeMaterialTypes,info.elementMaterialTypes)
-
-    def generateFrom2DMFile(self,filebase,base=1):
-        from .import cmeshTools
-        self.cmesh = cmeshTools.CMesh()
-        cmeshTools.generateFrom2DMFile(self.cmesh,filebase,base)
-        cmeshTools.allocateGeometricInfo_triangle(self.cmesh)
-        cmeshTools.computeGeometricInfo_triangle(self.cmesh)
-        self.buildFromC(self.cmesh)
+        _applyYmfFacetTags(self, prefix)
 
     def constructTriangularMeshOnRectangle(self,Lx,Ly,nx,ny,writeMesh=0,
                                            meshFileBase='mesh2d'):
@@ -5545,42 +5471,6 @@ Number of nodes : %d\n""" % (self.nElements_global,
             info = "*** Global ***\n" + minfo + "\n*** Local ***\n" + sinfo
             return info
         return minfo
-
-    def readMeshADH(self,filename,adhBase=1,suffix='3dm'):
-        cells, self.nodeList = _readADHMeshCards(filename+'.'+suffix, 'E3T', 3, adhBase)
-        self.nodeDict = dict((n,n) for n in self.nodeList)
-        triangles = []
-        triangleEdges=set()
-        logEvent("Reading "+str(filename)+ \
-                " and building node lists for triangles, and edges")
-        for nodeNumbers in cells:
-            nodeNumbers.sort()
-            triangles.append(array.array('i',nodeNumbers))
-            triangleEdges.update([(nodeNumbers[0],nodeNumbers[1]),
-                                  (nodeNumbers[0],nodeNumbers[2]),
-                                  (nodeNumbers[1],nodeNumbers[2])])
-        print("Number of triangles :"+str(len(triangles)))
-        print("Number of edges     :"+str(len(triangleEdges)))
-        print("Number of nodes     :"+str(len(self.nodeList)))
-        print("Number of objects   :"+\
-              str(len(triangleEdges)+len(triangles)+len(self.nodeList)))
-        print("Building edge list")
-        self.edgeList =[Edge(edgeNumber=eN,nodes=[self.nodeList[nN[0]],
-                                                  self.nodeList[nN[1]]])
-                        for eN,nN in enumerate(triangleEdges)]
-        print("Building edge dict")
-        self.edgeDict = dict([(e.nodes,e) for e in self.edgeList])
-        print("Building triangle list")
-        self.triangleList =[Triangle(triangleNumber=tN,
-                                     nodes=[self.nodeList[nN[0]],
-                                            self.nodeList[nN[1]],
-                                            self.nodeList[nN[2]]],
-                                     edgeDict=self.edgeDict)
-                            for tN,nN in enumerate(triangles)]
-        print("Building triangle dict")
-        self.triangleDict = dict([(t.nodes,t) for t in self.triangleList])
-        self.elementList = self.triangleList
-        self.elementBoundaryList = self.edgeList
 
     def writeMeshXdmf(self,ar,name='',t=0.0,init=False,meshChanged=False,tCount=0,EB=False):
         Mesh.writeMeshXdmf(self,ar,name,t,init,meshChanged,"Triangle",tCount,EB=EB)
@@ -7405,52 +7295,51 @@ def readMeshYmf(prefix, MeshTag=YMF_MESH_SPACE, verbose=0):
     domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
     return _readMeshFromDomain(domain, prefix + '.h5', MeshTag=MeshTag, verbose=verbose)
 
-def convert2DMToYmf(filebase, prefix=None, base=1):
-    """Convert the XMS 2DM triangle mesh ``filebase.3dm`` to a ymf mesh, ``prefix.ymf`` and ``prefix.h5``
+def ymfMeshTopology(prefix, MeshTag=YMF_MESH_SPACE):
+    """The topology type (``Triangle``, ``Tetrahedron``, ...) of the mesh in ``prefix.ymf``"""
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    return domain["times"][0]["spaces"][MeshTag]["topology"]["type"]
 
-    ``base`` is the index base of the node numbers, and of the element
-    materials, as in the file readers; ``prefix`` is ``filebase`` by default.
-    Node materials are zero unless ``filebase.bc`` gives them, as ``NDS``
-    lines. Its ``FCS`` lines tag element boundaries, which a ymf mesh has no
-    place for yet, so they are refused rather than dropped.
+def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
+    """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of ``prefix.ymf``, if it has one.
 
-    :return: the prefix written
+    Each facet (its node numbers, as in the file) names an element boundary of
+    the mesh; that boundary takes the facet's tag. An exterior boundary the
+    list does not name is untagged, 0 (ymf's convention), not the 1 the mesh
+    construction gives every exterior boundary: a converter numbers its
+    boundary strings from 1, so a default 1 would put every unlisted wall into
+    the first string's condition. A facet that is not a
+    boundary of the mesh is an error, as is a facet list read with a ymf too
+    old to check it: its validation would drop the list without a word.
     """
-    prefix = filebase if prefix is None else prefix
-    elements, elementMaterials, nodes = [], [], []
-    with open(filebase + '.3dm') as f:
-        for line in f:
-            words = line.split()
-            if not words:
-                continue
-            if words[0] == 'E3T':
-                if nodes:
-                    raise ValueError("%s.3dm: an E3T element follows the nodes" % (filebase,))
-                elements.append([int(w) - base for w in words[2:5]])
-                elementMaterials.append(int(words[5]) - base)
-            elif words[0] == 'ND':
-                nodes.append([float(w) for w in words[2:5]])
-            elif words[0] in ('E2L', 'E4Q', 'E6T', 'E8Q', 'E9Q'):
-                raise NotImplementedError(
-                    "%s.3dm: %s elements are not triangles" % (filebase, words[0]))
-    nodeMaterials = np.zeros((len(nodes),), 'i')
-    if os.path.exists(filebase + '.bc'):
-        with open(filebase + '.bc') as f:
-            for line in f:
-                words = line.split()
-                if words and words[0] == 'NDS':
-                    nodeMaterials[int(words[1]) - base] = int(words[2])
-                elif words and words[0] == 'FCS':
-                    raise NotImplementedError(
-                        "%s.bc tags element boundaries (FCS), which a ymf mesh cannot hold yet"
-                        % (filebase,))
-    writeMeshYmf(prefix,
-                 np.array(nodes, dtype='d').reshape(-1, 3),
-                 np.array(elements, dtype='i').reshape(-1, 3),
-                 nodeMaterialTypes=nodeMaterials,
-                 elementMaterialTypes=np.array(elementMaterials, dtype='i'),
-                 topologyName='Triangle')
-    return prefix
+    from ymf import archive as ymf_archive
+    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
+    if "facets" not in domain["times"][0]["spaces"][MeshTag]:
+        return
+    try:
+        from ymf.mesh import check_facets
+    except ImportError:
+        raise ImportError("%s.ymf has a facet list, which this ymf cannot read; "
+                          "install a ymf with ymf.mesh" % (prefix,))
+    space = ymf_archive.validate_domain(domain)["times"][0]["spaces"][MeshTag]
+    base = os.path.dirname(os.path.abspath(prefix + '.ymf'))
+    check_facets(space, base)
+    facets = space["facets"]
+    nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
+    nodes = nodes.reshape(facets["topology"]["number_of_elements"], -1)
+    tags = np.asarray(ymf_archive.load_array(facets["tags"]["data_item"], base)).reshape(-1)
+    boundary = dict((tuple(sorted(row)), ebN)
+                    for ebN, row in enumerate(mesh.elementBoundaryNodesArray.tolist()))
+    k = mesh.elementBoundaryNodesArray.shape[1]
+    mesh.elementBoundaryMaterialTypes[mesh.exteriorElementBoundariesArray] = 0
+    for row, tag in zip(nodes[:, :k].tolist(), tags.tolist()):
+        try:
+            ebN = boundary[tuple(sorted(row))]
+        except KeyError:
+            raise ValueError("%s.ymf: facet %s is not an element boundary of the mesh" % (prefix, row))
+        mesh.elementBoundaryMaterialTypes[ebN] = tag
+    logEvent("Tagged %d element boundaries from the facets of %s.ymf" % (len(tags), prefix))
 
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
     """
@@ -8528,6 +8417,19 @@ def checkPartitionMatchesMesh(p, n):
                options.parallelPartitioningType, options.nLayersOfOverlapForParallel))
 
 
+def _meshFileDomain(meshfile, nd):
+    """The domain of an old-style p module's ``meshfile``: a ymf mesh, ``meshfile.ymf``.
+
+    proteus reads explicit meshes only as ymf; an SMS/ADH file (``.3dm``,
+    ``.2dm``) is converted first, with ymf-import-sms.
+    """
+    if not os.path.exists(meshfile + '.ymf'):
+        raise ValueError(
+            "p.meshfile = %r names no ymf mesh (%s.ymf); proteus reads explicit meshes as ymf. "
+            "Convert an SMS/ADH mesh with ymf-import-sms (ymf-import-sms %s -o %s)"
+            % (meshfile, meshfile, meshfile, meshfile))
+    return Domain.MeshYmfDomain(meshfile, nd=nd)
+
 def setDomainFromPhysics(p, n):
     """Give an old-style p module (no ``domain``) a domain built from its
     ``nd``, ``L``, ``x0``, ``polyfile`` or ``meshfile``, with mesh options
@@ -8544,7 +8446,7 @@ def setDomainFromPhysics(p, n):
         if p.polyfile is not None:
             p.domain = Domain.PlanarStraightLineGraphDomain(fileprefix=p.polyfile,name=p.polyfile)
         elif p.meshfile != None:
-            p.domain = Domain.Mesh2DMDomain(p.meshfile)
+            p.domain = _meshFileDomain(p.meshfile, 2)
         else:
             p.domain = Domain.RectangularDomain(L=p.L[:2],
                                                 x=p.x0[:2],
@@ -8553,7 +8455,7 @@ def setDomainFromPhysics(p, n):
         if p.polyfile is not None:
             p.domain = Domain.PiecewiseLinearComplexDomain(fileprefix=p.polyfile,name=p.polyfile)
         elif p.meshfile is not None:
-            p.domain = Domain.Mesh3DMDomain(p.meshfile)
+            p.domain = _meshFileDomain(p.meshfile, 3)
         else:
             p.domain = Domain.RectangularDomain(L=p.L[:3],
                                                 x=p.x0[:3],
@@ -8978,29 +8880,20 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                                   nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                   parallelPartitioningType=meshOptions.parallelPartitioningType)
-    elif isinstance(domain, Domain.Mesh3DMDomain):
-        mesh = TetrahedralMesh()
-        logEvent("Reading coarse mesh from 3DM file")
-        mesh.generateFrom3DMFile(domain.meshfile)
-        mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
-                                                     nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                     parallelPartitioningType=meshOptions.parallelPartitioningType)
-        logEvent("Generating %i-level mesh from coarse 3DM mesh" % (meshOptions.nLevels,))
-        mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
+    elif isinstance(domain, Domain.MeshYmfDomain):
+        if domain.nd == 2:
+            mesh = TriangularMesh()
+            mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
-    elif isinstance(domain, Domain.Mesh2DMDomain):
-        mesh = TriangularMesh()
-        logEvent("Reading coarse mesh from 2DM file, converted to a ymf mesh")
-        ymf_prefix = os.path.basename(domain.meshfile) + "_2dm"
-        if comm.rank() == 0:
-            convert2DMToYmf(domain.meshfile, ymf_prefix)
-        comm.barrier()
-        mesh.generateFromYmfFile(ymf_prefix)
-        mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
-                                                    nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                    parallelPartitioningType=meshOptions.parallelPartitioningType)
-        logEvent("Generating %i-level mesh from coarse 2DM mesh" % (meshOptions.nLevels,))
+        else:
+            mesh = TetrahedralMesh()
+            mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
+                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
+        logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (domain.meshfile,))
+        mesh.generateFromYmfFile(domain.meshfile)
+        logEvent("Generating %i-level mesh from coarse ymf mesh" % (meshOptions.nLevels,))
         mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)

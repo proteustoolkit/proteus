@@ -112,8 +112,9 @@ class TestPoisson2D(object):
     def test_2dm(self,opts,use_strong_constraints=False,nLevels=3):
         reload(poisson_het_2d_p)
         reload(poisson_het_2d_c0pk_n)
+        # square4x4.ymf/.h5 is square4x4.3dm/.bc converted by ymf-import-sms; proteus reads meshes as ymf
         poisson_het_2d_p.meshfile=os.path.join(self.meshdir,'square4x4')
-        assert os.path.isfile(poisson_het_2d_p.meshfile+'.3dm'), "could not find meshfile {0}".format(poisson_het_2d_p.meshfile+'.3dm')
+        assert os.path.isfile(poisson_het_2d_p.meshfile+'.ymf'), "could not find meshfile {0}".format(poisson_het_2d_p.meshfile+'.ymf')
         poisson_het_2d_p.x0 = (0.0,0.0,0.)
         poisson_het_2d_p.L  = (1.,1.,1.)
         poisson_het_2d_c0pk_n.nLevels = nLevels

@@ -1,17 +1,11 @@
-"""The in-tree mesh importers that had no test (C7.1, before any converter replaces them).
+"""The in-tree mesh importers left after the SMS/ADH readers moved to ymf-import-sms (C7.1).
 
 Each importer gets a small fixture and a test that pins the mesh it reads, per the
-test-meshing policy: the reader is downstream of meshing, so the input is stored and
-the mesh compared exactly. An importer that cannot read anything today is pinned
-with a strict xfail naming why, so a fix shows up as an unexpected pass.
+test-meshing policy. An importer that cannot read anything today is pinned with a strict
+xfail naming why, so a fix shows up as an unexpected pass. The 3DM and ADH tests that were
+here (proteus-written cube, square4x4, erdc/AdhModel's angle_bt, the CHL cases opt-in) now
+run in proteustoolkit/ymf-import-sms against its converter.
 
-- 3DM (``Mesh3DMDomain``, C++ ``read3DM``): ``importers/cube_3x3x3.3dm``, written
-  by proteus's own ``write3dmFiles`` from the 3x3x3 cube, element materials 1, 2, 3.
-- ADH (``readMeshADH``, Python, tetrahedra and triangles): the same 3DM file, the
-  2DM fixture ``test/poisson_2d/square4x4.3dm`` that ``test_2dm`` reads, and
-  ``importers/adh/angle_bt.3dm``, a real AdH/SMS mesh from the public erdc/AdhModel
-  repository (BSD-3-Clause; source and licence in ``importers/adh/``). Each is
-  compared with the C++ reader of the same file (``read3DM``, ``read2DM``).
 - IFISS (``QuadrilateralMesh.generateFromQuadFileIFISS``): ``.mat`` grids made in the
   test, in the reader's own layout and in IFISS 3.7's.
 - NURBS (``MultilevelNURBSMesh``): the box.
@@ -22,165 +16,11 @@ import os
 import numpy as np
 import pytest
 
-from proteus import Comm, Domain, MeshTools
+from proteus import Comm, MeshTools
 
 Comm.init()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CUBE_3DM = os.path.join(HERE, "importers", "cube_3x3x3")
-ANGLE_BT = os.path.join(HERE, "importers", "adh", "angle_bt")
-SQUARE_2DM = os.path.join(os.path.dirname(HERE), "poisson_2d", "square4x4")
-
-
-def _cube():
-    """The mesh the 3DM fixture was written from."""
-    mesh = MeshTools.TetrahedralMesh()
-    mesh.generateTetrahedralMeshFromRectangularGrid(3, 3, 3, 1.0, 1.0, 1.0)
-    return mesh
-
-
-def _as_sets(cells):
-    return sorted(map(tuple, np.sort(np.asarray(cells), axis=1).tolist()))
-
-
-def _tet_volumes(nodes, cells):
-    x = nodes[cells]
-    return np.abs(np.linalg.det(x[:, 1:] - x[:, :1])) / 6.0
-
-
-# --------------------------------------------------------------------------
-# 3DM
-# --------------------------------------------------------------------------
-
-
-def test_a_3dm_file_reads_back_the_mesh_it_was_written_from():
-    mesh = MeshTools.TetrahedralMesh()
-    mesh.generateFrom3DMFile(CUBE_3DM)
-    source = _cube()
-    np.testing.assert_array_equal(mesh.nodeArray, source.nodeArray)
-    np.testing.assert_array_equal(mesh.elementNodesArray, source.elementNodesArray)
-    # written as material + 1 (the index base), read back as material
-    np.testing.assert_array_equal(mesh.elementMaterialTypes,
-                                  np.arange(48) % 3 + 1)
-    assert (mesh.nNodes_global, mesh.nElements_global,
-            mesh.nElementBoundaries_global, mesh.nExteriorElementBoundaries_global,
-            mesh.nEdges_global) == (27, 48, 120, 48, 98)
-    assert _tet_volumes(mesh.nodeArray, mesh.elementNodesArray).sum() == pytest.approx(1.0)
-    # 3DM carries no node or face tags
-    assert not mesh.nodeMaterialTypes.any()
-
-
-def test_a_3dm_domain_is_meshed_and_partitioned():
-    """Through _generateMesh, on however many ranks the test runs on."""
-    domain = Domain.Mesh3DMDomain(CUBE_3DM)
-    options = MeshTools.MeshOptions(nd=3)
-    mlMesh = MeshTools._generateMesh(domain, options)
-    mesh = mlMesh.meshList[0]
-    assert (mesh.nNodes_global, mesh.nElements_global) == (27, 48)
-    sub = mesh.subdomainMesh
-    owned = (mesh.elementOffsets_subdomain_owned[Comm.get().rank() + 1]
-             - mesh.elementOffsets_subdomain_owned[Comm.get().rank()])
-    total = Comm.get().comm.tompi4py().allreduce(int(owned))
-    assert total == 48
-    assert sub.nElements_global >= owned
-
-
-# --------------------------------------------------------------------------
-# ADH: the Python readers of the same files
-# --------------------------------------------------------------------------
-
-
-def _adh_nodes(mesh):
-    nodes = mesh.nodeList
-    assert [n.N for n in nodes] == list(range(len(nodes)))
-    return np.array([n.p for n in nodes])
-
-
-def test_the_tetrahedral_adh_reader_reads_what_proteus_writes():
-    """write3dmFiles leaves a blank line between the E4T and ND blocks; both readers skip it."""
-    adh = MeshTools.TetrahedralMesh()
-    adh.readMeshADH(CUBE_3DM)
-    c3dm = MeshTools.TetrahedralMesh()
-    c3dm.generateFrom3DMFile(CUBE_3DM)
-    np.testing.assert_array_equal(_adh_nodes(adh), c3dm.nodeArray)
-    assert _as_sets([[n.N for n in T.nodes] for T in adh.tetrahedronList]) == \
-        _as_sets(c3dm.elementNodesArray)
-
-
-def test_the_tetrahedral_adh_reader_agrees_with_read3DM(tmp_path):
-    """On the 3DM fixture with its blank line removed, the two readers see one mesh.
-
-    The same nodes and the same cells (the ADH reader sorts each cell's nodes, and
-    drops the material).
-    """
-    text = open(CUBE_3DM + ".3dm").read()
-    (tmp_path / "cube.3dm").write_text("\n".join(l for l in text.splitlines() if l.strip()) + "\n")
-    adh = MeshTools.TetrahedralMesh()
-    adh.readMeshADH(str(tmp_path / "cube"))
-    source = _cube()
-    nodes = sorted(adh.nodeList, key=lambda n: n.N)
-    assert [n.N for n in nodes] == list(range(27))
-    np.testing.assert_array_equal(np.array([n.p for n in nodes]), source.nodeArray)
-    cells = [[n.N for n in T.nodes] for T in adh.tetrahedronList]
-    assert _as_sets(cells) == _as_sets(source.elementNodesArray)
-    assert len(adh.triangleList) == 120 and len(adh.edgeList) == 98
-
-
-def _compare_2d_readers(filebase):
-    """readMeshADH and read2DM on one file: the same nodes, cells and edges."""
-    adh = MeshTools.TriangularMesh()
-    adh.readMeshADH(filebase)
-    c2dm = MeshTools.TriangularMesh()
-    c2dm.generateFrom2DMFile(filebase)
-    np.testing.assert_array_equal(_adh_nodes(adh), c2dm.nodeArray)
-    assert _as_sets([[n.N for n in t.nodes] for t in adh.triangleList]) == \
-        _as_sets(c2dm.elementNodesArray)
-    assert len(adh.edgeList) == c2dm.nElementBoundaries_global
-    return c2dm
-
-
-def test_the_triangular_adh_reader_reads_the_2dm_fixture():
-    mesh = _compare_2d_readers(SQUARE_2DM)
-    assert (mesh.nNodes_global, mesh.nElements_global) == (9, 8)
-
-
-def test_both_readers_read_a_real_adh_mesh():
-    """A mesh from erdc/AdhModel, with the cards SMS writes that proteus does not use.
-
-    MESHNAME, a nodestring (NS) and a BEGPARAMDEF..ENDPARAMDEF block are skipped;
-    the mesh is a 250-node, 392-triangle angled channel of area 50,000 m^2.
-    """
-    mesh = _compare_2d_readers(ANGLE_BT)
-    assert (mesh.nNodes_global, mesh.nElements_global, mesh.nElementBoundaries_global,
-            mesh.nExteriorElementBoundaries_global) == (250, 392, 641, 106)
-    x = mesh.nodeArray[mesh.elementNodesArray]
-    a, b = x[:, 1, :2] - x[:, 0, :2], x[:, 2, :2] - x[:, 0, :2]
-    area = 0.5 * np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum()
-    assert area == pytest.approx(50000.0)
-    # the material column is 1 throughout, read as material 0 (index base 1)
-    assert not mesh.elementMaterialTypes.any()
-
-
-@pytest.fixture
-def shared_dir(tmp_path, monkeypatch):
-    """One working directory for every rank (each rank's tmp_path is its own),
-    since rank 0 writes the files the other ranks read."""
-    comm = Comm.get().comm.tompi4py()
-    path = comm.bcast(str(tmp_path) if comm.rank == 0 else None, root=0)
-    monkeypatch.chdir(path)
-    yield path
-    comm.barrier()
-
-
-def test_a_real_adh_mesh_is_meshed_and_partitioned(shared_dir):
-    """The SMS file through Mesh2DMDomain (converted to a ymf mesh, then read),
-    on however many ranks the test runs on."""
-    mlMesh = MeshTools._generateMesh(Domain.Mesh2DMDomain(ANGLE_BT), MeshTools.MeshOptions(nd=2))
-    mesh = mlMesh.meshList[0]
-    assert (mesh.nNodes_global, mesh.nElements_global) == (250, 392)
-    owned = (mesh.elementOffsets_subdomain_owned[Comm.get().rank() + 1]
-             - mesh.elementOffsets_subdomain_owned[Comm.get().rank()])
-    assert Comm.get().comm.tompi4py().allreduce(int(owned)) == 392
 
 
 # --------------------------------------------------------------------------
@@ -321,57 +161,3 @@ def test_the_ifiss_grid_transcription_is_the_unit_square():
 def test_a_nurbs_box_is_meshed():
     MeshTools.MultilevelNURBSMesh(3, 3, 3, 1, 1, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
                                   refinementLevels=1)
-
-
-# --------------------------------------------------------------------------
-# ADH test cases from the XMS Wiki, opt-in: their terms are not stated, so they
-# are not in the repository. Download and unzip any of them (URLs in
-# importers/adh/README.md) into one directory and set PROTEUS_ADH_TEST_FILES to it.
-# --------------------------------------------------------------------------
-
-ADH_FILES = os.environ.get("PROTEUS_ADH_TEST_FILES")
-needs_adh_files = pytest.mark.skipif(
-    not ADH_FILES, reason="PROTEUS_ADH_TEST_FILES does not name a directory of ADH test cases")
-BAYOU_SORREL_SHA256 = "0e8fac7b763f0eabd23b5165f3249563909cd8e93829c2662e0b494fe649821d"
-
-
-def _adh_case(name):
-    """``name``.3dm under PROTEUS_ADH_TEST_FILES (searched recursively), without its suffix."""
-    for root, _, files in os.walk(ADH_FILES):
-        if name + ".3dm" in files:
-            return os.path.join(root, name)
-    pytest.skip("%s.3dm is not under %s" % (name, ADH_FILES))
-
-
-@needs_adh_files
-def test_both_readers_read_the_chl_bayou_sorrel_mesh():
-    """CHL's Bayou Sorrel case (ADH-bayousorrel.zip, 2007): 13,325 triangles, two materials."""
-    import hashlib
-    filebase = _adh_case("bayousorrel")
-    with open(filebase + ".3dm", "rb") as f:
-        assert hashlib.sha256(f.read()).hexdigest() == BAYOU_SORREL_SHA256, \
-            "not the bayousorrel.3dm these numbers were measured on"
-    mesh = _compare_2d_readers(filebase)
-    assert (mesh.nNodes_global, mesh.nElements_global, mesh.nElementBoundaries_global,
-            mesh.nExteriorElementBoundaries_global) == (7040, 13325, 20368, 761)
-    # materials 1 and 2 in the file, read with the index base taken off
-    assert np.bincount(mesh.elementMaterialTypes).tolist() == [13307, 18]
-    x = mesh.nodeArray[mesh.elementNodesArray]
-    a, b = x[:, 1, :2] - x[:, 0, :2], x[:, 2, :2] - x[:, 0, :2]
-    assert 0.5 * np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum() == pytest.approx(106107.769609)
-
-
-@needs_adh_files
-def test_both_readers_agree_on_every_downloaded_2d_adh_mesh():
-    """Whatever cases are in the directory: readMeshADH and read2DM see one mesh."""
-    found = []
-    for root, _, files in os.walk(ADH_FILES):
-        for name in sorted(files):
-            if name.endswith(".3dm"):
-                with open(os.path.join(root, name)) as f:
-                    if f.readline().split()[:1] != ["MESH2D"]:
-                        continue
-                found.append(name)
-                _compare_2d_readers(os.path.join(root, name[:-len(".3dm")]))
-    if not found:
-        pytest.skip("no MESH2D .3dm file under %s" % (ADH_FILES,))
