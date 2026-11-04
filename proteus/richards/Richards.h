@@ -46,10 +46,10 @@ namespace richards
 //FCT_BND_DIFF=False keeps the old routing (TB folded into TransportMatrix).
 //Coefficients(FCT_BND_RESET=True): reset the FCT boundary bounds min_m_bc/max_m_bc every call
 //(see calculateResidual_entropy_viscosity); False keeps the old accumulate-forever window.
-//Coefficients(BC_CONS=True): hand the transport model the water flux this scheme really applies on the exterior
+//Coefficients(BC_CONS=True, off by default): hand the transport model the water flux this scheme really applies on the exterior
 //boundary instead of the pointwise interior trace -(a/rho)(grad psi - rho_r g).n.  See
 //the consBoundaryFlux comment in calculateResidual_entropy_viscosity for the algebra and
-//for the numbers that motivated it.  BC_CONS=False restores the pointwise trace.
+//for the numbers that motivated it.  BC_CONS=False (the default) keeps the pointwise trace.
 
 //cek todo: revisit entry for mass transport form
 // Power entropy //

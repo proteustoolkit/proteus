@@ -42,6 +42,21 @@ def _diagnostics(names):
     return names
 
 
+def _accepted_mass(vModel):
+    """The flow model's mass at the end of the step it accepted.
+
+    Richards' semi-implicit FCT leaves the limited mass in mAccepted; its implicit FCT sets
+    fctCorrectionApplied too but leaves the accepted mass in mLow (its final solve), and without FCT
+    mLow is the solution. Richards.LevelModel.acceptedMass makes that choice; this falls back on the
+    same rule for a flow model without it."""
+    accepted = getattr(vModel, 'acceptedMass', None)
+    if accepted is not None:
+        return accepted()
+    if getattr(vModel, 'fctCorrectionApplied', False) and getattr(vModel, 'mAccepted', None) is not None:
+        return vModel.mAccepted
+    return getattr(vModel, 'mLow', None)
+
+
 class SubgridError(SGE_base):
     def __init__(self, coefficients, nd):
         SGE_base.__init__(self, coefficients, nd, lag=False)
@@ -848,8 +863,7 @@ class Coefficients(TC_base):
                 # (its FCT inversion loss: theta(psi(mLim))*rho < mLim).  Not an
                 # error in this model; reported so it stays visible.
                 vModel = self.vModel
-                m_flow = np.asarray(vModel.mAccepted if getattr(vModel, "fctCorrectionApplied", False)
-                                    else vModel.mLow)
+                m_flow = np.asarray(_accepted_mass(vModel))
                 no = m.mesh.nNodes_owned
                 ML = np.asarray(m.ML)[:no]
                 diff = m.M_dof[:no] - m_flow[:no]
@@ -1680,7 +1694,10 @@ class LevelModel(OneLevelTransport):
             self._edge_flux_checked = True
             ok = 0
             # every edge-based branch: ImplicitEV and the explicit 2/3/4
+            # Richards allocates edgeFluxInterior, mn and thetaW_dof for every type, but only its edge-based
+            # (entropy-viscosity) kernel fills them: a Galerkin Richards (type 0) exports nothing
             if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
+                    and getattr(getattr(vModel, 'coefficients', None), 'STABILIZATION_TYPE', 0) != 0
                     and np.shape(getattr(vModel, 'edgeFluxInterior', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
                 r_t, c_t, _ = self.MC_global.getCSRrepresentation()
@@ -1710,7 +1727,7 @@ class LevelModel(OneLevelTransport):
                                 "no (needs edge-flux mode and Richards STABILIZATION_TYPE 1 or 2)"))
         if self._use_edge_flux:
             mn = np.asarray(vModel.mn)
-            m_new = np.asarray(vModel.mAccepted if getattr(vModel, 'fctCorrectionApplied', False) else vModel.mLow)
+            m_new = np.asarray(_accepted_mass(vModel))
             # M^n is seeded in Coefficients.preStep, NOT here: the first residual
             # call comes from attachModels, before the flow model has stepped, when
             # its mn is not yet any step's old-time mass (a 3.4% offset on UHD).
@@ -1769,7 +1786,13 @@ class LevelModel(OneLevelTransport):
             # with the OLD density, theta(psi^n)*rho(c^{n-1}), and the kernel takes the flux
             # density from the EOS at the node instead.  Left at zero when there is
             # no flow model, which is how the kernel knows to keep its projection.
-            self.theta_nodal[:] = self.coefficients.vModel.thetaW_dof
+            # Richards' nodal theta; a flow model without one (m_comp_co2) leaves it at zero, which is how the
+            # kernel knows to keep its own projection
+            theta_flow = getattr(vModel, 'thetaW_dof', None)
+            if theta_flow is not None and np.shape(theta_flow) == np.shape(self.theta_nodal):
+                self.theta_nodal[:] = theta_flow
+            else:
+                self.theta_nodal[:] = 0.0
             if not self._M_dof_initialized:
                 logEvent("TADR SCHEME B (option C): fluid mass M read from "
                          "Richards mn every step (min=%.6e max=%.6e); no fluid "
@@ -1859,13 +1882,8 @@ class LevelModel(OneLevelTransport):
         if getattr(self, 'ML', None) is None:
             return None
         vModel = getattr(self.coefficients, 'vModel', None)
-        # mAccepted is set by Richards.FCTStep and tracks its per-step accept/reject
-        # veto; it is None when the flow model runs without FCT, and then mLow (the
-        # unlimited predictor) IS the accepted mass.  Preferring mAccepted makes this
-        # probe valid in both modes.
-        M_new = getattr(vModel, 'mAccepted', None)
-        if M_new is None or not getattr(vModel, 'fctCorrectionApplied', False):
-            M_new = getattr(vModel, 'mLow', None)
+        # the flow model's accepted mass, whichever FCT (or none) produced it
+        M_new = _accepted_mass(vModel)
         # Advecting with the flow model's fluxes, TADR CARRIES M^{n+1} (M_low):
         # the fluid balance behind the cancelled form is the one of THAT mass.
         if self._use_edge_flux:

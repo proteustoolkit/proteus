@@ -358,3 +358,80 @@ def test_levee_implicit_ev_with_flow_fct(levee_deck):
     transport = ns.modelList[1].levelModelList[-1]
     assert transport._use_edge_flux == 1
     assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+
+# --------------------------------------------------------------------------
+# which flow models the edge-flux coupling takes (review of the 2026-11-04 trains)
+# --------------------------------------------------------------------------
+
+
+class _Pattern(object):
+    def __init__(self, n):
+        self.rowptr, self.colind = np.array([0, n], 'i'), np.arange(n, dtype='i')
+
+    def getCSRrepresentation(self):
+        return self.rowptr, self.colind, None
+
+
+def _transport_stub(stab, vModel, n=4):
+    """The attributes TADR.LevelModel._refreshFluidMassFromFlow reads, on one rank."""
+    from types import SimpleNamespace
+    return SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=stab, vModel=vModel, EDGE_VELOCITY=False),
+                           edgeFlux=np.zeros(n), MC_global=_Pattern(n), M_dof=np.zeros(n), theta_nodal=np.full(n, -1.0),
+                           _M_dof_initialized=True, _edge_flux_checked=False, _use_edge_flux=0, _use_edge_velocity=0)
+
+
+def test_a_galerkin_flow_model_does_not_turn_on_edge_fluxes():
+    """Richards allocates its edge-flux arrays for every type, but only its edge-based kernel fills them. A
+    Galerkin Richards (type 0, the bioswale deck) left the arrays at zero and TADR advected nothing; it now keeps
+    the transport on its own velocity, and a type-2 Richards still turns the coupling on."""
+    from types import SimpleNamespace
+    n = 4
+    for flow_type, expected in [(0, 0), (2, 1)]:
+        vModel = SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=flow_type),
+                                 edgeFluxInterior=np.zeros(n), MC_global=_Pattern(n), mn=np.zeros(n))
+        stub = _transport_stub(4, vModel, n)
+        try:
+            TADR.LevelModel._refreshFluidMassFromFlow(stub)
+        except Exception:
+            pass  # past the gate, the edge-flux branch needs a whole flow model; only the decision is checked
+        assert stub._use_edge_flux == expected, flow_type
+
+
+def test_a_flow_model_without_nodal_theta_leaves_it_to_the_projection():
+    """A flow model with a positive mn and no thetaW_dof (m_comp_co2) raised AttributeError; theta_nodal now stays
+    at zero, which tells the kernel to keep its own projection, and M is taken from mn."""
+    from types import SimpleNamespace
+    n = 4
+    vModel = SimpleNamespace(mn=np.full(n, 2.0))
+    stub = _transport_stub(5, vModel, n)
+    stub._edge_flux_checked = True
+    assert TADR.LevelModel._refreshFluidMassFromFlow(stub) == 0
+    np.testing.assert_array_equal(stub.theta_nodal, 0.0)
+    np.testing.assert_array_equal(stub.M_dof, 2.0)
+
+
+def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
+    """Richards' implicit FCT sets fctCorrectionApplied but leaves the accepted mass in mLow (its final solve);
+    the edge-flux coupling read mAccepted, all zeros, and drained its carried fluid mass every step. c0 = cin =
+    0.5 stays 0.5."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
+    flow = ns.modelList[0].levelModelList[-1]
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    assert flow.acceptedMass() is flow.mLow
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+
+def test_the_conservative_boundary_flux_is_opt_in():
+    """BC_CONS changes the boundary velocity a coupled transport sees, so existing decks keep the pointwise trace
+    unless they ask for it."""
+    from proteus.richards import Richards
+    import inspect
+    assert inspect.signature(Richards.Coefficients.__init__).parameters['BC_CONS'].default is False
