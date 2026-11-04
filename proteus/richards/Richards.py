@@ -1680,6 +1680,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         else:
             satLow = np.zeros((len(rowptr) - 1,), 'd')
         argsDict["satLow"] = satLow
+        # each node's own soil, to cap the limiter bounds at its rho*[theta_r, theta_s]
+        argsDict["thetaR"] = self.coefficients.thetaR_types
+        argsDict["thetaSR"] = self.coefficients.thetaSR_types
+        argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
         argsDict["Rpos"] = self.Rpos
         argsDict["Rneg"] = self.Rneg
         argsDict["FluxCorrectionMatrix"] = self.FluxCorrectionMatrix
@@ -1750,7 +1754,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # ~10 m across one cell) trips it on most steps and throws the whole FCT
         # step away, leaving the run to alternate silently between the limited
         # scheme and the bare low-order one.
-        use_newton_invert = (self.coefficients.FCT == 1 and self.coefficients.nd > 1)
+        # Gardner (PSK_type 3) always takes the analytic invert, so it never gets the cap;
+        # this must match USE_NEWTON_INVERT in invert().
+        use_newton_invert = (self.coefficients.FCT == 1 and self.coefficients.nd > 1
+                             and self.coefficients.PSK_type != 3)
         # RICHARDS_FCT_DU_MAX overrides the cap (use a huge value to disable it)
         # so the veto can be tested without editing the source.
         DU_INF_MAX = float(os.environ.get("RICHARDS_FCT_DU_MAX",
@@ -2749,7 +2756,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["limited_solution"] = u
         argsDict["mLow"] = self.u[0].dof
         argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
-        argsDict["USE_NEWTON_INVERT"] = 1 if (self.coefficients.FCT==1 and self.coefficients.nd > 1) else 0
+        # Gardner retention is a plain exponential, so its analytic inverse is exact at
+        # beta = 0 (it drops only the exp(beta*u) factor); Gardner always inverts analytically.
+        argsDict["USE_NEWTON_INVERT"] = 1 if (self.coefficients.FCT==1 and self.coefficients.nd > 1
+                                              and self.coefficients.PSK_type != 3) else 0
         self.richards.invert(argsDict)
      
     def getJacobian(self,jacobian):
