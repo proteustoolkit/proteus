@@ -289,6 +289,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  FCT_PRELIMITER_VARIABLE='pressure',
                  LSCHEME_L=0.0,
                  VG_AIR_ENTRY=0.0,
+                 FCT_BND_DIFF=False,
                  NONLINEAR_SOLVER=None,
                  LSCHEME_RETRY_ITS=1,
                  LSCHEME_TRIGGER='residual',
@@ -480,6 +481,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         if VG_AIR_ENTRY > 0.0 and self.PSK_type != 0:
             raise ValueError("VG_AIR_ENTRY applies to PSK_type='VG' only")
         self.VG_AIR_ENTRY = float(VG_AIR_ENTRY)
+        # FCT_BND_DIFF: with FCT, route the weak-Dirichlet block of the transport operator unclipped and
+        # identically in the low- and high-order fluxes (Barua's edge-flux coupling). Off by default so the
+        # compatible coupling and every existing deck keep their routing; RICHARDS_FCT_BND_DIFF=0 still
+        # forces it off.
+        self.FCT_BND_DIFF = bool(FCT_BND_DIFF)
         if NONLINEAR_SOLVER is None:
             NONLINEAR_SOLVER = 'lscheme' if LSCHEME_L > 0.0 else 'newton'
         if NONLINEAR_SOLVER not in ('newton', 'lscheme', 'hybrid'):
@@ -1261,6 +1267,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.rho_dof_in = np.ones((nDOF,), 'd') * self.coefficients.rho
         self.boundaryFluxDOF = np.zeros((nDOF,), 'd')
         self.edgeFluxLow = None
+        self.edgeFluxInterior = None
         self.limitedFluxMatrix = None
         self.limitedSpatialFluxMatrix = None
         self.fctCorrectionApplied = False
@@ -2040,6 +2047,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # allocated once rather than with the work arrays above
         if self.limitedFluxMatrix is None or self.limitedFluxMatrix.shape != Cx.shape:
             self.edgeFluxLow = np.zeros(Cx.shape, 'd')
+            self.edgeFluxInterior = np.zeros(Cx.shape, 'd')
             self.limitedFluxMatrix = np.zeros(Cx.shape, 'd')
             self.limitedSpatialFluxMatrix = np.zeros(Cx.shape, 'd')
             self.limitedFlux = np.zeros(Cx.shape, 'd')
@@ -2285,7 +2293,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # Step B alters the residual (TB unclipped), and it only buys conservation of the
         # limited correction, so it is tied to FCT.  Gating it here also keeps an FCT=False
         # run byte-identical to the pre-Step-B code.
-        argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT))
+        argsDict["FCT_BND_DIFF"] = int(bool(self.coefficients.FCT) and self.coefficients.FCT_BND_DIFF)
         # Needed here as well as in FCTStep: STABILIZATION_TYPE=Implicit_FCT calls
         # FCTStep from inside the residual off this same dict, and arguments_dict
         # throws on a missing key.  fct_pass=0 keeps that in-kernel call single
@@ -2304,7 +2312,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaW_dof"] = self.thetaW_dof
         argsDict["anb_seepage_flux_n"]= self.anb_seepage_flux_n
         argsDict["consBoundaryFlux"] = self.consBoundaryFlux
-        argsDict["edgeFluxLow"] = self.edgeFluxLow
+        argsDict["edgeFluxInterior"] = self.edgeFluxInterior
         argsDict["nodalSource"] = self.nodalSource
         argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
         ######################################################################################
@@ -2429,7 +2437,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         rowptr, colind, _ = self.MC_global.getCSRrepresentation()
         nFree = len(rowptr) - 1
         no = self.mesh.nNodes_owned
-        E = self.timeIntegration.dt*self.edgeFluxLow + self.limitedFlux
+        E = self.timeIntegration.dt*self.edgeFluxInterior + self.limitedFlux
         rows = np.repeat(np.arange(nFree), np.diff(rowptr))
         both_owned = (rows < no) & (colind < no)
         asym = np.abs(E + E[self.csrTransposeIndices])[both_owned]
@@ -2485,7 +2493,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["q_rho"] = self.q['rho']
         argsDict["q_mu"] = self.q['mu']
         argsDict["dt"] = self.timeIntegration.dt
-        argsDict["edgeFluxLow"] = self.edgeFluxLow
+        argsDict["edgeFluxLow"] = self.edgeFluxInterior
         argsDict["limitedFlux"] = self.limitedFlux
         argsDict["csrRowIndeces_DofLoops"] = rowptr
         argsDict["csrColumnOffsets_DofLoops"] = colind
@@ -2502,7 +2510,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             np.add.at(Q, self.l2g[0]['freeGlobal'],
                       np.einsum('ek,eks,ekas->ea', self.q['rho'],
                                 self.q[('velocity_edge',0)], self.q[('grad(w)*dV_f',0)]))
-            E = self.edgeFluxLow + self.limitedFlux/self.timeIntegration.dt
+            E = self.edgeFluxInterior + self.limitedFlux/self.timeIntegration.dt
             no = self.mesh.nNodes_owned
             err = self.comm.globalMax(float(np.abs(Q - np.add.reduceat(E, rowptr[:-1]))[:no].max()))
             e_max = self.comm.globalMax(float(np.abs(E).max()))

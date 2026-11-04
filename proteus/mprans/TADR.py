@@ -825,7 +825,7 @@ class Coefficients(TC_base):
                 # (its FCT inversion loss: theta(psi(mLim))*rho < mLim).  Not an
                 # error in this model; reported so it stays visible.
                 vModel = self.vModel
-                m_flow = np.asarray(vModel.mAccepted if vModel.mAccepted is not None
+                m_flow = np.asarray(vModel.mAccepted if getattr(vModel, "fctCorrectionApplied", False)
                                     else vModel.mLow)
                 no = m.mesh.nNodes_owned
                 ML = np.asarray(m.ML)[:no]
@@ -1638,7 +1638,7 @@ class LevelModel(OneLevelTransport):
             ok = 0
             # every edge-based branch: ImplicitEV and the explicit 2/3/4
             if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
-                    and np.shape(getattr(vModel, 'edgeFluxLow', None)) == np.shape(self.edgeFlux)):
+                    and np.shape(getattr(vModel, 'edgeFluxInterior', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
                 r_t, c_t, _ = self.MC_global.getCSRrepresentation()
                 ok = int(np.array_equal(r_f, r_t) and np.array_equal(c_f, c_t))
@@ -1667,7 +1667,7 @@ class LevelModel(OneLevelTransport):
                                 "no (needs edge-flux mode and Richards STABILIZATION_TYPE 1 or 2)"))
         if self._use_edge_flux:
             mn = np.asarray(vModel.mn)
-            m_new = np.asarray(vModel.mAccepted if vModel.mAccepted is not None else vModel.mLow)
+            m_new = np.asarray(vModel.mAccepted if getattr(vModel, 'fctCorrectionApplied', False) else vModel.mLow)
             # M^n is seeded in Coefficients.preStep, NOT here: the first residual
             # call comes from attachModels, before the flow model has stepped, when
             # its mn is not yet any step's old-time mass (a 3.4% offset on UHD).
@@ -1683,7 +1683,7 @@ class LevelModel(OneLevelTransport):
             # with the edge velocity the kernel assembles edgeFlux from q_v and
             # writes nodalBoundaryFlux from M_low itself
             if not self._use_edge_velocity:
-                self.edgeFlux[:] = (vModel.timeIntegration.dt*vModel.edgeFluxLow
+                self.edgeFlux[:] = (vModel.timeIntegration.dt*vModel.edgeFluxInterior
                                     + vModel.limitedFlux)/dt
                 self.nodalBoundaryFlux[:] = (self.ML*dM/dt
                                              - np.add.reduceat(self.edgeFlux, rowptr[:-1]))
@@ -1821,7 +1821,7 @@ class LevelModel(OneLevelTransport):
         # unlimited predictor) IS the accepted mass.  Preferring mAccepted makes this
         # probe valid in both modes.
         M_new = getattr(vModel, 'mAccepted', None)
-        if M_new is None:
+        if M_new is None or not getattr(vModel, 'fctCorrectionApplied', False):
             M_new = getattr(vModel, 'mLow', None)
         # Advecting with the flow model's fluxes, TADR CARRIES M^{n+1} (M_low):
         # the fluid balance behind the cancelled form is the one of THAT mass.
