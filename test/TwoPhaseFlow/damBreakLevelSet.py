@@ -1,6 +1,6 @@
 """damBreak.py with the level-set family instead of CLSVOF + projection: RANS2P, VOF, NCLS, RDLS and MCorr
 (useDefaultModels(flowModel=0, interfaceModel=0)), the boundary conditions from domain.bc. Same geometry, mesh
-and options; used by test_step_retry.py.
+and options; used by test_step_retry.py. interface=1 runs RANS2P with CLSVOF instead (interfaceModel=1).
 """
 """
 danbreak 2-D
@@ -25,7 +25,8 @@ opts= Context.Options([
     ("he",0.01,"he relative to Length of domain in x"),
     ("refinement",3,"level of refinement"),
     ("hotstart",False,"will be hotstartting?"),
-    ("genMesh", False,"generate the mesh on the fly")
+    ("genMesh", False,"generate the mesh on the fly"),
+    ("interface", 0, "0: VOF, NCLS, RDLS and MCorr; 1: CLSVOF")
     ])
 
 # ****************** #
@@ -119,7 +120,7 @@ else:
 
 
 myTpFlowProblem.SystemPhysics.setDefaults()
-myTpFlowProblem.SystemPhysics.useDefaultModels(flowModel=0,interfaceModel=0)
+myTpFlowProblem.SystemPhysics.useDefaultModels(flowModel=0,interfaceModel=opts.interface)
 myTpFlowProblem.SystemNumerics.cfl=opts.cfl
 myTpFlowProblem.SystemNumerics.useSuperlu=True
 
@@ -140,10 +141,13 @@ m = myTpFlowProblem.SystemPhysics.modelDict
 m['flow'].p.initialConditions['p'] = zero()
 m['flow'].p.initialConditions['u'] = zero()
 m['flow'].p.initialConditions['v'] = zero()
-m['vof'].p.initialConditions['vof'] = vof_init()
-m['ncls'].p.initialConditions['phi'] = phi_init()
-m['rdls'].p.initialConditions['phid'] = phi_init()
-m['mcorr'].p.initialConditions['phiCorr'] = zero()
+if opts.interface == 0:
+    m['vof'].p.initialConditions['vof'] = vof_init()
+    m['ncls'].p.initialConditions['phi'] = phi_init()
+    m['rdls'].p.initialConditions['phid'] = phi_init()
+    m['mcorr'].p.initialConditions['phiCorr'] = zero()
+else:
+    m['clsvof'].p.initialConditions['clsvof'] = phi_init()
 
 myTpFlowProblem.SystemPhysics.gravity = np.array([0.0,-9.8,0.0])
 

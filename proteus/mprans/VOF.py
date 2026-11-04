@@ -26,6 +26,7 @@ from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
 #from . import cVOF3P
 from . import cArgumentsDict
+from proteus.mprans import EntropyViscosity
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError
@@ -1320,6 +1321,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrRowIndeces_u_u"] = self.csrRowIndeces[(0, 0)]
         argsDict["csrColumnOffsets_u_u"] = self.csrColumnOffsets[(0, 0)]
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0, 0)]
+        if getattr(self, "_entropyViscosityArrays", None) is None:
+            self._entropyViscosityArrays = EntropyViscosity.arrays(self.mesh.nElements_global)
+        argsDict["nElements_owned"] = self.mesh.nElements_owned
+        argsDict["entropy_stats"], argsDict["element_viscosity"] = self._entropyViscosityArrays
         if self.coefficients.STABILIZATION_TYPE == 2:
             # entropy viscosity: the normalized entropy residual of a ghost dof comes from a truncated
             # graph row and the dissipation of an owned dof reads it. Compute it (phase 0), scatter it,
@@ -1335,6 +1340,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             argsDict["global_entropy_residual_dof"] = self.psi_dof
             argsDict["phase"] = 1
         self.calculateResidual(argsDict)
+        if self.coefficients.STABILIZATION_TYPE == 1:
+            EntropyViscosity.reduce_numDiff(self.comm, *self._entropyViscosityArrays, self.shockCapturing.numDiff[0])
 
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):

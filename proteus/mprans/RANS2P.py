@@ -3,6 +3,7 @@ Optimized  Two-Phase Reynolds Averaged Navier-Stokes
 """
 import math
 import proteus
+from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 import sys
 from proteus.mprans.cRANS2P import *
 from proteus.mprans.cRANS2P2D import *
@@ -762,17 +763,28 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         import os
         if comm.isMaster():
             self.history_file = open(os.path.join(proteus.Profiling.logDir, "particles.txt"),"ab")
-            self.timeHistory = open(os.path.join(proteus.Profiling.logDir, "timeHistory.txt"), "w")
-            self.wettedAreaHistory = open(os.path.join(proteus.Profiling.logDir, "wettedAreaHistory.txt"), "w")
-            self.forceHistory_p = open(os.path.join(proteus.Profiling.logDir, "forceHistory_p.txt"), "w")
-            self.forceHistory_v = open(os.path.join(proteus.Profiling.logDir, "forceHistory_v.txt"), "w")
-            self.momentHistory = open(os.path.join(proteus.Profiling.logDir, "momentHistory.txt"), "w")
+            # the histories postStep writes: one time per step, a row per boundary flag per step for the per-flag
+            # ones, a row per step for the particles'
+            perStep = [(name, nBoundariesMax) for name in ("wettedAreaHistory", "forceHistory_p", "forceHistory_v",
+                                                           "momentHistory")]
             if self.nParticles:
-                self.particle_forceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_forceHistory.txt"), "w")
-                self.particle_pforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_pforceHistory.txt"), "w")
-                self.particle_vforceHistory = open(os.path.join(proteus.Profiling.logDir, "particle_vforceHistory.txt"), "w")
-                self.particle_momentHistory = open(os.path.join(proteus.Profiling.logDir, "particle_momentHistory.txt"), "w")
+                perStep += [(name, 1) for name in ("particle_forceHistory", "particle_pforceHistory",
+                                                   "particle_vforceHistory", "particle_momentHistory")]
+            if self.legacyHistoryFiles:
+                self.openHistoryFiles(perStep)
         self.comm = comm
+    def openHistoryFiles(self, perStep):
+        """Open timeHistory.txt and the per-step history files ((name, rows per step) pairs) as attributes of the
+        same names. On a hot start the files of the run this one continues are kept, cut back to the steps at or
+        before the restart instant (proteus.Gauges.open_history_file)."""
+        logDir = proteus.Profiling.logDir
+        self.timeHistory, resumed = open_history_file(os.path.join(logDir, "timeHistory.txt"))
+        for name, rows in perStep:
+            setattr(self, name, open_history_file(os.path.join(logDir, name + ".txt"))[0])
+        if resumed:
+            members = [(getattr(self, name), rows) for name, rows in perStep]
+            on_hot_start(lambda t: keep_steps_up_to(self.timeHistory, members, t))
+
     # initialize so it can run as single phase
 
     def initializeElementQuadrature(self, t, cq):
@@ -945,6 +957,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
 
     #: what postStep leaves for the next step that the solution does not determine: dt of the last step, the
     #: active elements, and the internal particle solver's state (the ball_* arrays it advances in postStep)
+    #: write the legacy history files (timeHistory.txt, forceHistory_p/_v.txt, momentHistory.txt,
+    #: wettedAreaHistory.txt, particle_*History.txt); proteus.Gauges.BoundaryIntegralGauges replaces them. On by default
+    #: for one release, then off, then removed (force-history gauge plan, decision 3, 2026-11-04)
+    legacyHistoryFiles = True
+
     def state(self):
         m = getattr(self, "model", None)
         if m is None or not hasattr(m, "isActiveElement_last"):
@@ -969,7 +986,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.model.dt_last = self.model.timeIntegration.dt
         self.model.q['dV_last'][:] = self.model.q['dV']
         self.model.isActiveElement_last[:] = self.model.isActiveElement
-        if self.comm.isMaster():
+        if self.comm.isMaster() and self.legacyHistoryFiles:
             # logEvent("wettedAreas\n"+
             #          repr(self.wettedAreas[:]) +
             #          "\nForces_p\n" +

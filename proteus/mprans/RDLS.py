@@ -6,6 +6,7 @@ import numpy as np
 from proteus.Transport import OneLevelTransport, memory
 from proteus.Transport import TC_base, NonlinearEquation, Quadrature, logEvent
 from proteus.Transport import cfemIntegrals
+from proteus.LinearAlgebraTools import ParVec_petsc4py
 from . import cArgumentsDict
 import proteus.FemTools
 import proteus.NonlinearSolvers
@@ -781,6 +782,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.lumped_qx = np.zeros(self.u[0].dof.shape,'d')
         self.lumped_qy = np.zeros(self.u[0].dof.shape,'d')
         self.lumped_qz = np.zeros(self.u[0].dof.shape,'d')
+        self._dofVecs = {}
         self.stage = 1
         self.auxEllipticFlag = 1
         if self.coefficients.ELLIPTIC_REDISTANCING==2:
@@ -972,6 +974,26 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["lumped_qy"] = self.lumped_qy
         argsDict["lumped_qz"] = self.lumped_qz
         self.rdls.normalReconstruction(argsDict)
+        # a lumped projection: a ghost node sums only the elements this rank has, and owned rows read it
+        for q in (self.lumped_qx, self.lumped_qy, self.lumped_qz):
+            self.scatterDOFArray(q)
+
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array by the owners' values (in place)."""
+        if self.comm.size() == 1:
+            return
+        cached = self._dofVecs.get(a.shape)
+        if cached is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = self.comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            buf = a.copy()
+            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
+        par.scatter_forward_insert()
+        a[:] = buf
 
     def getResidual(self, u, r):
         import pdb

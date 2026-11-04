@@ -11,6 +11,11 @@ consistent mass matrix with smoothness only to 1e-8 for a short run (its differe
 t=0.08, probably round-off amplified by the regularized indicator in flat regions, which was not checked). Entropy
 viscosity has a branch, etaMin == etaMax, that amplifies ulp-level differences of the nodal projections (2e-5 at t=0.02), so
 it gets a looser tolerance. The controls run without the scatters and differ.
+
+STAB=5 (ImplicitEV: backward Euler and Newton, FCT applied after the solve; Zalesak disk, problem=1) goes through the
+same FCTStep: 2 ranks 3.6e-11 from serial and total mass 3.3e-13 (Newton atol 1e-10); without the scatters of uLow, R
+and the limited solution, 0.49 and 0.8% of the mass (the defect reported on a branch without them: 0.077 and 3.8% on 4
+ranks).
 """
 import os
 import shutil
@@ -54,9 +59,9 @@ def _field(ranks, cwd, **overrides):
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 @pytest.mark.parametrize("lumped,stabilization,final_time,tolerance", [
     (1, 3, 0.08, 1e-8), (0, 3, 0.02, 1e-8), (1, 4, 0.08, 1e-8), (0, 4, 0.08, 1e-8),
-    (1, 2, 0.02, 1e-3), (0, 2, 0.02, 1e-3)],
+    (1, 2, 0.02, 1e-3), (0, 2, 0.02, 1e-3), (0, 5, 0.08, 1e-8)],
     ids=["lumped-smoothness", "consistent-smoothness", "lumped-kuzmin", "consistent-kuzmin",
-         "lumped-entropy_viscosity", "consistent-entropy_viscosity"])
+         "lumped-entropy_viscosity", "consistent-entropy_viscosity", "implicit-entropy_viscosity-fct"])
 def test_tadr_edge_based_on_two_ranks_is_the_serial_answer(tmp_path, lumped, stabilization, final_time, tolerance):
     for d in ("1", "2", "3"):
         (tmp_path / d).mkdir()

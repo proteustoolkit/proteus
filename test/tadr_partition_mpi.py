@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""TADR edge-based (STAB=3 smoothness indicator, the default, STAB=2 entropy viscosity or STAB=4) rotation of the disk
+"""TADR edge-based (STAB=3 smoothness indicator, the default, STAB=2 entropy viscosity, STAB=4, or STAB=5 implicit
+entropy viscosity with FCT after the Newton solve) rotation of the disk
 of test/TADR, to t=TFINAL (0.08), for the partition-independence test.
 
 Run under mpiexec by test_tadr_partition_independence.py in an empty directory, with PETSC_OPTIONS tightening the KSP
 of the mass matrix solves; leaves u.csv there (owned nodes, sorted by x, y). The mesh is unstructured and the partition
-is pinned to a cut x + 0.37 y >= 0.62 through the disk. LUMPED=1 uses the lumped mass matrix. NOSCAT=1 turns off every
+is pinned to a cut x + 0.37 y >= 0.62 through the disk (on more ranks, equal strips along x + 0.37 y). LUMPED=1 uses the lumped mass matrix. NOSCAT=1 turns off every
 owner-to-ghost scatter, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost dofs; OLDMAX=1 makes
 the time step read it again (a control). POROUS=1 makes the porosity vary in space; NOTHETASCAT=1 keeps the partial
 nodal porosity at the ghosts (a control).
@@ -22,6 +23,10 @@ for name in ("thelper_tadr.py", "thelper_tadr_p.py", "thelper_tadr_n.py"):
     if name == "thelper_tadr_n.py":
         # converge the mass matrix solves far enough for a comparison to 1e-8
         text += "\nnl_atol_res = 1.0e-13; l_atol_res = 1.0e-15; linTolFac = 0.0; tolFac = 0.0\n"
+        # STAB=5 (ImplicitEV) is implicit: backward Euler and Newton, with FCT applied after the solve
+        text += ("\nif ct.STABILIZATION_TYPE == 5:\n    levelNonlinearSolver = Newton\n    fullNewtonFlag = True\n"
+                 "    updateJacobian = True\n    timeIntegration = BackwardEuler_cfl\n    nl_atol_res = 1.0e-10\n"
+                 "    l_atol_res = 1.0e-12\n    maxNonlinearIts = 100\n")
     open(name, "w").write(text)
 
 _partition = MT.Mesh.partitionMesh
@@ -29,7 +34,12 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                   nodeOwners=None, elementOwners=None, nodeWeights=None):
     if (nodeOwners is None and Comm.get().size() > 1
             and parallelPartitioningType == MT.MeshParallelPartitioningTypes.node):
-        nodeOwners = (self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1] >= 0.62).astype(np.intc)
+        cut = self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1]
+        if Comm.get().size() == 2:
+            nodeOwners = (cut >= 0.62).astype(np.intc)
+        else:  # strips along the same direction, equal node counts
+            edges = np.quantile(cut, np.linspace(0.0, 1.0, Comm.get().size() + 1)[1:-1])
+            nodeOwners = np.searchsorted(edges, cut, side="right").astype(np.intc)
     return _partition(self, nLayersOfOverlap=nLayersOfOverlap, parallelPartitioningType=parallelPartitioningType,
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh

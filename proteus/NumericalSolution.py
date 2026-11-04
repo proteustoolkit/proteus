@@ -17,6 +17,8 @@ from . import Transport
 from . import SimTools
 from . import Archiver
 from . import Viewers
+from . import Gauges
+from .mprans import PressureNormalization
 from .Archiver import ArchiveFlags
 from . import Domain
 from .MeshAdaptPUMI import Checkpoint,AdaptHelper
@@ -125,6 +127,8 @@ class NS_base(object):  # (HasTraits):
         from . import Comm
         comm=Comm.get()
         self.comm=comm
+        # before any model opens its history or gauge files: a hot start keeps them (proteus.Gauges)
+        Gauges.reset_history_files(opts.hotStart)
         message = "Initializing NumericalSolution for "+so.name+"\n System includes: \n"
         for p in pList:
             message += p.name+"\n"
@@ -526,6 +530,9 @@ class NS_base(object):  # (HasTraits):
                     lm.calculateSolutionAtQuadrature()
             else:
                 logEvent("No initial conditions provided for model "+p.name)
+        if self.opts.hotStart:
+            # the history and gauge files keep their rows up to the restart instant, before the gauges sample it
+            Gauges.resume_history_files(time)
         for model in self.modelList:
             for av in self.auxiliaryVariables[model.name]:
                 # auxiliary variables need not derive from AV_base
@@ -1139,6 +1146,12 @@ class NS_base(object):  # (HasTraits):
     ##intermodel transfer after a step
     def postStep(self,model):
         for level,levelModel in enumerate(model.levelModelList):
+            if getattr(levelModel.coefficients, "zeroMean", False):
+                # a pressure fixed only up to a constant: zero integral mean, before any model reads it, in the dofs
+                # and in the solver's unknowns the next solve starts from (all of them free: no Dirichlet condition)
+                mean = PressureNormalization.zero_mean(levelModel)
+                if mean:
+                    model.uList[level] -= mean
             postCopy = levelModel.coefficients.postStep(model.stepController.t_model,firstStep=self.firstStep)
             if postCopy is not None and ('copy_uList') in postCopy and postCopy['copy_uList'] == True:
                 for u_ci_lhs,u_ci_rhs in zip(list(self.modelList[postCopy['uList_model']].levelModelList[level].u.values()),list(model.levelModelList[level].u.values())):
@@ -1347,14 +1360,17 @@ class NS_base(object):  # (HasTraits):
         self._systemStepState = []
         for m in self.modelList:
             levels = []
-            for lm in m.levelModelList:
+            for level, lm in enumerate(m.levelModelList):
                 owners = {}
                 for owner in self.SOLVER_STATE_OWNERS:
                     obj = getattr(lm, owner, None)
                     if obj is not None and hasattr(obj, "state"):
                         owners[owner] = copy.deepcopy(obj.state())
+                # the solver's unknowns are kept as they are, not rebuilt from the dofs: a model's Newton starts
+                # from them, and they need not equal its dofs at the start of a step (RDLS's do not: the dofs
+                # are changed after its last solve)
                 levels.append(([lm.u[ci].dof.copy() for ci in range(lm.coefficients.nc)], owners,
-                               {k: v.copy() for k, v in self._coupledFields(lm)}))
+                               {k: v.copy() for k, v in self._coupledFields(lm)}, m.uList[level].copy()))
             self._systemStepState.append(levels)
 
     #: the quadrature-point and face fields that one model reads from another (RANS2P reads VOF's and NCLS's
@@ -1383,13 +1399,13 @@ class NS_base(object):  # (HasTraits):
         in the failed attempt kept the lags its postStep had moved forward, and the next model read the failed
         attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's)."""
         for m, levels in zip(self.modelList, self._systemStepState):
-            for level, (lm, (dofs, owners, fields)) in enumerate(zip(m.levelModelList, levels)):
+            for level, (lm, (dofs, owners, fields, unknowns)) in enumerate(zip(m.levelModelList, levels)):
                 for ci in range(lm.coefficients.nc):
                     lm.u[ci].dof[:] = dofs[ci]
                 for k, v in self._coupledFields(lm):
                     if k in fields:
                         v[:] = fields[k]
-                lm.setFreeDOF(m.uList[level])
+                m.uList[level][:] = unknowns
                 for owner, st in owners.items():
                     if st is not None:
                         getattr(lm, owner).set_state(copy.deepcopy(st))
