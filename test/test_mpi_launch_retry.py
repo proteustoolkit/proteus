@@ -237,3 +237,79 @@ def test_the_launch_asks_its_helpers_to_dump_stacks_before_the_timeout(launch_po
 
     launch_policy.retrying_run(run)(['x'], timeout=100)
     assert seen['PROTEUS_TEST_DUMP_AFTER'] == '80'
+
+
+# A launcher that leaves its child in a process group of its own, as Open MPI's prterun does with
+# every rank: the child writes its pid, then sleeps; the launcher sleeps too, or exits 3 at once.
+ORPHANING_LAUNCHER = textwrap.dedent('''\
+    import os, subprocess, sys, time
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'],
+                             preexec_fn=os.setpgrp)
+    open(sys.argv[1], 'w').write(str(child.pid))
+    if sys.argv[2] == 'exit':
+        os._exit(3)
+    time.sleep(120)
+    ''')
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _gone_soon(pid, seconds=3.0):
+    deadline = time.time() + seconds
+    while _alive(pid) and time.time() < deadline:
+        time.sleep(0.1)
+    return not _alive(pid)
+
+
+@pytest.mark.parametrize('how', ['timeout', 'exit'])
+def test_a_launch_cut_short_takes_its_whole_tree_with_it(tmp_path, monkeypatch, how):
+    """A launch that times out, or whose launcher dies, leaves nothing running: not even a
+    child in a process group of its own, whose parent is gone (2026-11-03: such an Open MPI
+    rank outlived its cancelled CI job by 10 h 43 min)."""
+    monkeypatch.setenv('PROTEUS_TEST_TIMEOUT_SCALE', '1')
+    script, pidfile = tmp_path / 'launcher.py', tmp_path / 'child.pid'
+    script.write_text(ORPHANING_LAUNCHER)
+    if how == 'timeout':
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run([sys.executable, str(script), str(pidfile), 'sleep'],
+                           capture_output=True, text=True, timeout=3)
+    else:
+        result = subprocess.run([sys.executable, str(script), str(pidfile), 'exit'],
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 3
+    child = int(pidfile.read_text())
+    assert _gone_soon(child), 'pid %d outlived its launch' % child
+
+
+def test_a_timed_out_mpi_job_leaves_no_rank_running(tmp_path, monkeypatch):
+    """The same through mpiexec: three ranks that never finish, a launch that times out, no rank
+    left afterwards (Open MPI 5 puts each rank in a process group of its own; MPICH a session)."""
+    mpiexec = shutil.which('mpiexec')
+    if mpiexec is None:
+        pytest.skip('no mpiexec')
+    monkeypatch.setenv('PROTEUS_TEST_TIMEOUT_SCALE', '1')
+    helper = tmp_path / 'never_finishes.py'
+    helper.write_text('import os, sys, time\n'
+                      'open(os.path.join(sys.argv[1], "rank.%d" % os.getpid()), "w").close()\n'
+                      'time.sleep(120)\n')
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess.run([mpiexec, '-n', '3', sys.executable, str(helper), str(tmp_path)],
+                       capture_output=True, text=True, timeout=15)
+    ranks = [int(p.name.split('.')[1]) for p in tmp_path.glob('rank.*')]
+    assert len(ranks) == 3, ranks
+    assert [pid for pid in ranks if not _gone_soon(pid)] == []
+
+
+def test_input_reaches_a_launch_that_outlasts_one_wait():
+    """The launch is waited for in one-second steps; input goes in with the first of them only
+    (a second would raise "Cannot send input after starting communication")."""
+    result = subprocess.run([sys.executable, '-c', 'import sys, time; time.sleep(2.5); print(sys.stdin.read())'],
+                            input='sent once', capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'sent once'
