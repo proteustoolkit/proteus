@@ -500,11 +500,10 @@ def subdomainNumbers(Comm comm, int nGlobal, int ownedBegin, object owned, objec
     owned ones (a subset) numbered ownedBegin, ownedBegin+1, ... in ascending
     file order, the others asked of the rank whose default chunk of
     [0,nGlobal) holds them. Collective."""
-    cdef cppset[int] own, sub
+    cdef cppset[int] own
     for k in owned:
         own.insert(k)
-    for k in subdomain:
-        sub.insert(k)
+    cdef vector[int] sub = sorted(set(subdomain))
     return dict(c_subdomainNumbersByDirectory(comm.ob_mpi, nGlobal, ownedBegin, own, sub))
 
 def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVertexMarkers,

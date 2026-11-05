@@ -8,6 +8,9 @@
 #include <cstdio>
 #include <cerrno>
 #include <unistd.h>
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 namespace proteus
 {
@@ -1481,56 +1484,107 @@ std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<
 }
 
 /* MPI: file number -> new number for the entities `subdomain` (elements,
-   faces or edges of this rank's subdomain, file numbers), given the ones this
-   rank owns. The owned entities, in ascending file order, take the new
-   numbers ownedBegin, ownedBegin+1, ... (ownedBegin = the count owned by lower
-   ranks). The others' new numbers come from a directory: every rank pushes
-   its (old, new) pairs to the rank whose default chunk of [0,nGlobal) holds
-   the old number (one exchange), then asks that rank for the entities it
-   needs (askOwningRanks, two exchanges). Memory per rank is O(subdomain +
+   faces or edges of this rank's subdomain, file numbers, ascending), given the
+   ones this rank owns. The owned entities, in ascending file order, take the
+   new numbers ownedBegin, ownedBegin+1, ... (ownedBegin = the count owned by
+   lower ranks). The others' new numbers come from a directory: every rank
+   pushes its (old, new) pairs to the rank whose default chunk of [0,nGlobal)
+   holds the old number (one exchange), then asks that rank for the entities
+   it needs (askOwningRanks, two exchanges). Memory per rank is O(subdomain +
    nGlobal/size); no file, no global array. Collective. `owned` must be a
-   subset of `subdomain`; the result holds exactly the keys of `subdomain`. */
-std::map<int,int> subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
-                                              const std::set<int>& owned, const std::set<int>& subdomain)
+   subset of `subdomain`; the result holds exactly the entries of `subdomain`,
+   as (old, new) pairs sorted by old. */
+std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
+                                                             const std::set<int>& owned,
+                                                             const std::vector<int>& subdomain)
 {
   int rank, size;
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
   const std::valarray<int> chunks = defaultChunkOffsets(nGlobal, size);
   const std::vector<int> offsets(std::begin(chunks), std::end(chunks));
-  std::map<int,int> old2new;
+  std::vector<std::pair<int,int> > mine;
+  mine.reserve(owned.size());
   std::vector<std::vector<int> > pairs(size);
   int nNew = ownedBegin;
   for (std::set<int>::const_iterator it = owned.begin(); it != owned.end(); it++, nNew++)
     {
-      old2new[*it] = nNew;
+      mine.push_back(std::make_pair(*it, nNew));
       std::vector<int>& to = pairs[rankOfNumber(offsets, *it)];
       to.push_back(*it);
       to.push_back(nNew);
     }
   std::vector<int> received = exchangeInts(comm, pairs);
+  pairs.clear();
   const int begin = offsets[rank];
   std::vector<int> directory(offsets[rank+1] - begin, -1);
   for (size_t i = 0; i < received.size(); i += 2)
     directory[received[i] - begin] = received[i+1];
+  received.clear();
   std::set<int> wanted;
-  for (std::set<int>::const_iterator it = subdomain.begin(); it != subdomain.end(); it++)
-    if (old2new.find(*it) == old2new.end())
+  for (std::vector<int>::const_iterator it = subdomain.begin(); it != subdomain.end(); it++)
+    if (owned.find(*it) == owned.end())
       wanted.insert(*it);
   std::map<int,int> ghosts = askOwningRanks(comm, offsets, wanted,
                                             [&](int n_old) { return directory[n_old - begin]; });
-  old2new.insert(ghosts.begin(), ghosts.end());
+  std::vector<std::pair<int,int> > old2new;
+  old2new.reserve(mine.size() + ghosts.size());
+  std::merge(mine.begin(), mine.end(), ghosts.begin(), ghosts.end(), std::back_inserter(old2new));
   assert(old2new.size() == subdomain.size());
   return old2new;
 }
 
-/* The inverse of a one-to-one map. */
-std::map<int,int> invertedMap(const std::map<int,int>& m)
+namespace
 {
-  std::map<int,int> inverse;
-  for (std::map<int,int>::const_iterator it = m.begin(); it != m.end(); it++)
-    inverse[it->second] = it->first;
-  return inverse;
+  /* One numbering of a subdomain's entities (old -> new, or new -> old), as a
+     table sorted by key: the lookups the -F partitioners make of it, in 8
+     bytes an entry rather than the ~48 of a std::map node (at 4 ranks the
+     std::maps took more memory than the global arrays they replaced). */
+  class SubdomainNumbering
+  {
+  public:
+    typedef std::vector<std::pair<int,int> >::const_iterator const_iterator;
+    explicit SubdomainNumbering(std::vector<std::pair<int,int> > sorted) : table(std::move(sorted)) {}
+    const_iterator find(int key) const
+    {
+      const_iterator it = std::lower_bound(table.begin(), table.end(), std::make_pair(key, std::numeric_limits<int>::min()));
+      return (it != table.end() && it->first == key) ? it : table.end();
+    }
+    const_iterator end() const { return table.end(); }
+    size_t size() const { return table.size(); }
+    //the number of key, which must be in the table: a missing key is an
+    //inconsistent set of mesh files, not a default (a std::map gave 0)
+    int operator[](int key) const
+    {
+      const_iterator it = find(key);
+      if (it == table.end())
+        throw std::out_of_range("parun -F: entity " + std::to_string(key) +
+                                " is not in this subdomain's numbering (are the mesh files consistent?)");
+      return it->second;
+    }
+    SubdomainNumbering inverse() const
+    {
+      std::vector<std::pair<int,int> > inverted;
+      inverted.reserve(table.size());
+      for (const_iterator it = table.begin(); it != table.end(); it++)
+        inverted.push_back(std::make_pair(it->second, it->first));
+      std::sort(inverted.begin(), inverted.end());
+      return SubdomainNumbering(std::move(inverted));
+    }
+  private:
+    std::vector<std::pair<int,int> > table;
+  };
+
+  //the keys of a map, ascending
+  template<class Map>
+  std::vector<int> keysOf(const Map& m)
+  {
+    std::vector<int> keys;
+    keys.reserve(m.size());
+    for (typename Map::const_iterator it = m.begin(); it != m.end(); it++)
+      keys.push_back(it->first);
+    return keys;
+  }
 }
 
 /* MPI: give the faces the partition cut the reserved flag -1, for a
@@ -2183,13 +2237,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //the new numbers of every element of the subdomain, owned or not, from a
   //directory on the default chunks of the file numbers (no mappings-file read)
   //
-  set<int> elements_subdomain;
-  for (auto it = elementNodesArrayMap.begin(); it != elementNodesArrayMap.end(); it++)
-    elements_subdomain.insert(elements_subdomain.end(), it->first);
-  map<int,int> elementNumbering_old2new_subdomain_map =
+  const SubdomainNumbering elementNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
-                                elements_subdomain_owned, elements_subdomain);
-  map<int,int> elementNumbering_new2old_subdomain_map = invertedMap(elementNumbering_old2new_subdomain_map);
+                                elements_subdomain_owned, keysOf(elementNodesArrayMap)));
+  const SubdomainNumbering elementNumbering_new2old_subdomain_map = elementNumbering_old2new_subdomain_map.inverse();
   PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_faces_event;
@@ -2419,9 +2470,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   H5Fclose(file_id);
   //the new numbers of every face of the subdomain, owned or not, from the
   //directory (no mappings-file read)
-  map<int,int> elementBoundaryNumbering_old2new_subdomain_map =
+  const SubdomainNumbering elementBoundaryNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
-                                elementBoundaries_subdomain_owned, elementBoundaries_subdomain);
+                                elementBoundaries_subdomain_owned,
+                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end())));
   PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_edges_event;
@@ -2637,12 +2689,9 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //
   //the new numbers of every edge of the subdomain, owned or not, from the
   //directory (no mappings-file read)
-  set<int> edges_subdomain;
-  for (auto it = edgeNodesMap.begin(); it != edgeNodesMap.end(); it++)
-    edges_subdomain.insert(edges_subdomain.end(), it->first);
-  map<int,int> edgeNumbering_old2new_subdomain_map =
+  const SubdomainNumbering edgeNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
-                                edges_subdomain_owned, edges_subdomain);
+                                edges_subdomain_owned, keysOf(edgeNodesMap)));
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
   //6. Figure out what is in the node stars but not locally owned, create ghost information

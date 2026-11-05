@@ -340,9 +340,11 @@ namespace proteus
   /* MPI: file number -> new number of the subdomain's entities (elements,
      faces, edges), the owned ones numbered from ownedBegin in ascending file
      order and the others asked of a directory on the default chunks of
-     [0,nGlobal). owned is a subset of subdomain. Collective. */
-  extern std::map<int,int> subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
-                                                       const std::set<int>& owned, const std::set<int>& subdomain);
+     [0,nGlobal). owned is a subset of subdomain (ascending). Returns (old, new)
+     sorted by old. Collective. */
+  extern std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
+                                                                      const std::set<int>& owned,
+                                                                      const std::vector<int>& subdomain);
 
   /* MPI: flag -1 the subdomain faces the partition cut (exterior to the
      subdomain, interior to the mesh) whose flag is 0, asking each face's owner

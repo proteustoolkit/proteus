@@ -3,6 +3,7 @@ from libcpp.vector cimport vector
 from libcpp.string cimport string
 from libcpp.set cimport set as cppset
 from libcpp.map cimport map as cppmap
+from libcpp.utility cimport pair
 from libcpp cimport bool as cppbool
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
@@ -87,10 +88,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                      const vector[int]& nodeOffsets_old,
                                                                                      const vector[int]& old2new_chunk,
                                                                                      const cppset[int]& wanted)
-    extern cppmap[int,int] c_subdomainNumbersByDirectory "proteus::subdomainNumbersByDirectory" (const MPI_Comm& comm,
-                                                                                                 int nGlobal, int ownedBegin,
-                                                                                                 const cppset[int]& owned,
-                                                                                                 const cppset[int]& subdomain)
+    extern vector[pair[int,int]] c_subdomainNumbersByDirectory "proteus::subdomainNumbersByDirectory" (const MPI_Comm& comm,
+                                                                                                       int nGlobal, int ownedBegin,
+                                                                                                       const cppset[int]& owned,
+                                                                                                       const vector[int]& subdomain)
     extern cppbool c_readSubdomainVertices "proteus::readSubdomainVertices" (const string& vertexFileName, const char* format,
                                                                              int nSpace, int indexBase, int hasVertexMarkers,
                                                                              const cppmap[int,int]& nodes_old2new,
