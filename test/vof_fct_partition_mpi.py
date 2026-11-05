@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""VOF (MODEL=VOF3P for VOF3P) edge-based (STAB=3 smoothness indicator, the default, STAB=2 entropy viscosity or STAB=4) with FCT, a blob advected across a rank cut.
+"""VOF (MODEL=VOF3P for VOF3P) edge-based (STAB=3 smoothness indicator, the default, STAB=2 entropy viscosity or STAB=4) with FCT, or
+Taylor-Galerkin with entropy viscosity (STAB=1: backward Euler, TwoStageNewton, consistent mass, no FCT), a blob advected across a rank cut.
 
 Run by test_vof_partition_independence.py under mpiexec in an empty directory; leaves u.csv (owned nodes,
 sorted by x, y). Same blob and velocity as vof_partition_mpi.py, explicit lumped-mass RKEV, node partition with one
 overlap layer. NOFIX=1 turns off the owner-to-ghost scatters, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost
-dofs; OLDMAX=1 makes the time step read it again (a control).
+dofs; NOREDUCE=1 keeps each rank's own entropy normalization (STAB=1, a control). OLDMAX=1 makes the time step read it again (a control).
 """
 import os
 
@@ -20,7 +21,7 @@ from proteus.FemTools import C0_AffineLinearOnSimplexWithNodalBasis
 from proteus.iproteus import opts
 import importlib
 VOF = importlib.import_module("proteus.mprans." + os.environ.get("MODEL", "VOF"))
-from proteus.NonlinearSolvers import Newton, ExplicitLumpedMassMatrix
+from proteus.NonlinearSolvers import Newton, ExplicitLumpedMassMatrix, TwoStageNewton
 from proteus.LinearAlgebraTools import SparseMatrix
 from proteus.LinearSolvers import KSP_petsc4py
 from proteus.Quadrature import SimplexGaussQuadrature
@@ -61,12 +62,15 @@ def inflow(x, flag):
         return lambda x, t: 0.0
 
 
+STAB = int(os.environ.get('STAB', '3'))
+TG = STAB == 1  # Taylor-Galerkin with entropy viscosity: implicit two-stage solve, consistent mass, no FCT
+
 p = defaults.Physics_base(nd=2, name="vof_part")
 p.domain = domain
 p.LevelModelType = VOF.LevelModel
 p.coefficients = Coefficients(LS_model=None, V_model=None, RD_model=None, ME_model=0,
-                              checkMass=False, epsFact=0.0, STABILIZATION_TYPE=int(os.environ.get('STAB', '3')),
-                              LUMPED_MASS_MATRIX=True, FCT=True)
+                              checkMass=False, epsFact=0.0, STABILIZATION_TYPE=STAB,
+                              LUMPED_MASS_MATRIX=not TG, FCT=not TG)
 p.initialConditions = {0: Blob()}
 p.dirichletConditions = {0: inflow}
 p.advectiveFluxBoundaryConditions = {0: lambda x, flag: None}
@@ -98,6 +102,9 @@ n.nl_atol_res = 1.0e-12
 n.l_atol_res = 1.0e-13
 n.linTolFac = 0.0
 n.maxNonlinearIts = 30
+if TG:
+    n.timeIntegration = TimeIntegration.BackwardEuler_cfl
+    n.levelNonlinearSolver = TwoStageNewton
 n.parallelPartitioningType = options.parallelPartitioningType
 n.nLayersOfOverlapForParallel = options.nLayersOfOverlapForParallel
 
@@ -114,6 +121,10 @@ if os.environ.get("GHOSTCFL"):
         self.edge_based_cfl[self.mesh.nNodes_owned:] = 200.0
         return out
     VOF.LevelModel.getResidual = getResidual
+if os.environ.get("NOREDUCE"):
+    # each rank normalizes the Taylor-Galerkin entropy viscosity by its own subdomain (a control)
+    from proteus.mprans import EntropyViscosity
+    EntropyViscosity.reduce_numDiff = lambda *args: None
 if os.environ.get("OLDMAX"):
     VOF.RKEV.ownedMaxCFL = lambda self: self.cfl.max()
 ns.calculateSolution("vof_part")

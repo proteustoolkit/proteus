@@ -6,7 +6,7 @@ of test/TADR, to t=TFINAL (0.08), for the partition-independence test.
 Run under mpiexec by test_tadr_partition_independence.py in an empty directory, with PETSC_OPTIONS tightening the KSP
 of the mass matrix solves; leaves u.csv there (owned nodes, sorted by x, y). The mesh is unstructured and the partition
 is pinned to a cut x + 0.37 y >= 0.62 through the disk (on more ranks, equal strips along x + 0.37 y). LUMPED=1 uses the lumped mass matrix. NOSCAT=1 turns off every
-owner-to-ghost scatter, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost dofs; OLDMAX=1 makes
+owner-to-ghost scatter, as a control. GHOSTCFL=1 puts garbage in the edge based cfl of the ghost dofs; NOREDUCE=1 keeps each rank's own entropy normalization (STAB=1, a control). OLDMAX=1 makes
 the time step read it again (a control). POROUS=1 makes the porosity vary in space; NOTHETASCAT=1 keeps the partial
 nodal porosity at the ghosts (a control).
 """
@@ -100,6 +100,10 @@ if os.environ.get("GHOSTCFL"):
         self.edge_based_cfl[nOwned:] = 3.0 * self.edge_based_cfl[:nOwned].max()
         return out
     TADR.LevelModel.getResidual = getResidual
+if os.environ.get("NOREDUCE"):
+    # each rank normalizes the Taylor-Galerkin entropy viscosity by its own subdomain (a control)
+    from proteus.mprans import EntropyViscosity
+    EntropyViscosity.reduce_numDiff = lambda *args: None
 if os.environ.get("OLDMAX"):
     TADR.RKEV.ownedMaxCFL = lambda self: self.cfl.max()
 
@@ -118,7 +122,9 @@ def calculateSolution(self, *args, **kwargs):
 NS.NS_base.calculateSolution = calculateSolution
 
 sys.argv = ['parun', 'thelper_tadr_p.py', 'thelper_tadr_n.py', '-l1', '-C',
-            'problem=1 nd=2 unstructured=True refinement=2 nDTout=1 FCT=True ENTROPY_TYPE=1 cE=1.0 '
+            'problem=1 nd=2 unstructured=True refinement=2 nDTout=1 ENTROPY_TYPE=1 cE=1.0 '
+            + 'FCT=' + ('False' if os.environ.get('STAB') == '1' else 'True') + ' '
             'STABILIZATION_TYPE=' + os.environ.get('STAB', '3') + ' T=' + os.environ.get('TFINAL', '0.08')
-            + ' LUMPED_MASS_MATRIX=' + ('True' if os.environ.get('LUMPED') else 'False')]
+            + ' LUMPED_MASS_MATRIX=' + ('True' if os.environ.get('LUMPED') else 'False')
+            + ' ' + os.environ.get('OPTS', '')]
 runpy.run_path(shutil.which('parun'), run_name='__main__')
