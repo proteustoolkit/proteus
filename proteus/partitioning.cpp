@@ -1774,6 +1774,763 @@ bool readSubdomainElements(const MPI_Comm& comm, const std::string& elementFileN
   return true;
 }
 
+/* Steps 4b-8 of the parun -F partitioners, after the second element read
+   (readSubdomainElements): read the faces and edges of the subdomain
+   elements (I/O, local), number elements, faces and edges by owner
+   (subdomainNumbersByDirectory, MPI), collect the ghosts of the minimal
+   overlap, read the subdomain's vertices (I/O, local) and build
+   newMesh.subdomainp with its subdomain-to-global maps, then flag the cut
+   faces -1 (markRankInterfacesByOwner). One body for triangles (simplexDim 3,
+   Triangle .edge files as faces) and tetrahedra (simplexDim 4, TetGen .face);
+   format names the file kind in messages. The element maps given are
+   consumed. max_rss_gb <= 0 skips the memory checks. Returns true on a
+   failed read (every rank reads; a missing file fails on every rank).
+   Collective. */
+template<int simplexDim>
+bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int size, const char* format,
+                             const std::string& elementBoundaryFileName, const std::string& edgeFileName,
+                             const std::string& vertexFileName, int indexBase, int hasVertexMarkers,
+                             int nNodes_overlap, double max_rss_gb, int nElements_global,
+                             const std::valarray<int>& nNodes_subdomain_new, const std::valarray<int>& nodeOffsets_new,
+                             std::set<int>& elements_subdomain_owned,
+                             std::vector<std::set<int> >& nodeElementsStar,
+                             std::vector<std::set<int> >& nodeStarNew,
+                             std::map<int,std::vector<int> >& elementNodesArrayMap,
+                             std::map<int,long int>& elementMaterialTypesMap,
+                             std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
+                             std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
+                             std::map<int,int>& nodes_old2new_subdomain_map,
+                             Mesh& newMesh)
+{
+  using namespace std;
+  PetscErrorCode ierr;
+  bool failed = false;
+  const int nNodes_face = simplexDim-1, nEdges_element = simplexDim*(simplexDim-1)/2;
+  char log_buffer[100];
+  int build_subdomains_send_marked_elements_event;
+  PetscLogEventRegister("Mark/send eles",0,&build_subdomains_send_marked_elements_event);
+  PetscLogEventBegin(build_subdomains_send_marked_elements_event,0,0,0,0);
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done marking elements");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  //cek todo: fix PETsc and memory log messages
+  //
+  //done with the element file
+  //
+  //construct compact nodeElementsArray
+  valarray<int> nodeElementOffsets(nNodes_subdomain_new[rank]+1);
+  nodeElementOffsets[0] = 0;
+  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
+    nodeElementOffsets[nN+1] = nodeElementOffsets[nN]+nodeElementsStar[nN].size();
+  valarray<int> nodeElementsArray(nodeElementOffsets[nNodes_subdomain_new[rank]]);
+  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
+    {
+      for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+           eN_star++,offset++)
+        {
+          nodeElementsArray[offset] = *eN_star;
+        }
+    }
+  nodeElementsStar.clear();
+  //construct compact nodeStarArray
+  valarray<int> nodeStarOffsetsNew(nNodes_subdomain_new[rank]+1);
+  nodeStarOffsetsNew[0] = 0;
+  for (int nN=1;nN<nNodes_subdomain_new[rank]+1;nN++)
+    nodeStarOffsetsNew[nN] = nodeStarOffsetsNew[nN-1] + nodeStarNew[nN-1].size();
+  valarray<int> nodeStarArrayNew(nodeStarOffsetsNew[nNodes_subdomain_new[rank]]);
+  for (int nN=0,offset=0;nN<nNodes_subdomain_new[rank];nN++)
+    {
+      for (set<int>::iterator nN_star=nodeStarNew[nN].begin();nN_star!=nodeStarNew[nN].end();nN_star++,offset++)
+        {
+          nodeStarArrayNew[offset] = *nN_star;
+        }
+    }
+  nodeStarNew.clear();
+  PetscLogEventEnd(build_subdomains_send_marked_elements_event,0,0,0,0);
+  int build_subdomains_global_numbering_elements_event;
+  PetscLogEventRegister("Global ele nmbr",0,&build_subdomains_global_numbering_elements_event);
+  PetscLogEventBegin(build_subdomains_global_numbering_elements_event,0,0,0,0);
+  //
+  //5. Generate global element numbering corresponding to new subdomain ownership
+  //
+  logEvent("Generating global element numbering corresponding to new subdomain ownership",5);
+  valarray<int> nElements_subdomain_new(size),
+    elementOffsets_new(size+1);
+  for (int sdN = 0; sdN < size; sdN++)
+    {
+      if (sdN == rank)
+        nElements_subdomain_new[sdN] = int(elements_subdomain_owned.size());
+      else
+        nElements_subdomain_new[sdN] = 0;
+    }
+  valarray<int> nElements_subdomain_new_send = nElements_subdomain_new;
+  MPI_Allreduce(&nElements_subdomain_new_send[0],&nElements_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
+  sprintf(log_buffer,"Final partitioning: Max nElements_subdomain %d nElements_global %d",nElements_subdomain_new.max(),nElements_global);
+  logEvent(log_buffer,5);
+
+  //construct new offsets for elements
+  elementOffsets_new[0] = 0;
+  for (int sdN = 0; sdN < size; sdN++)
+    elementOffsets_new[sdN+1] = elementOffsets_new[sdN] + nElements_subdomain_new[sdN];
+  //
+  //the new numbers of every element of the subdomain, owned or not, from a
+  //directory on the default chunks of the file numbers (no mappings-file read)
+  //
+  const SubdomainNumbering elementNumbering_old2new_subdomain_map(
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
+                                elements_subdomain_owned, keysOf(elementNodesArrayMap)));
+  const SubdomainNumbering elementNumbering_new2old_subdomain_map = elementNumbering_old2new_subdomain_map.inverse();
+  PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  int build_subdomains_faces_event;
+  PetscLogEventRegister("Subd faces",0,&build_subdomains_faces_event);
+  PetscLogEventBegin(build_subdomains_faces_event,0,0,0,0);
+  //
+  //4b,5b. repeat process to build global face (elementBoundary) numbering
+  //
+  //first read element boundaries to create nodeElementBoundariesArray
+  //for all element boundaries on this subdomain, which we'll use to
+  //grab element boundaries from the bit array
+  logEvent("Generating global face numbering and ownership corresponding to new subdomain ownership",5);
+  //the faces with a node of a subdomain element; the others play no part below
+  bool hasElementBoundaryMarkers = false;
+  int nElementBoundaries_global;
+  int ihasElementBoundaryMarkers(0);
+  vector<int> ebNumbers, ebNodes, ebIds;
+  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, format, simplexDim == 4 ? "face" : "edge", nNodes_face, indexBase, true,
+                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
+                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
+    {
+      failed = true;
+      return failed;
+    }
+  assert(nElementBoundaries_global > 0);
+  if (ihasElementBoundaryMarkers > 0)
+    {
+      hasElementBoundaryMarkers = true;
+    }
+  newMesh.nElementBoundaries_global = nElementBoundaries_global;
+  //note, these will be in the new element numbering
+  set<int> elementBoundaries_subdomain_owned;
+  vector<set<int>> nodeElementBoundariesStar(nNodes_subdomain_new[rank]);
+  map<int,int> elementBoundaryMaterialTypesMap;
+  map<int,vector<int> > elementBoundariesMap;
+  set<int> supportedElementBoundaries;
+  set<int> elementBoundaries_subdomain;
+  for (size_t k = 0; k < ebNumbers.size(); k++)
+    {
+      const int neb = ebNumbers[k];
+      const int ebId = ebIds.empty() ? 0 : ebIds[k];
+      //grab the element boundaries for the node if the node is owned by the subdomain
+      //this will miss the element boundaries on the "outside boundary" of the star, which we'll grab later
+      //a node of no subdomain element keeps a distinct negative number, so the
+      //face's tuple matches no subdomain face and the check on nodes[1] fails
+      int nodes[nNodes_face];
+      for (int i = 0; i < nNodes_face; i++)
+        {
+          const int nn = ebNodes[nNodes_face*k+i];
+          nodes[i] = -1-i;
+          map<int,int>::const_iterator it = nodes_old2new_subdomain_map.find(nn);
+          if (it != nodes_old2new_subdomain_map.end())
+            nodes[i] = it->second;
+          if (nodes[i] >= nodeOffsets_new[rank] && nodes[i] < nodeOffsets_new[rank+1])
+            {
+              nodeElementBoundariesStar[nodes[i]-nodeOffsets_new[rank]].insert(neb);
+              supportedElementBoundaries.insert(neb);
+            }
+        }
+      NodeTuple<nNodes_face> nodeTuple(nodes);
+      if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
+        {
+          elementBoundaries_subdomain.insert(neb);
+          if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
+            elementBoundaries_subdomain_owned.insert(neb);
+          if (ihasElementBoundaryMarkers > 0)
+            elementBoundaryMaterialTypesMap[neb]=ebId;
+          int eN_left = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].left];
+          if (elementBoundariesMap.find(eN_left) != elementBoundariesMap.end())
+            {
+              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
+            }
+          else
+            {
+              //initialize
+              vector<int> elementBoundaries_element(simplexDim,-1);
+              elementBoundariesMap[eN_left] = elementBoundaries_element;
+              //assign
+              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
+            }
+          if (elementBoundaryElementsMap[nodeTuple].right >= 0)
+            {
+              int eN_right = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].right];
+              if (elementBoundariesMap.find(eN_right) != elementBoundariesMap.end())
+                {
+                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
+                }
+              else
+                {
+                  //initialize
+                  vector<int> elementBoundaries_element(simplexDim,-1);
+                  elementBoundariesMap[eN_right] = elementBoundaries_element;
+                  //assign
+                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
+                }
+            }
+        }
+    }
+  elementBoundaryElementsMap.clear();
+  //done reading element boundaries
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
+    nElementBoundaries_owned_new=0;
+  MPI_Allreduce(&nElementBoundaries_owned_subdomain,&nElementBoundaries_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
+  assert(nElementBoundaries_owned_new == nElementBoundaries_global);
+  //now get the element boundaries on the outside of the star
+  for (auto elementBoundariesp=elementBoundariesMap.begin(); 
+       elementBoundariesp!=elementBoundariesMap.end();
+       elementBoundariesp++)
+    {
+      //loop over the nodes of this element for the owned nodes
+      for (int iv=0;iv<simplexDim;iv++)
+        {
+          //the elementNodesArrayMap is in the old element numbering while the elementBoundariesMap is in the new element numbering       
+          int nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[elementBoundariesp->first]][iv];
+          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
+            {
+              //add all the faces to this node star
+              for(int eb=0;eb<simplexDim;eb++)
+                {
+                  nodeElementBoundariesStar[nN_global-nodeOffsets_new[rank]].insert(elementBoundariesp->second[eb]);
+                }
+            }
+        }
+    }
+  //build compact structures for nodeElementBoundariesArray
+  valarray<int> nodeElementBoundaryOffsets(nNodes_subdomain_new[rank]+1);
+  nodeElementBoundaryOffsets[0] = 0;
+  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
+    nodeElementBoundaryOffsets[nN+1] = nodeElementBoundaryOffsets[nN]+nodeElementBoundariesStar[nN].size();
+  valarray<int> nodeElementBoundariesArray(nodeElementBoundaryOffsets[nNodes_subdomain_new[rank]]);
+  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
+    {
+      for (set<int>::iterator ebN_star = nodeElementBoundariesStar[nN].begin(); ebN_star != nodeElementBoundariesStar[nN].end();
+           ebN_star++,offset++)
+        {
+          nodeElementBoundariesArray[offset] = *ebN_star;
+        }
+    }
+
+  //get the number of elementBoundaries owned on each processor
+  valarray<int> nElementBoundaries_subdomain_new(size),
+    elementBoundaryOffsets_new(size+1);
+  for (int sdN=0;sdN<size;sdN++)
+    if (sdN == rank)
+      nElementBoundaries_subdomain_new[sdN] = elementBoundaries_subdomain_owned.size();
+    else
+      nElementBoundaries_subdomain_new[sdN] = 0;
+  valarray<int> nElementBoundaries_subdomain_new_send=nElementBoundaries_subdomain_new;
+  MPI_Allreduce(&nElementBoundaries_subdomain_new_send[0],&nElementBoundaries_subdomain_new[0],
+                size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
+  elementBoundaryOffsets_new[0] = 0;
+  for (int sdN=0;sdN<size;sdN++)
+    elementBoundaryOffsets_new[sdN+1] = elementBoundaryOffsets_new[sdN]+nElementBoundaries_subdomain_new[sdN];
+  //the new numbers of every face of the subdomain, owned or not, from the
+  //directory (no mappings-file read)
+  const SubdomainNumbering elementBoundaryNumbering_old2new_subdomain_map(
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
+                                elementBoundaries_subdomain_owned,
+                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end())));
+  PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  int build_subdomains_edges_event;
+  PetscLogEventRegister("Subd edges",0,&build_subdomains_edges_event);
+  PetscLogEventBegin(build_subdomains_edges_event,0,0,0,0);
+
+  //
+  //4c,5c. Repeate the process for edges
+  //
+  logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
+  //the edges with a node of a subdomain element; the others play no part below.
+  //The .edge markers are not read (header count only), as always.
+  bool hasEdgeMarkers = false;
+  int nEdges_global;
+  int ihasEdgeMarkers(0);
+  vector<int> edNumbers, edNodes, edIds;
+  if (!readSimplexSubentitiesTouching(edgeFileName, format, "edge", 2, indexBase, false,
+                                      nodes_old2new_subdomain_map, nEdges_global,
+                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
+    {
+      failed = true;
+      return failed;
+    }
+  assert(nEdges_global > 0);
+  if (ihasEdgeMarkers > 0)
+    {
+      hasEdgeMarkers = true;
+    }
+  newMesh.nEdges_global = nEdges_global;
+  set<int> edges_subdomain_owned;
+  vector<set<int> > nodeEdgesStar(nNodes_subdomain_new[rank]);
+  map<int,int> edgeMaterialTypesMap;
+  map<int,vector<int> > elementEdgesMap;
+  map<int,pair<int,int> > edgeNodesMap;
+  set<int> supportedEdges;
+  for (size_t k = 0; k < edNumbers.size(); k++)
+    {
+      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
+      const int edId = edIds.empty() ? 0 : edIds[k];
+      int nn0_new = -1;
+      if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
+        nn0_new = nodes_old2new_subdomain_map[nn0];
+      if (nn0_new >= nodeOffsets_new[rank] && nn0_new < nodeOffsets_new[rank+1])
+        {
+          nodeEdgesStar.at(nn0_new-nodeOffsets_new[rank]).insert(ned);
+          supportedEdges.insert(ned);
+        }
+      int nn1_new = -2;
+      if(nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
+        nn1_new = nodes_old2new_subdomain_map[nn1];
+      if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
+        {
+          nodeEdgesStar.at(nn1_new-nodeOffsets_new[rank]).insert(ned);
+          supportedEdges.insert(ned);
+        }
+      int nodes[2] = {nn0_new,nn1_new};
+      NodeTuple<2> nodeTuple(nodes);
+      if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
+        {
+          if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
+            edges_subdomain_owned.insert(ned);
+          //pick up all the edges on the subdomain and store their nodes
+          edgeNodesMap[ned].first = nodeTuple.nodes[0];
+          edgeNodesMap[ned].second = nodeTuple.nodes[1];
+          if (ihasEdgeMarkers > 0)
+            edgeMaterialTypesMap[ned]=edId;
+          for (auto elementp=edgeElementsMap[nodeTuple].begin();
+               elementp != edgeElementsMap[nodeTuple].end();
+               elementp++)
+            {
+              int eN = elementNumbering_old2new_subdomain_map[elementp->first];
+              if (elementEdgesMap.find(eN) != elementEdgesMap.end())
+                {
+                  elementEdgesMap[eN][elementp->second] = ned;
+                }
+              else
+                {
+                  std::vector<int> init(nEdges_element,-1);
+                  elementEdgesMap[eN] = init;
+                  elementEdgesMap[eN][elementp->second] = ned;
+                }
+            }
+        }
+    }//end iv
+  edgeElementsMap.clear();
+  int nEdges_owned_subdomain=edges_subdomain_owned.size(),
+    nEdges_owned_new=0;
+  MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
+  assert(nEdges_owned_new == nEdges_global);
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading edges");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  //done with edge file
+  //
+  //just as with faces, we need to add edges along outer boundaries of star
+  //not sure if we need to collect nodeEdges star above anymore, since we're doing this
+  //
+  for (auto edgesp=elementEdgesMap.begin();
+       edgesp!=elementEdgesMap.end();
+       edgesp++)
+    {
+      //loop over the nodes of this element for the owned nodes
+      for (int iv=0;iv<simplexDim;iv++)
+        {
+          //the elementNodesArrayMap is in the old element numbering while the elementEdgesMap is in the new element numbering
+          int nN_global = -1;
+          if (elementNumbering_new2old_subdomain_map.find(edgesp->first) != elementNumbering_new2old_subdomain_map.end())
+            nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[edgesp->first]][iv];
+          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
+            {
+              //add all the edges to this node star
+              for(int ed=0;ed<nEdges_element;ed++)
+                {
+                  nodeEdgesStar.at(nN_global-nodeOffsets_new[rank]).insert(edgesp->second[ed]);
+                }
+            }
+        }
+    }
+  //build compact data structures for nodeEdgesArray
+  valarray<int> nodeEdgeOffsets(nNodes_subdomain_new[rank]+1);
+  nodeEdgeOffsets[0] = 0;
+  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
+    nodeEdgeOffsets[nN+1] = nodeEdgeOffsets[nN]+nodeEdgesStar.at(nN).size();
+  valarray<int> nodeEdgesArray(nodeEdgeOffsets[nNodes_subdomain_new[rank]]);
+  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
+    {
+      for (auto edN_star = nodeEdgesStar.at(nN).begin();
+           edN_star != nodeEdgesStar.at(nN).end();
+           edN_star++,offset++)
+        {
+          nodeEdgesArray[offset] = *edN_star;
+        }
+    }
+  newMesh.subdomainp->nEdges_global = edgeNodesMap.size();
+  //get the number of edges on each processor
+  valarray<int> nEdges_subdomain_new(size),
+    edgeOffsets_new(size+1);
+  for (int sdN=0;sdN<size;sdN++)
+    if (sdN == rank)
+      nEdges_subdomain_new[sdN] = edges_subdomain_owned.size();
+    else
+      nEdges_subdomain_new[sdN] = 0;
+  valarray<int> nEdges_subdomain_new_send=nEdges_subdomain_new;
+  MPI_Allreduce(&nEdges_subdomain_new_send[0],&nEdges_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
+  //
+  //construct new offsets for owned edges
+  //
+  edgeOffsets_new[0] = 0;
+  for (int sdN=0;sdN<size;sdN++)
+    edgeOffsets_new[sdN+1] = edgeOffsets_new[sdN]+nEdges_subdomain_new[sdN];
+  //
+  //the new numbers of every edge of the subdomain, owned or not, from the
+  //directory (no mappings-file read)
+  const SubdomainNumbering edgeNumbering_old2new_subdomain_map(
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
+                                edges_subdomain_owned, keysOf(edgeNodesMap)));
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  //
+  //6. Figure out what is in the node stars but not locally owned, create ghost information
+  //
+  logEvent("Creating ghost information",5);
+  set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
+  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
+    {
+      //nodes
+      for (int offset = nodeStarOffsetsNew[nN];offset<nodeStarOffsetsNew[nN+1];offset++)
+        {
+          int nN_point_global = nodeStarArrayNew[offset];
+          bool offproc = nN_point_global < nodeOffsets_new[rank] || nN_point_global >= nodeOffsets_new[rank+1];
+          if (offproc)
+            nodes_overlap.insert(nN_point_global);
+        }
+      //elements
+      for (int eN_star_offset = nodeElementOffsets[nN];
+           eN_star_offset < nodeElementOffsets[nN+1]; eN_star_offset++)
+        {
+          int eN_star_old = nodeElementsArray[eN_star_offset];
+          int eN_star_new = elementNumbering_old2new_subdomain_map[eN_star_old];
+          bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
+          if (offproc)
+            elements_overlap.insert(eN_star_new);
+        }
+      //element boundaries
+      for (int ebN_star_offset = nodeElementBoundaryOffsets[nN];
+           ebN_star_offset < nodeElementBoundaryOffsets[nN+1]; ebN_star_offset++)
+        {
+          int ebN_star_old = nodeElementBoundariesArray[ebN_star_offset];
+          int ebN_star_new = elementBoundaryNumbering_old2new_subdomain_map[ebN_star_old];
+          bool offproc = ebN_star_new >= elementBoundaryOffsets_new[rank+1] || ebN_star_new < elementBoundaryOffsets_new[rank];
+          if (offproc)
+            elementBoundaries_overlap.insert(ebN_star_new);
+        }
+      //edges in overlap
+      for (int edN_star_offset = nodeEdgeOffsets[nN];
+           edN_star_offset < nodeEdgeOffsets[nN+1]; edN_star_offset++)
+        {
+          int edN_star_old = nodeEdgesArray[edN_star_offset];
+          int edN_star_new = edgeNumbering_old2new_subdomain_map[edN_star_old];
+          bool offproc = edN_star_new >= edgeOffsets_new[rank+1] || edN_star_new < edgeOffsets_new[rank];
+          if (offproc)
+            edges_overlap.insert(edN_star_new);
+        }
+    }//nodes on this processor
+  //cek debugging, edge overlap seems to be messed up. Check global node tuples of edges vs global edge numbers
+  assert(edges_overlap.size() + nEdges_subdomain_new[rank] == edgeNodesMap.size());
+  //
+  //enumerate the overlap
+  //
+  int nN_subdomain = nNodes_subdomain_new[rank];
+  map<int,int> nodes_overlap_global2subdomainMap;
+  for (auto nN_globalp=nodes_overlap.begin();nN_globalp != nodes_overlap.end(); nN_globalp++,nN_subdomain++)
+    nodes_overlap_global2subdomainMap[*nN_globalp] = nN_subdomain;
+  //
+  //7. add any addtional overlap, skip for now
+  //
+  //cek todo: re-enable additional overlap with out of core global maps
+  assert(nNodes_overlap<2);
+  logEvent("Skipping additiona of addtional overlap--only minimal overlap supported by this partioning function for now",5);
+  //
+  PetscLogEventEnd(build_subdomains_edges_event,0,0,0,0);
+  int build_subdomains_renumber_event;
+  PetscLogEventRegister("Subd's renumber",0,&build_subdomains_renumber_event);
+  PetscLogEventBegin(build_subdomains_renumber_event,0,0,0,0);
+  //
+  //8. Build subdomain meshes in new numbering, assumes memory not allocated in subdomain mesh
+  //
+  if (simplexDim == 4)
+    {
+      logEvent("USER WARNING: You are partioning in parallel directly from Tetgen files (parun -F ...). ",5);
+      logEvent("USER WARNING: You must use the 'f' and 'ee' flags in the triangleOptions input to avoid errors.",5);
+      logEvent("USER WARNING: You may have done so, but the tetgen options are not stored in the Tetgen files, so we can't know.",5);
+    }
+  else if (rank==0)
+    {
+      std::cerr<<"USER WARNING: In order to avoid a segmentation fault, you need to have supplied the 'f' flag to the triangleOptions input."<<std::endl;
+      std::cerr<<"USER WARNING: In order to avoid an edge assertion error, you need to have supplied the 'ee' flag to the triangleOptions input."<<std::endl;
+    }
+  logEvent("Creating final subdomain mesh data structures",5);
+  if (newMesh.subdomainp == NULL)
+    newMesh.subdomainp = new Mesh();
+  newMesh.subdomainp->nElements_global = nElements_subdomain_new[rank] + elements_overlap.size();
+  newMesh.subdomainp->nNodes_global    = nNodes_subdomain_new[rank] + nodes_overlap.size();
+  newMesh.subdomainp->nElementBoundaries_global = nElementBoundaries_subdomain_new[rank]+elementBoundaries_overlap.size();
+  assert(int(edges_subdomain_owned.size()+edges_overlap.size()) == newMesh.subdomainp->nEdges_global);
+  //newMesh.subdomainp->nEdges_global   = edges_subdomain_owned.size()+edges_overlap.size();
+  newMesh.subdomainp->nNodes_element   = newMesh.nNodes_element;
+  newMesh.subdomainp->nNodes_elementBoundary = newMesh.nNodes_elementBoundary;
+  newMesh.subdomainp->nElementBoundaries_element = newMesh.nElementBoundaries_element;
+  //subdomain 2 global mappings (including ghost info)
+  valarray<int> nodeNumbering_subdomain2global(newMesh.subdomainp->nNodes_global);
+  valarray<int> elementNumbering_subdomain2global(newMesh.subdomainp->nElements_global);
+  valarray<int> elementBoundaryNumbering_subdomain2global(newMesh.subdomainp->nElementBoundaries_global);
+  valarray<int> edgeNumbering_subdomain2global(newMesh.subdomainp->nEdges_global);
+  map<int,int> nodeNumbering_global2subdomainMap;
+  map<int,int> elementBoundaryNumbering_global2subdomainMap;
+  map<int,int> edgeNumbering_global2subdomainMap;
+  newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
+  //0 until a vertex flag or a face flag says otherwise: without vertex markers
+  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
+  //faces take face flags below, so the others used to keep whatever the heap held
+  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
+  //
+  //now finally finish reading node coordinates and node flags
+  //
+  if (!readSubdomainVertices(vertexFileName, format, simplexDim-1, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
+                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
+                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
+                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
+    MPI_Abort(PROTEUS_COMM_WORLD, 1);
+  //done with vertex file (and all file reads at this point)
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+
+  newMesh.subdomainp->elementNodesArray = new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nNodes_element];
+  newMesh.subdomainp->elementMaterialTypes = new int[newMesh.subdomainp->nElements_global];
+  //
+  //elements
+  //
+  //locally owned
+  //
+  for (int eN = 0; eN < nElements_subdomain_new[rank]; eN++)
+    {
+      int eN_global_new = elementOffsets_new[rank] + eN;
+      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
+      elementNumbering_subdomain2global[eN] = eN_global_new;
+      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
+      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
+        {
+          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
+          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
+          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
+        }
+    }
+  //
+  //ghost
+  //
+  set<int>::iterator eN_p = elements_overlap.begin();
+  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
+    {
+      int eN_global_new = *eN_p;
+      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
+      elementNumbering_subdomain2global[eN] = eN_global_new;
+      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
+      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
+        {
+          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
+          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
+          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
+        }
+    }
+  elementNodesArrayMap.clear();
+  elementMaterialTypesMap.clear();
+  //
+  //element boundaries
+  //
+  //owned
+  //
+  for (int ebN=0; ebN < nElementBoundaries_subdomain_new[rank]; ebN++)
+    {
+      int ebN_global = ebN + elementBoundaryOffsets_new[rank];
+      elementBoundaryNumbering_subdomain2global[ebN]=ebN_global;
+      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
+    }
+  //
+  //ghost
+  //
+  set<int>::iterator ebN_p = elementBoundaries_overlap.begin();
+  for(int ebN=nElementBoundaries_subdomain_new[rank];ebN < nElementBoundaries_subdomain_new[rank] + int(elementBoundaries_overlap.size()); ebN++,ebN_p++)
+    {
+      int ebN_global = *ebN_p;
+      elementBoundaryNumbering_subdomain2global[ebN] = ebN_global;
+      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
+    }
+  //
+  //need elementBoundariesArray to assign consistent numbering on subdomain
+  //
+  //local
+  //
+  newMesh.subdomainp->elementBoundariesArray =
+    new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nElementBoundaries_element];
+  for (int eN=0;eN<nElements_subdomain_new[rank];eN++)
+    {
+      int eN_global = eN+elementOffsets_new[rank];
+      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
+        {
+          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
+            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global][ebN]]];
+        }
+    }
+  //
+  //ghost elements
+  //
+  eN_p = elements_overlap.begin();
+  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
+    {
+      int eN_global_new = *eN_p;
+      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
+        {
+          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
+            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global_new][ebN]]];
+        }
+    }
+  //
+  //edges
+  //
+  //local
+  //
+  for (int edN=0; edN < nEdges_subdomain_new[rank]; edN++)
+    {
+      int edN_global = edN + edgeOffsets_new[rank];
+      edgeNumbering_subdomain2global[edN]=edN_global;
+      edgeNumbering_global2subdomainMap[edN_global] = edN;
+    }
+  //
+  //ghost
+  //
+  set<int>::iterator edN_p = edges_overlap.begin();
+  for(int edN=nEdges_subdomain_new[rank];edN < nEdges_subdomain_new[rank] + int(edges_overlap.size()); edN++,edN_p++)
+    {
+      int edN_global = *edN_p;
+      edgeNumbering_subdomain2global[edN] = edN_global;
+      edgeNumbering_global2subdomainMap[edN_global] = edN;
+    }
+  //
+  //now build edgeNodes array in new numberings
+  //
+  newMesh.subdomainp->edgeNodesArray = new int[newMesh.subdomainp->nEdges_global*2];
+  for (int i=0;i<newMesh.subdomainp->nEdges_global*2;i++)
+    newMesh.subdomainp->edgeNodesArray[i] = -1;
+  for (map<int,pair<int,int> >::iterator edgep=edgeNodesMap.begin();
+       edgep!=edgeNodesMap.end();
+       edgep++)
+    {
+      int edN_global_old = edgep->first;
+      int edN_global_new = edgeNumbering_old2new_subdomain_map[edN_global_old];
+      assert(edgeNumbering_global2subdomainMap.find(edN_global_new) != edgeNumbering_global2subdomainMap.end());
+      int edN_subdomain  = edgeNumbering_global2subdomainMap[edN_global_new];
+      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+0] = nodeNumbering_global2subdomainMap[edgep->second.first];
+      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+1] = nodeNumbering_global2subdomainMap[edgep->second.second];
+    }
+  //
+  //end edges
+  //
+
+  //now build rest of subdomain mesh connectivity information etc
+  if constexpr (simplexDim == 4)
+    constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_tetrahedron(*newMesh.subdomainp);
+  else
+    constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_triangle(*newMesh.subdomainp);
+  //build local geometric info
+  if constexpr (simplexDim == 4)
+    {
+      allocateGeometricInfo_tetrahedron(*newMesh.subdomainp);
+      computeGeometricInfo_tetrahedron(*newMesh.subdomainp);
+    }
+  else
+    {
+      allocateGeometricInfo_triangle(*newMesh.subdomainp);
+      computeGeometricInfo_triangle(*newMesh.subdomainp);
+    }
+  if (hasElementBoundaryMarkers)
+    {
+      assert(newMesh.subdomainp->elementBoundariesArray != NULL);
+      for (auto ebmp = elementBoundaryMaterialTypesMap.begin(); ebmp != elementBoundaryMaterialTypesMap.end();ebmp++)
+        {
+          int ebN_global_new = elementBoundaryNumbering_old2new_subdomain_map[ebmp->first];
+          assert(elementBoundaryNumbering_global2subdomainMap.find(ebN_global_new) != elementBoundaryNumbering_global2subdomainMap.end());
+          int ebN_subdomain  = elementBoundaryNumbering_global2subdomainMap[ebN_global_new];
+          newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
+        }
+      if (!hasVertexMarkers)
+        for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
+          {
+            int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
+            for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
+              {
+                int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
+                newMesh.subdomainp->nodeMaterialTypes[nN] = newMesh.subdomainp->elementBoundaryMaterialTypes[ebN];
+              }
+          }
+    }
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);
+  int build_subdomains_cleanup_event;
+  PetscLogEventRegister("Cleanup",0,&build_subdomains_cleanup_event);
+  PetscLogEventBegin(build_subdomains_cleanup_event,0,0,0,0);
+  //transfer information about owned nodes and elements to mesh
+  logEvent("Cleaning up after partitioning",5);
+  if (newMesh.nodeOffsets_subdomain_owned)
+    delete [] newMesh.nodeOffsets_subdomain_owned;
+  if (newMesh.elementOffsets_subdomain_owned)
+    delete [] newMesh.elementOffsets_subdomain_owned;
+  if (newMesh.elementBoundaryOffsets_subdomain_owned)
+    delete [] newMesh.elementBoundaryOffsets_subdomain_owned;
+  if (newMesh.edgeOffsets_subdomain_owned)
+    delete [] newMesh.edgeOffsets_subdomain_owned;
+  newMesh.nodeOffsets_subdomain_owned    = new int[size+1];
+  newMesh.elementOffsets_subdomain_owned = new int[size+1];
+  newMesh.elementBoundaryOffsets_subdomain_owned = new int[size+1];
+  newMesh.edgeOffsets_subdomain_owned = new int[size+1];
+  for (int sdN = 0; sdN < size+1; sdN++)
+    {
+      newMesh.nodeOffsets_subdomain_owned[sdN]    = nodeOffsets_new[sdN];
+      newMesh.elementOffsets_subdomain_owned[sdN] = elementOffsets_new[sdN];
+      newMesh.elementBoundaryOffsets_subdomain_owned[sdN] = elementBoundaryOffsets_new[sdN];
+      newMesh.edgeOffsets_subdomain_owned[sdN] = edgeOffsets_new[sdN];
+    }
+  if (newMesh.nodeNumbering_subdomain2global)
+    delete [] newMesh.nodeNumbering_subdomain2global;
+  newMesh.nodeNumbering_subdomain2global = new int[newMesh.subdomainp->nNodes_global];
+  for (int nN = 0; nN < newMesh.subdomainp->nNodes_global; nN++)
+    newMesh.nodeNumbering_subdomain2global[nN] = nodeNumbering_subdomain2global[nN];
+  if (newMesh.elementNumbering_subdomain2global)
+    delete [] newMesh.elementNumbering_subdomain2global;
+  newMesh.elementNumbering_subdomain2global = new int[newMesh.subdomainp->nElements_global];
+  for (int eN = 0; eN < newMesh.subdomainp->nElements_global; eN++)
+    newMesh.elementNumbering_subdomain2global[eN] = elementNumbering_subdomain2global[eN];
+  //
+  if (newMesh.elementBoundaryNumbering_subdomain2global)
+    delete [] newMesh.elementBoundaryNumbering_subdomain2global;
+  newMesh.elementBoundaryNumbering_subdomain2global = new int[newMesh.subdomainp->nElementBoundaries_global];
+  for (int ebN = 0; ebN < newMesh.subdomainp->nElementBoundaries_global; ebN++)
+    newMesh.elementBoundaryNumbering_subdomain2global[ebN] = elementBoundaryNumbering_subdomain2global[ebN];
+  //
+  if (newMesh.edgeNumbering_subdomain2global)
+    delete [] newMesh.edgeNumbering_subdomain2global;
+  newMesh.edgeNumbering_subdomain2global = new int[newMesh.subdomainp->nEdges_global];
+  for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
+    newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
+  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
+  //cleanup
+  PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
+  return false;
+}
+
 int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, 
                                   Mesh& newMesh, int nNodes_overlap, double memHardLimit)
 {
@@ -2028,10 +2785,8 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //GN_SW2DCV read it; nothing reads the node new2old, element, face or edge
   //numberings, which were written here until 2026-11)
   H5Fclose(file_id);
-  //nodes_subdomain_old2new_array stays live: readSubdomainElements answers
-  //other ranks' old->new requests from it.
-  //ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
-  //ierr=ISDestroy(&nodeNumberingIS_subdomain_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  //nodes_subdomain_old2new_array stays live until the subdomain is built:
+  //readSubdomainElements answers other ranks' old->new requests from it.
 
   PetscLogEventEnd(repartition_nodes_event,0,0,0,0);
   int receive_element_mask_event;
@@ -2058,12 +2813,12 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   set<int> elements_subdomain_owned;
   vector<set<int>> nodeElementsStar(nNodes_subdomain_new[rank]);
   vector<set<int>> nodeStarNew(nNodes_subdomain_new[rank]);
-  map<int,valarray<int>> elementNodesArrayMap;
+  map<int,vector<int> > elementNodesArrayMap;
   map<int,long int> elementMaterialTypesMap;
   map<NodeTuple<3>,ElementNeighbors> elementBoundaryElementsMap;
   map<NodeTuple<2>,set<pair<int,int>>> edgeElementsMap;
   map<int, int> nodes_old2new_subdomain_map;
-  if (!readSubdomainElements<simplexDim,valarray<int> >(PROTEUS_COMM_WORLD, elementFileName, "Tetgen", indexBase, nNodes_global,
+  if (!readSubdomainElements<simplexDim,vector<int> >(PROTEUS_COMM_WORLD, elementFileName, "Tetgen", indexBase, nNodes_global,
                                                         nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
                                                         nElements_global, elements_subdomain_owned,
                                                         nodeElementsStar, nodeStarNew, elementNodesArrayMap,
@@ -2078,717 +2833,16 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
   assert(nElements_owned_new == nElements_global);
   PetscLogEventEnd(build_subdomains_reread_elements_event,0,0,0,0);
-  int build_subdomains_send_marked_elements_event;
-  PetscLogEventRegister("Mark/send eles",0,&build_subdomains_send_marked_elements_event);
-  PetscLogEventBegin(build_subdomains_send_marked_elements_event,0,0,0,0);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done marking elements");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //cek todo: fix PETsc and memory log messages
-  //
-  //done with the element file
-  //
-  //construct compact nodeElementsArray
-  valarray<int> nodeElementOffsets(nNodes_subdomain_new[rank]+1);
-  nodeElementOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeElementOffsets[nN+1] = nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-  valarray<int> nodeElementsArray(nodeElementOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
-           eN_star++,offset++)
-        {
-          nodeElementsArray[offset] = *eN_star;
-        }
-    }
-  nodeElementsStar.clear();
-  //construct compact nodeStarArray
-  valarray<int> nodeStarOffsetsNew(nNodes_subdomain_new[rank]+1);
-  nodeStarOffsetsNew[0] = 0;
-  for (int nN=1;nN<nNodes_subdomain_new[rank]+1;nN++)
-    nodeStarOffsetsNew[nN] = nodeStarOffsetsNew[nN-1] + nodeStarNew[nN-1].size();
-  valarray<int> nodeStarArrayNew(nodeStarOffsetsNew[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0;nN<nNodes_subdomain_new[rank];nN++)
-    {
-      for (set<int>::iterator nN_star=nodeStarNew[nN].begin();nN_star!=nodeStarNew[nN].end();nN_star++,offset++)
-        {
-          nodeStarArrayNew[offset] = *nN_star;
-        }
-    }
-  nodeStarNew.clear();
-  PetscLogEventEnd(build_subdomains_send_marked_elements_event,0,0,0,0);
-  int build_subdomains_global_numbering_elements_event;
-  PetscLogEventRegister("Global ele nmbr",0,&build_subdomains_global_numbering_elements_event);
-  PetscLogEventBegin(build_subdomains_global_numbering_elements_event,0,0,0,0);
-  //
-  //5. Generate global element numbering corresponding to new subdomain ownership
-  //
-  logEvent("Generating global element numbering corresponding to new subdomain ownership",5);
-  valarray<int> nElements_subdomain_new(size),
-    elementOffsets_new(size+1);
-  for (int sdN = 0; sdN < size; sdN++)
-    {
-      if (sdN == rank)
-        nElements_subdomain_new[sdN] = int(elements_subdomain_owned.size());
-      else
-        nElements_subdomain_new[sdN] = 0;
-    }
-  valarray<int> nElements_subdomain_new_send = nElements_subdomain_new;
-  MPI_Allreduce(&nElements_subdomain_new_send[0],&nElements_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  sprintf(log_buffer,"Final partitioning: Max nElements_subdomain %d nElements_global %d",nElements_subdomain_new.max(),nElements_global);
-  logEvent(log_buffer,5);
-
-  //construct new offsets for elements
-  elementOffsets_new[0] = 0;
-  for (int sdN = 0; sdN < size; sdN++)
-    elementOffsets_new[sdN+1] = elementOffsets_new[sdN] + nElements_subdomain_new[sdN];
-  //
-  //the new numbers of every element of the subdomain, owned or not, from a
-  //directory on the default chunks of the file numbers (no mappings-file read)
-  //
-  const SubdomainNumbering elementNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
-                                elements_subdomain_owned, keysOf(elementNodesArrayMap)));
-  const SubdomainNumbering elementNumbering_new2old_subdomain_map = elementNumbering_old2new_subdomain_map.inverse();
-  PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int build_subdomains_faces_event;
-  PetscLogEventRegister("Subd faces",0,&build_subdomains_faces_event);
-  PetscLogEventBegin(build_subdomains_faces_event,0,0,0,0);
-  //
-  //4b,5b. repeat process to build global face (elementBoundary) numbering
-  //
-  //first read element boundaries to create nodeElementBoundariesArray
-  //for all element boundaries on this subdomain, which we'll use to
-  //grab element boundaries from the bit array
-  logEvent("Generating global face numbering and ownership corresponding to new subdomain ownership",5);
-  //the faces with a node of a subdomain element; the others play no part below
-  bool hasElementBoundaryMarkers = false;
-  int nElementBoundaries_global;
-  int ihasElementBoundaryMarkers(0);
-  vector<int> ebNumbers, ebNodes, ebIds;
-  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "Tetgen", "face", 3, indexBase, true,
-                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
-                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
-    {
-      failed = true;
-      return failed;
-    }
-  assert(nElementBoundaries_global > 0);
-  if (ihasElementBoundaryMarkers > 0)
-    {
-      hasElementBoundaryMarkers = true;
-    }
-  newMesh.nElementBoundaries_global = nElementBoundaries_global;
-  //note, these will be in the new element numbering
-  set<int> elementBoundaries_subdomain_owned;
-  vector<set<int>> nodeElementBoundariesStar(nNodes_subdomain_new[rank]);
-  map<int,int> elementBoundaryMaterialTypesMap;
-  map<int,valarray<int>> elementBoundariesMap;
-  set<int> supportedElementBoundaries;
-  set<int> elementBoundaries_subdomain;
-  for (size_t k = 0; k < ebNumbers.size(); k++)
-    {
-      const int neb = ebNumbers[k], nn0 = ebNodes[3*k], nn1 = ebNodes[3*k+1], nn2 = ebNodes[3*k+2];
-      const int ebId = ebIds.empty() ? 0 : ebIds[k];
-      //grab the element boundaries for the node if the node is owned by the subdomain
-      //this will miss the element boundaries on the "outside boundary" of the star, which we'll grab later
-      //
-      int nn0_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
-        nn0_new = nodes_old2new_subdomain_map[nn0];
-      if (nn0_new >= nodeOffsets_new[rank] && nn0_new < nodeOffsets_new[rank+1])
-        {
-          nodeElementBoundariesStar[nn0_new-nodeOffsets_new[rank]].insert(neb);
-          supportedElementBoundaries.insert(neb);
-        }
-      int nn1_new = -2;
-      if (nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
-        nn1_new = nodes_old2new_subdomain_map[nn1];
-      if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
-        {
-          nodeElementBoundariesStar[nn1_new-nodeOffsets_new[rank]].insert(neb);
-          supportedElementBoundaries.insert(neb);
-        }
-      int nn2_new = -3;
-      if (nodes_old2new_subdomain_map.find(nn2) != nodes_old2new_subdomain_map.end())
-        nn2_new = nodes_old2new_subdomain_map[nn2];
-      if (nn2_new >= nodeOffsets_new[rank] && nn2_new < nodeOffsets_new[rank+1])
-        {
-          nodeElementBoundariesStar[nn2_new-nodeOffsets_new[rank]].insert(neb);
-          supportedElementBoundaries.insert(neb);
-        }
-      //if any of the new nodes is negative, then this face does not belong to an element in the subdomain
-      //so the check on nodes[1] will always be false
-      const int nodes[3] = {nn0_new,nn1_new,nn2_new};
-      NodeTuple<3> nodeTuple(nodes);
-      if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
-        {
-          elementBoundaries_subdomain.insert(neb);
-          assert(nn0_new >= 0 && nn1_new >= 0 && nn2_new >= 0);
-          if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
-            elementBoundaries_subdomain_owned.insert(neb);
-          if (ihasElementBoundaryMarkers > 0)
-            elementBoundaryMaterialTypesMap[neb]=ebId;
-          int eN_left = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].left];
-          if (elementBoundariesMap.find(eN_left) != elementBoundariesMap.end())
-            {
-              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
-            }
-          else
-            {
-              //initialize
-              valarray<int> elementBoundaries_element(-1,4);
-              elementBoundariesMap[eN_left] = elementBoundaries_element;
-              //assign
-              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
-            }
-          if (elementBoundaryElementsMap[nodeTuple].right >= 0)
-            {
-              int eN_right = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].right];
-              if (elementBoundariesMap.find(eN_right) != elementBoundariesMap.end())
-                {
-                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
-                }
-              else
-                {
-                  //initialize
-                  valarray<int> elementBoundaries_element(-1, 4);
-                  elementBoundariesMap[eN_right] = elementBoundaries_element;
-                  //assign
-                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
-                }
-            }
-        }
-    }
-  //done reading element boundaries
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
-    nElementBoundaries_owned_new=0;
-  MPI_Allreduce(&nElementBoundaries_owned_subdomain,&nElementBoundaries_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  assert(nElementBoundaries_owned_new == nElementBoundaries_global);
-  //now get the element boundaries on the outside of the star
-  for (auto elementBoundariesp=elementBoundariesMap.begin(); 
-       elementBoundariesp!=elementBoundariesMap.end();
-       elementBoundariesp++)
-    {
-      //loop over the nodes of this element for the owned nodes
-      for (int iv=0;iv<4;iv++)
-        {
-          //the elementNodesArrayMap is in the old element numbering while the elementBoundariesMap is in the new element numbering       
-          int nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[elementBoundariesp->first]][iv];
-          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
-            {
-              //add all the faces to this node star
-              for(int eb=0;eb<4;eb++)
-                {
-                  nodeElementBoundariesStar[nN_global-nodeOffsets_new[rank]].insert(elementBoundariesp->second[eb]);
-                }
-            }
-        }
-    }
-  //build compact structures for nodeElementBoundariesArray
-  valarray<int> nodeElementBoundaryOffsets(nNodes_subdomain_new[rank]+1);
-  nodeElementBoundaryOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeElementBoundaryOffsets[nN+1] = nodeElementBoundaryOffsets[nN]+nodeElementBoundariesStar[nN].size();
-  valarray<int> nodeElementBoundariesArray(nodeElementBoundaryOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (set<int>::iterator ebN_star = nodeElementBoundariesStar[nN].begin(); ebN_star != nodeElementBoundariesStar[nN].end();
-           ebN_star++,offset++)
-        {
-          nodeElementBoundariesArray[offset] = *ebN_star;
-        }
-    }
-
-  //get the number of elementBoundaries owned on each processor
-  valarray<int> nElementBoundaries_subdomain_new(size),
-    elementBoundaryOffsets_new(size+1);
-  for (int sdN=0;sdN<size;sdN++)
-    if (sdN == rank)
-      nElementBoundaries_subdomain_new[sdN] = elementBoundaries_subdomain_owned.size();
-    else
-      nElementBoundaries_subdomain_new[sdN] = 0;
-  valarray<int> nElementBoundaries_subdomain_new_send=nElementBoundaries_subdomain_new;
-  MPI_Allreduce(&nElementBoundaries_subdomain_new_send[0],&nElementBoundaries_subdomain_new[0],
-                size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  elementBoundaryOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    elementBoundaryOffsets_new[sdN+1] = elementBoundaryOffsets_new[sdN]+nElementBoundaries_subdomain_new[sdN];
-  //the new numbers of every face of the subdomain, owned or not, from the
-  //directory (no mappings-file read)
-  const SubdomainNumbering elementBoundaryNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
-                                elementBoundaries_subdomain_owned,
-                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end())));
-  PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int build_subdomains_edges_event;
-  PetscLogEventRegister("Subd edges",0,&build_subdomains_edges_event);
-  PetscLogEventBegin(build_subdomains_edges_event,0,0,0,0);
-
-  //
-  //4c,5c. Repeate the process for edges
-  //
-  logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
-  //the edges with a node of a subdomain element; the others play no part below.
-  //The .edge markers are not read (header count only), as always.
-  bool hasEdgeMarkers = false;
-  int nEdges_global;
-  int ihasEdgeMarkers(0);
-  vector<int> edNumbers, edNodes, edIds;
-  if (!readSimplexSubentitiesTouching(edgeFileName, "Tetgen", "edge", 2, indexBase, false,
-                                      nodes_old2new_subdomain_map, nEdges_global,
-                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
-    {
-      failed = true;
-      return failed;
-    }
-  assert(nEdges_global > 0);
-  if (ihasEdgeMarkers > 0)
-    {
-      hasEdgeMarkers = true;
-    }
-  newMesh.nEdges_global = nEdges_global;
-  set<int> edges_subdomain_owned;
-  vector<set<int> > nodeEdgesStar(nNodes_subdomain_new[rank]);
-  map<int,int> edgeMaterialTypesMap;
-  map<int,valarray<int> > elementEdgesMap;
-  map<int,pair<int,int> > edgeNodesMap;
-  set<int> supportedEdges;
-  for (size_t k = 0; k < edNumbers.size(); k++)
-    {
-      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
-      const int edId = edIds.empty() ? 0 : edIds[k];
-      int nn0_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
-        nn0_new = nodes_old2new_subdomain_map[nn0];
-      if (nn0_new >= nodeOffsets_new[rank] && nn0_new < nodeOffsets_new[rank+1])
-        {
-          nodeEdgesStar.at(nn0_new-nodeOffsets_new[rank]).insert(ned);
-          supportedEdges.insert(ned);
-        }
-      int nn1_new = -2;
-      if(nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
-        nn1_new = nodes_old2new_subdomain_map[nn1];
-      if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
-        {
-          nodeEdgesStar.at(nn1_new-nodeOffsets_new[rank]).insert(ned);
-          supportedEdges.insert(ned);
-        }
-      int nodes[2] = {nn0_new,nn1_new};
-      NodeTuple<2> nodeTuple(nodes);
-      if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
-        {
-          if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
-            edges_subdomain_owned.insert(ned);
-          //pick up all the edges on the subdomain and store their nodes
-          edgeNodesMap[ned].first = nodeTuple.nodes[0];
-          edgeNodesMap[ned].second = nodeTuple.nodes[1];
-          if (ihasEdgeMarkers > 0)
-            edgeMaterialTypesMap[ned]=edId;
-          for (auto elementp=edgeElementsMap[nodeTuple].begin();
-               elementp != edgeElementsMap[nodeTuple].end();
-               elementp++)
-            {
-              int eN = elementNumbering_old2new_subdomain_map[elementp->first];
-              if (elementEdgesMap.find(eN) != elementEdgesMap.end())
-                {
-                  elementEdgesMap[eN][elementp->second] = ned;
-                }
-              else
-                {
-                  std::valarray<int> init(-1,6);
-                  elementEdgesMap[eN] = init;
-                  elementEdgesMap[eN][elementp->second] = ned;
-                }
-            }
-        }
-    }//end iv
-  int nEdges_owned_subdomain=edges_subdomain_owned.size(),
-    nEdges_owned_new=0;
-  MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  assert(nEdges_owned_new == nEdges_global);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading edges");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //done with edge file
-  //
-  //just as with faces, we need to add edges along outer boundaries of star
-  //not sure if we need to collect nodeEdges star above anymore, since we're doing this
-  //
-  for (auto edgesp=elementEdgesMap.begin();
-       edgesp!=elementEdgesMap.end();
-       edgesp++)
-    {
-      //loop over the nodes of this element for the owned nodes
-      for (int iv=0;iv<4;iv++)
-        {
-          //the elementNodesArrayMap is in the old element numbering while the elementEdgesMap is in the new element numbering
-          int nN_global = -1;
-          if (elementNumbering_new2old_subdomain_map.find(edgesp->first) != elementNumbering_new2old_subdomain_map.end())
-            nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[edgesp->first]][iv];
-          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
-            {
-              //add all the edges to this node star
-              for(int ed=0;ed<6;ed++)
-                {
-                  nodeEdgesStar.at(nN_global-nodeOffsets_new[rank]).insert(edgesp->second[ed]);
-                }
-            }
-        }
-    }
-  //build compact data structures for nodeEdgesArray
-  valarray<int> nodeEdgeOffsets(nNodes_subdomain_new[rank]+1);
-  nodeEdgeOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeEdgeOffsets[nN+1] = nodeEdgeOffsets[nN]+nodeEdgesStar.at(nN).size();
-  valarray<int> nodeEdgesArray(nodeEdgeOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (auto edN_star = nodeEdgesStar.at(nN).begin();
-           edN_star != nodeEdgesStar.at(nN).end();
-           edN_star++,offset++)
-        {
-          nodeEdgesArray[offset] = *edN_star;
-        }
-    }
-  newMesh.subdomainp->nEdges_global = edgeNodesMap.size();
-  //get the number of edges on each processor
-  valarray<int> nEdges_subdomain_new(size),
-    edgeOffsets_new(size+1);
-  for (int sdN=0;sdN<size;sdN++)
-    if (sdN == rank)
-      nEdges_subdomain_new[sdN] = edges_subdomain_owned.size();
-    else
-      nEdges_subdomain_new[sdN] = 0;
-  valarray<int> nEdges_subdomain_new_send=nEdges_subdomain_new;
-  MPI_Allreduce(&nEdges_subdomain_new_send[0],&nEdges_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  //
-  //construct new offsets for owned edges
-  //
-  edgeOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    edgeOffsets_new[sdN+1] = edgeOffsets_new[sdN]+nEdges_subdomain_new[sdN];
-  //
-  //the new numbers of every edge of the subdomain, owned or not, from the
-  //directory (no mappings-file read)
-  const SubdomainNumbering edgeNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
-                                edges_subdomain_owned, keysOf(edgeNodesMap)));
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //
-  //6. Figure out what is in the node stars but not locally owned, create ghost information
-  //
-  logEvent("Creating ghost information",5);
-  set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      //nodes
-      for (int offset = nodeStarOffsetsNew[nN];offset<nodeStarOffsetsNew[nN+1];offset++)
-        {
-          int nN_point_global = nodeStarArrayNew[offset];
-          bool offproc = nN_point_global < nodeOffsets_new[rank] || nN_point_global >= nodeOffsets_new[rank+1];
-          if (offproc)
-            nodes_overlap.insert(nN_point_global);
-        }
-      //elements
-      for (int eN_star_offset = nodeElementOffsets[nN];
-           eN_star_offset < nodeElementOffsets[nN+1]; eN_star_offset++)
-        {
-          int eN_star_old = nodeElementsArray[eN_star_offset];
-          int eN_star_new = elementNumbering_old2new_subdomain_map[eN_star_old];
-          bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
-          if (offproc)
-            elements_overlap.insert(eN_star_new);
-        }
-      //element boundaries
-      for (int ebN_star_offset = nodeElementBoundaryOffsets[nN];
-           ebN_star_offset < nodeElementBoundaryOffsets[nN+1]; ebN_star_offset++)
-        {
-          int ebN_star_old = nodeElementBoundariesArray[ebN_star_offset];
-          int ebN_star_new = elementBoundaryNumbering_old2new_subdomain_map[ebN_star_old];
-          bool offproc = ebN_star_new >= elementBoundaryOffsets_new[rank+1] || ebN_star_new < elementBoundaryOffsets_new[rank];
-          if (offproc)
-            elementBoundaries_overlap.insert(ebN_star_new);
-        }
-      //edges in overlap
-      for (int edN_star_offset = nodeEdgeOffsets[nN];
-           edN_star_offset < nodeEdgeOffsets[nN+1]; edN_star_offset++)
-        {
-          int edN_star_old = nodeEdgesArray[edN_star_offset];
-          int edN_star_new = edgeNumbering_old2new_subdomain_map[edN_star_old];
-          bool offproc = edN_star_new >= edgeOffsets_new[rank+1] || edN_star_new < edgeOffsets_new[rank];
-          if (offproc)
-            edges_overlap.insert(edN_star_new);
-        }
-    }//nodes on this processor
-  //cek debugging, edge overlap seems to be messed up. Check global node tuples of edges vs global edge numbers
-  assert(edges_overlap.size() + nEdges_subdomain_new[rank] == edgeNodesMap.size());
-  //
-  //enumerate the overlap
-  //
-  int nN_subdomain = nNodes_subdomain_new[rank];
-  map<int,int> nodes_overlap_global2subdomainMap;
-  for (auto nN_globalp=nodes_overlap.begin();nN_globalp != nodes_overlap.end(); nN_globalp++,nN_subdomain++)
-    nodes_overlap_global2subdomainMap[*nN_globalp] = nN_subdomain;
-  //
-  //7. add any addtional overlap, skip for now
-  //
-  //cek todo: re-enable additional overlap with out of core global maps
-  assert(nNodes_overlap<2);
-  logEvent("Skipping additiona of addtional overlap--only minimal overlap supported by this partioning function for now",5);
-  //
-  PetscLogEventEnd(build_subdomains_edges_event,0,0,0,0);
-  int build_subdomains_renumber_event;
-  PetscLogEventRegister("Subd's renumber",0,&build_subdomains_renumber_event);
-  PetscLogEventBegin(build_subdomains_renumber_event,0,0,0,0);
-  //
-  //8. Build subdomain meshes in new numbering, assumes memory not allocated in subdomain mesh
-  //
-  logEvent("USER WARNING: You are partioning in parallel directly from Tetgen files (parun -F ...). ",5);
-  logEvent("USER WARNING: You must use the 'f' and 'ee' flags in the triangleOptions input to avoid errors.",5);
-  logEvent("USER WARNING: You may have done so, but the tetgen options are not stored in the Tetgen files, so we can't know.",5);
-  logEvent("Creating final subdomain mesh data structures",5);
-  if (newMesh.subdomainp == NULL)
-    newMesh.subdomainp = new Mesh();
-  newMesh.subdomainp->nElements_global = nElements_subdomain_new[rank] + elements_overlap.size();
-  newMesh.subdomainp->nNodes_global    = nNodes_subdomain_new[rank] + nodes_overlap.size();
-  newMesh.subdomainp->nElementBoundaries_global = nElementBoundaries_subdomain_new[rank]+elementBoundaries_overlap.size();
-  assert(int(edges_subdomain_owned.size()+edges_overlap.size()) == newMesh.subdomainp->nEdges_global);
-  //newMesh.subdomainp->nEdges_global   = edges_subdomain_owned.size()+edges_overlap.size();
-  newMesh.subdomainp->nNodes_element   = newMesh.nNodes_element;
-  newMesh.subdomainp->nNodes_elementBoundary = newMesh.nNodes_elementBoundary;
-  newMesh.subdomainp->nElementBoundaries_element = newMesh.nElementBoundaries_element;
-  //subdomain 2 global mappings (including ghost info)
-  valarray<int> nodeNumbering_subdomain2global(newMesh.subdomainp->nNodes_global);
-  valarray<int> elementNumbering_subdomain2global(newMesh.subdomainp->nElements_global);
-  valarray<int> elementBoundaryNumbering_subdomain2global(newMesh.subdomainp->nElementBoundaries_global);
-  valarray<int> edgeNumbering_subdomain2global(newMesh.subdomainp->nEdges_global);
-  map<int,int> nodeNumbering_global2subdomainMap;
-  map<int,int> elementBoundaryNumbering_global2subdomainMap;
-  map<int,int> edgeNumbering_global2subdomainMap;
-  newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  //0 until a vertex flag or a face flag says otherwise: without vertex markers
-  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
-  //faces take face flags below, so the others used to keep whatever the heap held
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
-  //
-  //now finally finish reading node coordinates and node flags
-  //
-  if (!readSubdomainVertices(vertexFileName, "Tetgen", 3, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
-                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
-                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
-                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
-    MPI_Abort(PROTEUS_COMM_WORLD, 1);
-  //done with vertex file (and all file reads at this point)
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-
-  newMesh.subdomainp->elementNodesArray = new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nNodes_element];
-  newMesh.subdomainp->elementMaterialTypes = new int[newMesh.subdomainp->nElements_global];
-  //
-  //elements
-  //
-  //locally owned
-  //
-  for (int eN = 0; eN < nElements_subdomain_new[rank]; eN++)
-    {
-      int eN_global_new = elementOffsets_new[rank] + eN;
-      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
-      elementNumbering_subdomain2global[eN] = eN_global_new;
-      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
-      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
-        {
-          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
-          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
-          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
-        }
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator eN_p = elements_overlap.begin();
-  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
-    {
-      int eN_global_new = *eN_p;
-      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
-      elementNumbering_subdomain2global[eN] = eN_global_new;
-      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
-      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
-        {
-          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
-          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
-          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
-        }
-    }
-  //
-  //element boundaries
-  //
-  //owned
-  //
-  for (int ebN=0; ebN < nElementBoundaries_subdomain_new[rank]; ebN++)
-    {
-      int ebN_global = ebN + elementBoundaryOffsets_new[rank];
-      elementBoundaryNumbering_subdomain2global[ebN]=ebN_global;
-      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator ebN_p = elementBoundaries_overlap.begin();
-  for(int ebN=nElementBoundaries_subdomain_new[rank];ebN < nElementBoundaries_subdomain_new[rank] + int(elementBoundaries_overlap.size()); ebN++,ebN_p++)
-    {
-      int ebN_global = *ebN_p;
-      elementBoundaryNumbering_subdomain2global[ebN] = ebN_global;
-      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
-    }
-  //
-  //need elementBoundariesArray to assign consistent numbering on subdomain
-  //
-  //local
-  //
-  newMesh.subdomainp->elementBoundariesArray =
-    new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nElementBoundaries_element];
-  for (int eN=0;eN<nElements_subdomain_new[rank];eN++)
-    {
-      int eN_global = eN+elementOffsets_new[rank];
-      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
-        {
-          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
-            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global][ebN]]];
-        }
-    }
-  //
-  //ghost elements
-  //
-  eN_p = elements_overlap.begin();
-  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
-    {
-      int eN_global_new = *eN_p;
-      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
-        {
-          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
-            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global_new][ebN]]];
-        }
-    }
-  //
-  //edges
-  //
-  //local
-  //
-  for (int edN=0; edN < nEdges_subdomain_new[rank]; edN++)
-    {
-      int edN_global = edN + edgeOffsets_new[rank];
-      edgeNumbering_subdomain2global[edN]=edN_global;
-      edgeNumbering_global2subdomainMap[edN_global] = edN;
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator edN_p = edges_overlap.begin();
-  for(int edN=nEdges_subdomain_new[rank];edN < nEdges_subdomain_new[rank] + int(edges_overlap.size()); edN++,edN_p++)
-    {
-      int edN_global = *edN_p;
-      edgeNumbering_subdomain2global[edN] = edN_global;
-      edgeNumbering_global2subdomainMap[edN_global] = edN;
-    }
-  //
-  //now build edgeNodes array in new numberings
-  //
-  newMesh.subdomainp->edgeNodesArray = new int[newMesh.subdomainp->nEdges_global*2];
-  for (int i=0;i<newMesh.subdomainp->nEdges_global*2;i++)
-    newMesh.subdomainp->edgeNodesArray[i] = -1;
-  for (map<int,pair<int,int> >::iterator edgep=edgeNodesMap.begin();
-       edgep!=edgeNodesMap.end();
-       edgep++)
-    {
-      int edN_global_old = edgep->first;
-      int edN_global_new = edgeNumbering_old2new_subdomain_map[edN_global_old];
-      assert(edgeNumbering_global2subdomainMap.find(edN_global_new) != edgeNumbering_global2subdomainMap.end());
-      int edN_subdomain  = edgeNumbering_global2subdomainMap[edN_global_new];
-      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+0] = nodeNumbering_global2subdomainMap[edgep->second.first];
-      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+1] = nodeNumbering_global2subdomainMap[edgep->second.second];
-    }
-  //
-  //end edges
-  //
-
-  //now build rest of subdomain mesh connectivity information etc
-  constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_tetrahedron(*newMesh.subdomainp);
-  //build local geometric info
-  allocateGeometricInfo_tetrahedron(*newMesh.subdomainp);
-  computeGeometricInfo_tetrahedron(*newMesh.subdomainp);
-  if (hasElementBoundaryMarkers)
-    {
-      assert(newMesh.subdomainp->elementBoundariesArray != NULL);
-      for (auto ebmp = elementBoundaryMaterialTypesMap.begin(); ebmp != elementBoundaryMaterialTypesMap.end();ebmp++)
-        {
-          int ebN_global_new = elementBoundaryNumbering_old2new_subdomain_map[ebmp->first];
-          assert(elementBoundaryNumbering_global2subdomainMap.find(ebN_global_new) != elementBoundaryNumbering_global2subdomainMap.end());
-          int ebN_subdomain  = elementBoundaryNumbering_global2subdomainMap[ebN_global_new];
-          newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
-        }
-      if (!hasVertexMarkers)
-        for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
-          {
-            int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
-            for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-              {
-                int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-                newMesh.subdomainp->nodeMaterialTypes[nN] = newMesh.subdomainp->elementBoundaryMaterialTypes[ebN];
-              }
-          }
-    }
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);
-  int build_subdomains_cleanup_event;
-  PetscLogEventRegister("Cleanup",0,&build_subdomains_cleanup_event);
-  PetscLogEventBegin(build_subdomains_cleanup_event,0,0,0,0);
-  //transfer information about owned nodes and elements to mesh
-  logEvent("Cleaning up after partitioning",5);
-  if (newMesh.nodeOffsets_subdomain_owned)
-    delete [] newMesh.nodeOffsets_subdomain_owned;
-  if (newMesh.elementOffsets_subdomain_owned)
-    delete [] newMesh.elementOffsets_subdomain_owned;
-  if (newMesh.elementBoundaryOffsets_subdomain_owned)
-    delete [] newMesh.elementBoundaryOffsets_subdomain_owned;
-  if (newMesh.edgeOffsets_subdomain_owned)
-    delete [] newMesh.edgeOffsets_subdomain_owned;
-  newMesh.nodeOffsets_subdomain_owned    = new int[size+1];
-  newMesh.elementOffsets_subdomain_owned = new int[size+1];
-  newMesh.elementBoundaryOffsets_subdomain_owned = new int[size+1];
-  newMesh.edgeOffsets_subdomain_owned = new int[size+1];
-  for (int sdN = 0; sdN < size+1; sdN++)
-    {
-      newMesh.nodeOffsets_subdomain_owned[sdN]    = nodeOffsets_new[sdN];
-      newMesh.elementOffsets_subdomain_owned[sdN] = elementOffsets_new[sdN];
-      newMesh.elementBoundaryOffsets_subdomain_owned[sdN] = elementBoundaryOffsets_new[sdN];
-      newMesh.edgeOffsets_subdomain_owned[sdN] = edgeOffsets_new[sdN];
-    }
-  if (newMesh.nodeNumbering_subdomain2global)
-    delete [] newMesh.nodeNumbering_subdomain2global;
-  newMesh.nodeNumbering_subdomain2global = new int[newMesh.subdomainp->nNodes_global];
-  for (int nN = 0; nN < newMesh.subdomainp->nNodes_global; nN++)
-    newMesh.nodeNumbering_subdomain2global[nN] = nodeNumbering_subdomain2global[nN];
-  if (newMesh.elementNumbering_subdomain2global)
-    delete [] newMesh.elementNumbering_subdomain2global;
-  newMesh.elementNumbering_subdomain2global = new int[newMesh.subdomainp->nElements_global];
-  for (int eN = 0; eN < newMesh.subdomainp->nElements_global; eN++)
-    newMesh.elementNumbering_subdomain2global[eN] = elementNumbering_subdomain2global[eN];
-  //
-  if (newMesh.elementBoundaryNumbering_subdomain2global)
-    delete [] newMesh.elementBoundaryNumbering_subdomain2global;
-  newMesh.elementBoundaryNumbering_subdomain2global = new int[newMesh.subdomainp->nElementBoundaries_global];
-  for (int ebN = 0; ebN < newMesh.subdomainp->nElementBoundaries_global; ebN++)
-    newMesh.elementBoundaryNumbering_subdomain2global[ebN] = elementBoundaryNumbering_subdomain2global[ebN];
-  //
-  if (newMesh.edgeNumbering_subdomain2global)
-    delete [] newMesh.edgeNumbering_subdomain2global;
-  newMesh.edgeNumbering_subdomain2global = new int[newMesh.subdomainp->nEdges_global];
-  for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
-    newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
-  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
-  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
-  //cleanup
-  PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
+  if (buildSubdomainFromFiles<simplexDim>(PROTEUS_COMM_WORLD, rank, size, "Tetgen",
+                                          elementBoundaryFileName, edgeFileName, vertexFileName,
+                                          indexBase, hasVertexMarkers, nNodes_overlap, max_rss_gb, nElements_global,
+                                          nNodes_subdomain_new, nodeOffsets_new, elements_subdomain_owned,
+                                          nodeElementsStar, nodeStarNew, elementNodesArrayMap,
+                                          elementMaterialTypesMap, elementBoundaryElementsMap,
+                                          edgeElementsMap, nodes_old2new_subdomain_map, newMesh))
+    return failed;
+  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
+  ierr=ISDestroy(&nodeNumberingIS_subdomain_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
@@ -3160,722 +3214,19 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
   assert(nElements_owned_new == nElements_global);
   PetscLogEventEnd(build_subdomains_reread_elements_event,0,0,0,0);
-  int build_subdomains_send_marked_elements_event;
-  PetscLogEventRegister("Mark/send eles",0,&build_subdomains_send_marked_elements_event);
-  PetscLogEventBegin(build_subdomains_send_marked_elements_event,0,0,0,0);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done marking elements");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //
-  //done with the element file
-  //
-  //construct compact nodeElementsArray
-  valarray<int> nodeElementOffsets(nNodes_subdomain_new[rank]+1);
-  nodeElementOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeElementOffsets[nN+1] = nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-  valarray<int> nodeElementsArray(nodeElementOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
-           eN_star++,offset++)
-        {
-          nodeElementsArray[offset] = *eN_star;
-        }
-    }
-  //construct compact nodeStarArray
-  valarray<int> nodeStarOffsetsNew(nNodes_subdomain_new[rank]+1);
-  nodeStarOffsetsNew[0] = 0;
-  for (int nN=1;nN<nNodes_subdomain_new[rank]+1;nN++)
-    nodeStarOffsetsNew[nN] = nodeStarOffsetsNew[nN-1] + nodeStarNew[nN-1].size();
-  valarray<int> nodeStarArrayNew(nodeStarOffsetsNew[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0;nN<nNodes_subdomain_new[rank];nN++)
-    {
-      for (set<int>::iterator nN_star=nodeStarNew[nN].begin();nN_star!=nodeStarNew[nN].end();nN_star++,offset++)
-        {
-          nodeStarArrayNew[offset] = *nN_star;
-        }
-    }
-  PetscLogEventEnd(build_subdomains_send_marked_elements_event,0,0,0,0);
-  int build_subdomains_global_numbering_elements_event;
-  PetscLogEventRegister("Global ele nmbr",0,&build_subdomains_global_numbering_elements_event);
-  PetscLogEventBegin(build_subdomains_global_numbering_elements_event,0,0,0,0);
-  //
-  //5. Generate global element numbering corresponding to new subdomain ownership
-  //
-  valarray<int> nElements_subdomain_new(size),
-    elementOffsets_new(size+1);
-  for (int sdN = 0; sdN < size; sdN++)
-    {
-      if (sdN == rank)
-        nElements_subdomain_new[sdN] = int(elements_subdomain_owned.size());
-      else
-        nElements_subdomain_new[sdN] = 0;
-    }
-  valarray<int> nElements_subdomain_new_send = nElements_subdomain_new;
-  MPI_Allreduce(&nElements_subdomain_new_send[0],&nElements_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  //construct new offsets for elements
-  elementOffsets_new[0] = 0;
-  for (int sdN = 0; sdN < size; sdN++)
-    elementOffsets_new[sdN+1] = elementOffsets_new[sdN] + nElements_subdomain_new[sdN];
-  //the new numbers of every element of the subdomain, owned or not, from a
-  //directory on the default chunks of the file numbers (no global array)
-  const SubdomainNumbering elementNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
-                                elements_subdomain_owned, keysOf(elementNodesArrayMap)));
-  const SubdomainNumbering elementNumbering_new2old_subdomain_map = elementNumbering_old2new_subdomain_map.inverse();
-  PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int build_subdomains_faces_event;
-  PetscLogEventRegister("Subd faces",0,&build_subdomains_faces_event);
-  PetscLogEventBegin(build_subdomains_faces_event,0,0,0,0);
-  //
-  //4b,5b. repeat process to build global face (elementBoundary) numbering
-  //
-  //first read element boundaries to create nodeElementBoundariesArray
-  //for all element boundaries on this subdomain, which we'll use to
-  //grab element boundaries from the bit array
-
-
-  //In 2D, the element boundaries are edges and not faces.
-  //nodeElementBoundariesArray maps an element
-
-  //the faces with a node of a subdomain element; the others play no part below
-  bool hasElementBoundaryMarkers = false;
-  int nElementBoundaries_global;
-  int ihasElementBoundaryMarkers(0);
-  vector<int> ebNumbers, ebNodes, ebIds;
-  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "triangle", "edge", 2, indexBase, true,
-                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
-                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
-    {
-      failed = true;
-      return failed;
-    }
-  assert(nElementBoundaries_global > 0);
-  if (ihasElementBoundaryMarkers > 0)
-    {
-      hasElementBoundaryMarkers = true;
-    }
-  newMesh.nElementBoundaries_global = nElementBoundaries_global;
-  //note, these will be in the new element numbering
-  set<int> elementBoundaries_subdomain_owned;
-  vector<set<int> > nodeElementBoundariesStar(nNodes_subdomain_new[rank]);
-  map<int,int> elementBoundaryMaterialTypesMap;
-  map<int,vector<int> > elementBoundariesMap;
-  set<int> supportedElementBoundaries;
-  set<int> elementBoundaries_subdomain;
-  for (size_t k = 0; k < ebNumbers.size(); k++)
-    {
-      const int neb = ebNumbers[k], nn0 = ebNodes[2*k], nn1 = ebNodes[2*k+1];
-      const int ebId = ebIds.empty() ? 0 : ebIds[k];
-      //grab the element boundaries for the node if the node is owned by the subdomain
-      //this will miss the element boundaries on the "outside boundary" of the star, which will grab later
-      int nn0_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
-        nn0_new = nodes_old2new_subdomain_map[nn0];
-      if (nn0_new >= nodeOffsets_new[rank] && nn0_new < nodeOffsets_new[rank+1])
-        {
-          nodeElementBoundariesStar[nn0_new-nodeOffsets_new[rank]].insert(neb);
-          supportedElementBoundaries.insert(neb);
-        }
-      int nn1_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
-        nn1_new = nodes_old2new_subdomain_map[nn1];
-      if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
-        {
-          nodeElementBoundariesStar[nn1_new-nodeOffsets_new[rank]].insert(neb);
-          supportedElementBoundaries.insert(neb);
-        }
-      int nodes[2] = {nn0_new,nn1_new};
-      NodeTuple<2> nodeTuple(nodes);
-      if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
-        {
-          elementBoundaries_subdomain.insert(neb);
-          if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
-            elementBoundaries_subdomain_owned.insert(neb);
-          if (ihasElementBoundaryMarkers > 0)
-            elementBoundaryMaterialTypesMap[neb]=ebId;
-          int eN_left = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].left];
-          if (elementBoundariesMap.find(eN_left) != elementBoundariesMap.end())
-            {
-              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
-            }
-          else
-            {
-              //initialize
-              vector<int> elementBoundaries_element(3,-1);
-              elementBoundariesMap[eN_left] = elementBoundaries_element;
-              //assign
-              elementBoundariesMap[eN_left][elementBoundaryElementsMap[nodeTuple].left_ebN_element] = neb;
-            }
-          if (elementBoundaryElementsMap[nodeTuple].right >= 0)
-            {
-              int eN_right = elementNumbering_old2new_subdomain_map[elementBoundaryElementsMap[nodeTuple].right];
-              if (elementBoundariesMap.find(eN_right) != elementBoundariesMap.end())
-                {
-                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
-                }
-              else
-                {
-                  //initialize
-                  vector<int> elementBoundaries_element(3,-1);
-                  elementBoundariesMap[eN_right] = elementBoundaries_element;
-                  //assign
-                  elementBoundariesMap[eN_right][elementBoundaryElementsMap[nodeTuple].right_ebN_element] = neb;
-                }
-            }
-        }
-    }
-  elementBoundaryElementsMap.clear();
-  //done reading element boundaries
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
-    nElementBoundaries_owned_new=0;
-  MPI_Allreduce(&nElementBoundaries_owned_subdomain,&nElementBoundaries_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  assert(nElementBoundaries_owned_new == nElementBoundaries_global);
-
-  //now get the element boundaries on the outside of the star
-  for (map<int,vector<int> >::iterator elementBoundariesp=elementBoundariesMap.begin();
-       elementBoundariesp!=elementBoundariesMap.end();
-       elementBoundariesp++)
-    {
-      //loop over the nodes of this element for the owned nodes
-      for (int iv=0;iv<simplexDim;iv++)
-        {
-          //the elementNodesArrayMap is in the old element numbering while the elementBoundariesMap is in the new element numbering
-          int nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[elementBoundariesp->first]][iv];
-          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
-            {
-              //add all the faces to this node star
-              for(int eb=0;eb<simplexDim;eb++)
-                {
-                  nodeElementBoundariesStar[nN_global-nodeOffsets_new[rank]].insert(elementBoundariesp->second[eb]);
-                }
-            }
-        }
-    }
-  //build compact structures for nodeElementBoundariesArray
-  valarray<int> nodeElementBoundaryOffsets(nNodes_subdomain_new[rank]+1);
-  nodeElementBoundaryOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeElementBoundaryOffsets[nN+1] = nodeElementBoundaryOffsets[nN]+nodeElementBoundariesStar[nN].size();
-  valarray<int> nodeElementBoundariesArray(nodeElementBoundaryOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (set<int>::iterator ebN_star = nodeElementBoundariesStar[nN].begin(); ebN_star != nodeElementBoundariesStar[nN].end();
-           ebN_star++,offset++)
-        {
-          nodeElementBoundariesArray[offset] = *ebN_star;
-        }
-    }
-
-  //get the number of elementBoundaries owned on each processor
-  valarray<int> nElementBoundaries_subdomain_new(size),
-    elementBoundaryOffsets_new(size+1);
-  for (int sdN=0;sdN<size;sdN++)
-    if (sdN == rank)
-      nElementBoundaries_subdomain_new[sdN] = elementBoundaries_subdomain_owned.size();
-    else
-      nElementBoundaries_subdomain_new[sdN] = 0;
-  valarray<int> nElementBoundaries_subdomain_new_send=nElementBoundaries_subdomain_new;
-  MPI_Allreduce(&nElementBoundaries_subdomain_new_send[0],&nElementBoundaries_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  elementBoundaryOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    elementBoundaryOffsets_new[sdN+1] = elementBoundaryOffsets_new[sdN]+nElementBoundaries_subdomain_new[sdN];
-  //the new numbers of every face of the subdomain, owned or not, from the
-  //directory (no global array)
-  const SubdomainNumbering elementBoundaryNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
-                                elementBoundaries_subdomain_owned,
-                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end())));
-  PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int build_subdomains_edges_event;
-  PetscLogEventRegister("Subd edges",0,&build_subdomains_edges_event);
-  PetscLogEventBegin(build_subdomains_edges_event,0,0,0,0);
-
-  //
-  //4c,5c. Repeate the process for edges
-  //
-  //the edges with a node of a subdomain element; the others play no part below.
-  //The .edge markers are not read (header count only), as always.
-  bool hasEdgeMarkers = false;
-  int nEdges_global;
-  int ihasEdgeMarkers(0);
-  vector<int> edNumbers, edNodes, edIds;
-  if (!readSimplexSubentitiesTouching(edgeFileName, "Triangle", "edge", 2, indexBase, false,
-                                      nodes_old2new_subdomain_map, nEdges_global,
-                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
-    {
-      failed = true;
-      return failed;
-    }
-  assert(nEdges_global > 0);
-  if (ihasEdgeMarkers > 0)
-    {
-      hasEdgeMarkers = true;
-    }
-
-  newMesh.nEdges_global = nEdges_global;
-  set<int> edges_subdomain_owned;
-  vector<set<int> > nodeEdgesStar(nNodes_subdomain_new[rank]);
-  map<int,int> edgeMaterialTypesMap;
-  map<int,vector<int> > elementEdgesMap;
-  map<int,pair<int,int> > edgeNodesMap;
-  set<int> supportedEdges;
-  for (size_t k = 0; k < edNumbers.size(); k++)
-    {
-      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
-      const int edId = edIds.empty() ? 0 : edIds[k];
-      int nn0_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
-        nn0_new = nodes_old2new_subdomain_map[nn0];
-      if (nn0_new >= nodeOffsets_new[rank] && nn0_new < nodeOffsets_new[rank+1])
-        {
-          nodeEdgesStar.at(nn0_new-nodeOffsets_new[rank]).insert(ned);
-          supportedEdges.insert(ned);
-        }
-      int nn1_new = -1;
-      if (nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
-        nn1_new = nodes_old2new_subdomain_map[nn1];
-      if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
-        {
-          nodeEdgesStar.at(nn1_new-nodeOffsets_new[rank]).insert(ned);
-          supportedEdges.insert(ned);
-        }
-      int nodes[2] = {nn0_new,nn1_new};
-      NodeTuple<2> nodeTuple(nodes);
-      if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
-        {
-          if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
-            edges_subdomain_owned.insert(ned);
-          //pick up all the edges on the subdomain and store their nodes
-          edgeNodesMap[ned].first = nodeTuple.nodes[0];
-          edgeNodesMap[ned].second = nodeTuple.nodes[1];
-          if (ihasEdgeMarkers > 0)
-            edgeMaterialTypesMap[ned]=edId;
-          for (set<pair<int,int> >::iterator elementp=edgeElementsMap[nodeTuple].begin();
-               elementp != edgeElementsMap[nodeTuple].end();
-               elementp++)
-            {
-              int eN = elementNumbering_old2new_subdomain_map[elementp->first];
-              if (elementEdgesMap.find(eN) != elementEdgesMap.end())
-                {
-                  elementEdgesMap[eN][elementp->second] = ned;
-                }
-              else
-                {
-                  std::vector<int> init(3,-1);
-                  elementEdgesMap[eN] = init;
-                  elementEdgesMap[eN][elementp->second] = ned;
-                }
-            }
-        }
-    }//end iv
-  edgeElementsMap.clear();
-  int nEdges_owned_subdomain=edges_subdomain_owned.size(),
-    nEdges_owned_new=0;
-  MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  assert(nEdges_owned_new == nEdges_global);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading edges");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //done with edge file
-  //
-  //just as with faces, we need to add edges along outer boundaries of star
-  //not sure if we need to collect nodeEdges star above anymore, since we're doing this
-  //
-  for (map<int,vector<int> >::iterator edgesp=elementEdgesMap.begin();
-       edgesp!=elementEdgesMap.end();
-       edgesp++)
-    {
-      //loop over the nodes of this element for the owned nodes
-      for (int iv=0;iv<simplexDim;iv++)
-        {
-          //the elementNodesArrayMap is in the old elemetn numbering while the elementEdgesMap is in the new element numbering
-          int nN_global = elementNodesArrayMap[elementNumbering_new2old_subdomain_map[edgesp->first]][iv];
-          if (nN_global >= nodeOffsets_new[rank] && nN_global < nodeOffsets_new[rank+1])
-            {
-              //add all the edges to this node star
-              for(int ed=0;ed<3;ed++)
-                {
-                  nodeEdgesStar.at(nN_global-nodeOffsets_new[rank]).insert(edgesp->second[ed]);
-                }
-            }
-        }
-    }
-  //build compact data structures for nodeEdgesArray
-  valarray<int> nodeEdgeOffsets(nNodes_subdomain_new[rank]+1);
-  nodeEdgeOffsets[0] = 0;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    nodeEdgeOffsets[nN+1] = nodeEdgeOffsets[nN]+nodeEdgesStar.at(nN).size();
-  valarray<int> nodeEdgesArray(nodeEdgeOffsets[nNodes_subdomain_new[rank]]);
-  for (int nN=0,offset=0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      for (set<int>::iterator edN_star = nodeEdgesStar.at(nN).begin();
-           edN_star != nodeEdgesStar.at(nN).end();
-           edN_star++,offset++)
-        {
-          nodeEdgesArray[offset] = *edN_star;
-        }
-    }
-  newMesh.subdomainp->nEdges_global = edgeNodesMap.size();
-  //get the number of edges on each processor
-  valarray<int> nEdges_subdomain_new(size),
-    edgeOffsets_new(size+1);
-  for (int sdN=0;sdN<size;sdN++)
-    if (sdN == rank)
-      nEdges_subdomain_new[sdN] = edges_subdomain_owned.size();
-    else
-      nEdges_subdomain_new[sdN] = 0;
-  valarray<int> nEdges_subdomain_new_send=nEdges_subdomain_new;
-  MPI_Allreduce(&nEdges_subdomain_new_send[0],&nEdges_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  //
-  //construct new offsets for owned edges
-  //
-  edgeOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    edgeOffsets_new[sdN+1] = edgeOffsets_new[sdN]+nEdges_subdomain_new[sdN];
-  //the new numbers of every edge of the subdomain, owned or not, from the
-  //directory (no global array)
-  const SubdomainNumbering edgeNumbering_old2new_subdomain_map(
-    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
-                                edges_subdomain_owned, keysOf(edgeNodesMap)));
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //
-  //6. Figure out what is in the node stars but not locally owned, create ghost information
-  //
-
-  set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
-  for (int nN = 0; nN < nNodes_subdomain_new[rank]; nN++)
-    {
-      //nodes
-      for (int offset = nodeStarOffsetsNew[nN];offset<nodeStarOffsetsNew[nN+1];offset++)
-        {
-          int nN_point_global = nodeStarArrayNew[offset];
-          bool offproc = nN_point_global < nodeOffsets_new[rank] || nN_point_global >= nodeOffsets_new[rank+1];
-          if (offproc)
-            nodes_overlap.insert(nN_point_global);
-        }
-      //elements
-      for (int eN_star_offset = nodeElementOffsets[nN];
-           eN_star_offset < nodeElementOffsets[nN+1]; eN_star_offset++)
-        {
-          int eN_star_old = nodeElementsArray[eN_star_offset];
-          int eN_star_new = elementNumbering_old2new_subdomain_map[eN_star_old];
-          bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
-          if (offproc)
-            elements_overlap.insert(eN_star_new);
-        }
-      //element boundaries
-      for (int ebN_star_offset = nodeElementBoundaryOffsets[nN];
-           ebN_star_offset < nodeElementBoundaryOffsets[nN+1]; ebN_star_offset++)
-        {
-          int ebN_star_old = nodeElementBoundariesArray[ebN_star_offset];
-          int ebN_star_new = elementBoundaryNumbering_old2new_subdomain_map[ebN_star_old];
-          bool offproc = ebN_star_new >= elementBoundaryOffsets_new[rank+1] || ebN_star_new < elementBoundaryOffsets_new[rank];
-          if (offproc)
-            elementBoundaries_overlap.insert(ebN_star_new);
-        }
-      //edges in overlap
-      for (int edN_star_offset = nodeEdgeOffsets[nN];
-           edN_star_offset < nodeEdgeOffsets[nN+1]; edN_star_offset++)
-        {
-          int edN_star_old = nodeEdgesArray[edN_star_offset];
-          int edN_star_new = edgeNumbering_old2new_subdomain_map[edN_star_old];
-          bool offproc = edN_star_new >= edgeOffsets_new[rank+1] || edN_star_new < edgeOffsets_new[rank];
-          if (offproc)
-            edges_overlap.insert(edN_star_new);
-        }
-    }//nodes on this processor
-  MPI_Barrier(PROTEUS_COMM_WORLD);
-  assert(edges_overlap.size() + nEdges_subdomain_new[rank] == edgeNodesMap.size());
-  //
-  //enumerate the overlap
-  //
-  int nN_subdomain = nNodes_subdomain_new[rank];
-  map<int,int> nodes_overlap_global2subdomainMap;
-  for (set<int>::iterator nN_globalp=nodes_overlap.begin();nN_globalp != nodes_overlap.end(); nN_globalp++,nN_subdomain++)
-    nodes_overlap_global2subdomainMap[*nN_globalp] = nN_subdomain;
-
-  // map<int,int> elements_overlap_global2subdomainMap;
-  // for (set<int>::iterator eN_globalp=elements_overlap.begin();eN_globalp != elements_overlap.end(); eN_globalp++,eN_subdomain++)
-  //   elements_overlap_global2subdomainMap[*eN_globalp] = eN_subdomain;
-
-  // int ebN_subdomain = nElementBoundaries_subdomain_new[rank];
-  // map<int,int> elementBoundaries_overlap_global2subdomainMap;
-  // for (set<int>::iterator ebN_globalp=elementBoundaries_overlap.begin();ebN_globalp != elementBoundaries_overlap.end(); ebN_globalp++,ebN_subdomain++)
-  //   elementBoundaries_overlap_global2subdomainMap[*ebN_globalp] = ebN_subdomain;
-
-  // int edN_subdomain = nEdges_subdomain_new[rank];
-  // map<int,int> edges_overlap_global2subdomainMap;
-  // for (set<int>::iterator edN_globalp=edges_overlap.begin();edN_globalp != edges_overlap.end(); edN_globalp++,edN_subdomain++)
-  //   edges_overlap_global2subdomainMap[*edN_globalp] = edN_subdomain;
-  //
-  //7. add any addtional overlap, skip for now
-  //
-
-  PetscLogEventEnd(build_subdomains_edges_event,0,0,0,0);
-  int build_subdomains_renumber_event;
-  PetscLogEventRegister("Subd's renumber",0,&build_subdomains_renumber_event);
-  PetscLogEventBegin(build_subdomains_renumber_event,0,0,0,0);
-  //
-  //8. Build subdomain meshes in new numbering, assumes memory not allocated in subdomain mesh
-  //
-  if(rank==0){
-    std::cerr<<"USER WARNING: In order to avoid a segmentation fault, you need to have supplied the 'f' flag to the triangleOptions input."<<std::endl;
-    std::cerr<<"USER WARNING: In order to avoid an edge assertion error, you need to have supplied the 'ee' flag to the triangleOptions input."<<std::endl;
-  }
-
-  if (newMesh.subdomainp == NULL)
-    newMesh.subdomainp = new Mesh();
-  newMesh.subdomainp->nElements_global = nElements_subdomain_new[rank] + elements_overlap.size();
-  newMesh.subdomainp->nNodes_global    = nNodes_subdomain_new[rank] + nodes_overlap.size();
-  newMesh.subdomainp->nElementBoundaries_global = nElementBoundaries_subdomain_new[rank]+elementBoundaries_overlap.size();
-  assert(int(edges_subdomain_owned.size()+edges_overlap.size()) == newMesh.subdomainp->nEdges_global);
-  //newMesh.subdomainp->nEdges_global   = edges_subdomain_owned.size()+edges_overlap.size();
-  newMesh.subdomainp->nNodes_element   = newMesh.nNodes_element;
-  newMesh.subdomainp->nNodes_elementBoundary = newMesh.nNodes_elementBoundary;
-  newMesh.subdomainp->nElementBoundaries_element = newMesh.nElementBoundaries_element;
-  //subdomain 2 global mappings (including ghost info)
-  valarray<int> nodeNumbering_subdomain2global(newMesh.subdomainp->nNodes_global);
-  valarray<int> elementNumbering_subdomain2global(newMesh.subdomainp->nElements_global);
-  valarray<int> elementBoundaryNumbering_subdomain2global(newMesh.subdomainp->nElementBoundaries_global);
-  valarray<int> edgeNumbering_subdomain2global(newMesh.subdomainp->nEdges_global);
-  map<int,int> nodeNumbering_global2subdomainMap;
-  map<int,int> elementBoundaryNumbering_global2subdomainMap;
-  map<int,int> edgeNumbering_global2subdomainMap;
-  newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  //0 until a vertex flag or a face flag says otherwise: without vertex markers
-  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
-  //faces take face flags below, so the others used to keep whatever the heap held
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
-  //
-  //now finally finish reading node coordinates and node flags
-  //
-  if (!readSubdomainVertices(vertexFileName, "triangle", 2, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
-                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
-                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
-                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
-    MPI_Abort(PROTEUS_COMM_WORLD, 1);
+  if (buildSubdomainFromFiles<simplexDim>(PROTEUS_COMM_WORLD, rank, size, "triangle",
+                                          elementBoundaryFileName, edgeFileName, vertexFileName,
+                                          indexBase, hasVertexMarkers, nNodes_overlap, 0.0, nElements_global,
+                                          nNodes_subdomain_new, nodeOffsets_new, elements_subdomain_owned,
+                                          nodeElementsStar, nodeStarNew, elementNodesArrayMap,
+                                          elementMaterialTypesMap, elementBoundaryElementsMap,
+                                          edgeElementsMap, nodes_old2new_subdomain_map, newMesh))
+    return failed;
   ISDestroy(&nodePartitioningIS_new);
   ISDestroy(&nodeNumberingIS_subdomain_old2new);
-  //done with vertex file (and all file reads at this point)
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-
-  newMesh.subdomainp->elementNodesArray = new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nNodes_element];
-  newMesh.subdomainp->elementMaterialTypes = new int[newMesh.subdomainp->nElements_global];
-  //
-  //elements
-  //
-  //locally owned
-  //
-  for (int eN = 0; eN < nElements_subdomain_new[rank]; eN++)
-    {
-      int eN_global_new = elementOffsets_new[rank] + eN;
-      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
-      elementNumbering_subdomain2global[eN] = eN_global_new;
-      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
-      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
-        {
-          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
-          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
-          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
-        }
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator eN_p = elements_overlap.begin();
-  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
-    {
-      int eN_global_new = *eN_p;
-      int eN_global_old = elementNumbering_new2old_subdomain_map[eN_global_new];
-      elementNumbering_subdomain2global[eN] = eN_global_new;
-      newMesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypesMap[eN_global_old];
-      for (int nN =  0; nN < newMesh.subdomainp->nNodes_element; nN++)
-        {
-          int nN_global_new = elementNodesArrayMap[eN_global_old][nN];
-          int nN_subdomain  = nodeNumbering_global2subdomainMap[nN_global_new];
-          newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element + nN]= nN_subdomain;
-        }
-    }
-  elementNodesArrayMap.clear();
-  elementMaterialTypesMap.clear();
-  //
-  //element boundaries
-  //
-  //owned
-  //
-  for (int ebN=0; ebN < nElementBoundaries_subdomain_new[rank]; ebN++)
-    {
-      int ebN_global = ebN + elementBoundaryOffsets_new[rank];
-      elementBoundaryNumbering_subdomain2global[ebN]=ebN_global;
-      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator ebN_p = elementBoundaries_overlap.begin();
-  for(int ebN=nElementBoundaries_subdomain_new[rank];ebN < nElementBoundaries_subdomain_new[rank] + int(elementBoundaries_overlap.size()); ebN++,ebN_p++)
-    {
-      int ebN_global = *ebN_p;
-      elementBoundaryNumbering_subdomain2global[ebN] = ebN_global;
-      elementBoundaryNumbering_global2subdomainMap[ebN_global] = ebN;
-    }
-  //
-  //need elementBoundariesArray to assign consistent numbering on subdomain
-  //
-  //local
-  //
-  newMesh.subdomainp->elementBoundariesArray =
-    new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nElementBoundaries_element];
-  for (int eN=0;eN<nElements_subdomain_new[rank];eN++)
-    {
-      int eN_global = eN+elementOffsets_new[rank];
-      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
-        {
-          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
-            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global][ebN]]];
-        }
-    }
-  //
-  //ghost elements
-  //
-  eN_p = elements_overlap.begin();
-  for (int eN = nElements_subdomain_new[rank]; eN < nElements_subdomain_new[rank] + int(elements_overlap.size()); eN++,eN_p++)
-    {
-      int eN_global_new = *eN_p;
-      for (int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
-        {
-          newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN] =
-            elementBoundaryNumbering_global2subdomainMap[elementBoundaryNumbering_old2new_subdomain_map[elementBoundariesMap[eN_global_new][ebN]]];
-        }
-    }
-  //
-  //edges
-  //
-  //local
-  //
-  for (int edN=0; edN < nEdges_subdomain_new[rank]; edN++)
-    {
-      int edN_global = edN + edgeOffsets_new[rank];
-      edgeNumbering_subdomain2global[edN]=edN_global;
-      edgeNumbering_global2subdomainMap[edN_global] = edN;
-    }
-  //
-  //ghost
-  //
-  set<int>::iterator edN_p = edges_overlap.begin();
-  for(int edN=nEdges_subdomain_new[rank];edN < nEdges_subdomain_new[rank] + int(edges_overlap.size()); edN++,edN_p++)
-    {
-      int edN_global = *edN_p;
-      edgeNumbering_subdomain2global[edN] = edN_global;
-      edgeNumbering_global2subdomainMap[edN_global] = edN;
-    }
-  //
-  //now build edgeNodes array in new numberings
-  //
-  newMesh.subdomainp->edgeNodesArray = new int[newMesh.subdomainp->nEdges_global*2];
-  for (int i=0;i<newMesh.subdomainp->nEdges_global*2;i++)
-    newMesh.subdomainp->edgeNodesArray[i] = -1;
-  for (map<int,pair<int,int> >::iterator edgep=edgeNodesMap.begin();
-       edgep!=edgeNodesMap.end();
-       edgep++)
-    {
-      int edN_global_old = edgep->first;
-      int edN_global_new = edgeNumbering_old2new_subdomain_map[edN_global_old];
-      assert(edgeNumbering_global2subdomainMap.find(edN_global_new) != edgeNumbering_global2subdomainMap.end());
-      int edN_subdomain  = edgeNumbering_global2subdomainMap[edN_global_new];
-      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+0] = nodeNumbering_global2subdomainMap[edgep->second.first];
-      newMesh.subdomainp->edgeNodesArray[edN_subdomain*2+1] = nodeNumbering_global2subdomainMap[edgep->second.second];
-    }
-  //
-  //end edges
-  //
-
-  //now build rest of subdomain mesh connectivity information etc
-  constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_triangle(*newMesh.subdomainp);
-  //build local geometric info
-  allocateGeometricInfo_triangle(*newMesh.subdomainp);
-  computeGeometricInfo_triangle(*newMesh.subdomainp);
-
-  if (hasElementBoundaryMarkers)
-    {
-      assert(newMesh.subdomainp->elementBoundariesArray != NULL);
-      for (map<int,int>::iterator ebmp = elementBoundaryMaterialTypesMap.begin(); ebmp != elementBoundaryMaterialTypesMap.end();ebmp++)
-        {
-          int ebN_global_new = elementBoundaryNumbering_old2new_subdomain_map[ebmp->first];
-          assert(elementBoundaryNumbering_global2subdomainMap.find(ebN_global_new) != elementBoundaryNumbering_global2subdomainMap.end());
-          int ebN_subdomain  = elementBoundaryNumbering_global2subdomainMap[ebN_global_new];
-          newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
-        }
-      if (!hasVertexMarkers)
-        for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
-          {
-            int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
-            for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-              {
-                int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-                newMesh.subdomainp->nodeMaterialTypes[nN] = newMesh.subdomainp->elementBoundaryMaterialTypes[ebN];
-              }
-          }
-    }
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);
-  int build_subdomains_cleanup_event;
-  PetscLogEventRegister("Cleanup",0,&build_subdomains_cleanup_event);
-  PetscLogEventBegin(build_subdomains_cleanup_event,0,0,0,0);
-  //transfer information about owned nodes and elements to mesh
-  if (newMesh.nodeOffsets_subdomain_owned)
-    delete [] newMesh.nodeOffsets_subdomain_owned;
-  if (newMesh.elementOffsets_subdomain_owned)
-    delete [] newMesh.elementOffsets_subdomain_owned;
-  if (newMesh.elementBoundaryOffsets_subdomain_owned)
-    delete [] newMesh.elementBoundaryOffsets_subdomain_owned;
-  if (newMesh.edgeOffsets_subdomain_owned)
-    delete [] newMesh.edgeOffsets_subdomain_owned;
-  newMesh.nodeOffsets_subdomain_owned    = new int[size+1];
-  newMesh.elementOffsets_subdomain_owned = new int[size+1];
-  newMesh.elementBoundaryOffsets_subdomain_owned = new int[size+1];
-  newMesh.edgeOffsets_subdomain_owned = new int[size+1];
-  for (int sdN = 0; sdN < size+1; sdN++)
-    {
-      newMesh.nodeOffsets_subdomain_owned[sdN]    = nodeOffsets_new[sdN];
-      newMesh.elementOffsets_subdomain_owned[sdN] = elementOffsets_new[sdN];
-      newMesh.elementBoundaryOffsets_subdomain_owned[sdN] = elementBoundaryOffsets_new[sdN];
-      newMesh.edgeOffsets_subdomain_owned[sdN] = edgeOffsets_new[sdN];
-    }
-  if (newMesh.nodeNumbering_subdomain2global)
-    delete [] newMesh.nodeNumbering_subdomain2global;
-  newMesh.nodeNumbering_subdomain2global = new int[newMesh.subdomainp->nNodes_global];
-  for (int nN = 0; nN < newMesh.subdomainp->nNodes_global; nN++)
-    newMesh.nodeNumbering_subdomain2global[nN] = nodeNumbering_subdomain2global[nN];
-  if (newMesh.elementNumbering_subdomain2global)
-    delete [] newMesh.elementNumbering_subdomain2global;
-  newMesh.elementNumbering_subdomain2global = new int[newMesh.subdomainp->nElements_global];
-  for (int eN = 0; eN < newMesh.subdomainp->nElements_global; eN++)
-    newMesh.elementNumbering_subdomain2global[eN] = elementNumbering_subdomain2global[eN];
-  //
-  if (newMesh.elementBoundaryNumbering_subdomain2global)
-    delete [] newMesh.elementBoundaryNumbering_subdomain2global;
-  newMesh.elementBoundaryNumbering_subdomain2global = new int[newMesh.subdomainp->nElementBoundaries_global];
-  for (int ebN = 0; ebN < newMesh.subdomainp->nElementBoundaries_global; ebN++)
-    newMesh.elementBoundaryNumbering_subdomain2global[ebN] = elementBoundaryNumbering_subdomain2global[ebN];
-  //
-  if (newMesh.edgeNumbering_subdomain2global)
-    delete [] newMesh.edgeNumbering_subdomain2global;
-  newMesh.edgeNumbering_subdomain2global = new int[newMesh.subdomainp->nEdges_global];
-  for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
-    newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
-  //cleanup
-  /* out of core*/
   H5Sclose(filespace);
   H5Sclose(memspace);
   H5Pclose(plist_id);
-  //(the mappings file is closed right after the numbering write; nothing is
-  //open here any more)
-  /* out of core */
-  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
-  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
-  PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
   //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
