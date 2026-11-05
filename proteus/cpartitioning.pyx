@@ -52,6 +52,9 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_partitionNodesFromTriangleFiles,
                                    c_readSimplexNodeStars,
                                    c_readSubdomainVertices,
+                                   c_readSimplexElementsTouching,
+                                   c_ownedNodesByFileNumber,
+                                   c_newNumbersOfFileNodes,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
                                    buildQuadraticSubdomain2GlobalMappings_2d,
                                    buildQuadraticSubdomain2GlobalMappings_3d,
@@ -434,6 +437,41 @@ def readNodeStars(object filebase, int simplexDim, int indexBase, int nNodes_glo
     if not c_readSimplexNodeStars(name, b"simplex", simplexDim, indexBase, nNodes_global, begin, end, nElements_global, stars):
         raise IOError("cannot open element file %s" % name.decode())
     return nElements_global, [np.array(sorted(star), dtype=np.intc) for star in stars]
+
+def readSimplexElementsTouching(object filebase, int simplexDim, int indexBase, int nNodes_global, object nodes):
+    """The second read of the parun -F partitioners: the elements of
+    filebase.ele with a node in `nodes` (0-based file numbers), in file order.
+    Returns (nElements_global, hasElementMarkers, elements, elementNodes
+    (n, simplexDim), elementIds), all in file numbering, the last empty
+    without attributes. No MPI."""
+    if not isinstance(filebase, bytes):
+        filebase = filebase.encode()
+    cdef string name = filebase + b'.ele'
+    cdef cppmap[int,int] nodeMap
+    for k in nodes:
+        nodeMap[k] = 0
+    cdef int nElements_global = 0, hasElementMarkers = 0
+    cdef vector[int] elements, elementNodes
+    cdef vector[double] elementIds
+    if not c_readSimplexElementsTouching(name, b"simplex", simplexDim, indexBase, nNodes_global, nodeMap,
+                                         nElements_global, hasElementMarkers, elements, elementNodes, elementIds):
+        raise IOError("cannot open element file %s" % name.decode())
+    return (nElements_global, hasElementMarkers, np.array(elements, dtype=np.intc),
+            np.array(elementNodes, dtype=np.intc).reshape(-1, simplexDim), np.array(elementIds, dtype=np.double))
+
+def fileNodeNumbers(Comm comm, object nodeOffsets_old, object nodeOffsets_new, object old2new_chunk, object wanted):
+    """The two exchanges of the parun -F partitioners' second element read.
+    Each rank holds old2new for its default chunk of file nodes
+    [nodeOffsets_old[rank], nodeOffsets_old[rank+1]). Returns (owned, answered):
+    file -> new number of the nodes whose new number is in this rank's range of
+    nodeOffsets_new, and of the file nodes `wanted`. Collective."""
+    cdef vector[int] off_old = list(nodeOffsets_old), off_new = list(nodeOffsets_new), chunk = list(old2new_chunk)
+    cdef cppset[int] want
+    for k in wanted:
+        want.insert(k)
+    owned = c_ownedNodesByFileNumber(comm.ob_mpi, off_old, off_new, chunk)
+    answered = c_newNumbersOfFileNodes(comm.ob_mpi, off_old, chunk, want)
+    return dict(owned), dict(answered)
 
 def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVertexMarkers,
                           object nodes_old2new, int ownedBegin, int ownedEnd, object overlap):

@@ -72,15 +72,15 @@ def _mpiexec():
     return shutil.which('mpiexec') or shutil.which('mpirun')
 
 
-def _launch(args, n_ranks, cwd):
-    """Run meshPartition_mpi.py on n_ranks (None: plain python, no launcher)."""
+def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py'):
+    """Run script (meshPartition_mpi.py) on n_ranks (None: plain python, no launcher)."""
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     env.setdefault('OMPI_MCA_rmaps_base_oversubscribe', '1')
     env.setdefault('PRTE_MCA_rmaps_default_mapping_policy', ':oversubscribe')
     env['PETSC_OPTIONS'] = (env.get('PETSC_OPTIONS', '') + ' -mat_partitioning_type current').strip()
-    cmd = [sys.executable, os.path.join(HERE, 'meshPartition_mpi.py')] + [str(a) for a in args]
+    cmd = [sys.executable, os.path.join(HERE, script)] + [str(a) for a in args]
     if n_ranks is not None:
         mpiexec = _mpiexec()
         if mpiexec is None:
@@ -649,3 +649,46 @@ def test_files_reader_subdomain_vertices(mesh):
     assert np.array_equal(old2new[new2old], np.arange(n))
     with pytest.raises(IOError):
         cpartitioning.readSubdomainVertices(filebase + '_missing', nSpace, 1, 1, nodes_old2new, begin, end, [])
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_reader_subdomain_elements(mesh):
+    """The second read of the parun -F partitioners (Triangle and TetGen): each
+    rank streams the .ele file again and keeps, in file order, the elements
+    with a node it owns after repartitioning, with their file nodes and first
+    attribute. Checked against the file itself and the in-memory reader."""
+    from proteus import cpartitioning
+    m = _readMesh(mesh)
+    n = m.nNodes_global
+    filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    simplexDim = {'tri': 3, 'tet': 4}[mesh]
+    table = np.loadtxt(filebase + '.ele', skiprows=1, comments='#', ndmin=2)
+    fileElements = table[:, 0].astype(int) - 1
+    fileNodes = table[:, 1:1 + simplexDim].astype(int) - 1
+    fileIds = table[:, 1 + simplexDim]
+    assert np.array_equal(np.sort(fileNodes, axis=1), np.sort(np.asarray(m.elementNodesArray), axis=1))
+    assert np.array_equal(fileIds, np.asarray(m.elementMaterialTypes))
+    rng = np.random.default_rng(32)
+    for nodes in (rng.choice(n, size=n // 4, replace=False), np.arange(n), np.array([], dtype=int)):
+        nElements, markers, elements, elementNodes, elementIds = cpartitioning.readSimplexElementsTouching(
+            filebase, simplexDim, 1, n, nodes.tolist())
+        keep = np.isin(fileNodes, nodes).any(axis=1)
+        assert nElements == m.nElements_global and markers == 1
+        assert np.array_equal(elements, fileElements[keep])
+        assert np.array_equal(elementNodes, fileNodes[keep])
+        assert np.array_equal(elementIds, fileIds[keep])
+    with pytest.raises(IOError):
+        cpartitioning.readSimplexElementsTouching(filebase + '_missing', simplexDim, 1, n, [0])
+
+
+@pytest.mark.parametrize('n', [1, 2, 3, 4])
+def test_files_node_number_exchange(tmp_path, n):
+    """The parun -F partitioners number the nodes of their second element read
+    by exchange, not by reading mappings.h5: each rank sends old->new of its
+    default chunk to the new owner, and asks the chunk owners for the new
+    numbers of the other nodes its elements touch. Checked under a random
+    permutation and uneven new ranges (meshPartition_exchange_mpi.py), which the
+    stored-mesh cases never produce."""
+    for nNodes, seed in ((1, 0), (37, 1), (1000, 2)):
+        got = _launch([nNodes, seed], n, cwd=tmp_path, script='meshPartition_exchange_mpi.py')
+        assert got == {'ranks': str(n), 'owned': str(nNodes), 'asked': got['asked']}

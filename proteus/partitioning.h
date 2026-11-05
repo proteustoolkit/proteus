@@ -303,6 +303,29 @@ namespace proteus
                                     std::map<int,int>& nodeNumbering_global2subdomainMap,
                                     double* nodeArray, int* nodeMaterialTypes);
 
+  /* I/O, local: stream a Triangle or TetGen .ele file and keep, in file order,
+     the elements with a node among the keys of `nodes` (0-based file
+     numbers): their file numbers, their file nodes (simplexDim each, in
+     elementNodes) and, when the header announces attributes, the first
+     (elementIds). False if the file cannot be opened. */
+  extern bool readSimplexElementsTouching(const std::string& elementFileName, const char* format, int simplexDim,
+                                          int indexBase, int nNodes_global, const std::map<int,int>& nodes,
+                                          int& nElements_global, int& hasElementMarkers,
+                                          std::vector<int>& elements, std::vector<int>& elementNodes,
+                                          std::vector<double>& elementIds);
+
+  /* MPI: file number -> new number of the nodes this rank owns after
+     repartitioning, sent by the ranks whose default chunk (nodeOffsets_old)
+     computed them (old2new_chunk). One exchange. */
+  extern std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                                  const std::vector<int>& nodeOffsets_new,
+                                                  const std::vector<int>& old2new_chunk);
+
+  /* MPI: the new numbers of the file nodes `wanted`, from the ranks whose
+     default chunk holds them. Collective: every rank calls it. */
+  extern std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                                 const std::vector<int>& old2new_chunk, const std::set<int>& wanted);
+
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
