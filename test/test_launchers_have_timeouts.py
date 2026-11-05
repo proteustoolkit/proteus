@@ -8,7 +8,8 @@ on expiry ends the launch's whole process tree.
 This checks the files pytest runs: every test_*.py and conftest.py under test/. (test/multilevel
 has a stricter check of its own, over its helpers too.) ``subprocess.Popen`` takes no timeout,
 so it is not checked: its ``wait``/``communicate`` is where one goes. A ``**kwargs`` that may
-carry the timeout does not count; pass it by name.
+carry the timeout does not count; pass it by name. ``os.system`` and ``os.popen`` take none and
+ignore the exit status: use ``subprocess.run(cmd, shell=True, check=True, timeout=...)``.
 """
 import ast
 import os
@@ -28,6 +29,10 @@ def launches_without_timeout(path):
                 and node.func.value.id == 'subprocess'
                 and not any(k.arg == 'timeout' for k in node.keywords)):
             yield '%s:%d' % (os.path.relpath(path, TEST_ROOT), node.lineno)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ('system', 'popen') and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'os'):
+            yield '%s:%d (os.%s)' % (os.path.relpath(path, TEST_ROOT), node.lineno, node.func.attr)
 
 
 def files_pytest_runs():
@@ -53,5 +58,7 @@ def test_the_check_sees_a_launch_without_one(tmp_path):
     sample.write_text('import subprocess\n'
                       'subprocess.run(["true"], timeout=10)\n'
                       'subprocess.check_call("true", shell=True)\n'
-                      'subprocess.Popen(["true"]).wait(timeout=10)\n')
-    assert [where.rsplit(':', 1)[1] for where in launches_without_timeout(str(sample))] == ['3']
+                      'subprocess.Popen(["true"]).wait(timeout=10)\n'
+                      'import os\n'
+                      'os.system("true")\n')
+    assert [where.split(':', 1)[1] for where in launches_without_timeout(str(sample))] == ['3', '6 (os.system)']
