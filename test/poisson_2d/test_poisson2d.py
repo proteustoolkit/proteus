@@ -206,6 +206,9 @@ def test_ncp1_p1nc_velocity(opts):
     reload(poisson_het_2d_ncp1_n)
     pList = [poisson_het_2d_p]
     nList = [poisson_het_2d_ncp1_n]
+    # the deck sets nn = 21 but star-imports nnx and nny from default_n, and the mesh takes nnx over nn: a value an
+    # earlier test leaves there (3 on a CI worker) gives 8 elements and an error of 0.33
+    nList[0].nnx = nList[0].nny = nList[0].nn
     reload(default_so)
     so = default_so
     so.name = pList[0].name = "poisson_2d_ncp1_pe{0}".format(repr(Comm.get().size()))
