@@ -111,6 +111,8 @@ class Coefficients(TC_base):
        :parts: 2
     """
     from proteus.ctransportCoefficients import L2projectEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    L2projectEvaluate = staticmethod(L2projectEvaluate)
     def __init__(self,aOfX,fOfX,velocity=None,nc=1,nd=2,l2proj=None,
                  timeVaryingCoefficients=False,
                  forceStrongDirichlet=False,

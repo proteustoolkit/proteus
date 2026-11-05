@@ -206,6 +206,8 @@ class TwophaseDarcyFlow_base(TC_base):
 #primitive fully coupled formulation
 class TwophaseDarcy_fc(TwophaseDarcyFlow_base):
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_fc_sd_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_fc_sd_het_matType = staticmethod(twophaseDarcy_fc_sd_het_matType)
     def __init__(self,
                  g=9.8,
                  rhon=1.0,
@@ -357,6 +359,8 @@ class TwophaseDarcy_fc(TwophaseDarcyFlow_base):
 #split fractional flow formulation--pressure equation
 class TwophaseDarcy_split_pressure(TwophaseDarcyFlow_base):
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_sd_pressure_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_sd_pressure_het_matType = staticmethod(twophaseDarcy_incompressible_split_sd_pressure_het_matType)
     def __init__(self,
                  g=9.8,
                  rhon=1.0,
@@ -547,6 +551,8 @@ class TwophaseDarcy_split_pressure(TwophaseDarcyFlow_base):
 #split fractional flow formulation--saturation equation
 class TwophaseDarcy_split_saturation(TwophaseDarcyFlow_base):
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_sd_saturation_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_sd_saturation_het_matType = staticmethod(twophaseDarcy_incompressible_split_sd_saturation_het_matType)
     def __init__(self,
                  g=[9.8],
                  rhon=1.0,
