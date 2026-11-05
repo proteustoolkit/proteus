@@ -8,9 +8,12 @@ coarse level is solved by a redundant SuperLU factorization (RedundantLU). The
 PETSc C library is still used by the graph partitioner, unless the partition is
 prescribed (test_partition_arrays.py runs multigrid with no PETSc at all).
 
-* The building blocks agree with PETSc's exactly: DistMat's mult and
-  multTranspose, ParVec_mpi4py's forward insert and reverse add, on uneven
-  layouts with empty ranks.
+* The building blocks agree with PETSc's, on uneven layouts with empty ranks:
+  ParVec_mpi4py's forward insert and reverse add exactly, DistMat's mult and
+  multTranspose to rounding. They agree exactly on the conda builds; the fleet's
+  pip PETSc on aarch64 (spark2) differs by 4.4e-16-8.9e-16, a fused
+  multiply-add, so the products are held to the rounding bound distmat_mpi.py
+  prints (about 1e-14 here) instead of to zero.
 * MGM run with petsc4py blocked (without_petsc4py.py) reproduces the PETSc path
   at every rank count, for nodal P1, P2, discontinuous P1 and hexahedral Q1. The
   PETSc path is in turn the serial cycle (test_parallel_mgm.py and friends), so
@@ -62,8 +65,10 @@ def _launch(args, n_ranks, blocked, timeout=300):
 def test_building_blocks_agree_with_petsc(n_ranks):
     pytest.importorskip('petsc4py')
     got = _launch(['distmat_mpi.py', '40', '23'], n_ranks, blocked=False)
-    for key in ('mult', 'multTranspose', 'forward', 'forward_truth', 'reverse'):
+    for key in ('forward', 'forward_truth', 'reverse'):
         assert float(got[key]) == 0.0, got
+    for key in ('mult', 'multTranspose'):
+        assert float(got[key]) <= float(got[key + '_bound']), got
 
 
 CASES = {
