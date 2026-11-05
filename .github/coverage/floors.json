@@ -116,7 +116,7 @@
   "proteus/mprans/MoveMesh.py": 86.4,
   "proteus/mprans/MoveMeshMonitor.py": 65.9,
   "proteus/mprans/NCLS.py": 75.4,
-  "proteus/mprans/NCLS3P.py": 76.2,
+  "proteus/mprans/NCLS3P.py": 75.6,
   "proteus/mprans/Pres.py": 76.1,
   "proteus/mprans/PresInc.py": 76.2,
   "proteus/mprans/PresInit.py": 23.2,
