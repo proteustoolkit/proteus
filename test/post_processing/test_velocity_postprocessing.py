@@ -34,7 +34,10 @@ face quadrature points as the number of shape functions, and with P2 it evaluate
 quadratic basis. Its face fluxes missed the numerical flux by 0.5 (P1) and 1.3 (P2, 25 x 25 nodes).
 
 point-eval-gwvd keeps the velocity an LDG flux computes (VPP_SPACE=ldg); it is tested for that and for its refusals.
-The LDG solve itself is wrong on this problem, so its accuracy test is a strict xfail.
+The LDG solve was wrong until 2026-11-05 (L2 velocity error 1.7e2 to 3.6e2, different on every run): Diffusion_LDG
+passed its exterior flux Jacobian kernel (rowptr, colind, isDiffusiveFluxBoundary) for (isDiffusiveFluxBoundary,
+rowptr, colind), so the kernel read the face flags past the end of the 3-entry rowptr and dropped the a V.n term.
+It is now first order in the velocity and exact for P2, and needs two layers of overlap in parallel.
 
 Every run checks the linear solver's converged reason: a solve stopped at the iteration limit makes every variant
 differ from serial (CG/ASM does on the interior-penalty systems, which are solved directly here).
@@ -300,9 +303,33 @@ def test_point_eval_gwvd_needs_an_ldg_flux(tmp_path):
     assert "LDG numerical flux" in out.stdout + out.stderr
 
 
-@pytest.mark.xfail(strict=True, reason="the LDG solve is wrong: u misses x^2 + y^2 by 13 (P1, 13 x 13), Newton "
-                                       "diverges from it, and identical runs differ in the fourth digit")
 def test_point_eval_gwvd_velocity_is_accurate(tmp_path):
-    """The LDG velocity should be within the RT0 error of -a grad u (0.063 here); measured 1.7e2."""
-    _run(1, tmp_path, "point-eval-gwvd", 1, space="ldg")
-    assert _summary(tmp_path)["l2_velocity_error"] < 0.2
+    """The LDG velocity converges at first order with P1 (L2 error 0.218, 0.114, 0.058, 0.029 on 7, 13, 25, 49 nodes
+    per side) and is exact for P2 (4e-13); it was 1.7e2 to 3.6e2 before, a different number on every run."""
+    _run(1, tmp_path / "13", "point-eval-gwvd", 1, space="ldg")
+    _run(1, tmp_path / "25", "point-eval-gwvd", 1, space="ldg", nn=25)
+    coarse, fine = (_summary(tmp_path / d)["l2_velocity_error"] for d in ("13", "25"))
+    assert coarse < 0.12 and 1.9 < coarse / fine < 2.1
+    _run(1, tmp_path / "p2", "point-eval-gwvd", 2, space="ldg")
+    assert _summary(tmp_path / "p2")["l2_velocity_error"] < 1e-10
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("ranks", [2, 4])
+def test_ldg_on_ranks_with_two_layers_is_the_serial_answer(tmp_path, ranks):
+    """LDG's face flux reads the neighbour's velocity, solved from the neighbour's faces: with two layers of overlap
+    the velocities are the serial ones (measured 1e-15 in the L2 error, 2 and 4 ranks)."""
+    serial = _run(1, tmp_path / "1", "point-eval-gwvd", 1, space="ldg")
+    parallel = _run(ranks, tmp_path / "n", "point-eval-gwvd", 1, overlap=2, space="ldg")
+    assert abs(_summary(tmp_path / "1")["l2_velocity_error"] - _summary(tmp_path / "n")["l2_velocity_error"]) < 1e-12
+    s, p = (rows[numpy.lexsort((rows[:, 1], rows[:, 0]))] for rows in (serial, parallel))
+    assert numpy.abs(s[:, -12:] - p[:, -12:]).max() < 1e-10 * numpy.abs(s[:, -12:]).max()
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+def test_ldg_on_one_layer_is_refused_on_every_rank(tmp_path):
+    """With one layer the neighbours of ghost elements are missing; measured 0.113549 against 0.113510 (4 ranks)."""
+    out = _run(2, tmp_path, "point-eval-gwvd", 1, overlap=1, space="ldg", check=False)
+    output = out.stdout + out.stderr
+    assert out.returncode != 0
+    assert output.count("owned elements or their face neighbours (LDG)") >= 2, output[-3000:]
