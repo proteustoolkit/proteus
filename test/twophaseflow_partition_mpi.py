@@ -35,10 +35,22 @@ def boundary_integral_gauges(pList, nList):
             n.auxiliaryVariables = list(getattr(n, "auxiliaryVariables", [])) + [gauge]
 
 
+def ymf_gauges(pList, nList):
+    """YMFGAUGES=<yaml file>: the gauges of its ``gauges:`` list, attached by proteus.Gauges.attach_ymf_gauges;
+    YMFFIELDS="sym=name,..." maps ymf symbols to Proteus variable names."""
+    import strictyaml
+    from proteus.Gauges import attach_ymf_gauges
+    spec = strictyaml.dirty_load(open(os.environ["YMFGAUGES"], encoding="utf-8").read(), allow_flow_style=True)
+    fields = dict(f.split("=") for f in os.environ.get("YMFFIELDS", "").split(",") if f)
+    attach_ymf_gauges(spec, pList, nList, fields=fields)
+
+
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
     if os.environ.get("BIGAUGES"):
         boundary_integral_gauges(pList, nList)
+    if os.environ.get("YMFGAUGES"):
+        ymf_gauges(pList, nList)
     if os.environ.get("ATOL"):
         atol = float(os.environ["ATOL"])
         for n in nList:
