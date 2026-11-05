@@ -72,6 +72,16 @@ def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
     assert _worst(full, hot) > 1e-3
 
 
+def test_a_driver_without_hot_start_mode_continues(tmp_path):
+    """Options without ``hotStartMode`` (a parun installed before the option existed: setup.py copies the script
+    at install time, editable install or not) take the default, continue, instead of failing in the restore."""
+    dtout, t, ft = CASES["lagged"]
+    full = _run(tmp_path / "full", FT=ft, DTOUT=dtout)
+    _run(tmp_path / "hot", FT=t, DTOUT=dtout, NOHOTSTARTMODE=1)
+    hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t, NOHOTSTARTMODE=1)
+    assert _worst(full, hot) == 0.0
+
+
 def test_the_hot_start_time_meets_an_archived_time_in_floating_point():
     """-H -t 0.06 with archives every 0.02: the archived step is 0.06000000000000001 (a sum of steps), and the
     "latest archived step at or before t" rule used to restart from 0.04. An archived time counts as at t

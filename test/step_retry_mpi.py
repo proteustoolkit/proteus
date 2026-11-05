@@ -42,6 +42,9 @@ def boundary_integral_gauges(pList, nList):
 
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
+    if os.environ.get("NOHOTSTARTMODE"):
+        # options from a driver older than --hotStartMode (sList, opts follow nList)
+        delattr(args[1], "hotStartMode")
     if os.environ.get("REPLAY"):
         # the system steps land on the replayed run's accepted times, the first step included
         so.systemStepSchedule = np.loadtxt(os.environ["REPLAY"])

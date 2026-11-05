@@ -199,8 +199,10 @@ class NS_base(object):  # (HasTraits):
 
     @_with_numerics_petsc_options
     def __init__(self,so,pList,nList,sList,opts,simFlagsList=None,TwoPhaseFlow=False):
-        if getattr(opts, 'hotStartMode', 'continue') not in ('continue', 'restart'):
-            raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (opts.hotStartMode,))
+        # a driver that predates the option (an installed parun is a copy made at install time) gets the default
+        self.hotStartMode = getattr(opts, 'hotStartMode', 'continue')
+        if self.hotStartMode not in ('continue', 'restart'):
+            raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (self.hotStartMode,))
         from . import Comm
         comm=Comm.get()
         self.comm=comm
@@ -1515,7 +1517,7 @@ class NS_base(object):  # (HasTraits):
         hdf = ar.hdfFile
         if ar.inline or ar.dataItemFormat != "HDF" or hdf is None:
             return False
-        if self.opts.hotStartMode == "restart":
+        if self.hotStartMode == "restart":
             logEvent("Hot start (restart): the history of model %s is rebuilt from the restart state" % model.name,
                      level=0)
             return False
