@@ -36,6 +36,19 @@ OMPI_MPI_INIT_FAILED = textwrap.dedent('''\
     --------------------------------------------------------------------------
     ''')
 OMPI_PTL_TOOL = ('[host:58199] ptl_tool: problems getting address for index 0 (kernel index -1)\n')
+# chewbacca-2, 2026-11-04 (cekees/proteus#182): a one-rank helper run without mpiexec whose pid had
+# another user's stale /mpich_shm_<hex pid>_0 (MPICH 5.0.1, exit status 15)
+MPICH_SINGLETON_SHM = textwrap.dedent('''\
+    Abort(742016271) on node 0: Fatal error in internal_Init_thread: Other MPI error, error stack:
+    internal_Init_thread(71)..............: MPI_Init_thread(argc=0x0, argv=0x0, required=3, provided=0x16ba67628) failed
+    MPII_Init_thread(305).................:
+    MPIR_init_comm_world(37)..............:
+    MPIR_Comm_commit(821).................:
+    MPID_Comm_commit_pre_hook(160)........:
+    MPIDI_SHM_mpi_comm_commit_pre_hook(18):
+    MPIDI_SHM_comm_bootstrap(45)..........:
+    MPIDI_POSIX_comm_bootstrap(288).......: Out of memory
+    ''')
 SOMETHING_ELSE = 'Traceback (most recent call last):\n  ...\nAssertionError: the job itself failed\n'
 
 FAKE_LAUNCHER = textwrap.dedent('''\
@@ -71,6 +84,12 @@ def test_an_mpi_init_failure_is_launched_again(launch):
     result, calls = launch(2, OMPI_MPI_INIT_FAILED, 14)
     assert result.returncode == 0 and 'started on call 3' in result.stdout
     assert calls == 3
+
+
+def test_an_mpich_singleton_on_a_stale_shm_name_is_launched_again(launch):
+    result, calls = launch(1, MPICH_SINGLETON_SHM, 15)
+    assert result.returncode == 0 and 'started on call 2' in result.stdout
+    assert calls == 2
 
 
 def test_a_pmix_address_failure_is_launched_again(launch):
