@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from miscible_displacement import *
 
-"""
+r"""
 advective-dispersive transport in heterogeneous domain
 
    \pd{\theta c}{t} + \deld \left[\vec q c - \theta\ten{D}\nabla c\right] = s_c(x,t) 

@@ -136,6 +136,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_3D_Evaluate
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_3D_Evaluate_sd
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    TwophaseNavierStokes_ST_LS_SO_2D_Evaluate = staticmethod(TwophaseNavierStokes_ST_LS_SO_2D_Evaluate)
+    TwophaseNavierStokes_ST_LS_SO_3D_Evaluate = staticmethod(TwophaseNavierStokes_ST_LS_SO_3D_Evaluate)
+    TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd = staticmethod(TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd)
+    TwophaseNavierStokes_ST_LS_SO_3D_Evaluate_sd = staticmethod(TwophaseNavierStokes_ST_LS_SO_3D_Evaluate_sd)
 
     def __init__(self,
                  epsFact=1.5,

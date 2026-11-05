@@ -6049,6 +6049,8 @@ class RedistanceLevelSet(TC_base):
 #end class
 class RedistanceLevelSetWithWeakPenalty(RedistanceLevelSet):
     from proteus.ctransportCoefficients import redistanceLevelSetCoefficientsWithWeakPenaltyEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    redistanceLevelSetCoefficientsWithWeakPenaltyEvaluate = staticmethod(redistanceLevelSetCoefficientsWithWeakPenaltyEvaluate)
     def __init__(self,applyRedistancing=True,epsFact=2.0,penaltyParameter=1.0,nModelId=None,u0=None,rdModelId=0):
         variableNames=['phid']
         nc=1
