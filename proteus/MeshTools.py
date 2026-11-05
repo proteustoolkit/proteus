@@ -7581,6 +7581,137 @@ def _applyYmfFacetTags(mesh, source, MeshTag=YMF_MESH_SPACE):
         mesh.elementBoundaryMaterialTypes[ebN] = tag
     logEvent("Tagged %d element boundaries from the facets of %s" % (len(tags), label))
 
+def _meshFromYmf(source, MeshTag=YMF_MESH_SPACE):
+    """A new global TriangularMesh or TetrahedralMesh read from a ymf mesh (file prefix or grid)."""
+    topology = ymfMeshTopology(source, MeshTag)
+    classes = {"Triangle": TriangularMesh, "Tetrahedron": TetrahedralMesh}
+    if topology not in classes:
+        raise ValueError("a ymf mesh of %s cells has no per-rank view; triangles or tetrahedra" % (topology,))
+    mesh = classes[topology]()
+    mesh.generateFromYmf(source)
+    return mesh
+
+
+def _owners(offsets, globalNumbers):
+    """The rank owning each global number, from the partitioner's owned offsets."""
+    return (np.searchsorted(np.asarray(offsets), np.asarray(globalNumbers), side="right") - 1).astype(np.int32)
+
+
+def subdomainYmfGrid(globalMesh, rank=None):
+    """One rank's piece of a partitioned mesh as a ymf grid, facets in the ``subdomain`` view (C7.1 step H).
+
+    The grid holds the subdomain as the solver sees it, overlap included, in its local numbering (owned
+    nodes and elements first): ``topology`` and ``geometry``; the attributes ``NodeMapInput`` and
+    ``CellMapInput`` (each local node's and element's index in the input mesh: the partitioner's
+    numbering composed with its inverse, see inputNumbering), ``NodeOwner`` and ``CellOwner`` (the rank
+    owning each), and the material types; and ``facets``, every exterior face of the subdomain with its
+    tag: 0 untagged, >0 a condition, -1 a face cut by the partition (ymf decision 2: -1 only here).
+    Arrays are inline. ``rank`` defaults to this process's; the global mesh must have been partitioned
+    (partitionMesh, or subdomainYmfGrids in one process).
+    """
+    from ymf import archive as ymf_archive
+    if rank is None:
+        rank = Comm.get().rank()
+    g, sub = globalMesh, globalMesh.subdomainMesh
+    nodes_input, elements_input = inputNumbering(g)
+    nodes_global = np.asarray(g.nodeNumbering_subdomain2global)
+    cells_global = np.asarray(g.elementNumbering_subdomain2global)
+    def item(array):
+        return ymf_archive.data_item_for(np.ascontiguousarray(array), inline=True)
+    def attribute(name, values, center):
+        return ymf_archive.attribute(name, item(values), center=center)
+    nodeMapInput = nodes_global if nodes_input is None else nodes_input[nodes_global]
+    cellMapInput = cells_global if elements_input is None else elements_input[cells_global]
+    topologyName = {3: "Triangle", 4: "Tetrahedron"}[sub.nNodes_element]
+    exterior = np.asarray(sub.exteriorElementBoundariesArray)
+    faces = np.asarray(sub.elementBoundaryNodesArray)[exterior]
+    grid = ymf_archive.uniform_grid(
+        ymf_archive.topology(topologyName, sub.nElements_global, item(np.asarray(sub.elementNodesArray, dtype=np.int32))),
+        ymf_archive.geometry(item(np.asarray(sub.nodeArray, dtype='d'))),
+        [attribute("NodeMapInput", nodeMapInput.astype(np.int64), "Node"),
+         attribute("CellMapInput", cellMapInput.astype(np.int64), "Cell"),
+         attribute("NodeOwner", _owners(g.nodeOffsets_subdomain_owned, nodes_global), "Node"),
+         attribute("CellOwner", _owners(g.elementOffsets_subdomain_owned, cells_global), "Cell"),
+         attribute("nodeMaterialTypes", np.asarray(sub.nodeMaterialTypes, dtype=np.int32), "Node"),
+         attribute("elementMaterialTypes", np.asarray(sub.elementMaterialTypes, dtype=np.int32), "Cell")])
+    grid["name"] = "subdomain %d" % rank
+    grid["facets"] = ymf_archive.facets(
+        ymf_archive.topology("Polyline" if faces.shape[1] == 2 else "Triangle", len(faces),
+                             item(faces.astype(np.int32)), nodes_per_element=faces.shape[1]),
+        item(np.asarray(sub.elementBoundaryMaterialTypes)[exterior].astype(np.int32)), view="subdomain")
+    return grid
+
+
+def subdomainYmfGrids(source, size, nodeOwners, nLayersOfOverlap=1, MeshTag=YMF_MESH_SPACE):
+    """Every rank's subdomainYmfGrid for ``size`` ranks, computed in this one process, without MPI.
+
+    ``source`` is a ymf mesh (file prefix or grid) and ``nodeOwners`` the owning rank of each of its
+    nodes, as partitionMesh would be given them. Each rank's piece comes from C32's
+    ``cpartitioning.partitionNodesLocal`` (the part of partitionNodes after the owners are known) on a
+    fresh copy of the global mesh, with the cut faces marked -1 as partitionMesh marks them; under
+    ``mpiexec -n size`` each rank's partitionMesh gives the same grid.
+    """
+    from . import cmeshTools, cpartitioning
+    nodeOwners = np.ascontiguousarray(nodeOwners, dtype=np.intc)
+    grids = []
+    for rank in range(size):
+        g = _meshFromYmf(source, MeshTag)
+        realBoundary = set(map(tuple, np.sort(g.elementBoundaryNodesArray[g.exteriorElementBoundariesArray],
+                                              axis=1).tolist()))
+        nodesBefore = np.array(g.nodeArray, copy=True)
+        g.subdomainMesh = g.__class__()
+        g.subdomainMesh.globalMesh = g
+        g.subdomainMesh.cmesh = cmeshTools.CMesh()
+        g.nLayersOfOverlap = nLayersOfOverlap
+        g.parallelPartitioningType = MeshParallelPartitioningTypes.node
+        (g.elementOffsets_subdomain_owned,
+         g.elementNumbering_subdomain2global,
+         g.nodeOffsets_subdomain_owned,
+         g.nodeNumbering_subdomain2global,
+         g.elementBoundaryOffsets_subdomain_owned,
+         g.elementBoundaryNumbering_subdomain2global,
+         g.edgeOffsets_subdomain_owned,
+         g.edgeNumbering_subdomain2global) = cpartitioning.partitionNodesLocal(
+             rank, size, nLayersOfOverlap, g.cmesh, g.subdomainMesh.cmesh, nodeOwners)
+        g.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(g.cmesh)
+        g.elementNumbering_global_old2new = cpartitioning.getElementNumbering_global_old2new(g.cmesh)
+        sub = g.subdomainMesh
+        sub.buildFromC(sub.cmesh)
+        sub.nElements_owned = g.elementOffsets_subdomain_owned[rank+1] - g.elementOffsets_subdomain_owned[rank]
+        sub.nNodes_owned = g.nodeOffsets_subdomain_owned[rank+1] - g.nodeOffsets_subdomain_owned[rank]
+        if size > 1:
+            g._markRankInterfaces(realBoundary, nodesBefore)
+        grids.append(subdomainYmfGrid(g, rank))
+    return grids
+
+
+def subdomainMeshFromYmf(grid):
+    """The subdomain mesh a ``subdomain`` view (subdomainYmfGrid) holds, as a mesh in its local numbering.
+
+    Its element boundary flags are the facet tags, -1 on the cut faces, and ``rankInterfacesMarked`` is
+    set, as partitionMesh leaves a subdomain mesh (on more than one rank). The view's maps come back as ``nodeNumbering_input``,
+    ``elementNumbering_input``, ``nodeOwners`` and ``elementOwners``, and the owned counts as
+    ``nNodes_owned`` and ``nElements_owned`` (owned first, the owner being the first node's and element's).
+    This is the view, not a solver-ready subdomain: the global offsets a parallel vector needs are not in it.
+    """
+    from ymf import archive as ymf_archive
+    if grid.get("facets", {}).get("view") != "subdomain":
+        raise ValueError("%s is not a subdomain view (facets view %r)"
+                         % (grid.get("name", "the grid"), grid.get("facets", {}).get("view")))
+    mesh = _meshFromYmf(grid)
+    arrays = dict((a["name"], np.asarray(ymf_archive.load_array(a["data_item"])).reshape(-1))
+                  for a in grid["attributes"])
+    mesh.nodeNumbering_input, mesh.elementNumbering_input = arrays["NodeMapInput"], arrays["CellMapInput"]
+    mesh.nodeOwners, mesh.elementOwners = arrays["NodeOwner"], arrays["CellOwner"]
+    rank = mesh.nodeOwners[0] if len(mesh.nodeOwners) else 0
+    mesh.nNodes_owned = int(np.count_nonzero(mesh.nodeOwners == rank))
+    mesh.nElements_owned = int(np.count_nonzero(mesh.elementOwners == rank))
+    # a subdomain view's facets carry the partition's marking (-1 wherever it cut, perhaps nowhere on this
+    # rank), so the flags are marked, as partitionMesh leaves every rank's subdomain
+    mesh.rankInterfacesMarked = True
+    return mesh
+
+
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
     """
     Write a hex mesh in Ido's format with base numbering index_base
