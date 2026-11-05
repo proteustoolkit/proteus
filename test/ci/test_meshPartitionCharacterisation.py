@@ -72,9 +72,10 @@ def _mpiexec():
     return shutil.which('mpiexec') or shutil.which('mpirun')
 
 
-def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py'):
+def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py', extraEnv=None):
     """Run script (meshPartition_mpi.py) on n_ranks (None: plain python, no launcher)."""
     env = dict(os.environ)
+    env.update(extraEnv or {})
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     env.setdefault('OMPI_MCA_rmaps_base_oversubscribe', '1')
@@ -99,11 +100,11 @@ def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py'):
 _runs = {}
 
 
-def run_files(d, mesh, n, filebase=None):
+def run_files(d, mesh, n, filebase=None, extraEnv=None):
     """The -F path on n ranks for the stored mesh or a variant; (RESULT, ranks)."""
     os.makedirs(str(d), exist_ok=True)
     args = [mesh, 'files', 'graph', 1, os.path.join(str(d), 'out')] + ([filebase] if filebase else [])
-    got = _launch(args, n, cwd=str(d))
+    got = _launch(args, n, cwd=str(d), extraEnv=extraEnv)
     return got, [dict(np.load(os.path.join(str(d), 'out', 'rank%d.npz' % r))) for r in range(n)]
 
 
@@ -781,3 +782,33 @@ def test_files_tetgen_vertex_attribute_is_the_node_flag_on_every_rank(tmp_path, 
         assert sorted(a) == sorted(b)
         for name in a:
             assert np.array_equal(a[name], b[name]), name
+
+
+#fill fresh heap memory with a pattern (macOS: 0xAA, glibc: ~0x55 = 0xAA), so a
+#read of memory nobody wrote shows up as -1431655766 instead of a lucky 0
+SCRIBBLE = {'MallocScribble': '1', 'MALLOC_PERTURB_': '85'}
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_node_flags_without_vertex_markers_are_initialised(tmp_path, mesh):
+    """A .node file without vertex markers: the -F partitioners give the nodes
+    of exterior subdomain faces the face flags and every other node 0. The
+    others used to keep what the heap held (new int[] never written); with the
+    allocator scribbling, they read -1431655766. 2 ranks, Triangle and TetGen:
+    the arrays do not depend on the heap, every flag is 0 or a face flag, and a
+    node on no exterior face reads 0."""
+    base = _variantMesh(tmp_path, mesh, 'none')
+    _, plain = run_files(tmp_path / 'plain', mesh, 2, base)
+    _, scribbled = run_files(tmp_path / 'scribbled', mesh, 2, base, extraEnv=SCRIBBLE)
+    for a, b in zip(plain, scribbled):
+        for name in a:
+            assert np.array_equal(a[name], b[name]), name
+        flags = a['sub.nodeMaterialTypes']
+        faceFlags = a['sub.elementBoundaryMaterialTypes']
+        faceNodes = a['sub.elementBoundaryNodesArray']
+        exterior = a['sub.exteriorElementBoundariesArray']
+        onExterior = np.zeros(len(flags), bool)
+        onExterior[faceNodes[exterior].ravel()] = True
+        assert np.all(flags[~onExterior] == 0)
+        assert set(flags[onExterior].tolist()) <= set(np.maximum(faceFlags, 0).tolist())
+        assert onExterior.any() and (~onExterior).any()

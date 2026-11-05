@@ -3232,7 +3232,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global];
+  //0 until a vertex flag or a face flag says otherwise: without vertex markers
+  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
+  //faces take face flags below, so the others used to keep whatever the heap held
+  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
   //
@@ -4361,7 +4364,10 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global];
+  //0 until a vertex flag or a face flag says otherwise: without vertex markers
+  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
+  //faces take face flags below, so the others used to keep whatever the heap held
+  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
   //
