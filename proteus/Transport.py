@@ -1701,6 +1701,31 @@ class OneLevelTransport(NonlinearEquation):
                 "nLayersOfOverlapForParallel = 1, in the n module and in the domain's MeshOptions)."
                 % (self.name, missing, nf.__class__.__name__))
 
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array of component 0's space by the owners' values (in place).
+
+        Kernels write dof-shaped arrays (limiters, smoothness indicators, entropy residuals, interface locators,
+        normals) over the elements a rank holds, so their ghost entries are partial; a later kernel that reads them
+        at ghost dofs needs the owners' values. One ghosted vector over a buffer of its own per array shape: callers
+        pass temporaries, and a vector cached per array kept every one of them alive (1080 per rank after 0.08 s of
+        an NCLS run)."""
+        comm = getattr(self, "comm", None) or Comm.get()
+        if comm.size() == 1:
+            return
+        vecs = self.__dict__.setdefault("_dofVecs", {})
+        cached = vecs.get(a.shape)
+        if cached is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            buf = a.copy()
+            cached = vecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
+        par.scatter_forward_insert()
+        a[:] = buf
+
     def setupFieldStrides(self, interleaved=True):
         """
         Set up the stride/offset layout for this object.  The default layout is interleaved.

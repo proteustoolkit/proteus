@@ -764,7 +764,6 @@ class LevelModel(OneLevelTransport):
         self.cell_interface_locator = np.zeros(self.mesh.nElements_global,'d')
         self.interface_locator = np.zeros(self.u[0].dof.shape,'d')
         self.quantDOFs = np.zeros(self.u[0].dof.shape,'d')
-        self._dofVecs = {}
         self._entropyViscosityArrays = EntropyViscosity.arrays(self.mesh.nElements_global)
 
         # For Taylor Galerkin methods
@@ -801,23 +800,6 @@ class LevelModel(OneLevelTransport):
         self.coefficients.ebqe_v[..., 1] = self.velocityField[1](ebqe_X, t)
         if (self.nSpace_global == 3):
             self.coefficients.ebqe_v[..., 2] = self.velocityField[2](ebqe_X, t)
-
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
 
     def calculateElementResidual(self):
         if self.globalResidualDummy is not None:

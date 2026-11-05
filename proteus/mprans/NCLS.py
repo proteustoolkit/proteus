@@ -514,7 +514,6 @@ class LevelModel(OneLevelTransport):
             for ci in range(1, coefficients.nc):
                 assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
-        self._dofVecs = {}
         self.free_u = None
         # Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
@@ -881,25 +880,6 @@ class LevelModel(OneLevelTransport):
         self.waterline_prints = 0
 
     # mwf these are getting called by redistancing classes,
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
-        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
-
     def calculateCoefficients(self):
         pass
 
