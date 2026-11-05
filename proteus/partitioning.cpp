@@ -1932,10 +1932,13 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   newMesh.nNodes_elementBoundary = simplexDim-1;
   newMesh.nElementBoundaries_element = simplexDim;
   //cek todo: review the situation with tetgen and triangle atribs and markers
-  if (hasVertexAttributes > 0 && rank==0)
+  //every rank reads the attribute as the flag (as the in-memory reader and the
+  //Triangle -F path do); only the warning is rank 0's
+  if (hasVertexAttributes > 0)
     {
-      std::cerr<<"WARNING Tetgen nodes hasAttributes= "<<hasVertexAttributes
-               <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
+      if (rank == 0)
+        std::cerr<<"WARNING Tetgen nodes hasAttributes= "<<hasVertexAttributes
+                 <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
   //the node coordinates are read after partitioning (readSubdomainVertices),

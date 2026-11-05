@@ -5,7 +5,7 @@ Partitions one of the stored unstructured meshes in meshPartition/ and writes
 every array the partitioner produced on this rank to OUTDIR/rank<r>.npz, so
 the test can check them against the serial mesh and against each other.
 
-Usage: meshPartition_mpi.py MESH PATH OWNERS OVERLAP OUTDIR
+Usage: meshPartition_mpi.py MESH PATH OWNERS OVERLAP OUTDIR [FILEBASE]
 
 MESH     tri  meshPartition/pslg.{node,ele,edge}      (Triangle, 154 nodes)
          tet  meshPartition/plc.{node,ele,face,edge}  (TetGen, 131 nodes)
@@ -21,6 +21,7 @@ OWNERS   scatter  prescribed owners, a deterministic hash of the index
                   -mat_partitioning_type current to get the default contiguous
                   chunks, which is what makes it reproducible
 OVERLAP  layers of overlap (the files path supports only 1)
+FILEBASE another mesh of the same kind (a variant of the stored one)
 
 Prints ``RESULT ... calls=<partitioner>:<owners given> petsc=<0|1>``. calls is
 which cpartitioning entry point ran and whether it was handed owners: the proof
@@ -40,7 +41,7 @@ rank, size = comm.rank(), comm.size()
 mpi = comm.comm.tompi4py()
 meshKind, path, ownersKind, overlap, outdir = sys.argv[1:6]
 overlap = int(overlap)
-filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[meshKind])
+filebase = sys.argv[6] if len(sys.argv) > 6 else os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[meshKind])
 nd = {'tri': 2, 'tet': 3}[meshKind]
 
 # Record which partitioner entry point ran and whether it was given owners.

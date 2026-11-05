@@ -99,6 +99,14 @@ def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py'):
 _runs = {}
 
 
+def run_files(d, mesh, n, filebase=None):
+    """The -F path on n ranks for the stored mesh or a variant; (RESULT, ranks)."""
+    os.makedirs(str(d), exist_ok=True)
+    args = [mesh, 'files', 'graph', 1, os.path.join(str(d), 'out')] + ([filebase] if filebase else [])
+    got = _launch(args, n, cwd=str(d))
+    return got, [dict(np.load(os.path.join(str(d), 'out', 'rank%d.npz' % r))) for r in range(n)]
+
+
 @pytest.fixture(scope='module')
 def run(tmp_path_factory):
     """run(mesh, path, owners, overlap, n) -> (RESULT fields, [rank arrays]), each case run once."""
@@ -733,3 +741,43 @@ def test_files_path_refuses_element_partitioning(tmp_path, mesh):
     got = _launch([mesh, 'files-element', 'graph', 1, tmp_path / 'out'], 2, cwd=tmp_path)
     assert got == {'mesh': mesh, 'path': 'files-element', 'ranks': '2', 'errors': 'ValueError,ValueError',
                    'calls': 'none'}
+
+
+def _variantMesh(tmp_path, mesh, vertexFlags):
+    """The stored mesh with its vertex flags as a TetGen/Triangle attribute
+    (header ``n d 1 0``, same column) or dropped (``n d 0 0``); the other files
+    copied. Returns the filebase."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = str(tmp_path / ('%s_%s' % (os.path.basename(stored), vertexFlags)))
+    for ext in ('ele', 'edge', 'face') if mesh == 'tet' else ('ele', 'edge'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    with open(stored + '.node') as f:
+        lines = [l for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    n, d = lines[0].split()[:2]
+    assert lines[0].split()[2:] == ['0', '1']
+    rows = [l.split() for l in lines[1:]]
+    if vertexFlags == 'attribute':
+        out = ['%s %s 1 0' % (n, d)] + [' '.join(r) for r in rows]
+    else:
+        out = ['%s %s 0 0' % (n, d)] + [' '.join(r[:1 + int(d)]) for r in rows]
+    with open(base + '.node', 'w') as f:
+        f.write('\n'.join(out) + '\n')
+    return base
+
+
+@pytest.mark.parametrize('n', [2, 4])
+def test_files_tetgen_vertex_attribute_is_the_node_flag_on_every_rank(tmp_path, n):
+    """A TetGen .node with an attribute and no marker: the -F partitioner
+    takes the attribute as the node flag (and warns), as the in-memory reader
+    does. It used to do so on rank 0 only (the rank==0 guard covered the
+    switch, not just the warning), so the other ranks' node flags came from the
+    faces instead. With the stored mesh's markers moved to an attribute
+    column, every array on every rank equals the stored mesh's."""
+    base = _variantMesh(tmp_path, 'tet', 'attribute')
+    _, stored = run_files(tmp_path / 'stored', 'tet', n)
+    _, attr = run_files(tmp_path / 'attr', 'tet', n, base)
+    assert len(attr) == len(stored) == n
+    for a, b in zip(attr, stored):
+        assert sorted(a) == sorted(b)
+        for name in a:
+            assert np.array_equal(a[name], b[name]), name
