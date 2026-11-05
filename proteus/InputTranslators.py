@@ -695,6 +695,8 @@ class ADH_metfile(object):
     read an ADH met file for boundary conditions etc
     """
     from proteus.cSubsurfaceTransportCoefficients import piecewiseLinearTableLookup
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    piecewiseLinearTableLookup = staticmethod(piecewiseLinearTableLookup)
     allowed_time_units = ['day','hour','sec']
     def __init__(self,fileprefix,directory='.'):
         self.fileprefix=fileprefix

@@ -7,9 +7,8 @@ a Python function, and raises ``TypeError: f() takes exactly N positional
 arguments (N+1 given)``. Proteus stores such functions on classes with a
 class-body ``from .cX import f``; each one is wrapped as ``staticmethod(f)``.
 
-DEFERRED lists the ones not yet wrapped, by owner. The test fails when the
-set found differs from DEFERRED in either direction, so remove an entry when
-its site is fixed.
+DEFERRED lists the ones not yet wrapped (none on 1.9.x). The test fails when
+the set found differs from DEFERRED in either direction.
 """
 import importlib
 import inspect
@@ -23,6 +22,7 @@ BINDING = ("cython_function_or_method", "fused_cython_function")
 MODULES = [
     "proteus.ADR",
     "proteus.AuxiliaryVariables",
+    "proteus.InputTranslators",
     "proteus.PostProcessingTools",
     "proteus.SubsurfaceTransportCoefficients",
     "proteus.TimeIntegration",
@@ -46,39 +46,8 @@ MODULES = [
     "proteus.mprans.VOS3P",
 ]
 
-_VOF = {"Coefficients.VOFCoefficientsEvaluate",
-        "Coefficients.VolumeAveragedVOFCoefficientsEvaluate",
-        "Coefficients.copyExteriorElementBoundaryValuesFromElementBoundaryValues"}
-_RANS = {"Coefficients.TwophaseNavierStokes_ST_LS_SO_2D_Evaluate",
-         "Coefficients.TwophaseNavierStokes_ST_LS_SO_3D_Evaluate",
-         "Coefficients.TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd",
-         "Coefficients.TwophaseNavierStokes_ST_LS_SO_3D_Evaluate_sd"}
-_KEPS = {"Coefficients.kEpsilon_k_3D_Evaluate_sd",
-         "Coefficients.kEpsilon_k_2D_Evaluate_sd"}
-_MCORR = {"Coefficients.levelSetConservationCoefficientsEvaluate",
-          "Coefficients.levelSetConservationCoefficientsEvaluate_sd"}
-
-DEFERRED = {
-    # cekees/proteus#203 deletes this class
-    "proteus.PostProcessingTools": {
-        "VPP_POINT_EVAL_GWVD.getElementLDGvelocityValuesLagrangeRep"},
-    # C0 territory, after C0 round 5 lands
-    "proteus.mprans.Dissipation": _KEPS,
-    "proteus.mprans.Kappa": _KEPS,
-    "proteus.mprans.MCorr": _MCORR,
-    "proteus.mprans.MCorr3P": _MCORR,
-    "proteus.mprans.NCLS": {"Coefficients.ncLevelSetCoefficientsEvaluate"},
-    "proteus.mprans.NCLS3P": {"Coefficients.ncLevelSetCoefficientsEvaluate"},
-    "proteus.mprans.RANS2P": _RANS,
-    "proteus.mprans.RANS3PF": _RANS,
-    "proteus.mprans.RANS3PSed": _RANS,
-    "proteus.mprans.RDLS": {"Coefficients.redistanceLevelSetCoefficientsEvaluate"},
-    "proteus.mprans.TADR": _VOF,
-    "proteus.mprans.VOF": _VOF,
-    "proteus.mprans.VOF3P": _VOF,
-    "proteus.mprans.VOS3P": _VOF,
-}
-
+# none on 1.9.x: every site is wrapped
+DEFERRED = {}
 
 def _binding_class_attributes(module):
     found = set()
