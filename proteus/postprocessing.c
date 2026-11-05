@@ -3311,7 +3311,7 @@ void solveLocalBDM1projectionFromFlux(int nElements_global,
           sign=1.0;
           if(elementBoundaryElementsArray[2*ebN_global+1] == eN)
             sign=-1.0;
-	  for (s = 0; s < nSimplex; s++)
+	  for (s = 0; s < nSpace; s++) /* nSpace test functions per face; s = nSpace wrote one row past the element */
 	    {
 	      irow = ebN*nSpace + s;
 	      kp = (ebN+s+1) % nSimplex;
