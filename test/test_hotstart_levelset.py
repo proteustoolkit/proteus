@@ -15,6 +15,7 @@ model's dofs at the end, hot start vs the uninterrupted run, with that piece lef
 Before all of it: 5.1e-1 (velocity 7.3e-2, VOF 1.4e-2, forces ~1%). After: 0.0, forces 0.0.
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -88,6 +89,47 @@ def test_a_continue_on_another_partition_warns_once(tmp_path):
     warned = [line for line in out.stderr.splitlines() if "RuntimeWarning: hot start (continue)" in line]
     assert len(warned) == 1, out.stderr[-3000:]
     assert "different partition" in warned[0] and all(m in warned[0] for m in ("rans2p", "vof", "mcorr"))
+
+
+def _mpiexec():
+    beside = os.path.join(os.path.dirname(sys.executable), "mpiexec")
+    return beside if os.path.exists(beside) else shutil.which("mpiexec")
+
+
+def _run_ranks(cwd, ranks, **overrides):
+    os.makedirs(str(cwd), exist_ok=True)
+    env = dict(os.environ, OMP_NUM_THREADS="1", DECK="damBreakLevelSet.py",
+               PETSC_OPTIONS="-mat_partitioning_type current")
+    env.setdefault("FI_PROVIDER", "tcp")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env.update({k: str(v) for k, v in overrides.items()})
+    out = subprocess.run([_mpiexec(), "-n", str(ranks), sys.executable, HELPER], capture_output=True, text=True,
+                         timeout=1800, env=env, cwd=str(cwd))
+    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    return out
+
+
+@pytest.mark.skipif(_mpiexec() is None, reason="needs mpiexec")
+def test_a_hot_start_on_another_number_of_ranks_is_a_restart(tmp_path):
+    """Decided by cekees 2026-11-05: a hot start on another partition is legitimate; with the solution archived
+    through MPI-IO and a global mesh it restarts from the archived step's solution, without the solver state.
+    Archived on 2 ranks, hot-started (continue) on 3: the same as --hotStartMode restart on 3 ranks (and one warning
+    saying so), to the run-to-run noise of 3 ranks (0.0 and 9.9e-14 in two runs; C7.1 saw 2.1e-12 on vortex2D). Measured against a serial restart from the same step: 8.2e-9 (rank count), where
+    the uninterrupted run differs from a restart by 3.6e-1, so it restarts from 0.04, not from the initial state."""
+    dtout, t, ft = CASES["lagged"]
+    _run_ranks(tmp_path / "stop", 2, FT=t, DTOUT=dtout)
+    shutil.copytree(str(tmp_path / "stop"), str(tmp_path / "continue"))
+    shutil.copytree(str(tmp_path / "stop"), str(tmp_path / "restart"))
+    out = _run_ranks(tmp_path / "continue", 3, FT=ft, DTOUT=dtout, HOTSTART=t)
+    _run_ranks(tmp_path / "restart", 3, FT=ft, DTOUT=dtout, HOTSTART=t, HOTSTARTMODE="restart")
+    assert sum("RuntimeWarning: hot start (continue)" in line for line in out.stderr.splitlines()) == 1
+    numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "continue" / "accepted.txt")),
+                                     numpy.loadtxt(str(tmp_path / "restart" / "accepted.txt")))
+    for rank in range(3):
+        a, b = (numpy.loadtxt(str(tmp_path / d / ("u%d.csv" % rank)), delimiter=",", skiprows=1)
+                for d in ("restart", "continue"))
+        assert _worst(a, b) < 1e-10
 
 
 def test_a_driver_without_hot_start_mode_continues(tmp_path):

@@ -140,7 +140,10 @@ def calc(self, *a, **k):
             x = getattr(lm.u[ci].femSpace.dofMap, "lagrangeNodesArray", lm.mesh.nodeArray)[:, :3]
             rows.append(np.hstack([np.full((x.shape[0], 1), 100 * mi + ci), x, lm.u[ci].dof[:, None]]))
     a = np.vstack(rows)
-    np.savetxt("u.csv", a[np.lexsort((a[:, 3], a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,z,u")
+    # in parallel each rank writes its own dofs (owned and ghost), u<rank>.csv
+    from proteus import Comm
+    comm = Comm.get()
+    np.savetxt("u.csv" if comm.size() == 1 else "u%d.csv" % comm.rank(), a[np.lexsort((a[:, 3], a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,z,u")
     np.savetxt("accepted.txt", np.array(accepted))
     with open("retries.txt", "w") as f:
         f.write("%d\n" % retries[0])
