@@ -509,6 +509,51 @@ def opts():
     return runtime.RunOptions()
 
 
+_DEFAULTS_MODULES = ("proteus.default_p", "proteus.default_n", "proteus.default_so")
+
+
+def _snapshot_defaults():
+    """The namespaces of default_p/default_n/default_so, their dicts and lists copied (a
+    deck that sets n.femSpaces[0] changes the dict, not the name)."""
+    import importlib
+    snapshot = {}
+    for name in _DEFAULTS_MODULES:
+        namespace = vars(importlib.import_module(name))
+        snapshot[name] = dict((key, (value.copy() if type(value) in (dict, list) else value))
+                              for key, value in namespace.items())
+    return snapshot
+
+
+def _restore_defaults(snapshot):
+    for name, saved in snapshot.items():
+        namespace = vars(sys.modules[name])
+        for key in list(namespace):
+            if key not in saved:
+                del namespace[key]
+        namespace.update(saved)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """Put default_p/default_n/default_so back after each test module is imported.
+
+    Some test modules build their problem at import, and the decks they import
+    reload proteus.default_p/default_n and set attributes on them (the BDM and
+    mass-matrix templates: n.triangleOptions = "Yp", p.nd, ...). Importing is
+    collecting, which happens before any test and outside the per-test restore
+    below, so every test file collected after one of them star-imported its
+    settings as Proteus's defaults: run reversed, poisson_2d, TADR, VOF, NCLS,
+    vortex and CLSVOF+RANS2P failed. Forward, they were collected first and
+    passed.
+    """
+    if not isinstance(collector, pytest.Module):
+        yield
+        return
+    snapshot = _snapshot_defaults()
+    yield
+    _restore_defaults(snapshot)
+
+
 @pytest.fixture(autouse=True)
 def _restore_proteus_process_state():
     """Put proteus.iproteus.opts, the default_p/n/so modules, proteus.Context,
