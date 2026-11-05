@@ -36,6 +36,19 @@ OMPI_MPI_INIT_FAILED = textwrap.dedent('''\
     --------------------------------------------------------------------------
     ''')
 OMPI_PTL_TOOL = ('[host:58199] ptl_tool: problems getting address for index 0 (kernel index -1)\n')
+# chewbacca-2, 2026-11-04 (cekees/proteus#182): a one-rank helper run without mpiexec whose pid had
+# another user's stale /mpich_shm_<hex pid>_0 (MPICH 5.0.1, exit status 15)
+MPICH_SINGLETON_SHM = textwrap.dedent('''\
+    Abort(742016271) on node 0: Fatal error in internal_Init_thread: Other MPI error, error stack:
+    internal_Init_thread(71)..............: MPI_Init_thread(argc=0x0, argv=0x0, required=3, provided=0x16ba67628) failed
+    MPII_Init_thread(305).................:
+    MPIR_init_comm_world(37)..............:
+    MPIR_Comm_commit(821).................:
+    MPID_Comm_commit_pre_hook(160)........:
+    MPIDI_SHM_mpi_comm_commit_pre_hook(18):
+    MPIDI_SHM_comm_bootstrap(45)..........:
+    MPIDI_POSIX_comm_bootstrap(288).......: Out of memory
+    ''')
 SOMETHING_ELSE = 'Traceback (most recent call last):\n  ...\nAssertionError: the job itself failed\n'
 
 FAKE_LAUNCHER = textwrap.dedent('''\
@@ -62,7 +75,8 @@ def launch(tmp_path, monkeypatch):
         message = tmp_path / 'message'
         message.write_text(text)
         result = subprocess.run([sys.executable, str(script), str(counter), str(fail), str(message),
-                                 str(status)], capture_output=True, text=True, **kwargs)
+                                 str(status)], capture_output=True, text=True,
+                                timeout=kwargs.pop('timeout', 120), **kwargs)
         return result, int(counter.read_text())
     return _launch
 
@@ -71,6 +85,12 @@ def test_an_mpi_init_failure_is_launched_again(launch):
     result, calls = launch(2, OMPI_MPI_INIT_FAILED, 14)
     assert result.returncode == 0 and 'started on call 3' in result.stdout
     assert calls == 3
+
+
+def test_an_mpich_singleton_on_a_stale_shm_name_is_launched_again(launch):
+    result, calls = launch(1, MPICH_SINGLETON_SHM, 15)
+    assert result.returncode == 0 and 'started on call 2' in result.stdout
+    assert calls == 2
 
 
 def test_a_pmix_address_failure_is_launched_again(launch):
@@ -99,7 +119,7 @@ def test_a_launch_whose_stderr_is_not_captured_is_not_launched_again(tmp_path, m
     counter, message = tmp_path / 'calls', tmp_path / 'message'
     message.write_text(OMPI_MPI_INIT_FAILED)
     result = subprocess.run([sys.executable, str(script), str(counter), '10', str(message), '14'],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
     assert result.returncode == 14
     assert int(counter.read_text()) == 1
 
@@ -130,7 +150,7 @@ def crashing_launch(tmp_path, monkeypatch):
 
     def _launch(fail):
         result = subprocess.run([sys.executable, str(script), str(counter), str(fail)],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, timeout=120)
         return result, int(counter.read_text())
     return _launch
 
@@ -194,10 +214,10 @@ def test_the_launched_interpreter_runs_with_faulthandler(monkeypatch):
     monkeypatch.delenv('PYTHONFAULTHANDLER', raising=False)
     probe = [sys.executable, '-c', 'import os; print(os.environ.get("PYTHONFAULTHANDLER"), '
                                    'os.environ.get("MARKER"))']
-    assert subprocess.run(probe, capture_output=True, text=True).stdout.split() == ['1', 'None']
+    assert subprocess.run(probe, capture_output=True, text=True, timeout=120).stdout.split() == ['1', 'None']
     # a caller's own environment is kept, and gains the setting
     result = subprocess.run(probe, capture_output=True, text=True,
-                            env={'PATH': os.environ.get('PATH', ''), 'MARKER': 'kept'})
+                            env={'PATH': os.environ.get('PATH', ''), 'MARKER': 'kept'}, timeout=120)
     assert result.stdout.split() == ['1', 'kept']
 
 

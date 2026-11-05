@@ -76,14 +76,14 @@ def test_a_subprocess_measures_itself(tmp_path):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("COV_CORE", "COVERAGE"))}
     env.update(PYTHONPATH=str(tmp_path), COVERAGE_RCFILE=str(rc))
     ran = subprocess.run([sys.executable, "-m", "coverage", "run", str(parent)],
-                         cwd=str(tmp_path), capture_output=True, text=True, env=env)
+                         cwd=str(tmp_path), capture_output=True, text=True, env=env, timeout=600)
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "ran in the child" in ran.stdout
     subprocess.run([sys.executable, "-m", "coverage", "combine"], cwd=str(tmp_path),
-                   capture_output=True, text=True, env=env, check=True)
+                   capture_output=True, text=True, env=env, check=True, timeout=600)
     report = subprocess.run([sys.executable, "-m", "coverage", "report", "-m"],
                             cwd=str(tmp_path), capture_output=True, text=True, env=env,
-                            check=True).stdout
+                            check=True, timeout=600).stdout
     (line,) = [l for l in report.splitlines() if "child.py" in l]
     # the function body ran in the child, so it is not missing
     assert "100%" in line, report

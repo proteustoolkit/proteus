@@ -20,7 +20,7 @@ def run_parun(tmp_path, n_module):
     parun = _parun if os.path.isfile(_parun) else shutil.which("parun")
     cmd = [sys.executable, parun, "-l", "5", "-v", "-D", str(tmp_path / "data"),
            "heat_1d_p.py", n_module + ".py"]
-    return subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+    return subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, timeout=600)
 
 
 def test_success_exits_zero(tmp_path):

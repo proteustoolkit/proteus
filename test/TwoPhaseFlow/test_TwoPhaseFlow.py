@@ -2,6 +2,7 @@
 """
 Test module for TwoPhaseFlow
 """
+import subprocess
 import h5py
 import pytest
 import numpy as np
@@ -58,38 +59,45 @@ class TestTwoPhaseFlow(object):
 
     # *** 2D tests *** #
     def test_risingBubble(self): #uses structured triangle mesh
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "risingBubble.py -l5 -v -C 'final_time=0.1 dt_output=0.1 refinement=1'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "risingBubble.py -l5 -v -C 'final_time=0.1 dt_output=0.1 refinement=1'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("risingBubble")
 
     def test_damBreak(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("damBreak")
 
-    def test_damBreak_hotstart(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "damBreak.py -l5 -v -H -C 'final_time=0.1 dt_output=0.1 he=0.1 hotstart=True'")
+    def test_damBreak_hotstart(self, tmp_path):
+        # The hot start reads the damBreak.h5 a run writes, so this test makes its own, in a directory of
+        # its own: in the worker's directory it read whatever damBreak.h5 another test had left there
+        # (the --genPUMI run's, which it refuses), and under os.system that failure went unnoticed.
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'",
+                       shell=True, check=True, timeout=600, cwd=str(tmp_path))
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "damBreak.py -l5 -v -H -C 'final_time=0.1 dt_output=0.1 he=0.1 hotstart=True'",
+                       shell=True, check=True, timeout=600, cwd=str(tmp_path))
 
     def test_TwoDimBucklingFlow(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "TwoDimBucklingFlow.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.09'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "TwoDimBucklingFlow.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.09'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("TwoDimBucklingFlow")
 
     def test_fillingTank(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "fillingTank.py -l5 -v -C 'final_time=0.02 dt_output=0.02 he=0.01'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "fillingTank.py -l5 -v -C 'final_time=0.02 dt_output=0.02 he=0.01'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("fillingTank")
 
     # *** 3D tests *** #
     def test_marin(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "marin.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.5'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "marin.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.5'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("marin")
 
     def test_moses(self):
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "moses.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.5'")
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "moses.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.5'", shell=True, check=True, timeout=600)
         # decimal=5, not the default 6: this baseline was generated against one
         # BLAS build and does not reproduce to 6 decimals elsewhere. Every
         # aarch64 environment tested (cekees-spark2 in all 8 install pathways, and
@@ -114,8 +122,8 @@ class TestTwoPhaseFlow(object):
     # produces real PUMI mesh files. The compare_vs_saved_files() call below is
     # a real assertion, and it passes against the existing baseline.
     def test_damBreak_genPUMI_runPUMI(self):
-        os.system("parun --TwoPhaseFlow --genPUMI --path " + self.path + " "
-                  "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'")
-        os.system("parun --TwoPhaseFlow --path " + self.path + " "
-                  "damBreak_PUMI.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1 adapt=0'")
+        subprocess.run("parun --TwoPhaseFlow --genPUMI --path " + self.path + " "
+                       "damBreak.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1'", shell=True, check=True, timeout=600)
+        subprocess.run("parun --TwoPhaseFlow --path " + self.path + " "
+                       "damBreak_PUMI.py -l5 -v -C 'final_time=0.1 dt_output=0.1 he=0.1 adapt=0'", shell=True, check=True, timeout=600)
         self.compare_vs_saved_files("damBreak_PUMI")
