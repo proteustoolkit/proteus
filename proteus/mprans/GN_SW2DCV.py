@@ -1003,7 +1003,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.RHS_high_hbeta = None
         self.size_of_domain = None
         self.delta_Sqd_h = None
-        self._dofVecs = {}
         self.delta_Sqd_heta = None
         # low-order solution using bar states
         self.hLow = None
@@ -1192,25 +1191,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.par_kin_max = None
         # for parallel entropy residual
         self.par_global_entropy_residual = None
-
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
-        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, LAT.ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
 
     def FCTStep(self):
         # NOTE: this function is meant to be called within the solver

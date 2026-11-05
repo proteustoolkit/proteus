@@ -1675,7 +1675,9 @@ class OneLevelTransport(NonlinearEquation):
         (the partitioner flags the faces it cuts -1), the neighbour is not on the rank and the face is assembled as
         domain boundary, so the answer depends on the partition: 16x16 DG Poisson, 1.04e-3 serial, 6.3e-2 on 2 ranks
         with an element partition and no overlap, 1.3e-1 with a node partition and one layer. An element partition
-        with one layer has none. Every rank takes part in the sum and every rank raises.
+        with one layer has none. LDG needs two: 13x13 LDG P1 on 4 ranks gave an L2
+        velocity error of 0.113549 with one layer against 0.113510 serial, and 0.113510 (1e-15) with two. Every rank
+        takes part in the sum and every rank raises.
         """
         comm = Comm.get()
         nf = self.numericalFlux
@@ -1691,15 +1693,50 @@ class OneLevelTransport(NonlinearEquation):
             return              # a partitioner that does not mark its cuts: nothing to conclude
         exterior = np.asarray(mesh.exteriorElementBoundariesArray)
         cut = exterior[MeshTools.rankInterfaceExteriorMask(mesh)]
-        owned = np.asarray(mesh.elementBoundaryElementsArray)[cut, 0] < mesh.nElements_owned
+        # LDG (mixed-form diffusion): the flux through an owned element's face reads the velocity of the neighbour,
+        # which is solved from the neighbour's own faces, so the neighbours' neighbours must be on the rank too
+        mixed = any(getattr(nf, 'mixedDiffusion', {}).values())
+        needed = np.zeros(mesh.nElements_global, bool)
+        needed[:mesh.nElements_owned] = True
+        if mixed:
+            neighbours = np.asarray(mesh.elementNeighborsArray)[:mesh.nElements_owned].ravel()
+            needed[neighbours[neighbours >= 0]] = True
+        owned = needed[np.asarray(mesh.elementBoundaryElementsArray)[cut, 0]]
         missing = int(comm.globalSum(int(np.count_nonzero(owned))))
         if missing > 0:
+            layers = 2 if mixed else 1
             raise RuntimeError(
-                "%s: %d faces of owned elements are rank interfaces, so the discontinuous space coupled by %s would "
+                "%s: %d faces of %s are rank interfaces, so the discontinuous space coupled by %s would "
                 "treat them as domain boundary and the solution would depend on the partition. Use an element "
-                "partition with one layer of overlap (parallelPartitioningType = MeshParallelPartitioningTypes.element, "
-                "nLayersOfOverlapForParallel = 1, in the n module and in the domain's MeshOptions)."
-                % (self.name, missing, nf.__class__.__name__))
+                "partition with %d layer%s of overlap (parallelPartitioningType = MeshParallelPartitioningTypes.element, "
+                "nLayersOfOverlapForParallel = %d, in the n module and in the domain's MeshOptions)."
+                % (self.name, missing, "owned elements or their face neighbours (LDG)" if mixed else "owned elements",
+                   nf.__class__.__name__, layers, "s" if layers > 1 else "", layers))
+
+    def scatterDOFArray(self, a):
+        """Replace the ghost entries of a dof array of component 0's space by the owners' values (in place).
+
+        Kernels write dof-shaped arrays (limiters, smoothness indicators, entropy residuals, interface locators,
+        normals) over the elements a rank holds, so their ghost entries are partial; a later kernel that reads them
+        at ghost dofs needs the owners' values. One ghosted vector over a buffer of its own per array shape: callers
+        pass temporaries, and a vector cached per array kept every one of them alive (1080 per rank after 0.08 s of
+        an NCLS run)."""
+        comm = getattr(self, "comm", None) or Comm.get()
+        if comm.size() == 1:
+            return
+        vecs = self.__dict__.setdefault("_dofVecs", {})
+        cached = vecs.get(a.shape)
+        if cached is None:
+            dofMap = self.u[0].femSpace.dofMap
+            rank = comm.rank()
+            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
+            buf = a.copy()
+            cached = vecs[a.shape] = (buf, ParVec_petsc4py(
+                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
+        buf, par = cached
+        buf[:] = a
+        par.scatter_forward_insert()
+        a[:] = buf
 
     def setupFieldStrides(self, interleaved=True):
         """
@@ -3563,7 +3600,7 @@ class OneLevelTransport(NonlinearEquation):
         if self.conservativeFlux is not None:
             for ci in list(self.conservativeFlux.keys()):
                 #don't need for p1-nc?
-                if self.conservativeFlux[ci] not in ['p1-nc','dg','dg-bdm','dg-point-eval','point-eval-gwvd'] and self.conservativeFlux[ci] is not None:
+                if self.conservativeFlux[ci] not in ['p1-nc','dg','dg-bdm','dg-point-eval'] and self.conservativeFlux[ci] is not None:
                     self.ebq[('velocity',ci)].fill(0.0)
                     #self.ebq_global[('velocity',ci)].fill(0.0)
                     self.ebq_global[('velocityAverage',ci)].fill(0.0)

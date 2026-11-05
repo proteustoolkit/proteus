@@ -460,6 +460,17 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         copyInstructions = {}
         return copyInstructions
 
+    def state(self):
+        """The lag a retried system step and a hot start restore: postStep moves u_old_dof to the step's solution,
+        so a later model's failure in the same system step would otherwise leave it at the failed attempt."""
+        if getattr(self, "model", None) is None or not hasattr(self, "u_old_dof"):
+            return None
+        return {"u_old_dof": np.array(self.u_old_dof, copy=True)}
+
+    def set_state(self, state):
+        if "u_old_dof" in state:
+            self.u_old_dof = np.array(state["u_old_dof"], copy=True)
+
     def postStep(self, t, firstStep=False):
         self.u_old_dof = np.copy(self.model.u[0].dof)
 

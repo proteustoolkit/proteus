@@ -78,9 +78,9 @@ if opts.he==4.0:
     saved_mesh=os.path.join(os.path.dirname(os.path.abspath(__file__)), "for_testMeshes")
     for name in ["obstacle.1.neigh","obstacle.1.poly","obstacle.edge","obstacle.ele","obstacle.node","obstacle.poly"]:
         saved_file = os.path.join(saved_mesh,name)
-        copied_to = os.path.join(os.path.dirname(os.path.abspath(__file__)),name)
+        copied_to = os.path.join(os.getcwd(), name)     # the run's directory, not the checkout
         copyfile(saved_file, copied_to)
-    domain.polyfile=os.path.join(os.path.dirname(os.path.abspath(__file__)), "obstacle")
+    domain.polyfile=os.path.join(os.getcwd(), "obstacle")
     domain.MeshOptions.genMesh=False
 ##########################################
 # DEFINE INITIAL CONSTANTS AND FUNCTIONS #

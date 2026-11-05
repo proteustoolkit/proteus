@@ -44,7 +44,7 @@ def _run(out, ranks, mode, n, endn=None):
         env["HS_ENDN"] = str(endn)
     cmd = [MPIEXEC, "-n", str(ranks), sys.executable, os.path.join(harness, "run_case.py"),
            str(out), "be", "1", mode] + ([str(n)] if mode != "full" else [])
-    subprocess.run(cmd, env=env, check=True, capture_output=True)
+    subprocess.run(cmd, env=env, check=True, capture_output=True, timeout=600)
 
 
 def _final_difference(a, b, step, fields=("u", "vof")):

@@ -32,7 +32,7 @@ def _run(outdir, mode):
     env = dict(os.environ, HS_NSTEPS=str(STEPS), HS_GAUGES="1", MPLBACKEND="AGG", FI_PROVIDER="tcp",
                OMP_NUM_THREADS="1")
     args = [sys.executable, driver, str(outdir), mode] + ([str(STOP)] if mode != "full" else [])
-    r = subprocess.run(args, env=env, capture_output=True, text=True)
+    r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stderr[-2000:]
 
 

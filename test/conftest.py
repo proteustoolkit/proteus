@@ -81,9 +81,46 @@ def pytest_ignore_collect(collection_path, config):
 
 
 def pytest_report_header(config):
+    lines = []
     if _MISSING:
-        return ['optional dependencies not built, their tests are not collected: '
-                + ', '.join('%s (no %s)' % (dep, spec['extension']) for dep, spec in sorted(_MISSING.items()))]
+        lines.append('optional dependencies not built, their tests are not collected: '
+                     + ', '.join('%s (no %s)' % (dep, spec['extension']) for dep, spec in sorted(_MISSING.items())))
+    if _STALE_MPI_NAMES:
+        lines.append('stale MPI names (macOS): ' + _STALE_MPI_NAMES[0])
+    return lines or None
+
+
+# On macOS, the stale MPICH singleton shm names and libomp files of this user are removed when a
+# pytest session starts and when it ends (mpi_stale_names.py: a launch the suite kills leaves its
+# names behind, and on a shared Mac they abort another user's MPI_Init when the pid comes round).
+# Only names of pids that are not running are touched, so a concurrent session is safe. Once per
+# session, in the controller (not in each xdist worker); about a second.
+# PROTEUS_TEST_KEEP_STALE_MPI_NAMES=1 turns it off.
+_STALE_MPI_NAMES = []
+
+
+def _sweep_stale_mpi_names(config):
+    if (sys.platform != 'darwin' or hasattr(config, 'workerinput')
+            or os.environ.get('PROTEUS_TEST_KEEP_STALE_MPI_NAMES')):
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location('_proteus_mpi_stale_names',
+                                                      os.path.join(_TEST_ROOT, 'mpi_stale_names.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.report(module.sweep())
+    except Exception as exc:        # never fail a session over housekeeping
+        return 'sweep failed: %r' % (exc,)
+
+
+def pytest_sessionstart(session):
+    message = _sweep_stale_mpi_names(session.config)
+    if message:
+        _STALE_MPI_NAMES[:] = [message]
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _sweep_stale_mpi_names(session.config)
 
 
 # mpiexec itself sometimes fails to start on a CI runner (the macOS Intel runner with Open MPI 5,
@@ -92,8 +129,18 @@ def pytest_report_header(config):
 # others ("It looks like MPI_INIT failed for some reason ... PML add procs failed --> Returned
 # "Not found" (-13)", exit status 14). Every launch in that second fails, whatever it was testing,
 # and no rank has run anything of the job when it happens, so launching it again is safe; any
-# other failure is left alone. The messages are Open MPI's, so only its launches are ever retried.
-MPI_LAUNCH_FAILURES = ('ptl_tool: problems getting address', 'It looks like MPI_INIT failed')
+# other failure is left alone.
+#
+# MPICH (5.x, macOS): a process started without mpiexec, a singleton, names its shared memory
+# /mpich_shm_<hex pid>_0. A killed MPI process leaves that name behind until reboot, and when its
+# pid comes round again under another user (a shared self-hosted Mac: the runners' user, people,
+# agents), MPI_Init cannot open it and aborts, exit status 15, at
+# "MPIDI_POSIX_comm_bootstrap(288).......: Out of memory" (mpi_stale_names.py has the mechanism).
+# Nothing has run; a relaunch has another pid, so another name. chewbacca lost five tests to it on
+# 2026-11-04 (`pro run`, `pro dis`, the one-rank VPP helper), on both runners. Launches under
+# mpiexec are immune: hydra's names hash a random number.
+MPI_LAUNCH_FAILURES = ('ptl_tool: problems getting address', 'It looks like MPI_INIT failed',
+                       'MPIDI_POSIX_comm_bootstrap')
 
 
 def mpi_launch_never_started(result):
@@ -289,6 +336,22 @@ def _end_launches_on_sigterm(signum, frame):
         end_session(sid, grace=1.0)
     signal.signal(signum, signal.SIG_DFL)
     os.kill(os.getpid(), signum)
+
+
+@pytest.fixture
+def case_copy(tmp_path):
+    """``case_copy(directory)``: a copy of a case directory (its decks and inputs) under tmp_path.
+
+    A test that runs a case in its own source directory leaves the run's output there (meshes,
+    logs, .h5 and gauge files), so a checkout looks edited after a run and the next run starts from
+    the last one's files. Run the case in the copy instead."""
+    import shutil
+
+    def copy(directory):
+        dest = tmp_path / os.path.basename(os.path.normpath(str(directory)))
+        shutil.copytree(str(directory), str(dest), ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        return dest
+    return copy
 
 
 @pytest.fixture

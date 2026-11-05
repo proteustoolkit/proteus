@@ -14,7 +14,10 @@ a covered line does not fail the run. A module new since the floors were
 recorded has no floor and is reported, not checked; a module that is gone is
 reported too. --partial (one of the measured suites is missing) prints
 the tables and the drops but never fails. --write-floors rewrites floors.json
-from this report, keeping every floor that is higher than today's value.
+from this report: a module with no floor gets today's value, and a floor is
+raised to today's value only when that is at least a point (RISE_PP) above it
+-- the modules in the "at least a point above the floor" table -- so a floor
+never chases the tenths a run's MPI timing can move. Every other floor stays.
 
 A floor may instead be a string: the module is measured and listed with that
 reason, but not checked (a module waiting for its first test, or one excluded
@@ -30,6 +33,7 @@ import xml.etree.ElementTree as ET
 
 TOLERANCE_PP = 0.5
 TOLERANCE_STATEMENTS = 2
+RISE_PP = 1.0
 
 
 def module_name(filename, source=''):
@@ -84,7 +88,7 @@ def compare(modules, floors):
             unchecked.append((name, statements, now, floors[name]))
         elif now < floors[name] - tolerance(statements):
             drops.append((name, statements, floors[name], now))
-        elif now >= floors[name] + 1.0:
+        elif now >= floors[name] + RISE_PP:
             rises.append((name, statements, floors[name], now))
     gone = sorted(set(floors) - set(modules))
     return drops, rises, new, unchecked, gone
@@ -139,8 +143,9 @@ def write_floors(path, modules, floors):
     for name, (statements, covered) in modules.items():
         if isinstance(floors.get(name), str):
             continue
-        today = math.floor(10.0 * percent(statements, covered)) / 10.0
-        merged[name] = max(today, floors.get(name, 0.0))
+        now = percent(statements, covered)
+        if name not in floors or now >= floors[name] + RISE_PP:
+            merged[name] = math.floor(10.0 * now) / 10.0
     with open(path, 'w') as f:
         f.write('{\n')
         f.write(',\n'.join('  %s: %s' % (json.dumps(name), json.dumps(merged[name]) if isinstance(merged[name], str)

@@ -1,6 +1,7 @@
 """damBreak.py with the level-set family instead of CLSVOF + projection: RANS2P, VOF, NCLS, RDLS and MCorr
 (useDefaultModels(flowModel=0, interfaceModel=0)), the boundary conditions from domain.bc. Same geometry, mesh
-and options; used by test_step_retry.py. interface=1 runs RANS2P with CLSVOF instead (interfaceModel=1).
+and options; used by test_step_retry.py. interface=1 runs RANS2P with CLSVOF instead (interfaceModel=1);
+turbulence=1 adds the k-epsilon models (Kappa, Dissipation).
 """
 """
 danbreak 2-D
@@ -26,7 +27,8 @@ opts= Context.Options([
     ("refinement",3,"level of refinement"),
     ("hotstart",False,"will be hotstartting?"),
     ("genMesh", False,"generate the mesh on the fly"),
-    ("interface", 0, "0: VOF, NCLS, RDLS and MCorr; 1: CLSVOF")
+    ("interface", 0, "0: VOF, NCLS, RDLS and MCorr; 1: CLSVOF"),
+    ("turbulence", 0, "1: add the k-epsilon models (Kappa, Dissipation; useRANS=1)")
     ])
 
 # ****************** #
@@ -121,6 +123,11 @@ else:
 
 myTpFlowProblem.SystemPhysics.setDefaults()
 myTpFlowProblem.SystemPhysics.useDefaultModels(flowModel=0,interfaceModel=opts.interface)
+if opts.turbulence:
+    from proteus.TwoPhaseFlow.utils import Parameters
+    myTpFlowProblem.SystemPhysics.useRANS = 1
+    myTpFlowProblem.SystemPhysics.addModel(Parameters.ParametersModelKappa, 'kappa')
+    myTpFlowProblem.SystemPhysics.addModel(Parameters.ParametersModelDissipation, 'dissipation')
 myTpFlowProblem.SystemNumerics.cfl=opts.cfl
 myTpFlowProblem.SystemNumerics.useSuperlu=True
 
@@ -148,6 +155,14 @@ if opts.interface == 0:
     m['mcorr'].p.initialConditions['phiCorr'] = zero()
 else:
     m['clsvof'].p.initialConditions['clsvof'] = phi_init()
+if opts.turbulence:
+    class constant(object):
+        def __init__(self, value):
+            self.value = value
+        def uOfXT(self, x, t):
+            return self.value
+    m['kappa'].p.initialConditions['kappa'] = constant(1.0e-4)
+    m['dissipation'].p.initialConditions['epsilon'] = constant(1.0e-4)
 
 myTpFlowProblem.SystemPhysics.gravity = np.array([0.0,-9.8,0.0])
 

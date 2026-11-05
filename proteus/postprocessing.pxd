@@ -748,14 +748,6 @@ cdef extern from "postprocessing.h":
 					         double * q_v, #scalar P^1 shape fncts
 					         double * p1_velocity_dofs,
 					         double * q_velocity)
-    void getElementLDGvelocityValuesLagrangeRep(int nElements_global,
-					        int nQuadraturePoints_element,
-					        int nSpace,
-					        int nDOF_trial_element,
-					        int nVDOF_element,
-					        double * q_v, #scalar shape fncts
-					        double * velocity_dofs,
-					        double * q_velocity)
     void getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(int nExteriorElementBoundaries_global,
 								       int nQuadraturePoints_elementBoundary,
 								       int nSpace,

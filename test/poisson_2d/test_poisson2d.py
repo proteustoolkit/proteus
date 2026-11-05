@@ -193,3 +193,42 @@ def test_load_vector_use_weak(opts, use_weak_dirichlet):
 
 if __name__ == '__main__':
     pass
+
+
+def test_ncp1_p1nc_velocity(opts):
+    """poisson_het_2d_ncp1_n: Crouzeix-Raviart P1 with the p1-nc velocity post-processing (Chou-Tang RT0).
+
+    Every element balances its source against the post-processed face fluxes, and the velocity is within its first
+    order error of the exact -a grad u (measured: residual 1.8e-16, largest pointwise error 0.044).
+    """
+    from . import poisson_het_2d_ncp1_n
+    reload(poisson_het_2d_p)
+    reload(poisson_het_2d_ncp1_n)
+    pList = [poisson_het_2d_p]
+    nList = [poisson_het_2d_ncp1_n]
+    # the deck sets nn = 21 but star-imports nnx and nny from default_n, and the mesh takes nnx over nn: a value an
+    # earlier test leaves there (3 on a CI worker) gives 8 elements and an error of 0.33
+    nList[0].nnx = nList[0].nny = nList[0].nn
+    reload(default_so)
+    so = default_so
+    so.name = pList[0].name = "poisson_2d_ncp1_pe{0}".format(repr(Comm.get().size()))
+    reload(default_s)
+    so.sList = [default_s]
+    ns = NumericalSolution.NS_base(so, pList, nList, so.sList, opts)
+    ns.calculateSolution(so.name)
+    model = ns.modelList[0].levelModelList[-1]
+    assert type(model.velocityPostProcessor.vpp_algorithms[0]).__name__ == "VPP_P1nc_RT0"
+    q, ebq = model.q, model.ebq
+    nOwned = model.mesh.nElements_owned
+    source = (-q[('r', 0)] * q[('dV_u', 0)]).sum(axis=1)
+    outflow = ((ebq[('velocity', 0)] * ebq['n']).sum(axis=-1) * ebq[('dS_u', 0)]).sum(axis=(1, 2))
+    residual = np.abs(source[:nOwned] - outflow[:nOwned]).max()
+    exact = pList[0].analyticalSolutionVelocity[0]
+    error = max(np.abs(q[('velocity', 0)][eN, k] - exact.uOfX(q['x'][eN, k])).max()
+                for eN in range(nOwned) for k in range(q['x'].shape[1]))
+    assert residual < 1e-12
+    assert error < 0.06
+    for ext in ('h5', 'xmf', 'ymf'):
+        if os.path.exists(so.name + '.' + ext):
+            os.remove(so.name + '.' + ext)
+    del ns
