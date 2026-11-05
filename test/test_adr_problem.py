@@ -1619,16 +1619,14 @@ def test_a_discrete_domain_solves_as_the_mesh_file_it_holds(tmp_path):
     pytest.importorskip("ymf.mesh")
     if not hasattr(discretizations, "mesh_from_domain"):
         pytest.skip("this ymf predates discrete domains (cekees/ymf#8)")
-    import json
-    import numpy
-    from ymf import archive, closure
+    from ymf import archive
     tagged = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_tests", "ymf_meshes",
                           "square4x4_tagged")
     domain, _ = archive.read_ymf(tagged + ".ymf")
     grid = domain["times"][0]["spaces"]["Spatial_Domain"]
-    # The arrays stay in the mesh's HDF5 file (absolute references): inline values in a YAML spec load as
-    # strings, which ymf's canonicalizer refuses. No attributes: ymf's spec schema does not take them on a
-    # discrete domain yet (ymf.domain does), and they matter (the node tags of square4x4.bc make its
+    # The arrays stay in the mesh's HDF5 file (absolute references), and no attributes: the form a ymf before
+    # cekees/ymf#11 can load (inline values read as text, no attributes key; the next test is the form after
+    # it). The attributes matter (the node tags of square4x4.bc make its
     # interior vertex a Dirichlet node), so the file route reads the same grid without them too.
     import copy
     import shutil
@@ -1646,6 +1644,14 @@ def test_a_discrete_domain_solves_as_the_mesh_file_it_holds(tmp_path):
     archive.write_ymf(domain, str(tmp_path / "square.ymf"))
     domains = {"file": {"kind": "file", "format": "ymf", "path": str(tmp_path / "square"), "dimension": 2},
                "discrete": dict(discrete, kind="discrete", dimension=2)}
+    _assert_same_solution(tmp_path, domains)
+
+
+def _assert_same_solution(tmp_path, domains):
+    """Pose SQUARE_TAGGED_SPEC on each domain block, run it, and compare the archives bitwise."""
+    import json
+    import numpy
+    from ymf import archive, closure
     arrays = {}
     for name, block in domains.items():
         (tmp_path / (name + ".ymf")).write_text(
@@ -1661,3 +1667,23 @@ def test_a_discrete_domain_solves_as_the_mesh_file_it_holds(tmp_path):
     for mine, theirs in zip(arrays["discrete"], arrays["file"]):
         assert set(mine) == set(theirs)
         assert all(numpy.array_equal(mine[k], theirs[k]) for k in theirs)
+
+
+def test_a_discrete_domain_inline_with_its_attributes_solves_as_its_file(tmp_path):
+    """With cekees/ymf#11 a discrete block in a spec file may hold its arrays inline and its attributes: the
+    whole square4x4_tagged mesh, node tags included (they make the interior vertex a Dirichlet node), solves
+    bit for bit as the file does."""
+    pytest.importorskip("ymf.mesh")
+    domain_module = pytest.importorskip("ymf.domain")
+    if not hasattr(domain_module, "type_discrete_block"):
+        pytest.skip("this ymf reads a spec's inline mesh as text (cekees/ymf#11)")
+    from ymf import archive
+    tagged = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_tests", "ymf_meshes",
+                          "square4x4_tagged")
+    domain, _ = archive.read_ymf(tagged + ".ymf")
+    grid = archive.inline_approximation(domain, os.path.dirname(tagged))["times"][0]["spaces"]["Spatial_Domain"]
+    discrete = dict((k, grid[k]) for k in ("topology", "geometry", "attributes", "facets") if k in grid)
+    assert discrete["attributes"]
+    _assert_same_solution(tmp_path, {
+        "file": {"kind": "file", "format": "ymf", "path": tagged, "dimension": 2},
+        "discrete": dict(discrete, kind="discrete", dimension=2)})
