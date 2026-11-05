@@ -20,7 +20,8 @@ def test_MeshAdaptRestart(verbose=0):
     for gen_mesh, adapt, name in (("True", 0, "baseline"),  # generate the PUMI mesh
                                   ("False", 0, "baseline"),  # baseline data
                                   ("False", 1, "adapt_0")):  # restart workflow
-        subprocess.check_call(RUN.format(gen=gen_mesh, adapt=adapt, name=name) % currentPath, shell=True)
+        subprocess.run(RUN.format(gen=gen_mesh, adapt=adapt, name=name) % currentPath, shell=True, check=True,
+                       timeout=900)
     #subprocess.call("diff normal adapt_0/pressure.csv baseline/pressure.csv")
     for gauge_file in ("pressure.csv", "vof_height.csv"):
         with open(currentPath+'/baseline/'+gauge_file) as file1, open(currentPath+'/adapt_0/'+gauge_file) as file2:

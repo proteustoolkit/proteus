@@ -74,9 +74,9 @@ class Test_Adapt_ibm():
         currentPath = os.path.dirname(os.path.abspath(__file__))
         # the adapt run reads the Reconstructed.* model and mesh this one writes
         runCommand = "cd "+currentPath+"; parun -l5 cylinder_so.py -C 'T=0.01 onlySaveFinalSolution=True genMesh=True usePUMI=True';"
-        subprocess.check_call(runCommand,shell=True )
+        subprocess.run(runCommand,shell=True, check=True, timeout=900)
         runCommand = "cd "+currentPath+"; parun -l5 cylinder_so.py -C 'T=0.01 onlySaveFinalSolution=True genMesh=False usePUMI=True';"
-        subprocess.check_call(runCommand,shell=True )
+        subprocess.run(runCommand,shell=True, check=True, timeout=900)
 
         #load initial mesh and extract element count
         domain = Domain.PUMIDomain(manager=MeshAdapt.AdaptManager()) #initialize the domain

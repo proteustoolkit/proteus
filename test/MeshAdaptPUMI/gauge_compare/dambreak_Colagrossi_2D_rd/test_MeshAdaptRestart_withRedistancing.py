@@ -17,7 +17,7 @@ def test_MeshAdaptRestart_withRedistancing(verbose=0):
                                   ("False", 0, "baseline"),  # baseline data
                                   ("False", 1, "adapt_0")):  # restart workflow
         runCommand = RUN.format(gen=gen_mesh, adapt=adapt, name=name) % currentPath
-        subprocess.check_call(runCommand, shell=True)
+        subprocess.run(runCommand, shell=True, check=True, timeout=900)
     #subprocess.call("diff normal adapt_0/pressure.csv baseline/pressure.csv")
     with open(currentPath+'/baseline/pressure.csv') as file1, open(currentPath+'/adapt_0/pressure.csv') as file2:
         for line1, line2 in zip(file1, file2):

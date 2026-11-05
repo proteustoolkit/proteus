@@ -27,7 +27,7 @@ def test_runTwoPhaseFlow_wPorosity_2D():
     """Test restart workflow"""
     currentPath = os.path.dirname(os.path.abspath(__file__))
     runCommand = "cd "+currentPath+"; parun --TwoPhaseFlow -l5 -v -C \"T=20. he=0.025 openTop=False genMesh=False\" sloshing.py;"
-    subprocess.check_call(runCommand,shell=True)
+    subprocess.run(runCommand,shell=True, check=True, timeout=600)
     check_massConservation_wPorosity_2D()
 
 def check_massConservation_wPorosity_2D(mcorr_nl_atol_res=1e-10):

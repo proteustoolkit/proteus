@@ -27,7 +27,7 @@ def test_flcbdf_with_a_tight_tolerance_on_ls_and_vof_passes_the_old_stall_time(t
                PYTHONPATH=os.pathsep.join([harness, experimental, os.environ.get("PYTHONPATH", "")]))
     env.pop("HS_DTMIN", None)
     run = subprocess.run([sys.executable, os.path.join(harness, "run_case.py"), str(tmp_path), "flcbdf", "1", "full"],
-                         env=env, capture_output=True, text=True)
+                         env=env, capture_output=True, text=True, timeout=600)
     if "flcbdfWrappers" in run.stderr and "ModuleNotFoundError" in run.stderr:
         pytest.skip("the experimental flcbdf extension is not built")
     assert run.returncode == 0, run.stderr[-2000:]

@@ -458,7 +458,7 @@ solution_paths:
 
 def ymf_run(*args):
     return subprocess.run([sys.executable, SCRIPT, *map(str, args)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=600)
 
 
 def rows(stdout):
@@ -567,7 +567,7 @@ def test_emitted_pn_files_reproduce_the_output_bitwise_under_parun(poisson_spec,
     for suffix in ("_p", "_n", "_so"):
         (work / (stem + suffix + ".py")).write_text((tmp_path / (stem + suffix + ".py")).read_text())
     parun = os.path.join(os.path.dirname(sys.executable), "parun")
-    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True)
+    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
     mine = domain_arrays(read_ymf(work / (stem + "_pn.ymf"))[0], work)
     recorded = domain_arrays(output["approximation"], tmp_path)
@@ -662,7 +662,7 @@ def test_emitted_pn_files_reproduce_a_krylov_solve_under_parun(poisson_spec, tmp
     for suffix in ("_p", "_n", "_so"):
         (work / (stem + suffix + ".py")).write_text((tmp_path / (stem + suffix + ".py")).read_text())
     parun = os.path.join(os.path.dirname(sys.executable), "parun")
-    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True)
+    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
     mine = domain_arrays(read_ymf(work / (stem + "_pn.ymf"))[0], work)
     recorded = domain_arrays(output["approximation"], tmp_path)
@@ -750,7 +750,7 @@ def test_a_pressure_up_to_a_constant_is_solved_in_the_null_space(kovasznay_spec,
         (work / (stem + suffix + ".py")).write_text((tmp_path / (stem + suffix + ".py")).read_text())
     env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", VECLIB_MAXIMUM_THREADS="1")
     parun = os.path.join(os.path.dirname(sys.executable), "parun")
-    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True, env=env)
+    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True, env=env, timeout=600)
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
     mine = domain_arrays(read_ymf(work / (stem + "_pn.ymf"))[0], work)
     recorded = domain_arrays(output["approximation"], tmp_path)
@@ -1480,7 +1480,7 @@ def test_a_tetgen_file_domain_with_its_face_markers(tmp_path):
     if not hasattr(discretizations, "mesh_from_domain"):
         pytest.skip("this ymf predates file domains (cekees/ymf#8)")
     (tmp_path / "cubeplc.poly").write_text(CUBE_PLC)
-    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True)
+    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True, timeout=120)
     for x in ("node", "ele", "face"):
         os.rename(tmp_path / ("cubeplc.1." + x), tmp_path / ("cube." + x))
     (tmp_path / "cube.ymf").write_text(CUBE_FILE_SPEC, encoding="utf-8")
@@ -1522,7 +1522,7 @@ def test_emitted_pn_files_of_a_file_domain_reproduce_the_output_under_parun(tmp_
         pytest.skip("this ymf predates file domains (cekees/ymf#8)")
     import numpy
     (tmp_path / "cubeplc.poly").write_text(CUBE_PLC)
-    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True)
+    subprocess.run(["tetgen", "-pq1.414a0.004Q", "cubeplc.poly"], cwd=tmp_path, check=True, timeout=120)
     for x in ("node", "ele", "face"):
         os.rename(tmp_path / ("cubeplc.1." + x), tmp_path / ("cube." + x))
     (tmp_path / "cube.ymf").write_text(CUBE_FILE_SPEC, encoding="utf-8")
@@ -1540,7 +1540,7 @@ def test_emitted_pn_files_of_a_file_domain_reproduce_the_output_under_parun(tmp_
     for suffix in ("_p", "_n", "_so"):
         (work / (stem + suffix + ".py")).write_text((tmp_path / "out" / (stem + suffix + ".py")).read_text())
     parun = os.path.join(os.path.dirname(sys.executable), "parun")
-    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True)
+    run = subprocess.run([parun, stem + "_so.py"], cwd=work, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
     mine = domain_arrays(read_ymf(work / (stem + "_pn.ymf"))[0], work)
     recorded = domain_arrays(output["approximation"], tmp_path / "out")

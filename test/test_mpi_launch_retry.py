@@ -75,7 +75,8 @@ def launch(tmp_path, monkeypatch):
         message = tmp_path / 'message'
         message.write_text(text)
         result = subprocess.run([sys.executable, str(script), str(counter), str(fail), str(message),
-                                 str(status)], capture_output=True, text=True, **kwargs)
+                                 str(status)], capture_output=True, text=True,
+                                timeout=kwargs.pop('timeout', 120), **kwargs)
         return result, int(counter.read_text())
     return _launch
 
@@ -118,7 +119,7 @@ def test_a_launch_whose_stderr_is_not_captured_is_not_launched_again(tmp_path, m
     counter, message = tmp_path / 'calls', tmp_path / 'message'
     message.write_text(OMPI_MPI_INIT_FAILED)
     result = subprocess.run([sys.executable, str(script), str(counter), '10', str(message), '14'],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
     assert result.returncode == 14
     assert int(counter.read_text()) == 1
 
@@ -149,7 +150,7 @@ def crashing_launch(tmp_path, monkeypatch):
 
     def _launch(fail):
         result = subprocess.run([sys.executable, str(script), str(counter), str(fail)],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, timeout=120)
         return result, int(counter.read_text())
     return _launch
 
@@ -213,10 +214,10 @@ def test_the_launched_interpreter_runs_with_faulthandler(monkeypatch):
     monkeypatch.delenv('PYTHONFAULTHANDLER', raising=False)
     probe = [sys.executable, '-c', 'import os; print(os.environ.get("PYTHONFAULTHANDLER"), '
                                    'os.environ.get("MARKER"))']
-    assert subprocess.run(probe, capture_output=True, text=True).stdout.split() == ['1', 'None']
+    assert subprocess.run(probe, capture_output=True, text=True, timeout=120).stdout.split() == ['1', 'None']
     # a caller's own environment is kept, and gains the setting
     result = subprocess.run(probe, capture_output=True, text=True,
-                            env={'PATH': os.environ.get('PATH', ''), 'MARKER': 'kept'})
+                            env={'PATH': os.environ.get('PATH', ''), 'MARKER': 'kept'}, timeout=120)
     assert result.stdout.split() == ['1', 'kept']
 
 

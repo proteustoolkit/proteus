@@ -9,5 +9,5 @@ def test_workflowPUMI(verbose=0):
     problem isn't setup properly"""
     currentPath = os.path.dirname(os.path.abspath(__file__))
     runCommand = "cd "+currentPath+"; parun -l5 couette_so.py;"
-    subprocess.check_call(runCommand,shell=True )
+    subprocess.run(runCommand,shell=True, check=True, timeout=900)
 
