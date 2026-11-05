@@ -5,6 +5,7 @@ Tools for creating and manipulating 1,2, and 3D meshes.
    :parts: 1
 """
 from .EGeometry import *
+import types
 import numpy as np
 import array
 import inspect
@@ -4039,12 +4040,16 @@ class TetrahedralMesh(Mesh):
         self.buildFromC(self.cmesh)
     def generateFromYmfFile(self,prefix):
         """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
-        info = readMeshYmf(prefix)
+        self.generateFromYmf(prefix)
+    def generateFromYmf(self,source):
+        """Build the mesh from a ymf mesh: a file prefix, or a grid (a ``discrete`` domain block)"""
+        info = ymfMeshInfo(source)
         if info.elementTopologyName != 'Tetrahedron':
-            raise ValueError("%s.ymf holds a %s mesh, not tetrahedra" % (prefix, info.elementTopologyName))
+            raise ValueError("%s holds a %s mesh, not tetrahedra"
+                             % (_ymfMeshSpace(source)[2], info.elementTopologyName))
         self.generateFromArrays(info.nodeArray,info.elementNodesArray,
                                 info.nodeMaterialTypes,info.elementMaterialTypes)
-        _applyYmfFacetTags(self, prefix)
+        _applyYmfFacetTags(self, source)
     def writeTetgenFiles(self,filebase,base):
         from . import cmeshTools
         cmeshTools.writeTetgenFiles(self.cmesh,filebase,base)
@@ -5201,12 +5206,16 @@ class TriangularMesh(Mesh):
 
     def generateFromYmfFile(self,prefix):
         """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
-        info = readMeshYmf(prefix)
+        self.generateFromYmf(prefix)
+    def generateFromYmf(self,source):
+        """Build the mesh from a ymf mesh: a file prefix, or a grid (a ``discrete`` domain block)"""
+        info = ymfMeshInfo(source)
         if info.elementTopologyName != 'Triangle':
-            raise ValueError("%s.ymf holds a %s mesh, not triangles" % (prefix, info.elementTopologyName))
+            raise ValueError("%s holds a %s mesh, not triangles"
+                             % (_ymfMeshSpace(source)[2], info.elementTopologyName))
         self.generateFromArrays(info.nodeArray,info.elementNodesArray,
                                 info.nodeMaterialTypes,info.elementMaterialTypes)
-        _applyYmfFacetTags(self, prefix)
+        _applyYmfFacetTags(self, source)
 
     def constructTriangularMeshOnRectangle(self,Lx,Ly,nx,ny,writeMesh=0,
                                            meshFileBase='mesh2d'):
@@ -7295,26 +7304,87 @@ def readMeshYmf(prefix, MeshTag=YMF_MESH_SPACE, verbose=0):
     domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
     return _readMeshFromDomain(domain, prefix + '.h5', MeshTag=MeshTag, verbose=verbose)
 
-def ymfMeshTopology(prefix, MeshTag=YMF_MESH_SPACE):
-    """The topology type (``Triangle``, ``Tetrahedron``, ...) of the mesh in ``prefix.ymf``"""
-    from ymf import archive as ymf_archive
-    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
-    return domain["times"][0]["spaces"][MeshTag]["topology"]["type"]
+#: the keys of a ymf grid that make a mesh; a ``discrete`` domain block holds them beside its own
+YMF_GRID_KEYS = ("name", "topology", "geometry", "attributes", "facets", "provenance")
 
-def ymfUntaggedExteriorFacets(prefix, MeshTag=YMF_MESH_SPACE):
-    """How many exterior facets of the mesh in ``prefix.ymf`` its facet list leaves untagged (or tags 0).
+def _ymfMeshSpace(source, MeshTag=YMF_MESH_SPACE):
+    """``(space, base, label)`` for a ymf mesh: a file prefix (``prefix.ymf``) or a grid in memory.
+
+    ``source`` is the prefix of a ymf mesh file, or a ymf grid -- a ``discrete`` domain block, whose
+    ``topology``, ``geometry`` and optional ``attributes``, ``facets`` and ``provenance`` are the mesh.
+    ``space`` is the raw grid (validation would drop a facet list an older ymf cannot read), ``base``
+    the directory its HDF5 references resolve from (the file's; the working directory for a grid),
+    ``label`` names it in messages.
+    """
+    from ymf import archive as ymf_archive
+    if isinstance(source, dict):
+        return dict((k, source[k]) for k in YMF_GRID_KEYS if k in source), os.getcwd(), "the discrete mesh"
+    domain, _ = ymf_archive.read_ymf(source + '.ymf')
+    return (domain["times"][0]["spaces"][MeshTag],
+            os.path.dirname(os.path.abspath(source + '.ymf')), source + '.ymf')
+
+def _validYmfMeshSpace(space, MeshTag=YMF_MESH_SPACE):
+    from ymf import archive as ymf_archive
+    return ymf_archive.validate_domain(
+        {"times": [{"time": 0.0, "spaces": {MeshTag: space}}]})["times"][0]["spaces"][MeshTag]
+
+def ymfMeshInfo(source, MeshTag=YMF_MESH_SPACE):
+    """The arrays of a ymf mesh (see :func:`_ymfMeshSpace`) as a BasicMeshInfo, as :func:`readMeshYmf`.
+
+    A file is read by :func:`readMeshYmf`; a grid's data items, inline values or HDF5 references,
+    by ymf. Node coordinates are padded to three columns, as the mesh readers give them; material
+    types are zero where the grid has no ``nodeMaterialTypes`` or ``elementMaterialTypes``.
+    """
+    if not isinstance(source, dict):
+        return readMeshYmf(source, MeshTag)
+    from ymf import archive as ymf_archive
+    space, base, label = _ymfMeshSpace(source, MeshTag)
+    space = _validYmfMeshSpace(space, MeshTag)
+    topology = space["topology"]
+    elements = np.asarray(ymf_archive.load_array(topology["data_item"], base))
+    elements = elements.reshape(topology["number_of_elements"], -1).astype('i')
+    nodes = np.asarray(ymf_archive.load_array(space["geometry"]["data_item"], base), dtype='d')
+    width = {"XY": 2, "XYZ": 3}.get(space["geometry"]["type"])
+    if width is None:
+        raise ValueError("%s: geometry %s; a mesh reads XY or XYZ"
+                         % (label, space["geometry"]["type"]))
+    nodes = nodes.reshape(-1, width)
+    if width == 2:
+        nodes = np.hstack([nodes, np.zeros((nodes.shape[0], 1))])
+    info = types.SimpleNamespace(nodeArray=np.ascontiguousarray(nodes), elementNodesArray=elements,
+                                 nNodes_global=nodes.shape[0], nElements_global=elements.shape[0],
+                                 elementTopologyName=topology["type"],
+                                 nodeMaterialTypes=np.zeros((nodes.shape[0],), 'i'),
+                                 elementMaterialTypes=np.zeros((elements.shape[0],), 'i'))
+    for a in space.get("attributes", []):
+        if a["name"] in ("nodeMaterialTypes", "elementMaterialTypes"):
+            setattr(info, a["name"],
+                    np.asarray(ymf_archive.load_array(a["data_item"], base)).reshape(-1).astype('i'))
+    return info
+
+def ymfMeshTopology(source, MeshTag=YMF_MESH_SPACE):
+    """The topology type (``Triangle``, ``Tetrahedron``, ...) of a ymf mesh (file prefix or grid)"""
+    return _ymfMeshSpace(source, MeshTag)[0]["topology"]["type"]
+
+def ymfMeshBounds(source, dim, MeshTag=YMF_MESH_SPACE):
+    """``(lower, upper)``, the bounding box of a ymf mesh's nodes in its first ``dim`` coordinates"""
+    nodes = np.asarray(ymfMeshInfo(source, MeshTag).nodeArray)[:, :dim]
+    if nodes.size == 0:
+        raise ValueError("no nodes in %s" % (_ymfMeshSpace(source, MeshTag)[2],))
+    return nodes.min(axis=0).tolist(), nodes.max(axis=0).tolist()
+
+def ymfUntaggedExteriorFacets(source, MeshTag=YMF_MESH_SPACE):
+    """How many exterior facets of a ymf mesh (file prefix or grid) its facet list leaves untagged (or tags 0).
 
     Those boundaries get flag 0 (:func:`_applyYmfFacetTags`), which a boundary condition selected by
     position cannot tell from the interior. A mesh with no facet list has none: every exterior boundary
     keeps the construction's flag 1.
     """
     from ymf import archive as ymf_archive
-    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
-    space = domain["times"][0]["spaces"][MeshTag]
+    space, base, label = _ymfMeshSpace(source, MeshTag)
     if "facets" not in space:
         return 0
-    base = os.path.dirname(os.path.abspath(prefix + '.ymf'))
-    info = readMeshYmf(prefix, MeshTag)
+    info = ymfMeshInfo(source, MeshTag)
     elements = np.asarray(info.elementNodesArray)
     k = {"Triangle": 2, "Tri_6": 2, "Tetrahedron": 3, "Tet_10": 3}[space["topology"]["type"]]
     vertices = elements[:, :k + 1]
@@ -7331,8 +7401,10 @@ def ymfUntaggedExteriorFacets(prefix, MeshTag=YMF_MESH_SPACE):
     tagged = set(tuple(sorted(row)) for row, tag in zip(nodes.tolist(), tags.tolist()) if tag != 0)
     return len(exterior - tagged)
 
-def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
-    """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of ``prefix.ymf``, if it has one.
+def _applyYmfFacetTags(mesh, source, MeshTag=YMF_MESH_SPACE):
+    """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of a ymf mesh, if it has one.
+
+    ``source`` is a file prefix (``prefix.ymf``) or a grid (:func:`_ymfMeshSpace`).
 
     Each facet (its node numbers, as in the file) names an element boundary of
     the mesh; that boundary takes the facet's tag. An exterior boundary the
@@ -7344,16 +7416,15 @@ def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
     old to check it: its validation would drop the list without a word.
     """
     from ymf import archive as ymf_archive
-    domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
-    if "facets" not in domain["times"][0]["spaces"][MeshTag]:
+    space, base, label = _ymfMeshSpace(source, MeshTag)
+    if "facets" not in space:
         return
     try:
         from ymf.mesh import check_facets
     except ImportError:
-        raise ImportError("%s.ymf has a facet list, which this ymf cannot read; "
-                          "install a ymf with ymf.mesh" % (prefix,))
-    space = ymf_archive.validate_domain(domain)["times"][0]["spaces"][MeshTag]
-    base = os.path.dirname(os.path.abspath(prefix + '.ymf'))
+        raise ImportError("%s has a facet list, which this ymf cannot read; "
+                          "install a ymf with ymf.mesh" % (label,))
+    space = _validYmfMeshSpace(space, MeshTag)
     check_facets(space, base)
     facets = space["facets"]
     nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
@@ -7367,9 +7438,9 @@ def _applyYmfFacetTags(mesh, prefix, MeshTag=YMF_MESH_SPACE):
         try:
             ebN = boundary[tuple(sorted(row))]
         except KeyError:
-            raise ValueError("%s.ymf: facet %s is not an element boundary of the mesh" % (prefix, row))
+            raise ValueError("%s: facet %s is not an element boundary of the mesh" % (label, row))
         mesh.elementBoundaryMaterialTypes[ebN] = tag
-    logEvent("Tagged %d element boundaries from the facets of %s.ymf" % (len(tags), prefix))
+    logEvent("Tagged %d element boundaries from the facets of %s" % (len(tags), label))
 
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
     """
@@ -8921,8 +8992,9 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
                                                nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                parallelPartitioningType=meshOptions.parallelPartitioningType)
-        logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (domain.meshfile,))
-        mesh.generateFromYmfFile(domain.meshfile)
+        logEvent("Reading coarse mesh from the ymf mesh %s"
+                 % ("held by the domain" if domain.grid is not None else domain.meshfile + ".ymf",))
+        mesh.generateFromYmf(domain.ymfSource)
         logEvent("Generating %i-level mesh from coarse ymf mesh" % (meshOptions.nLevels,))
         mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,

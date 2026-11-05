@@ -685,6 +685,18 @@ def _is_file(region):
     return region is not None and region.get("kind") == "file"
 
 
+def _is_discrete(region):
+    """A ``discrete`` region that is a mesh to solve on (a triangulated surface is not)."""
+    if region is None or region.get("kind") != "discrete":
+        return False
+    from proteus import DomainYMF
+    return not DomainYMF._is_surface(region)
+
+
+def _discrete_dimension(region):
+    return 2 if region["topology"]["type"] == "Triangle" else 3
+
+
 def file_bounds(region):
     """``(lower, upper)``: the bounding box of a mesh file's nodes.
 
@@ -825,6 +837,14 @@ def numerics(problem, spaces, cells, time=None, quadrature_order=None,
     elif _is_file(region) and region["format"] in CONVERTED_FORMATS:
         raise ValueError("Proteus does not read %s meshes: convert the file to a ymf mesh with "
                          "proteustoolkit/ymf-import-sms and pose format: ymf" % (region["format"],))
+    elif _is_discrete(region):
+        # a mesh is a domain (D4): read as it is, refined by levels
+        if problem.get("periodic"):
+            raise ValueError("periodic conditions need a piecewise_linear region; a discrete "
+                             "domain cannot pair its faces")
+        if h is not None or cells is not None:
+            raise ValueError("a discrete domain is already a mesh: give its levels only, not "
+                             "cells or h")
     elif _is_file(region) and problem.get("periodic"):
         raise ValueError("periodic conditions need a piecewise_linear region; a %s file domain "
                          "cannot pair its faces" % (region["format"],))
@@ -1039,19 +1059,23 @@ def _refuse_positions_on_untagged_walls(problem):
     exteriority, such a condition has to select its walls by their tags.
     """
     region = problem["domain"].get("region")
-    if not (_is_file(region) and region.get("format") == "ymf"):
+    if _is_discrete(region):
+        source, label = region, "the discrete domain"
+    elif _is_file(region) and region.get("format") == "ymf":
+        path = region["path"]
+        source, label = (path[:-4] if path.endswith(".ymf") else path), region["path"]
+    else:
         return
     by_position = sorted(set(e["region"] for e in problem.get("dirichlet") or [] if "flags" not in e))
     if not by_position:
         return
-    path = region["path"]
-    untagged = MeshTools.ymfUntaggedExteriorFacets(path[:-4] if path.endswith(".ymf") else path)
+    untagged = MeshTools.ymfUntaggedExteriorFacets(source)
     if untagged:
         raise ValueError(
             "Dirichlet regions %s are found by position, but %s leaves %d exterior facets untagged (flag 0), "
             "which Proteus cannot tell from the interior: the condition would not be imposed on them. Select "
             "those walls by their tags (boundary_regions: tags), or tag every exterior facet in the mesh"
-            % (", ".join(by_position), path, untagged))
+            % (", ".join(by_position), label, untagged))
 
 
 def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
@@ -1078,9 +1102,13 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
         # the mesh file, before the tolerance and anything else needs them
         lower, upper = file_bounds(region)
         problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
+    elif _is_discrete(region) and problem["domain"].get("lower") is None:
+        # nodes in an HDF5 file: ymf posed it without bounds, the mesh gives them
+        lower, upper = MeshTools.ymfMeshBounds(region, _discrete_dimension(region))
+        problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
     _refuse_positions_on_untagged_walls(problem)
     if problem.get("periodic") and problem["domain"].get("region") is not None and h \
-            and not _is_file(problem["domain"]["region"]):
+            and not _is_file(problem["domain"]["region"]) and not _is_discrete(problem["domain"]["region"]):
         # no boundary points from the mesher, so cut the faces to h here
         problem = dict(problem, domain=dict(
             problem["domain"], region=periodic_region(problem["domain"]["region"], h)))
@@ -1290,6 +1318,18 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if region is None:
         P += ["# the old-style box: domain None, with L and x0, hands nnx/nny/nnz to the mesher",
               "domain = None"]
+    elif _is_discrete(region):
+        # a mesh held in the document, read in memory as setup builds it
+        options = MeshTools.getMeshOptions(p.domain)
+        P += ["# a discrete domain: the mesh the document holds, read in memory",
+              "from proteus import DomainYMF, MeshTools",
+              "domain = DomainYMF.from_ymf(%s)" % pprint.pformat(region, width=72).replace(
+                  "\n", "\n" + " " * len("domain = DomainYMF.from_ymf(")),
+              "domain.name = name",
+              "meshOptions = MeshTools.getMeshOptions(domain)",
+              "meshOptions.nLevels = %d" % options.nLevels,
+              "meshOptions.genMesh = %r" % options.genMesh,
+              "# the bounding box: the scale of the boundary tolerance"]
     elif _is_file(region):
         # as setup builds it: the file's absolute path, read (or, for a geometry, meshed by he) where it lies;
         # nothing is written beside it

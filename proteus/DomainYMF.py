@@ -141,6 +141,13 @@ def to_ymf(domain):
         return dict(_shared(domain), kind="file", dimension=domain.nd,
                     format="gmsh_geo", path=str(domain.geofile))
 
+    if isinstance(domain, Domain.MeshYmfDomain) and domain.grid is not None:
+        # a mesh held in memory is a discrete domain: the block it came from
+        from proteus.MeshTools import YMF_GRID_KEYS
+        return dict(_shared(domain), kind="discrete", dimension=domain.nd,
+                    **dict((k, domain.grid[k]) for k in YMF_GRID_KEYS
+                           if k in domain.grid and k != "name"))
+
     if kind in _FILE_FORMATS:
         return dict(_shared(domain), kind="file", dimension=domain.nd,
                     format=_FILE_FORMATS[kind], path=str(domain.meshfile))
@@ -158,6 +165,20 @@ def to_ymf(domain):
 
 
 _FILE_CLASSES = {v: getattr(Domain, k) for k, v in _FILE_FORMATS.items()}
+
+
+def _is_surface(block):
+    """Whether a ``discrete`` block is a triangulated surface rather than a mesh to solve on.
+
+    Triangles in three coordinates with ``dimension: 3`` are a surface (what
+    :class:`Domain.TriangulatedSurfaceDomain` writes); triangles with
+    ``dimension: 2`` or ``XY`` geometry are a planar mesh, as are tetrahedra.
+    """
+    if block["topology"].get("type") != "Triangle":
+        return False
+    if block.get("dimension") is not None:
+        return int(block["dimension"]) == 3
+    return block["geometry"].get("type", "XYZ") != "XY"
 
 
 def from_ymf(block):
@@ -196,12 +217,16 @@ def from_ymf(block):
 
     if kind == "discrete":
         topology, geometry = block["topology"], block["geometry"]
-        if topology.get("type") != "Triangle":
+        if _is_surface(block):
+            return Domain.TriangulatedSurfaceDomain(
+                geometry["values"], topology["values"], name=name, units=units)
+        if topology.get("type") not in ("Triangle", "Tetrahedron"):
             raise DomainTranslationError(
-                "proteus has a discrete domain class for triangulated "
-                "surfaces only; this one is %r" % (topology.get("type"),))
-        return Domain.TriangulatedSurfaceDomain(
-            geometry["values"], topology["values"], name=name, units=units)
+                "proteus solves on a discrete mesh of triangles or tetrahedra; "
+                "this one is %r" % (topology.get("type"),))
+        # a mesh is a domain (D4): read in memory, as a ymf mesh file would be
+        return Domain.MeshYmfDomain(
+            name, nd=2 if topology["type"] == "Triangle" else 3, grid=block)
 
     # piecewise_linear
     common = dict(vertices=block["vertices"], name=name, units=units,
