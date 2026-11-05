@@ -151,6 +151,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
 
     from proteus.ctransportCoefficients import kEpsilon_k_3D_Evaluate_sd
     from proteus.ctransportCoefficients import kEpsilon_k_2D_Evaluate_sd
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    kEpsilon_k_3D_Evaluate_sd = staticmethod(kEpsilon_k_3D_Evaluate_sd)
+    kEpsilon_k_2D_Evaluate_sd = staticmethod(kEpsilon_k_2D_Evaluate_sd)
 
     def __init__(self,
                  VOS_model=None, # Solid model
