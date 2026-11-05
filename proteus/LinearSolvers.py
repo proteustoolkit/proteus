@@ -556,6 +556,10 @@ class KSP_petsc4py(LinearSolver):
             self.ksp.setPC(self.pc)
         self.ksp.max_it = self.maxIts
         self.ksp.setFromOptions()
+        # -<prefix>pc_lag_newton: set the preconditioner up on the first Newton iteration of each
+        # nonlinear solve and reuse it for the rest of that solve (PETSc's own
+        # -ksp_reuse_preconditioner would keep the first one for the whole run)
+        self.pc_lag_newton = p4pyPETSc.Options(prefix or '').getBool('pc_lag_newton', False)
         # set null space class
         self.null_space = self._set_null_space_class()
         self.converged_on_maxit=False
@@ -595,6 +599,8 @@ class KSP_petsc4py(LinearSolver):
         self.petsc_L.assemblyBegin()
         self.petsc_L.assemblyEnd()
         self.ksp.setOperators(self.petsc_L,self.petsc_L)
+        if self.pc_lag_newton:
+            self.ksp.getPC().setReusePreconditioner(bool(newton_its))
         if self.pc is not None:
             self.pc.setOperators(self.petsc_L,self.petsc_L)
             self.pc.setUp()
