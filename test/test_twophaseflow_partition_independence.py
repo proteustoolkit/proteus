@@ -107,6 +107,9 @@ CASES = {
     "damBreakLevelSet": (dict(DECK="damBreakLevelSet.py", OPTS="he=0.1", FT=0.5, ATOL=1e-10, MAXITS=1000), 1e-10),
     "damBreakLevelSet-clsvof": (dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 interface=1", FT=0.5, ATOL=1e-10,
                                      MAXITS=1000), 1e-10),
+    # k-epsilon (Kappa, Dissipation): 3.4e-9 / 6.8e-9 relative, 3e-13 absolute on values ~1e-4 (solver tolerance)
+    "damBreakLevelSet-turbulence": (dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 turbulence=1", FT=0.1, ATOL=1e-10,
+                                         MAXITS=1000), 1e-7),
     "marin": (dict(DECK="marin.py", OPTS="he=0.5", FT=0.1, ATOL=1e-10, MAXITS=200), 1e-8),
     "moses": (dict(DECK="moses.py", OPTS="he=0.5", FT=0.1, ATOL=1e-10, MAXITS=200), 1e-9),
     "rising_bubble_rans3p": (dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
