@@ -46,7 +46,7 @@ for _m in (ls_vortex_2d_n, redist_vortex_2d_n, vof_vortex_2d_n, ls_consrv_vortex
     _m.linTolFac = 0.0
     _m.l_rtol_res = 0.0
 import ls_vortex_2d_so as so  # noqa: E402
-from proteus import Archiver, MeshTools, NumericalSolution, default_s  # noqa: E402
+from proteus import NumericalSolution, default_s  # noqa: E402
 from proteus.runtime import RunOptions  # noqa: E402
 
 so.name = "views"
@@ -59,29 +59,8 @@ else:
     opts.hotStart = True
     opts.hotStartTime = N * DT
 
-# The hot start hands its open archive to generateMesh (NumericalSolution passes restartArchive once that
-# line lands; here the driver does it, so the comparison does not depend on where it lands).
-_archives = []
-_XdmfArchive = Archiver.XdmfArchive
-
-
-def _capture(*args, **kwargs):
-    ar = _XdmfArchive(*args, **kwargs)
-    _archives.append(ar)
-    return ar
-
-
-Archiver.XdmfArchive = _capture
-_generateMesh = MeshTools.generateMesh
-
-
-def _generate(physics, numerics, generatePartitionedMeshFromFiles=False, restartArchive=None):
-    if mode == "hot" and mesh_from == "views":
-        restartArchive = _archives[0]
-    return _generateMesh(physics, numerics, generatePartitionedMeshFromFiles, restartArchive=restartArchive)
-
-
-MeshTools.generateMesh = _generate
+if mode == "hot":
+    opts.hotStartMesh = mesh_from          # NumericalSolution passes its open archive to generateMesh
 sList = [default_s for _ in so.pnList]
 pm = {"ls": (ls_vortex_2d_p, ls_vortex_2d_n),
       "redist": (redist_vortex_2d_p, redist_vortex_2d_n),

@@ -5,7 +5,8 @@ the step-H ymf grid plus what rebuilding the solver's subdomain needs (each elem
 the edges, the flags, the partition's eight maps, the global counts). A hot start with the same number
 of ranks builds the mesh from the views, with no global mesh and no partitioner
 (MeshTools.generateMesh(restartArchive=...)); anything else -- another number of ranks, no views, a
-multilevel hierarchy -- takes the old path and says why.
+multilevel hierarchy -- takes the old path and says why. opts.hotStartMesh = 'global' asks for the old
+path (NumericalSolution).
 
 The drivers start their own ranks (subdomain_view_restart_mpi.py, restart_views_vortex.py), so these
 tests skip under a multi-rank launch.
@@ -97,6 +98,10 @@ def test_a_same_rank_restart_from_the_views_is_the_global_restart_bit_for_bit(gr
         out = _run(2, "restart_views_vortex.py", tmp_path / mesh_from, "hot", 3, mesh_from, grid, document,
                    cwd=tmp_path)
         assert ("views=1" if mesh_from == "views" else "views=0") in out, out
+        # a hot start whose mesh is numbered otherwise than the archive's does not fail: it restores no
+        # solver state, says so, and runs on as a restart (C17/C14); neither path may do that here
+        log = (tmp_path / mesh_from / "proteus_default.log").read_text()
+        assert "no solver state to restore" not in log
         runs[mesh_from] = [_datasets(tmp_path / mesh_from / ("views_p%d.h5" % r)) for r in range(2)]
     for mine, theirs in zip(runs["views"], runs["global"]):
         assert set(mine) == set(theirs)
