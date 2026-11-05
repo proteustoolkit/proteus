@@ -1,0 +1,66 @@
+# The two-phase level-set family of ymf's tests/fixtures/two_phase (C42), with
+# the two inertia forms as weak forms (D1: a formulation is a weak_forms
+# entry). proteus.Dispatch picks RANS2P's NONCONSERVATIVE_FORM from the
+# discretization's from_weak_form, never from a module name in the spec.
+# Incompressible two-phase flow with a sharp interface carried by a level
+# set (C42): the model only. Phase 0 is water (φ < 0), phase 1 air (φ > 0).
+# The density and viscosity are coefficients of the state, through
+# χ = heaviside(φ). The whole model is not one ADR system (v·∇φ is a
+# Hamiltonian in another unknown); a split discretization classifies each
+# sub-problem with the others' fields lagged.
+ymf_state: abstract
+
+model:
+  physical_model:
+    provenance: human_specified
+    processes: [incompressible_flow, two_phase_flow, interface_transport, gravity]
+    assumptions: [newtonian, immiscible, isothermal, no_phase_change, no_surface_tension]
+  strong_form:
+    provenance: human_specified
+    unknowns:
+      - {name: v, units: m/s, rank: 1}
+      - {name: p, units: Pa}
+      - {name: φ, units: m}
+    equation_formulation: "variable-density incompressible Navier-Stokes, interface by a level set"
+    equations:
+      - name: momentum
+        for: v
+        equation: "∂(ρ v)/∂t + ∇·(ρ v⊗v) − ∇·(2μ sym(∇v)) + ∇p = ρ g  in Ω"
+      - name: continuity
+        for: p
+        equation: "∇·v = 0  in Ω"
+      - name: interface
+        for: φ
+        equation: "∂φ/∂t + v·∇φ = 0  in Ω"
+    coefficients:
+      χ:  {formula: "heaviside(φ)", units: "1"}
+      ρ:  {formula: "ρw (1 − χ) + ρa χ", units: kg/m3}
+      μ:  {formula: "ρw νw (1 − χ) + ρa νa χ", units: Pa*s}
+      ρw: {units: kg/m3}
+      νw: {units: m2/s}
+      ρa: {units: kg/m3}
+      νa: {units: m2/s}
+      g:  {units: m/s2}
+    # what the cases' walls and tops mean, written once (Proteus's
+    # BC_RANS.setFreeSlip and setAtmosphere, for this model's unknowns)
+    condition_sets:
+      free_slip:
+        - {variable: v, type: slip}
+      atmosphere:
+        - {variable: p, type: dirichlet, value: 0.0}
+        - {variable: v, type: open}
+        - {variable: χ, type: inflow, value: 1.0}       # what enters is air
+
+  weak_forms:
+    - label: conservative_inertia
+      provenance: human_specified
+      derivation: "momentum as written; viscous and pressure terms integrated by parts"
+      solution_spaces: {trial: "H1(Ω)^d × L2(Ω) × H1(Ω)", test: "H1(Ω)^d × L2(Ω) × H1(Ω)"}
+      bilinear: "free text until weak forms are parsed"
+      linear: "free text"
+    - label: nonconservative_inertia
+      provenance: human_specified
+      derivation: "ρ(∂v/∂t + v·∇v) in place of ∂(ρv)/∂t + ∇·(ρ v⊗v), using ∇·v = 0 and the interface equation"
+      solution_spaces: {trial: "H1(Ω)^d × L2(Ω) × H1(Ω)", test: "H1(Ω)^d × L2(Ω) × H1(Ω)"}
+      bilinear: "free text until weak forms are parsed"
+      linear: "free text"

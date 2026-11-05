@@ -1,0 +1,379 @@
+"""proteus.Dispatch: a ymf spec's (formulation, discretization) -> Proteus modules and flags (C5 step 1).
+
+The acceptance check is object by object: each discretization of dambreak.ymf dispatches to exactly the modules,
+coefficient flags and numerics TwoPhaseFlow builds for the deck it describes (damBreakLevelSet.py, with
+interface=1, and damBreak.py), and the shallow-water spec to what SWFlow builds (sw_p/sw_n, GN_sw_p/GN_sw_n).
+Nothing is solved and no mesh is built: TwoPhaseFlowProblem.initializeAll() builds the p and n modules only.
+
+Then the refusals: a cell no module covers, a model in no family, a sub-problem with no role, an unknown
+formulation, a cell without the sub-problems it needs, a sharp function left sharp, and every way a proteus: hint
+can disagree (D8).
+"""
+import contextlib
+import copy
+import importlib.util
+import os
+import sys
+
+import pytest
+
+pytest.importorskip("ymf.explicit")
+
+from proteus import Context  # noqa: E402
+from proteus.Dispatch import DispatchError, dispatch, resolve  # noqa: E402
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TEST = os.path.dirname(HERE)
+SWFLOW_MODELS = os.path.join(os.path.dirname(resolve("proteus.SWFlow.SWFlowProblem.__file__")), "models")
+
+
+def _load_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _spec(name):
+    from ymf.closure import load
+    spec, _, _ = load(os.path.join(HERE, name))
+    return spec
+
+
+@pytest.fixture(scope="module")
+def dambreak():
+    return _spec("dambreak.ymf")
+
+
+@pytest.fixture(scope="module")
+def lake():
+    return _spec("lake_at_rest.ymf")
+
+
+@contextlib.contextmanager
+def _isolated():
+    """Leave PETSc's options database and the global Context as they were: building a deck sets solver options
+    (rans2p_ksp_type, ...) that a later test on the same worker would otherwise inherit."""
+    from petsc4py import PETSc
+    options = PETSc.Options()
+    before = options.getAll()
+    context = getattr(Context, "context", None)
+    try:
+        yield
+    finally:
+        after = options.getAll()
+        for key in after:
+            if key not in before:
+                options.delValue(key)
+            elif after[key] != before[key]:
+                options.setValue(key, before[key])
+        Context.contextOptionsString = None
+        Context.set(context)
+
+
+def _two_phase_deck(deck, options=None):
+    """The deck's TwoPhaseFlowProblem with its p and n modules built (initializeAll), nothing solved."""
+    with _isolated():
+        Context.contextOptionsString = options
+        module = _load_module(os.path.join(TEST, "TwoPhaseFlow", deck + ".py"),
+                              "c5_dispatch_%s_%s" % (deck, abs(hash(options))))
+        Context.contextOptionsString = None
+        problem = module.myTpFlowProblem
+        problem.initializeAll()
+    return problem
+
+
+def _resolved(value, model):
+    if isinstance(value, str) and (value.startswith("proteus.") or value.startswith("{module}")):
+        return model.resolve(value)
+    if isinstance(value, dict):
+        return {k: _resolved(v, model) for k, v in value.items()}
+    return value
+
+
+def _equal(actual, expected):
+    if isinstance(expected, type) or callable(expected):
+        return actual is expected
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        return bool(actual) == bool(expected)
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        return float(actual) == float(expected)
+    return actual == expected
+
+
+#: what every dispatched model must say, so that a comparison cannot pass by saying little
+REQUIRED_NUMERICS = {"timeIntegration", "stepController", "numericalFluxType", "subgridError", "shockCapturing",
+                     "multilevelNonlinearSolver", "quadrature_order"}
+
+
+def _compare_model(model, p, n, nd):
+    """Every coefficient flag, physics attribute and numerics attribute the dispatch gives, against the objects."""
+    where = "%s (%s)" % (model.subproblem, model.cell)
+    assert REQUIRED_NUMERICS <= set(model.numerics), where
+    assert type(p.coefficients) is model.resolve(model.coefficients_class), where
+    for flag, value in model.coefficients.items():
+        assert _equal(getattr(p.coefficients, flag), value), \
+            "%s: coefficients.%s is %r, dispatch says %r" % (where, flag, getattr(p.coefficients, flag), value)
+    for attribute, value in model.physics.items():
+        assert _equal(getattr(p, attribute), _resolved(value, model)), "%s: p.%s" % (where, attribute)
+    for attribute, value in model.numerics.items():
+        if attribute == "quadrature_order":
+            assert n.elementQuadrature.order == value, where
+            assert n.elementBoundaryQuadrature.order == value, where
+        elif "." in attribute:
+            owner, field = attribute.split(".")
+            obj = getattr(n, owner)
+            actual = obj.lagRequested if field == "lag" else getattr(obj, field)
+            assert _equal(actual, value), "%s: n.%s is %r, dispatch says %r" % (where, attribute, actual, value)
+        elif attribute in ("subgridError", "shockCapturing"):
+            obj = getattr(n, attribute)
+            if value is None:
+                assert obj is None, "%s: n.%s" % (where, attribute)
+            else:
+                assert type(obj) is model.resolve(value), "%s: n.%s" % (where, attribute)
+        else:
+            actual = getattr(n, attribute)
+            assert _equal(actual, _resolved(value, model)), \
+                "%s: n.%s is %r, dispatch says %r" % (where, attribute, actual, value)
+    expected = {i: resolve(b) for i, b in model.femSpaces(nd).items()}
+    assert n.femSpaces == expected, where
+
+
+def _compare_two_phase(found, problem):
+    params = list(problem.SystemPhysics.modelDict.items())
+    assert [key for key, _ in params] == [m.subproblem for m in found]
+    nd = problem.domain.nd
+    for model, (key, param) in zip(found, params):
+        assert param.index == model.index
+        assert param.name == model.name
+        _compare_model(model, param.p, param.n, nd)
+        assert param.n.runCFL == found.system["runCFL"]
+    so = problem.so
+    assert issubclass(so.systemStepControllerType, resolve(found.system["systemStepControllerType"]))
+    assert so.systemStepExact == found.system["systemStepExact"]
+    assert getattr(so, "modelSpinUpList", []) == found.system.get("modelSpinUpList", [])
+
+
+# ---- acceptance: object by object --------------------------------------------------------------------------------
+
+def test_level_set_five_is_damBreakLevelSet(dambreak):
+    found = dispatch(dambreak, "level_set_five")
+    assert found.family == "two_phase_level_set"
+    assert found.formulation == "nonconservative_inertia"
+    assert [m.module for m in found] == ["proteus.mprans.%s" % m for m in ("RANS2P", "VOF", "NCLS", "RDLS", "MCorr")]
+    assert [m.role for m in found] == ["velocity_pressure", "volume_fraction", "level_set", "redistancing",
+                                       "mass_correction"]
+    flow = found["flow"]
+    assert flow.coefficients["NONCONSERVATIVE_FORM"] == 1.0 and flow.sources["NONCONSERVATIVE_FORM"] == "cell"
+    assert flow.coefficients["useVF"] == 1.0 and flow.sources["useVF"] == "spec, hint agrees"
+    assert flow.coefficients["eb_penalty_constant"] == 1.0e6 and flow.sources["eb_penalty_constant"] == "hint"
+    assert found["rdls"].sources["epsFact"] == "spec, hint agrees"
+    _compare_two_phase(found, _two_phase_deck("damBreakLevelSet"))
+
+
+def test_level_set_clsvof_is_damBreakLevelSet_interface_1(dambreak):
+    found = dispatch(dambreak, "level_set_clsvof")
+    assert [m.cell for m in found] == ["rans2p_nonconservative", "clsvof"]
+    _compare_two_phase(found, _two_phase_deck("damBreakLevelSet", "interface=1"))
+
+
+def test_clsvof_projection_is_damBreak(dambreak):
+    found = dispatch(dambreak, "clsvof_projection")
+    assert [m.cell for m in found] == ["clsvof", "rans3pf_projection", "presinc", "pres", "presinit"]
+    assert found["flow"].coefficients["ARTIFICIAL_VISCOSITY"] == 3
+    assert found.system["modelSpinUpList"] == [4]
+    _compare_two_phase(found, _two_phase_deck("damBreak"))
+
+
+def _swflow(deck, p_module, n_module):
+    """SWFlow's p and n modules for a deck, as parun --SWEs builds them (SWEs_so), nothing solved."""
+    with _isolated():
+        module = _load_module(os.path.join(TEST, "SWFlow", deck + ".py"), "c5_dispatch_" + deck)
+        Context.setFromModule(module)
+        sys.path.insert(0, SWFLOW_MODELS)
+        try:
+            p = _load_module(os.path.join(SWFLOW_MODELS, p_module + ".py"), p_module)
+            sys.modules[p_module] = p              # the n module does "from <p> import *"
+            n = _load_module(os.path.join(SWFLOW_MODELS, n_module + ".py"), n_module)
+        finally:
+            sys.path.remove(SWFLOW_MODELS)
+            sys.modules.pop(p_module, None)
+    return p, n
+
+
+def test_shallow_water_is_SWFlow(lake):
+    found = dispatch(lake, "convex_limited")
+    assert found.family == "shallow_water"
+    (model,) = found.models
+    assert model.module == "proteus.mprans.SW2DCV"
+    assert {k: model.sources[k] for k in ("cE", "LUMPED_MASS_MATRIX", "BOUNDS_RELAXATION")} == \
+        dict.fromkeys(("cE", "LUMPED_MASS_MATRIX", "BOUNDS_RELAXATION"), "spec")
+    p, n = _swflow("dam3Bumps", "sw_p", "sw_n")
+    _compare_model(model, p, n, 2)
+    # runCFL is the case's (dam3Bumps runs at 0.25); SWEs_so keeps default_so's controller
+    from proteus import default_so
+    assert resolve(found.system["systemStepControllerType"]) is default_so.systemStepControllerType
+
+
+def _dispersive(lake):
+    """The lake at rest declared as the relaxed Serre-Green-Naghdi model. ymf cannot write the dispersive
+    equations yet (no D/Dt, C42 section 4.3), so the family is read from the declared assumptions alone."""
+    doc = copy.deepcopy(lake)
+    doc["model"]["physical_model"]["assumptions"] = ["depth_averaged", "hyperbolic_relaxation"]
+    entry = doc["solution_paths"]["discretizations"][0]
+    entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": "SSP_RK3",
+                               "lumped_mass": "false"}
+    entry["subproblems"][0]["proteus"] = {"model": "GN_SW2DCV", "INTEGRATE_BY_PARTS_WALLS": "1"}
+    return doc
+
+
+def test_dispersive_shallow_water_is_SWFlow_GN(lake):
+    found = dispatch(_dispersive(lake), "convex_limited")
+    assert found.family == "dispersive_shallow_water"
+    (model,) = found.models
+    assert model.module == "proteus.mprans.GN_SW2DCV"
+    p, n = _swflow("dSWEs_steady_state", "GN_sw_p", "GN_sw_n")
+    _compare_model(model, p, n, 2)
+
+
+# ---- refusals ----------------------------------------------------------------------------------------------------
+
+def _entry(doc, name):
+    return next(e for e in doc["solution_paths"]["discretizations"] if e["name"] == name)
+
+
+def _sub(doc, entry, name):
+    return next(s for s in _entry(doc, entry)["subproblems"] if s["name"] == name)
+
+
+def test_conservative_projection_is_a_cell_no_module_covers(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "clsvof_projection")["from_weak_form"] = "conservative_inertia"
+    with pytest.raises(DispatchError) as e:
+        dispatch(doc, "clsvof_projection")
+    assert "no Proteus module covers flow" in str(e.value)
+    assert "rans3pf_projection: formulation conservative_inertia, the cell's is nonconservative_inertia" \
+        in str(e.value)
+    assert e.value.subproblem == "flow"
+    # the same form with RANS2P is covered: one module, two cells
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "level_set_five")["from_weak_form"] = "conservative_inertia"
+    flow = dispatch(doc, "level_set_five")["flow"]
+    assert (flow.cell, flow.coefficients["NONCONSERVATIVE_FORM"]) == ("rans2p_conservative", 0.0)
+
+
+def test_an_uncovered_space_is_refused_by_name(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "flow")["finite_element"]["velocity"]["order"] = 2
+    with pytest.raises(DispatchError) as e:
+        dispatch(doc, "level_set_five")
+    message = str(e.value)
+    assert "velocity CG2" in message
+    assert "rans2p_nonconservative: velocity is CG2, the cell has CG1" in message
+
+
+def test_an_uncovered_time_integration_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "vof")["time_integration"] = "SSP_RK3"
+    with pytest.raises(DispatchError, match="vof: time integration SSP_RK3, the cell has backward_euler"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_model_in_no_family_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["physical_model"]["processes"] = ["incompressible_flow"]
+    with pytest.raises(DispatchError, match="matches no family"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_sub_problem_with_no_role_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "rdls")["enforces"] = "norm(∇φ) = 2"
+    with pytest.raises(DispatchError, match="sub-problem rdls .* has no role the table knows"):
+        dispatch(doc, "level_set_five")
+
+
+def test_an_unknown_formulation_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["weak_forms"][0]["label"] = "skew_symmetric_inertia"
+    _entry(doc, "level_set_five")["from_weak_form"] = "skew_symmetric_inertia"
+    with pytest.raises(DispatchError, match="formulation the table does not know"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_cell_without_the_sub_problems_it_needs_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    entry = _entry(doc, "clsvof_projection")
+    entry["subproblems"] = [s for s in entry["subproblems"] if s["name"] != "pressureInit"]
+    with pytest.raises(DispatchError, match="rans3pf_projection .* needs sub-problems with roles pressure_initial"):
+        dispatch(doc, "clsvof_projection")
+
+
+def test_a_sharp_heaviside_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    del _entry(doc, "level_set_five")["regularize"]
+    with pytest.raises(DispatchError, match="heaviside is sharp"):
+        dispatch(doc, "level_set_five")
+
+
+def test_an_unread_scheme_option_is_refused(lake):
+    doc = copy.deepcopy(lake)
+    doc["solution_paths"]["discretizations"][0]["discretization"]["limiter"] = "minmod"
+    with pytest.raises(DispatchError, match="does not read the scheme option.s. limiter"):
+        dispatch(doc, "convex_limited")
+
+
+# ---- D8: interim hints -------------------------------------------------------------------------------------------
+
+def test_a_hint_that_disagrees_with_the_spec_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "flow")["proteus"]["useVF"] = "0.0"    # the spec lags χ via vof: useVF = 1
+    with pytest.raises(DispatchError, match="hint sets useVF = 0.0, and dispatch infers 1.0 from the spec"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_hint_that_disagrees_with_the_cell_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "flow")["proteus"]["NONCONSERVATIVE_FORM"] = "0.0"
+    with pytest.raises(DispatchError, match="NONCONSERVATIVE_FORM = 0.0, and dispatch infers 1.0 from the table"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_hint_naming_another_module_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "flow")["proteus"]["model"] = "RANS3PF"
+    with pytest.raises(DispatchError, match="hint says model RANS3PF, and dispatch infers RANS2P"):
+        dispatch(doc, "level_set_five")
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "rdls")["proteus"]["epsFact"] = "1.5"   # the spec binds εr = 0.75 h
+    with pytest.raises(DispatchError, match="rdls: the proteus: hint sets epsFact = 1.5, and dispatch infers 0.75"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_hint_the_cell_does_not_know_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "level_set_five", "rdls")["proteus"]["weakDirichlet"] = "zero_level_set"
+    with pytest.raises(DispatchError, match="hint sets weakDirichlet, which cell rdls .RDLS. does not know"):
+        dispatch(doc, "level_set_five")
+
+
+def test_without_hints_the_defaults_stand(dambreak):
+    doc = copy.deepcopy(dambreak)
+    for sub in _entry(doc, "level_set_five")["subproblems"]:
+        sub.pop("proteus", None)
+    found = dispatch(doc, "level_set_five")
+    flow = found["flow"]
+    assert (flow.coefficients["eb_penalty_constant"], flow.sources["eb_penalty_constant"]) == (100.0, "default")
+    assert (flow.coefficients["useVF"], flow.sources["useVF"]) == (1.0, "spec")
+
+
+# ---- ymf_run -----------------------------------------------------------------------------------------------------
+
+def test_ymf_run_says_what_a_split_discretization_dispatches_to(tmp_path, capsys):
+    from proteus.cli import ymfrun
+    assert ymfrun.main([os.path.join(HERE, "dambreak.ymf"), "--outdir", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "level_set_five: split into sub-problems (flow, vof, ncls, rdls, mcorr)" in err
+    assert "It dispatches to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, mcorr MCorr" in err
+    assert "flow RANS3PF, pressureInc PresInc" in err
+    assert not os.listdir(tmp_path)
