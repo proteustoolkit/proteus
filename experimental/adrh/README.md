@@ -711,3 +711,44 @@ Dirichlet points, so that branch is not exercised. `ncls_test.py` checks the eng
 | solution after one Newton step | 1.9e-16 |
 
 The viscosity is not amplified here as it is for VOF: the level set is not flat away from the interface.
+
+## Two-phase level set, slice 3: RDLS (`rdls.h`, `rdls_test.py`)
+
+RDLS (`mprans/RDLS.h` with `ELLIPTIC_REDISTANCING=0`, `freezeLevelSet=1`, `useExact=0`, the damBreakLevelSet
+configuration) is the same element kernel again, with the template's first nonlinear Hamiltonian:
+
+- `RDLSCoefficients`: S = H_eps(phi) - (1 - H_eps(phi)) with eps = epsFact h_phi, H = S |grad u|,
+  dH = S grad u / (|grad u| + 1e-12), and a reaction r = -S. Its fields are NCLS's level set at the point, h_phi (the
+  node diameters interpolated to the point) and the element diameter.
+- What the kernel gained, each behind a functor trait or a parameter so VOF and NCLS compile as before (their fixtures
+  pass with the same numbers):
+  - a reaction term r (`hasR`), in the weak form and the strong residual;
+  - RDLS's tau, 1/(sqrt(dH . G dH) + 1e-8) (`tauForm = 1`). There is no time term (dm_t = 0), and VOF's form
+    1/sqrt(4 dm_t^2 + a . G a + 1e-8) would differ at 1e-8, not at round-off;
+  - shock capturing at the current u (`SUPGParameters::lag_sc = 0`), plus a background diffusion the functor returns
+    (`nuExtra`: backgroundDiffusionFactor h_e where |phi| > 2 eps).
+- The Jacobian is proteus's, not the exact one. The H term is exact (dH/d(grad u) = dH). The subgrid term keeps dH and
+  tau frozen, and nu is not differentiated.
+- `rdlsPinElement` is the interface pin. After an element's quadrature, every node whose starting value is within eps
+  of zero has its element residual row replaced by (u - u_last) wDF h_e and its Jacobian row by wDF h_e on the
+  diagonal. eps there is the element's value at its last quadrature point, because RDLS.h reuses the loop variable.
+  A node shared by several elements can therefore be pinned in some of them and not in others.
+- No boundary terms (`NumericalFlux.DoNothing`). `rdlsTraceFace` returns the trace and its normalized gradient
+  (`ebqe_u`, `ebqe_n`).
+- RDLS.h writes `q[('grad(u)',0)]` from an uninitialized local (`dir`, whose assignment is commented out). That output
+  is not reproduced.
+
+`vof_capture.py OUT model=rdls` records the first RDLS Newton iteration at or after T. RDLS's kernel gets only
+element-local CSR offsets, so the capture takes the Jacobian's CSR structure from the matrix. `rdls_damBreak_he0.05.npz`
+(733 triangles, t = 0.062) has 30 pinned nodes (165 pinned element rows). `rdls_test.py`:
+
+| check | max difference, relative |
+|---|---|
+| residual | 4.1e-14 of its max; 4.5e-17 absolute, 3e-15 of a node's H and r terms (O(sum w dV) = 1.5e-2), which cancel where \|grad u\| = 1 |
+| Jacobian | 3.9e-17 |
+| shock-capturing viscosity (current u) | 4.7e-15 |
+| CFL | 3.2e-16 |
+| boundary trace | bitwise |
+| normalized boundary gradient | 2.4e-15 |
+| next Newton iterate (one step with the engine's R and J) | 1.9e-16 |
+| residual at the next iterate (pinned rows nonzero there) | 6.9e-14 of its max |

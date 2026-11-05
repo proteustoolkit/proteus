@@ -8,7 +8,9 @@
 #include "lowOrder.h"
 #include "vof.h"
 #include "ncls.h"
+#include "rdls.h"
 #include <stdexcept>
+#include <vector>
 #include <string>
 
 namespace py = pybind11;
@@ -526,6 +528,55 @@ PYBIND11_MODULE(adrh_proto, m)
                                             g.data() + f * nQf, rd.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
                                             uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
       return py::make_tuple(R, J, uT, gN);
+    });
+  });
+
+  // RDLS (rdls.h): the same element kernel with H = S |grad u|, r = -S, no time term, shock capturing at the current u, and
+  // the interface pin. Per element xn (nE, nD, 3), u and uLast (nE, nD); per point fields (nE, nQ, 3) = (phi, h_phi, h_e);
+  // h (nE) the element diameter. Returns R (nE, nD), J (nE, nD, nD), numDiff, cfl (nE, nQ) and the pinned count per element.
+  m.def("rdls_supg", [](int nd, Arr xn, Arr u, Arr uLast, Arr qp, Arr qw, Arr fields, Arr h, double sc_c, double epsFact,
+                        double backgroundDiffusionFactor, double weakDirichletFactor) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::RDLSCoefficients<nS>;
+      const C coef{epsFact, backgroundDiffusionFactor};
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      adrh::SUPGParameters P{0.0, sc_c, 1.0, 1.0, 0.0, 4.0};
+      P.lag_sc = 0;
+      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
+      py::array_t<int> pinned(nE);
+      double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
+      int *pp = pinned.mutable_data();
+      const double *X = xn.data(), *U = u.data(), *UL = uLast.data(), *F = fields.data(), *H = h.data();
+      std::vector<double> zeros(nQ, 0.0);
+      {
+        py::gil_scoped_release release;
+        for (int eN = 0; eN < nE; ++eN)
+        {
+          const double *Fe = F + eN * nQ * C::nFields;
+          adrh::scalarSUPGElement<C, S>(coef, P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), Fe, zeros.data(),
+                                        zeros.data(), H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
+          const double epsLast = epsFact * Fe[(nQ - 1) * C::nFields + 1];
+          pp[eN] = adrh::rdlsPinElement<nD>(U + eN * nD, UL + eN * nD, epsLast, weakDirichletFactor, H[eN], Rp + eN * nD,
+                                            Jp + eN * nD * nD);
+        }
+      }
+      return py::make_tuple(R, J, nd_, cfl, pinned);
+    });
+  });
+  // RDLS exterior faces: the trace and its normalized gradient only (no boundary terms). Returns uT (nF, nQf), gN (nF, nQf, nS).
+  m.def("rdls_faces", [](int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      const int nF = xn.shape(0), nQf = xi.shape(1);
+      py::array_t<double> uT({nF, nQf}), gN({nF, nQf, nS});
+      const int *fl = faceLocal.data();
+      for (int f = 0; f < nF; ++f)
+        adrh::rdlsTraceFace<S>(xn.data() + f * nD * 3, u.data() + f * nD, nQf, xi.data() + fl[f] * nQf * nS,
+                               uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
+      return py::make_tuple(uT, gN);
     });
   });
 }

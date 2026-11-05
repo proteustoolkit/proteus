@@ -6,12 +6,14 @@ were handed (through an ArgumentsDict that remembers what was put in it), the re
 shock-capturing viscosity and CFL the kernel wrote, and the solution after the solve with the residual there. VOF is
 linear, so its Newton solve is one linear solve; the fixture pins one whole VOF step. ``model=ncls`` does the same for
 NCLS (also linear), with NCLS's arguments and outputs (grad u at the points, the boundary trace and its normalized gradient,
-the interface locator).
+the interface locator). ``model=rdls`` records the first RDLS Newton iteration at or after T (RDLS is nonlinear: the
+fixture's u_next is the next Newton iterate and out_residual_next proteus's residual there), with the Jacobian's CSR
+structure taken from the matrix (RDLS's kernel gets element-local offsets only).
 
 Needs a built proteus (PYTHONPATH at a worktree with its extensions) and runs from a scratch directory (the case
 writes its archive there):
 
-    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls]
+    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls|rdls]
 """
 import os
 import sys
@@ -33,6 +35,13 @@ KEEP_NCLS = ('dt', 'sc_drop_time', 'MOVING_DOMAIN', 'mesh_dof', 'mesh_l2g', 'dV_
              'elementBoundaryLocalElementBoundariesArray', 'ebqe_velocity_ext', 'isDOFBoundary_u', 'ebqe_rd_u_ext',
              'ebqe_bc_u_ext', 'PURE_BDF', 'STABILIZATION_TYPE', 'csrRowIndeces_DofLoops', 'csrColumnOffsets_DofLoops')
 OUTPUTS_R_NCLS = ('globalResidual', 'q_numDiff_u', 'cfl', 'q_n', 'ebqe_u', 'ebqe_grad_u', 'interface_locator')
+KEEP_RDLS = ('mesh_dof', 'mesh_l2g', 'dV_ref', 'u_trial_ref', 'u_trial_trace_ref', 'dS_ref', 'useMetrics', 'alphaBDF',
+             'epsFact_redist', 'backgroundDiffusionFactor', 'weakDirichletFactor', 'freezeLevelSet', 'useTimeIntegration',
+             'lag_shockCapturing', 'lag_subgridError', 'shockCapturingDiffusion', 'u_l2g', 'elementDiameter',
+             'nodeDiametersArray', 'u_dof', 'phi_dof', 'phi_ls', 'u_weak_internal_bc_dofs', 'q_numDiff_u_last', 'offset_u',
+             'stride_u', 'exteriorElementBoundariesArray', 'elementBoundaryElementsArray',
+             'elementBoundaryLocalElementBoundariesArray', 'ELLIPTIC_REDISTANCING')
+OUTPUTS_R_RDLS = ('globalResidual', 'q_numDiff_u', 'q_cfl', 'q_dH', 'q_m', 'q_u', 'ebqe_u', 'ebqe_n')
 
 
 def main(argv):
@@ -42,7 +51,7 @@ def main(argv):
     opts = dict(a.split('=', 1) for a in argv[1:])
     he, T = float(opts.get('he', 0.05)), float(opts.get('T', 0.05))
     model = opts.get('model', 'vof')
-    keep, outputs_r = (KEEP_NCLS, OUTPUTS_R_NCLS) if model == 'ncls' else (KEEP, OUTPUTS_R)
+    keep, outputs_r = {'ncls': (KEEP_NCLS, OUTPUTS_R_NCLS), 'rdls': (KEEP_RDLS, OUTPUTS_R_RDLS)}.get(model, (KEEP, OUTPUTS_R))
     here = os.path.dirname(os.path.abspath(__file__))
     case = os.path.join(here, '..', '..', 'test', 'TwoPhaseFlow', 'damBreakLevelSet.py')
 
@@ -77,7 +86,9 @@ def main(argv):
     flags = [{"simulationName": p.name, "simulationNameProc": p.name + '0', "dataFile": p.name + '0.dat',
               "components": list(range(p.coefficients.nc))} for p in pList]
     ns = NumericalSolution.NS_base(so, pList, nList, sList, runopts, flags, two_phase)
-    vof = [m for m in ns.modelList if m.name == model][0].levelModelList[-1]
+    mlm = [m for m in ns.modelList if m.name == model][0]
+    vof = mlm.levelModelList[-1]
+    jac_matrix = mlm.jacobianList[-1]
     state = {'phase': 'wait'}
     fixture = {}
 
@@ -86,14 +97,14 @@ def main(argv):
             v = d[k]
             fixture[prefix + k] = np.array(v, copy=True)
 
-    #NCLS binds self.calculateResidual = self.ncls.calculateResidual on every call, so wrap its kernel object instead
-    kernel = getattr(vof, 'ncls', None) if model == 'ncls' else None
+    #NCLS and RDLS bind self.calculateResidual = self.<kernel>.calculateResidual on every call, so wrap the kernel object
+    kernel = getattr(vof, model, None) if model in ('ncls', 'rdls') else None
     if kernel is not None:
         residual, jacobian = kernel.calculateResidual, kernel.calculateJacobian
     else:
         residual, jacobian = vof.calculateResidual, vof.calculateJacobian
 
-    def calculateResidual(argsDict):
+    def calculateResidual(argsDict, *extra):
         seen = argsDict.seen
         #NS_base's initialization calls the residual at a huge t and dt; a step of the run has T <= t <= the final time
         ti = vof.timeIntegration
@@ -101,21 +112,26 @@ def main(argv):
             copy(seen, keep)
             fixture['t'] = np.array(vof.timeIntegration.t)
             state['phase'] = 'residual'
-            residual(argsDict)
+            residual(argsDict, *extra)
             copy(seen, outputs_r, 'out_')
             return
         if state['phase'] == 'jacobian':
             fixture['u_next'] = np.array(seen['u_dof'], copy=True)
-            residual(argsDict)
+            residual(argsDict, *extra)
             fixture['out_residual_next'] = np.array(seen['globalResidual'], copy=True)
             state['phase'] = 'done'
             return
-        residual(argsDict)
+        residual(argsDict, *extra)
 
-    def calculateJacobian(argsDict):
-        jacobian(argsDict)
+    def calculateJacobian(argsDict, *extra):
+        jacobian(argsDict, *extra)
         if state['phase'] == 'residual':
             fixture['out_globalJacobian'] = np.array(argsDict.seen['globalJacobian'], copy=True)
+            if model == 'rdls':
+                #RDLS's kernel gets element-local CSR offsets only; keep the matrix's own CSR structure, under NCLS's names
+                rowptr, colind = jac_matrix.getCSRrepresentation()[:2]
+                fixture['csrRowIndeces_DofLoops'] = np.array(rowptr, copy=True)
+                fixture['csrColumnOffsets_DofLoops'] = np.array(colind, copy=True)
             fixture['jac_u_dof'] = np.array(argsDict.seen['u_dof'], copy=True)
             state['phase'] = 'jacobian'
 
@@ -125,7 +141,7 @@ def main(argv):
                 return getattr(kernel, name)
         proxy = Kernel()
         proxy.calculateResidual, proxy.calculateJacobian = calculateResidual, calculateJacobian
-        vof.ncls = proxy
+        setattr(vof, model, proxy)
     else:
         vof.calculateResidual, vof.calculateJacobian = calculateResidual, calculateJacobian
     ns.calculateSolution(so.name)
@@ -134,7 +150,7 @@ def main(argv):
     fixture['he'] = np.array(he)
     fixture['model'] = np.array(model)
     np.savez_compressed(out, **fixture)
-    print('wrote %s: t=%.4f dt=%.3e nodes=%d elements=%d' % (out, float(fixture['t']), float(fixture['dt']),
+    print('wrote %s: t=%.4f dt=%.3e nodes=%d elements=%d' % (out, float(fixture['t']), float(fixture.get('dt', np.nan)),
                                                            fixture['mesh_dof'].shape[0], fixture['mesh_l2g'].shape[0]))
 
 

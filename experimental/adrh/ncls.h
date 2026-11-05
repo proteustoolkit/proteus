@@ -27,7 +27,8 @@ namespace adrh
   struct NCLSCoefficients
   {
     static constexpr int nSpace = nS_, nFields = nS_;
-    static constexpr bool hasF = false, hasH = true;
+    static constexpr bool hasF = false, hasH = true, hasR = false;
+    static constexpr int tauForm = 0;
     ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, const double *gu, ScalarTerms<nS_> &T) const
     {
       T.m = u;
