@@ -87,6 +87,23 @@ def _with_numerics_petsc_options(method):
     return wrapper
 
 
+def hot_start_step(archived_times, t):
+    """The index of the latest archived step at or before ``t``, the step a hot start (``-H -t t``) resumes from.
+
+    The archived times are sums of steps, so the step meant by ``t`` is often archived a few ulps away from it
+    (0.02 + 0.02 + 0.02 is 0.06000000000000001): an archived time counts as "at" ``t`` when it is within a millionth of
+    the smallest interval between archived times. With no archived time at or before ``t`` it is the first step.
+    """
+    times = numpy.asarray(archived_times, dtype=float)
+    gaps = numpy.diff(times)
+    gaps = gaps[gaps > 0.0]
+    tol = 1.0e-6 * gaps.min() if len(gaps) else 0.0
+    tCount = len(times) - 1
+    while tCount > 0 and times[tCount] > t + tol:
+        tCount -= 1
+    return tCount
+
+
 class _CoupledFields(object):
     """The fields at the quadrature points and faces that other models read from a level model
     (NS_base.COUPLED_FIELD_NAMES), as a solver-state owner: a hot start puts them back as the
@@ -555,10 +572,8 @@ class NS_base(object):  # (HasTraits):
                 assert archiveTimes, \
                     ("hot start archive %s records no timesteps"
                      % (self.ar[index].filename,))
-                # the latest step at or before the requested time
-                tCount = len(archiveTimes) - 1
-                while tCount > 0 and archiveTimes[tCount] > self.opts.hotStartTime:
-                    tCount -= 1
+                # the latest step at or before the requested time (up to the archive's rounding)
+                tCount = hot_start_step(archiveTimes, self.opts.hotStartTime)
                 time = archiveTimes[tCount]
                 self.ar[index].continue_from(tCount)
                 if tCount > 0:

@@ -70,3 +70,30 @@ def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
     _run(tmp_path / "hot", FT=t, DTOUT=dtout)
     hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t, HOTSTARTMODE="restart")
     assert _worst(full, hot) > 1e-3
+
+
+def test_the_hot_start_time_meets_an_archived_time_in_floating_point():
+    """-H -t 0.06 with archives every 0.02: the archived step is 0.06000000000000001 (a sum of steps), and the
+    "latest archived step at or before t" rule used to restart from 0.04. An archived time counts as at t
+    within a millionth of the smallest interval between archived times (NumericalSolution.hot_start_step)."""
+    from proteus.NumericalSolution import hot_start_step
+    times = [0.0, 0.02, 0.04, 0.06000000000000001, 0.08]
+    assert hot_start_step(times, 0.06) == 3
+    assert hot_start_step(times, 0.059) == 2
+    assert hot_start_step(times, 0.0600001) == 3
+    assert hot_start_step(times, float("inf")) == 4
+    assert hot_start_step(times, -1.0) == 0
+    assert hot_start_step([0.0], 1.0) == 0
+
+
+def test_hot_start_at_an_archived_time_given_in_decimal(tmp_path):
+    """The same rule end to end: damBreakLevelSet archived every 0.02 to 0.1, hot-started again from -t 0.06 (the
+    archive holds 0.06000000000000001). It continues from 0.06, a restart (only the last archived step has its
+    solver state), and its first step ends at 0.08; the old rule restarted from 0.04 and stepped to 0.06."""
+    _run(tmp_path / "hot", FT=0.1, DTOUT=0.02)
+    archived = numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt"))
+    at = archived[numpy.argmin(numpy.abs(archived - 0.06))]
+    assert at != 0.06 and abs(at - 0.06) < 1e-15  # the case: the archived step is not 0.06 in floating point
+    _run(tmp_path / "hot", FT=0.1, DTOUT=0.02, HOTSTART=0.06)
+    first = numpy.atleast_1d(numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt")))[0]
+    assert abs(first - 0.08) < 1e-12, "the hot start did not continue from 0.06 (first step ended at %r)" % first
