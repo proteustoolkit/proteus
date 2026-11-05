@@ -682,3 +682,32 @@ point through the functor's `nFields`.
 arrays and checks against proteus: residual 1.9e-15, Jacobian 2.4e-16, CFL, boundary flux and upwinded trace bitwise,
 the next step's shock-capturing viscosity 5.5e-12 of its maximum (round-off amplified by the formula where u is flat;
 the test explains the tolerance), and one Newton step reproduces proteus's solution to 3.3e-16.
+
+## Two-phase level set, slice 2: NCLS (`ncls.h`, `ncls_test.py`)
+
+NCLS (`mprans/NCLS.h`, `STABILIZATION_TYPE=0`) is the same element kernel with a Hamiltonian in place of the advective
+flux. `ScalarTerms` now carries H and dH next to f and df, and a functor declares which it has (`hasF`, `hasH`). The
+kernel compiles only those terms and uses a = df + dH as the characteristic velocity of the strong residual, the
+adjoint, tau and the CFL. `NCLSCoefficients` is m = u, H = v . grad u (fields: the velocity only, no porosity). VOF's
+fixture still passes unchanged (`vof_test.py`).
+
+The faces are NCLS's own kind, `scalarInflowPenaltyFace`: there is no flux to upwind. The face term is
+F = -(v . n)(u - u_b) on inflow and 0 on outflow. u_b is the Dirichlet value where a point has one, and RDLS's
+redistanced trace (`ebqe_rd_u_ext`) elsewhere. The face kernel also returns the boundary trace and its normalized
+gradient, which proteus hands to the other models (`ebqe_u`, `ebqe_grad_u`). `signChangeElement` marks the elements
+where the level set changes sign. Their nodes are the `interface_locator` that RDLS freezes.
+
+`vof_capture.py OUT model=ncls` records NCLS from the same run at the same step. `ncls_damBreak_he0.05.npz` (733
+triangles, t = 0.063) holds 18 of 79 boundary faces with a nonzero inflow term and 33 interface nodes. The deck has no
+Dirichlet points, so that branch is not exercised. `ncls_test.py` checks the engine against proteus:
+
+| check | max difference, relative |
+|---|---|
+| residual | 1.7e-16 |
+| Jacobian | 2.5e-16 |
+| next step's shock-capturing viscosity | 2.4e-16 |
+| CFL, boundary trace, interface locator | bitwise |
+| grad u at the points (q_n), normalized boundary gradient | 2.4e-15 |
+| solution after one Newton step | 1.9e-16 |
+
+The viscosity is not amplified here as it is for VOF: the level set is not flat away from the interface.

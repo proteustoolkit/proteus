@@ -93,6 +93,8 @@ foreach(script stabilization_test.py upwind_test.py richards_layers.py richards_
 endforeach()
 # VOF against proteus's VOF kernel on the damBreak case (vof_damBreak_he0.05.npz, written by vof_capture.py); host module only so far
 adrh_test(proto_vof_test adrh_proto vof_test.py)
+# NCLS against proteus's NCLS kernel on the same case (ncls_damBreak_he0.05.npz, vof_capture.py model=ncls)
+adrh_test(proto_ncls_test adrh_proto ncls_test.py)
 if(tests_kokkos)
   # the Kokkos kernels reproduce the host kernels' bits (golden.py's inputs are fixed)
   adrh_test(kokkos_matches_host adrh_proto golden.py against adrh_kokkos)
