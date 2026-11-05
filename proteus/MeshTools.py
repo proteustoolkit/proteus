@@ -485,6 +485,17 @@ class Hexahedron(Polyhedron):
 #: positive values for conditions.
 RANK_INTERFACE_FLAG = -1
 
+
+def _requireNodePartitioningFromFiles(parallelPartitioningType):
+    """parun -F (partitionMeshFromFiles) partitions by nodes only: there is no
+    element partitioner that reads the mesh files itself. Say so, instead of
+    a bare assert (or, past it, a call to a function that does not exist)."""
+    if parallelPartitioningType != MeshParallelPartitioningTypes.node:
+        raise ValueError("partitioning a mesh from its files (parun -F, generatePartitionedMeshFromFiles) supports "
+                         "only parallelPartitioningType = MeshParallelPartitioningTypes.node; got %r. Use node "
+                         "partitioning, or read the mesh into memory (without -F) to partition by elements."
+                         % (parallelPartitioningType,))
+
 class MeshParallelPartitioningTypes(object):
     """
     fake an enum for parallel partitioning options
@@ -1008,6 +1019,7 @@ class Mesh(object):
         self.nLayersOfOverlap = nLayersOfOverlap; self.parallelPartitioningType = parallelPartitioningType
         logEvent(memory("partitionMesh 2","MeshTools"),level=4)
         
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         if parallelPartitioningType == MeshParallelPartitioningTypes.node:
             logEvent("Starting nodal partitioning")#mwf for now always gives 1 layer of overlap
             logEvent("filebase {0:s}".format(filebase))
@@ -1045,23 +1057,6 @@ class Mesh(object):
                                                                                                                 self.subdomainMesh.cmesh)                    
             else:
                 assert 0,"can't partition non-simplex mesh"
-
-        else:
-            logEvent("Starting element partitioning")
-            (self.elementOffsets_subdomain_owned,
-             self.elementNumbering_subdomain2global,
-             self.nodeOffsets_subdomain_owned,
-             self.nodeNumbering_subdomain2global,
-             self.elementBoundaryOffsets_subdomain_owned,
-             self.elementBoundaryNumbering_subdomain2global,
-             self.edgeOffsets_subdomain_owned,
-             self.edgeNumbering_subdomain2global) = cpartitioning.partitionElementsFromTetgenFiles(comm.comm.tompi4py(),
-                                                                                                   filebase,
-                                                                                                   base,
-                                                                                                   nLayersOfOverlap,
-                                                                                                   self.cmesh,
-                                                                                                   self.subdomainMesh.cmesh,
-                                                                                                   memHardLimit)
         #
         logEvent(memory("partitionMesh 3","MeshTools"),level=4)
         self.buildFromCNoArrays(self.cmesh)
@@ -1071,6 +1066,7 @@ class Mesh(object):
         #nodeNumbering_subdomain2global refers to.
         self.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(self.cmesh)
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+        self.subdomainMesh.rankInterfacesMarked = True     #the -F partitioners flag the cut faces -1 (markRankInterfacesByOwner)
         self._reduceSubdomainMeshSize(comm)
         self.subdomainMesh.nElements_owned = self.elementOffsets_subdomain_owned[comm.rank()+1] - self.elementOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nNodes_owned = self.nodeOffsets_subdomain_owned[comm.rank()+1] - self.nodeOffsets_subdomain_owned[comm.rank()]
@@ -4991,7 +4987,7 @@ class MultilevelTetrahedralMesh(MultilevelMesh):
         if filebase==None:
             filebase="mesh"
         assert(refinementLevels==1)
-        assert(parallelPartitioningType==MeshParallelPartitioningTypes.node)
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         assert(nLayersOfOverlap<=1)
         mesh0.cmesh = cmeshTools.CMesh()
         #blow away or just trust garbage collection
@@ -6154,7 +6150,7 @@ class MultilevelTriangularMesh(MultilevelMesh):
         if filebase==None:
             filebase="mesh"
         assert(refinementLevels==1)
-        assert(parallelPartitioningType==MeshParallelPartitioningTypes.node)
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         assert(nLayersOfOverlap<=1)
         mesh0.cmesh = cmeshTools.CMesh()
         #blow away or just trust garbage collection

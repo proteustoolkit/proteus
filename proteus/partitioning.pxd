@@ -66,6 +66,27 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                            int simplexDim, int indexBase,
                                                                            int nNodes_global, int begin, int end,
                                                                            int& nElements_global, vector[cppset[int]]& nodeStar)
+    extern cppbool c_readSimplexElementsTouching "proteus::readSimplexElementsTouching" (const string& elementFileName, const char* format,
+                                                                                         int simplexDim, int indexBase, int nNodes_global,
+                                                                                         const cppmap[int,int]& nodes,
+                                                                                         int& nElements_global, int& hasElementMarkers,
+                                                                                         vector[int]& elements, vector[int]& elementNodes,
+                                                                                         vector[double]& elementIds)
+    extern cppbool c_readSimplexSubentitiesTouching "proteus::readSimplexSubentitiesTouching" (const string& fileName, const char* format,
+                                                                                               const char* what, int nNodesPerEntity,
+                                                                                               int indexBase, cppbool headerHasMarkers,
+                                                                                               const cppmap[int,int]& nodes,
+                                                                                               int& nEntities_global, int& hasMarkers,
+                                                                                               vector[int]& numbers, vector[int]& entityNodes,
+                                                                                               vector[int]& ids)
+    extern cppmap[int,int] c_ownedNodesByFileNumber "proteus::ownedNodesByFileNumber" (const MPI_Comm& comm,
+                                                                                       const vector[int]& nodeOffsets_old,
+                                                                                       const vector[int]& nodeOffsets_new,
+                                                                                       const vector[int]& old2new_chunk)
+    extern cppmap[int,int] c_newNumbersOfFileNodes "proteus::newNumbersOfFileNodes" (const MPI_Comm& comm,
+                                                                                     const vector[int]& nodeOffsets_old,
+                                                                                     const vector[int]& old2new_chunk,
+                                                                                     const cppset[int]& wanted)
     extern cppbool c_readSubdomainVertices "proteus::readSubdomainVertices" (const string& vertexFileName, const char* format,
                                                                              int nSpace, int indexBase, int hasVertexMarkers,
                                                                              const cppmap[int,int]& nodes_old2new,

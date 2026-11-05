@@ -72,15 +72,16 @@ def _mpiexec():
     return shutil.which('mpiexec') or shutil.which('mpirun')
 
 
-def _launch(args, n_ranks, cwd):
-    """Run meshPartition_mpi.py on n_ranks (None: plain python, no launcher)."""
+def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py', extraEnv=None):
+    """Run script (meshPartition_mpi.py) on n_ranks (None: plain python, no launcher)."""
     env = dict(os.environ)
+    env.update(extraEnv or {})
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
     env.setdefault('OMPI_MCA_rmaps_base_oversubscribe', '1')
     env.setdefault('PRTE_MCA_rmaps_default_mapping_policy', ':oversubscribe')
     env['PETSC_OPTIONS'] = (env.get('PETSC_OPTIONS', '') + ' -mat_partitioning_type current').strip()
-    cmd = [sys.executable, os.path.join(HERE, 'meshPartition_mpi.py')] + [str(a) for a in args]
+    cmd = [sys.executable, os.path.join(HERE, script)] + [str(a) for a in args]
     if n_ranks is not None:
         mpiexec = _mpiexec()
         if mpiexec is None:
@@ -97,6 +98,14 @@ def _launch(args, n_ranks, cwd):
 
 
 _runs = {}
+
+
+def run_files(d, mesh, n, filebase=None, extraEnv=None):
+    """The -F path on n ranks for the stored mesh or a variant; (RESULT, ranks)."""
+    os.makedirs(str(d), exist_ok=True)
+    args = [mesh, 'files', 'graph', 1, os.path.join(str(d), 'out')] + ([filebase] if filebase else [])
+    got = _launch(args, n, cwd=str(d), extraEnv=extraEnv)
+    return got, [dict(np.load(os.path.join(str(d), 'out', 'rank%d.npz' % r))) for r in range(n)]
 
 
 @pytest.fixture(scope='module')
@@ -321,8 +330,9 @@ def test_rank_interface_flag(run, serial, case, n):
     """A face the partition cut -- exterior to the subdomain, interior to the
     mesh -- reads -1 where the mesh gave it no flag (0), and keeps a positive
     flag (the interior wall, 5). A real boundary face keeps its flag, 0
-    included. The ``files`` path (parun -F) does not mark: its cut faces keep 0
-    (MeshTools.partitionMeshFromFiles never calls _markRankInterfaces)."""
+    included. The ``files`` path (parun -F) has no global mesh to compare
+    with; its partitioners ask each face's owner (markRankInterfacesByOwner)
+    and mark the same faces."""
     S = serial(case[0])
     got, ranks = run(*(case + (n,)))
     P = pieces(S, ranks)
@@ -333,8 +343,7 @@ def test_rank_interface_flag(run, serial, case, n):
         serialFace = p.face[exterior]
         cut = S.interior[serialFace]
         want = S.faceFlags[serialFace].copy()
-        if case[1] != 'files':
-            want[cut & (want == 0)] = RANK_INTERFACE
+        want[cut & (want == 0)] = RANK_INTERFACE
         assert np.array_equal(flags[exterior], want), p.rank
         interior = np.setdiff1d(np.arange(len(flags)), exterior)
         assert np.all(flags[interior] != RANK_INTERFACE), p.rank
@@ -649,3 +658,193 @@ def test_files_reader_subdomain_vertices(mesh):
     assert np.array_equal(old2new[new2old], np.arange(n))
     with pytest.raises(IOError):
         cpartitioning.readSubdomainVertices(filebase + '_missing', nSpace, 1, 1, nodes_old2new, begin, end, [])
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_reader_subdomain_elements(mesh):
+    """The second read of the parun -F partitioners (Triangle and TetGen): each
+    rank streams the .ele file again and keeps, in file order, the elements
+    with a node it owns after repartitioning, with their file nodes and first
+    attribute. Checked against the file itself and the in-memory reader."""
+    from proteus import cpartitioning
+    m = _readMesh(mesh)
+    n = m.nNodes_global
+    filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    simplexDim = {'tri': 3, 'tet': 4}[mesh]
+    table = np.loadtxt(filebase + '.ele', skiprows=1, comments='#', ndmin=2)
+    fileElements = table[:, 0].astype(int) - 1
+    fileNodes = table[:, 1:1 + simplexDim].astype(int) - 1
+    fileIds = table[:, 1 + simplexDim]
+    assert np.array_equal(np.sort(fileNodes, axis=1), np.sort(np.asarray(m.elementNodesArray), axis=1))
+    assert np.array_equal(fileIds, np.asarray(m.elementMaterialTypes))
+    rng = np.random.default_rng(32)
+    for nodes in (rng.choice(n, size=n // 4, replace=False), np.arange(n), np.array([], dtype=int)):
+        nElements, markers, elements, elementNodes, elementIds = cpartitioning.readSimplexElementsTouching(
+            filebase, simplexDim, 1, n, nodes.tolist())
+        keep = np.isin(fileNodes, nodes).any(axis=1)
+        assert nElements == m.nElements_global and markers == 1
+        assert np.array_equal(elements, fileElements[keep])
+        assert np.array_equal(elementNodes, fileNodes[keep])
+        assert np.array_equal(elementIds, fileIds[keep])
+    with pytest.raises(IOError):
+        cpartitioning.readSimplexElementsTouching(filebase + '_missing', simplexDim, 1, n, [0])
+
+
+@pytest.mark.parametrize('n', [1, 2, 3, 4])
+def test_files_node_number_exchange(tmp_path, n):
+    """The parun -F partitioners number the nodes of their second element read
+    by exchange, not by reading mappings.h5: each rank sends old->new of its
+    default chunk to the new owner, and asks the chunk owners for the new
+    numbers of the other nodes its elements touch. Checked under a random
+    permutation and uneven new ranges (meshPartition_exchange_mpi.py), which the
+    stored-mesh cases never produce."""
+    for nNodes, seed in ((1, 0), (37, 1), (1000, 2)):
+        got = _launch([nNodes, seed], n, cwd=tmp_path, script='meshPartition_exchange_mpi.py')
+        assert got == {'ranks': str(n), 'owned': str(nNodes), 'asked': got['asked']}
+
+
+@pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
+                                                         ('plc.face', 3, True), ('plc.edge', 2, False)])
+def test_files_reader_faces_and_edges(ext, nNodes, headerHasMarkers):
+    """The .face/.edge reads of the parun -F partitioners: each rank streams
+    the file and keeps, in file order, the entities with a node of one of its
+    subdomain's elements; the partitioners do nothing with the others. Both
+    read Triangle's .edge as element boundaries with markers, and every .edge
+    as edges without (the header's marker count and the marker column are not
+    read: what they have always done)."""
+    from proteus import cpartitioning
+    filename = os.path.join(HERE, 'meshPartition', ext)
+    table = np.loadtxt(filename, skiprows=1, comments='#', ndmin=2).astype(int)
+    numbers, nodes, markers = table[:, 0] - 1, table[:, 1:1 + nNodes] - 1, table[:, 1 + nNodes]
+    n = nodes.max() + 1
+    rng = np.random.default_rng(32)
+    for keep in (rng.choice(n, size=n // 5, replace=False), np.arange(n), np.array([], dtype=int)):
+        count, hasMarkers, got, gotNodes, gotMarkers = cpartitioning.readSimplexSubentitiesTouching(
+            filename, nNodes, 1, headerHasMarkers, keep.tolist())
+        touches = np.isin(nodes, keep).any(axis=1)
+        assert count == len(table) and hasMarkers == int(headerHasMarkers)
+        assert np.array_equal(got, numbers[touches])
+        assert np.array_equal(gotNodes, nodes[touches])
+        assert np.array_equal(gotMarkers, markers[touches] if headerHasMarkers else [])
+    if headerHasMarkers:
+        assert markers.any()
+    with pytest.raises(IOError):
+        cpartitioning.readSimplexSubentitiesTouching(filename + '_missing', nNodes, 1, headerHasMarkers, [0])
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_path_refuses_element_partitioning(tmp_path, mesh):
+    """parun -F partitions by nodes only. Asking it for an element partition
+    used to stop at a bare assert in generatePartitionedMeshFrom*Files, past
+    which partitionMeshFromFiles called cpartitioning.partitionElementsFromTetgenFiles,
+    which does not exist. Now every rank raises a ValueError that says what to
+    do, before any partitioner runs. 2 ranks."""
+    got = _launch([mesh, 'files-element', 'graph', 1, tmp_path / 'out'], 2, cwd=tmp_path)
+    assert got == {'mesh': mesh, 'path': 'files-element', 'ranks': '2', 'errors': 'ValueError,ValueError',
+                   'calls': 'none'}
+
+
+def _variantMesh(tmp_path, mesh, vertexFlags):
+    """The stored mesh with its vertex flags as a TetGen/Triangle attribute
+    (header ``n d 1 0``, same column) or dropped (``n d 0 0``); the other files
+    copied. Returns the filebase."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = str(tmp_path / ('%s_%s' % (os.path.basename(stored), vertexFlags)))
+    for ext in ('ele', 'edge', 'face') if mesh == 'tet' else ('ele', 'edge'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    with open(stored + '.node') as f:
+        lines = [l for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    n, d = lines[0].split()[:2]
+    assert lines[0].split()[2:] == ['0', '1']
+    rows = [l.split() for l in lines[1:]]
+    if vertexFlags == 'attribute':
+        out = ['%s %s 1 0' % (n, d)] + [' '.join(r) for r in rows]
+    else:
+        out = ['%s %s 0 0' % (n, d)] + [' '.join(r[:1 + int(d)]) for r in rows]
+    with open(base + '.node', 'w') as f:
+        f.write('\n'.join(out) + '\n')
+    return base
+
+
+@pytest.mark.parametrize('n', [2, 4])
+def test_files_tetgen_vertex_attribute_is_the_node_flag_on_every_rank(tmp_path, n):
+    """A TetGen .node with an attribute and no marker: the -F partitioner
+    takes the attribute as the node flag (and warns), as the in-memory reader
+    does. It used to do so on rank 0 only (the rank==0 guard covered the
+    switch, not just the warning), so the other ranks' node flags came from the
+    faces instead. With the stored mesh's markers moved to an attribute
+    column, every array on every rank equals the stored mesh's."""
+    base = _variantMesh(tmp_path, 'tet', 'attribute')
+    _, stored = run_files(tmp_path / 'stored', 'tet', n)
+    _, attr = run_files(tmp_path / 'attr', 'tet', n, base)
+    assert len(attr) == len(stored) == n
+    for a, b in zip(attr, stored):
+        assert sorted(a) == sorted(b)
+        for name in a:
+            assert np.array_equal(a[name], b[name]), name
+
+
+#fill fresh heap memory with a pattern (macOS: 0xAA, glibc: ~0x55 = 0xAA), so a
+#read of memory nobody wrote shows up as -1431655766 instead of a lucky 0
+SCRIBBLE = {'MallocScribble': '1', 'MALLOC_PERTURB_': '85'}
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_node_flags_without_vertex_markers_are_initialised(tmp_path, mesh):
+    """A .node file without vertex markers: the -F partitioners give the nodes
+    of exterior subdomain faces the face flags and every other node 0. The
+    others used to keep what the heap held (new int[] never written); with the
+    allocator scribbling, they read -1431655766. 2 ranks, Triangle and TetGen:
+    the arrays do not depend on the heap, every flag is 0 or a face flag, and a
+    node on no exterior face reads 0."""
+    base = _variantMesh(tmp_path, mesh, 'none')
+    _, plain = run_files(tmp_path / 'plain', mesh, 2, base)
+    _, scribbled = run_files(tmp_path / 'scribbled', mesh, 2, base, extraEnv=SCRIBBLE)
+    for a, b in zip(plain, scribbled):
+        for name in a:
+            assert np.array_equal(a[name], b[name]), name
+        flags = a['sub.nodeMaterialTypes']
+        faceFlags = a['sub.elementBoundaryMaterialTypes']
+        faceNodes = a['sub.elementBoundaryNodesArray']
+        exterior = a['sub.exteriorElementBoundariesArray']
+        onExterior = np.zeros(len(flags), bool)
+        onExterior[faceNodes[exterior].ravel()] = True
+        assert np.all(flags[~onExterior] == 0)
+        assert set(flags[onExterior].tolist()) <= set(np.maximum(faceFlags, 0).tolist())
+        assert onExterior.any() and (~onExterior).any()
+
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_marks_rank_interfaces_without_face_flags(tmp_path, mesh):
+    """Element-boundary files without markers (.face, or Triangle's .edge, header
+    ``n 0``): the subdomain builder flags every subdomain-exterior face 1, cut
+    faces included, so marking only flag-0 faces marked nothing. The -F path
+    must mark the same faces -1 as the in-memory node partition of the same
+    files on the same ranks: the cut faces, here all of them. 2 ranks."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    boundary = 'face' if mesh == 'tet' else 'edge'
+    base = str(tmp_path / 'nofaceflags')
+    for ext in ('node', 'ele', 'edge', 'face') if mesh == 'tet' else ('node', 'ele', 'edge'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    with open(stored + '.' + boundary) as f:
+        lines = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    nNodes = 3 if boundary == 'face' else 2
+    with open(base + '.' + boundary, 'w') as f:
+        f.write('\n'.join(['%s 0' % lines[0][0]] + [' '.join(l[:1 + nNodes]) for l in lines[1:]]) + '\n')
+    d = tmp_path / 'node'
+    os.makedirs(str(d))
+    _launch([mesh, 'node', 'graph', 1, d / 'out', base], 2, cwd=str(d))
+    node = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(2)]
+    _, files = run_files(tmp_path / 'files', mesh, 2, base)
+    marked = 0
+    for a, b in zip(files, node):
+        def cutFaces(z):
+            nodes = z['map.nodeNumbering_subdomain2global'][z['sub.elementBoundaryNodesArray']]
+            faces = z['sub.elementBoundaryMaterialTypes'] == RANK_INTERFACE
+            return sorted(tuple(sorted(f)) for f in nodes[faces].tolist())
+        assert cutFaces(a) == cutFaces(b)
+        exterior = a['sub.exteriorElementBoundariesArray']
+        assert set(a['sub.elementBoundaryMaterialTypes'][exterior].tolist()) == {1, RANK_INTERFACE}
+        marked += len(cutFaces(a))
+    assert marked > 0
