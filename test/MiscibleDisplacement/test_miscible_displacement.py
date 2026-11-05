@@ -7,6 +7,7 @@ class attribute and called as self.f(...). Under Cython 3 that call bound
 ``self`` as a 13th argument and the deck stopped at the first evaluate with a
 TypeError (C47).
 """
+import importlib
 import os
 import sys
 import types
@@ -14,7 +15,7 @@ import types
 import numpy as np
 
 from proteus.iproteus import opts
-from proteus import Context, NumericalSolution, default_s, default_so
+from proteus import Context, NumericalSolution, default_n, default_p, default_s, default_so
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # bare-name deck modules; 1.9.x has no conftest that drops them after a test
@@ -44,6 +45,10 @@ def test_miscible_displacement(tmp_path):
     sys.path.insert(0, HERE)
     for name in DECK_MODULES:
         sys.modules.pop(name, None)
+    # the deck star-imports these; earlier tests in the process may have set
+    # attributes on them
+    for module in (default_p, default_n, default_s, default_so):
+        importlib.reload(module)
     try:
         import md_flow_p, md_flow_ncp1_n, md_trans_p, md_trans_c0p1_n
         pList = [md_flow_p, md_trans_p]
