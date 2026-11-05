@@ -858,7 +858,7 @@ class Mesh(object):
                                                                                  nodeWeights)
         else:
             assert nodeOwners is None and nodeWeights is None, "prescribed owners and node weights need node partitioning"
-            self.inputFingerprint()     # before partitionElements rearranges the global arrays
+            _wholeMeshFingerprint(self)     # before partitionElements rearranges the global arrays
             (self.elementOffsets_subdomain_owned,
              self.elementNumbering_subdomain2global,
              self.nodeOffsets_subdomain_owned,
