@@ -112,6 +112,11 @@ CASES = {
     "rising_bubble_rans3p": (dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
                                   OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", DIRECT=1, ATOL=1e-10,
                                   MAXITS=200), 1e-10),
+    # fixNullSpace with the top open: the Dirichlet condition fixes the increment, so neither the serial pin of dof 0
+    # nor the parallel constant null space may apply (main: 2-rank run fails)
+    "rising_bubble_rans3p-fixNullSpace": (dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                               OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", DIRECT=1,
+                                               ATOL=1e-10, MAXITS=200, FIXNULLSPACE=1), 1e-10),
 }
 
 

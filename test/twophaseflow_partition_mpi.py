@@ -8,7 +8,7 @@ nonlinear atol to a and its linear atol to a/100 (relative tolerances off); with
 MAXITS=n raises every model's maxNonlinearIts to at least n (RDLS needs it at a tight atol). DIRECT=1 replaces the
 serial-only LU of a deck by a PETSc direct solve (KSP preonly, LU from SuperLU_DIST), in serial and in parallel.
 DIR=<directory under test/> and SO=<so file> run an so-file deck instead (every file of DIR is copied; OPTS is the
-whole -C string and FT is not used).
+whole -C string and FT is not used). FIXNULLSPACE=1 sets PresInc's fixNullSpace.
 """
 import glob, os, runpy, shutil, sys
 import numpy as np
@@ -54,6 +54,10 @@ def init(self, so, pList, nList, *args, **kwargs):
                     n.linear_solver_options_prefix = "direct%d_" % i
                 for k, v in (("ksp_type", "preonly"), ("pc_type", "lu"), ("pc_factor_mat_solver_type", os.environ.get("DIRECT_PACKAGE", "superlu_dist"))):
                     PETSc.Options().setValue(n.linear_solver_options_prefix + k, v)
+    if os.environ.get("FIXNULLSPACE"):
+        for p in pList:
+            if type(p.coefficients).__module__ == "proteus.mprans.PresInc":
+                p.coefficients.fixNullSpace = True
     if os.environ.get("MAXITS"):
         for n in nList:
             n.maxNonlinearIts = max(getattr(n, "maxNonlinearIts", 0), int(os.environ["MAXITS"]))
