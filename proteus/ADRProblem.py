@@ -24,6 +24,8 @@ Nothing here imports sympy: the symbolic work happened in the front end,
 and this module only compiles and evaluates the code strings it was given.
 """
 
+import os
+
 import numpy
 
 from proteus import (FemTools, LinearAlgebraTools, LinearSolvers, MeshTools,
@@ -183,6 +185,30 @@ class _Field(object):
         return self.uOfXT(x, 0.0)
 
 
+def _selector(entry):
+    """``select(ns, flag)``: whether one condition claims a boundary point.
+
+    A region found by position carries ``where``, boolean code over the
+    point (None: the whole boundary); a region found by the mesh's boundary
+    tags carries ``flags`` instead, and no ``where``, and claims the points
+    whose boundary flag is one of them.
+    """
+    if "flags" in entry:
+        flags = frozenset(int(f) for f in entry["flags"])
+        return lambda ns, flag: flag in flags
+    if entry["where"] is None:
+        return lambda ns, flag: True
+    code = _compile(entry["where"])
+    return lambda ns, flag: bool(eval(code, _GLOBALS, ns))
+
+
+def _test_text(entry):
+    """The same test as Python source, for :func:`emit_pn`'s files."""
+    if "flags" in entry:
+        return "flag in %r" % (sorted(int(f) for f in entry["flags"]),)
+    return "True" if entry["where"] is None else entry["where"]
+
+
 def _dirichlet(entries, dim, tol):
     """getDBC(x, flag) for one component.
 
@@ -190,8 +216,7 @@ def _dirichlet(entries, dim, tol):
     for the interior; it must return None there, and for boundary nodes
     no entry claims.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]), _value_of(e, dim))
-             for e in entries]
+    tests = [(_selector(e), _value_of(e, dim)) for e in entries]
 
     def getDBC(x, flag):
         if flag == 0:
@@ -201,8 +226,8 @@ def _dirichlet(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, value in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, value in tests:
+            if select(ns, flag):
                 return value
         return None
     return getDBC
@@ -216,8 +241,8 @@ def _robin(entries, dim, tol):
     NumericalFlux.RobinFactory turns that into the flux and its exact
     derivative; see there for why this cannot be a flux boundary condition.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]),
-              _Field(e["alpha"], dim), _Field(e["beta"], dim), _Field(e["g"], dim))
+    tests = [(_selector(e), _Field(e["alpha"], dim), _Field(e["beta"], dim),
+              _Field(e["g"], dim))
              for e in entries]
 
     def get(x, flag):
@@ -226,8 +251,8 @@ def _robin(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, alpha, beta, g in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, alpha, beta, g in tests:
+            if select(ns, flag):
                 return lambda x, t, a=alpha, b=beta, gg=g: (
                     a.uOfXT(x, t), b.uOfXT(x, t), gg.uOfXT(x, t))
         return None
@@ -304,8 +329,7 @@ def _neumann(entries, dim, tol):
     None leaves the face to the natural condition, which for a diffusion
     term is zero flux.
     """
-    tests = [(None if e["where"] is None else _compile(e["where"]), _value_of(e, dim))
-             for e in entries]
+    tests = [(_selector(e), _value_of(e, dim)) for e in entries]
 
     def getDFBC(x, flag):
         ns = {"tol": tol, "x": x[0]}
@@ -313,8 +337,8 @@ def _neumann(entries, dim, tol):
             ns["y"] = x[1]
         if dim > 2:
             ns["z"] = x[2]
-        for where, value in tests:
-            if where is None or eval(where, _GLOBALS, ns):
+        for select, value in tests:
+            if select(ns, flag):
                 return value
         return None
     return getDFBC
@@ -633,17 +657,128 @@ def keeps_dirichlet_dofs(n, spaces):
             and not any(f == "DG" for f, _ in spaces.values()))
 
 
-def mesh_constraint(h, dim):
+def mesh_constraint(h, dim, boundary_points=True):
     """triangle's (2-D) or tetgen's (3-D) options for element size ``h``.
 
     Proteus's own convention, as in its models: a maximum triangle area of
     h**2/2 or tetrahedron volume of h**3/6 (the right simplex with legs h).
+    ``boundary_points=False`` adds ``Y``: the generator puts no points on the
+    boundary beyond those it was given, which a periodic region needs (see
+    :func:`periodic_region`).
     """
+    y = "" if boundary_points else "Y"
     if dim == 2:
-        return "VApq30Dena%8.8f" % (h ** 2 / 2.0,)
+        return "VApq30Dena%8.8f%s" % (h ** 2 / 2.0, y)
     if dim == 3:
-        return "VApq1.35q12feena%e" % (h ** 3 / 6.0,)
+        return "VApq1.35q12feena%e%s" % (h ** 3 / 6.0, y)
     raise ValueError("an unstructured mesh needs dimension 2 or 3, not %d" % dim)
+
+
+#: file formats whose file is a mesh Proteus reads; a geometry (gmsh_geo) is
+#: meshed by h. SMS/ADH 2dm and 3dm meshes are converted to ymf first
+#: (proteustoolkit/ymf-import-sms): Proteus no longer reads them
+MESH_FILE_FORMATS = ("hex", "tetgen", "ymf")
+CONVERTED_FORMATS = ("2dm", "3dm")
+
+
+def _is_file(region):
+    return region is not None and region.get("kind") == "file"
+
+
+def file_bounds(region):
+    """``(lower, upper)``: the bounding box of a mesh file's nodes.
+
+    A file domain without ``bounds`` is posed with none, and the solver takes
+    them from the mesh (C27 Phase 5, D2): here, from the node coordinates
+    the file holds, before anything is built from it. Read for tetgen
+    (``<path>.node``) and ymf (the mesh's node array); other formats, and a
+    geometry that is not a mesh yet, need ``bounds`` in the spec.
+    """
+    fmt, path = region["format"], region["path"]
+    rows = []
+    if fmt == "tetgen":
+        with open(path + ".node") as f:
+            lines = [l.split("#")[0].split() for l in f]
+        lines = [l for l in lines if l]
+        count, dim = int(lines[0][0]), int(lines[0][1])
+        rows = [[float(v) for v in l[1:1 + dim]] for l in lines[1:1 + count]]
+    elif fmt == "ymf":
+        prefix = path[:-4] if path.endswith(".ymf") else path
+        dim = int(region.get("dimension", 3))
+        rows = numpy.asarray(MeshTools.readMeshYmf(prefix).nodeArray)[:, :dim].tolist()
+    else:
+        raise ValueError("a %s file domain gives its bounds in the spec: Proteus reads the "
+                         "bounds only from tetgen and ymf files" % (fmt,))
+    if not rows:
+        raise ValueError("no nodes in the %s file %s" % (fmt, path))
+    nodes = numpy.array(rows)
+    return nodes.min(axis=0).tolist(), nodes.max(axis=0).tolist()
+
+
+def periodic_region(region, h):
+    """A 2-D region with every boundary segment cut into pieces of length <= h.
+
+    A periodic region (ymf poses one only when its two faces are
+    translations of each other) needs a mesh in which every node on one face
+    has its translated partner on the other. triangle with ``Y`` adds no
+    boundary points (see :func:`mesh_constraint`), so the boundary nodes are
+    exactly the region's vertices; cutting each segment into equal pieces
+    gives the two faces translated nodes, and the boundary the resolution
+    ``h`` would otherwise have given it. A new vertex takes its segment's flag.
+    A 3-D region is returned unchanged: tetgen's ``Y`` keeps the facets'
+    own vertices, and the partner check (:func:`periodic_partners`) says if
+    that is not enough.
+    """
+    if int(region.get("dimension", 2)) != 2:
+        return region
+    import math
+    vertices = [list(map(float, v)) for v in region["vertices"]]
+    flags = list(region.get("vertex_flags") or [])
+    segment_flags = list(region.get("segment_flags") or [])
+    segments, new_flags = [], []
+    for k, (a, b) in enumerate(region["segments"]):
+        pa, pb = vertices[a], vertices[b]
+        pieces = max(1, int(math.ceil(math.dist(pa, pb) / float(h) - 1e-12)))
+        chain = [a]
+        for j in range(1, pieces):
+            vertices.append([pa[i] + (pb[i] - pa[i]) * j / pieces for i in range(2)])
+            if flags:
+                flags.append(segment_flags[k] if segment_flags else flags[a])
+            chain.append(len(vertices) - 1)
+        chain.append(b)
+        for u, v in zip(chain[:-1], chain[1:]):
+            segments.append([u, v])
+            if segment_flags:
+                new_flags.append(segment_flags[k])
+    out = dict(region, vertices=vertices, segments=segments)
+    if segment_flags:
+        out["segment_flags"] = new_flags
+    if flags:
+        out["vertex_flags"] = flags
+    return out
+
+
+def periodic_partners(nodes, axes, lower, upper, tol):
+    """``{axis: unmatched}``: nodes on a periodic face with no partner on the other.
+
+    The key function (:func:`_periodic`) gives a node and its translated
+    copy one degree of freedom; a node without a copy is simply not merged,
+    and the solution is then not periodic there, silently. So after meshing
+    every node on the lower face must have one on the upper face at the
+    same position along the other axes (to 1e-8, as the keys are rounded),
+    and the other way round.
+    """
+    nodes = numpy.asarray(nodes)
+    out = {}
+    for a in axes:
+        others = [i for i in range(nodes.shape[1]) if i != a]
+
+        def keys(on):
+            return {tuple(round(float(v), 8) for v in p[others]) for p in nodes[on]}
+        low = keys(numpy.abs(nodes[:, a] - lower[a]) <= tol)
+        high = keys(numpy.abs(nodes[:, a] - upper[a]) <= tol)
+        out[a] = len(low ^ high)
+    return out
 
 
 def numerics(problem, spaces, cells, time=None, quadrature_order=None,
@@ -680,17 +815,33 @@ def numerics(problem, spaces, cells, time=None, quadrature_order=None,
     q = quadrature_order or min(2 * max(orders) + 2, 5 if dim == 3 else 8)
     n.elementQuadrature = Quadrature.SimplexGaussQuadrature(dim, q)
     n.elementBoundaryQuadrature = Quadrature.SimplexGaussQuadrature(dim - 1, q)
-    if problem["domain"].get("region") is None:
+    region = problem["domain"].get("region")
+    if region is None:
         if cells is None or h is not None:
             raise ValueError("a box is meshed by cells per side, not h")
         n.nnx = n.nny = cells + 1
         if dim == 3:
             n.nnz = cells + 1
+    elif _is_file(region) and region["format"] in CONVERTED_FORMATS:
+        raise ValueError("Proteus does not read %s meshes: convert the file to a ymf mesh with "
+                         "proteustoolkit/ymf-import-sms and pose format: ymf" % (region["format"],))
+    elif _is_file(region) and problem.get("periodic"):
+        raise ValueError("periodic conditions need a piecewise_linear region; a %s file domain "
+                         "cannot pair its faces" % (region["format"],))
+    elif _is_file(region) and region["format"] in MESH_FILE_FORMATS:
+        if h is not None or cells is not None:
+            raise ValueError("a %s file is already a mesh: give its levels only, not "
+                             "cells or h" % (region["format"],))
+    elif _is_file(region):
+        if h is None or cells is not None:
+            raise ValueError("a %s file is meshed by h, its element size"
+                             % (region["format"],))
     else:
         if h is None or cells is not None:
             raise ValueError("a piecewise_linear region is meshed by h, its "
                              "element size, not by cells")
-        n.triangleOptions = mesh_constraint(float(h), dim)
+        n.triangleOptions = mesh_constraint(float(h), dim,
+                                            boundary_points=not problem.get("periodic"))
     # nLevels > 1: the box mesh above is the coarsest, refined uniformly
     # levels-1 times; the solution of record is on the finest.
     n.nLevels = int(levels)
@@ -879,6 +1030,30 @@ def with_kept_dof_diagonals(problem):
     return problem
 
 
+def _refuse_positions_on_untagged_walls(problem):
+    """Refuse Dirichlet conditions found by position on a ymf mesh with untagged exterior walls.
+
+    A facet list that leaves exterior walls untagged gives them flag 0, and Proteus passes flag 0 for the
+    interior too, so getDBC cannot tell those walls from the interior: a condition selected by ``where``
+    would silently not be imposed there, and the wall would get zero flux. Until the flags carry
+    exteriority, such a condition has to select its walls by their tags.
+    """
+    region = problem["domain"].get("region")
+    if not (_is_file(region) and region.get("format") == "ymf"):
+        return
+    by_position = sorted(set(e["region"] for e in problem.get("dirichlet") or [] if "flags" not in e))
+    if not by_position:
+        return
+    path = region["path"]
+    untagged = MeshTools.ymfUntaggedExteriorFacets(path[:-4] if path.endswith(".ymf") else path)
+    if untagged:
+        raise ValueError(
+            "Dirichlet regions %s are found by position, but %s leaves %d exterior facets untagged (flag 0), "
+            "which Proteus cannot tell from the interior: the condition would not be imposed on them. Select "
+            "those walls by their tags (boundary_regions: tags), or tag every exterior facet in the mesh"
+            % (", ".join(by_position), path, untagged))
+
+
 def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
           levels=1, tolerance=None, max_iterations=None, h=None,
           linear_solver=None, petsc_options=None, mesh=None):
@@ -897,6 +1072,18 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if solver != "superlu" and not any(f == "DG" for f, _ in spaces.values()):
         # Dirichlet DOFs will be kept (see keeps_dirichlet_dofs)
         problem = with_kept_dof_diagonals(problem)
+    region = problem["domain"].get("region")
+    if _is_file(region) and problem["domain"].get("lower") is None:
+        # posing follows meshing for this kind alone: the bounds come from
+        # the mesh file, before the tolerance and anything else needs them
+        lower, upper = file_bounds(region)
+        problem = dict(problem, domain=dict(problem["domain"], lower=lower, upper=upper))
+    _refuse_positions_on_untagged_walls(problem)
+    if problem.get("periodic") and problem["domain"].get("region") is not None and h \
+            and not _is_file(problem["domain"]["region"]):
+        # no boundary points from the mesher, so cut the faces to h here
+        problem = dict(problem, domain=dict(
+            problem["domain"], region=periodic_region(problem["domain"]["region"], h)))
     p = physics(problem, name)
     n = numerics(problem, spaces, cells, time, stabilization=stabilization,
                  coefficients=p.coefficients, levels=levels,
@@ -915,6 +1102,12 @@ def setup(problem, spaces, cells, time=None, name="adr", stabilization="none",
         options.nLayersOfOverlapForParallel = n.nLayersOfOverlapForParallel
         options.genMesh = mesh is None
         p.domain.polyfile = name if mesh is None else mesh
+        if _is_file(region):
+            # read from (or, for a geometry, made beside) the file itself
+            path = os.path.abspath(region["path"])
+            p.domain.polyfile = path[:-4] if path.endswith(".geo") else path
+            if region["format"] not in MESH_FILE_FORMATS:
+                options.he = float(h)
     if problem.get("periodic"):
         n.periodicDirichletConditions = p.periodicDirichletConditions
     keep = keeps_dirichlet_dofs(n, spaces)
@@ -979,6 +1172,22 @@ def run(problem, spaces, cells, time=None, name="adr", stabilization="none",
         so.systemStepControllerType = SplitOperator.Sequential_FixedStep
         so.dt_system_fixed = system["dt_system_fixed"]
     ns = NumericalSolution.NS_base(so, [p], [n], so.sList, opts)
+    if problem.get("periodic") and problem["domain"].get("region") is not None:
+        # a node without its partner is simply not merged, silently
+        lower, upper = problem["domain"]["lower"], problem["domain"]["upper"]
+        axes = sorted({a for e in problem["periodic"] for a in e["axes"]})
+        tol = 1e-8 * max(u - l for u, l in zip(upper, lower))
+        mesh = ns.mlMesh_nList[0].meshList[-1]
+        nodes = mesh.nodeArray[:mesh.nNodes_global, :len(lower)]
+        unmatched = {a: k for a, k in periodic_partners(nodes, axes, lower, upper, tol).items()
+                     if k}
+        if unmatched:
+            raise ValueError(
+                "periodic region: %s node%s on the periodic faces %s no partner on the "
+                "opposite face (%s); the mesh does not pair the faces"
+                % (sum(unmatched.values()), "" if sum(unmatched.values()) == 1 else "s",
+                   "has" if sum(unmatched.values()) == 1 else "have",
+                   ", ".join("axis %s: %d" % ("xyz"[a], k) for a, k in unmatched.items())))
     ns.calculateSolution(name)
     model = ns.modelList[0].levelModelList[-1]
     return ns, model, l2_errors(model, problem, so.tnList[-1])
@@ -986,8 +1195,9 @@ def run(problem, spaces, cells, time=None, name="adr", stabilization="none",
 
 def write_poly(p):
     """Write a region domain's <polyfile>.poly, the mesh generator's input,
-    on rank 0 (a box needs none)."""
-    if p.domain is None:
+    on rank 0 (a box needs none, nor does a file domain: it is read)."""
+    if p.domain is None or not hasattr(p.domain, "writePoly") or getattr(
+            p.domain, "meshfile", None) is not None or hasattr(p.domain, "geofile"):
         return
     from proteus import Comm
     comm = Comm.get()
@@ -1080,6 +1290,25 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
     if region is None:
         P += ["# the old-style box: domain None, with L and x0, hands nnx/nny/nnz to the mesher",
               "domain = None"]
+    elif _is_file(region):
+        # as setup builds it: the file's absolute path, read (or, for a geometry, meshed by he) where it lies;
+        # nothing is written beside it
+        options = MeshTools.getMeshOptions(p.domain)
+        absolute = dict(region, path=os.path.abspath(region["path"]))
+        P += ["# a %s file domain, %s from %s" % (
+                  region["format"], "read" if region["format"] in MESH_FILE_FORMATS else "meshed",
+                  absolute["path"]),
+              "from proteus import DomainYMF, MeshTools",
+              "domain = DomainYMF.from_ymf(%s)" % pprint.pformat(absolute, width=72).replace(
+                  "\n", "\n" + " " * len("domain = DomainYMF.from_ymf(")),
+              "domain.name = name",
+              "domain.polyfile = %r" % p.domain.polyfile,
+              "meshOptions = MeshTools.getMeshOptions(domain)",
+              "meshOptions.nLevels = %d" % options.nLevels,
+              "meshOptions.genMesh = %r" % options.genMesh]
+        if region["format"] not in MESH_FILE_FORMATS:
+            P.append("meshOptions.he = %r" % options.he)
+        P.append("# the bounding box: the scale of the boundary tolerance")
     else:
         options = MeshTools.getMeshOptions(p.domain)
         P += ["# a piecewise_linear region: %s meshes it from %s.poly, written here"
@@ -1172,7 +1401,7 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
         if entries:
             P.append("    %s = %s" % (", ".join(xyz), ", ".join("X[%d]" % k for k in range(dim))))
         for e in entries:
-            test = "True" if e["where"] is None else e["where"]
+            test = _test_text(e)
             P.append("    if %s:   # region %s" % (test, e["region"]))
             P += _supplied_value(e, dim)
         P.append("    return None")
@@ -1233,7 +1462,7 @@ def emit_pn(problem, spaces, cells, time=None, name="adr", stabilization="none",
               "def getDFBC_%s(X, flag):" % names[i],
               "    %s = %s" % (", ".join(xyz), ", ".join("X[%d]" % k for k in range(dim)))]
         for e in entries:
-            test = "True" if e["where"] is None else e["where"]
+            test = _test_text(e)
             P.append("    if %s:   # region %s" % (test, e["region"]))
             P += _supplied_value(e, dim)
         P += ["    # elsewhere the natural condition: zero diffusive flux",

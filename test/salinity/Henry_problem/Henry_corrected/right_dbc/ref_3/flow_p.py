@@ -17,7 +17,7 @@ beta          = 0.0 #density*gravity*4.524e-10
 # Simulation runs in SI: meters, seconds, kg.
 
 
-Kx            = 0.01244
+Kx            = 0.01  # m/s; Henry a = Q/(eps K d) = 6.6e-5/(0.025*0.01*1) = 0.263
 Kz            = Kx
 thetaS1       = 0.35   # porosity
 thetaR1       = 0.0

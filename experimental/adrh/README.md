@@ -651,8 +651,8 @@ gravity term of its edge flux only through the salinity density (`rho_edge / rho
 beta = 1e-4 the effect is 1.4e-3 m after 35 steps, so the decks' results are not affected.
 
 **The post-step FCT (proteus's semi-implicit FCT, `FCT=True`, `FCT_TYPE='semi-implicit'`) in 2D.** On the deck it returned the low-order solution to the last digit, and the reason is a veto in `Richards.FCTStep`: on the
-Newton-invert path (`nd > 1`, so every 2D case) the limited step is thrown away and the low-order head kept whenever the correction moves any node's head by more than 1 m (`RICHARDS_FCT_DU_MAX`, default 1), and a dry node's moisture
-content moves its head by metres. `RICHARDS_FCT_DBG=1` logs each decision; `proteus_reference_2d.py` sets `RICHARDS_FCT_DU_MAX=1e30`. With the veto lifted, the limiter differs from `fct_correct(bounds='moisture')` in two ways, both found by
+Newton-invert path (`nd > 1`, so every 2D case) the limited step is thrown away and the low-order head kept whenever the correction moves any node's head by more than 1 m (`Richards.Coefficients(FCT_DU_MAX=...)`, default 1), and a dry node's moisture
+content moves its head by metres. `diagnostics=('fct',)` logs each decision; `proteus_reference_2d.py` sets `FCT_DU_MAX=1e30`. With the veto lifted, the limiter differs from `fct_correct(bounds='moisture')` in two ways, both found by
 dumping proteus's step-1 arrays and replaying its limiter in numpy (the replica reproduces proteus's limited moisture content to 6e-17):
 * **`FCT_SATURATED_LOW_ORDER`**: where the low-order head is >= 0 the room to the bounds is set to zero, so every flux touching the node is limited to zero. `fct_correct(..., sat_low=True)` does the same (`richards_nd_test.py`).
 * **The Dirichlet rows of the high-order flux matrix.** Proteus's `TransportMatrixConsistent` also holds the weak exterior-boundary terms (`Richards_IIPG_exterior`), which are not symmetric: in the row of a Dirichlet node they add an antidiffusive flux

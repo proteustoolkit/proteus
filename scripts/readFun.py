@@ -8,7 +8,8 @@ from proteus.FemTools import *
 #
 # \file readFun.py
 #
-# \brief A script for reading an ADH .3dm mesh and .data file to build a finite element function.
+# \brief A script for reading a tetrahedral ymf mesh (an ADH .3dm converted by proteustoolkit/ymf-import-sms)
+# and a .data file to build a finite element function.
 
 def readFun():
     from optparse import OptionParser
@@ -51,7 +52,8 @@ def readFun():
         print(usage)
         exit(1)
     mesh=TetrahedralMesh()
-    mesh.readMeshADH(meshFilename)
+    # Proteus no longer reads .3dm itself: convert it to a ymf mesh first (meshFile is its prefix)
+    mesh.generateFromYmfFile(meshFilename)
     spaceMap = SpaceMapping(mesh)
     funIn = open(funFilename,'r')
     nNodes=0

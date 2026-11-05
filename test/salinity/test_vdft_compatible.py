@@ -202,3 +202,236 @@ def test_stratified_column_at_rest(tmp_path, monkeypatch):
         _check_budgets(transport, fn.nl_atol_res, tn.nl_atol_res)
     finally:
         _unload(COLUMN_MODULES)
+
+
+# --------------------------------------------------------------------------
+# the edge-flux coupling of the edge-based TADR schemes (types 2-5) to Richards
+# --------------------------------------------------------------------------
+
+
+def _edge_flux_levee_transport(tp, tn, stab, order, c0, cin):
+    """The levee deck's transport on an edge-based TADR scheme that advects with Richards' edge fluxes:
+    2-4 explicit (SSP stages of order `order`, lumped mass), 5 ImplicitEV (backward Euler, Newton)."""
+    explicit = stab in (2, 3, 4)
+    tp.coefficients = tp.MyCoefficients(tp.aOfX,
+                                        alpha_L=tp.alpha_L,
+                                        alpha_T=tp.alpha_T,
+                                        Dm=tp.Dm,
+                                        porosity=0.41,
+                                        V_model=0,
+                                        specified_velocity=False,
+                                        checkMass=False,
+                                        FCT=True,
+                                        LUMPED_MASS_MATRIX=explicit,
+                                        STABILIZATION_TYPE=stab,
+                                        diagonal_conductivity=True,
+                                        rho_f=tp.coefficients.rho_f,
+                                        rho_s=tp.coefficients.rho_s)
+    tp.coefficients.variableNames = ['u']
+    tp.initialConditions = {0: tp.ConstantIC(c0)}
+
+    def getLeftConcDirichletBCs(x, tag):
+        if tag == tp.boundaryTags['leftTop']:
+            return lambda x, t: cin
+    tp.dirichletConditions = {0: getLeftConcDirichletBCs}
+    tn.stepController = StepControl.Min_dt_controller
+    tn.multilevelNonlinearSolver = NonlinearSolvers.Newton
+    tn.tolFac = 0.0
+    tn.nl_atol_res = 1.0e-10
+    tn.maxLineSearches = 0
+    # the edge-based kernels read the shock-capturing lag and factor even when the factor is 0
+    tn.shockCapturing = TADR.ShockCapturing(tp.coefficients, tp.nd, shockCapturingFactor=0.0, lag=True)
+    if explicit:
+        tn.timeIntegration = TADR.RKEV
+        tn.timeOrder = tn.nStagesTime = order
+        tn.runCFL = 0.5
+        tn.levelNonlinearSolver = NonlinearSolvers.ExplicitLumpedMassMatrix
+        tn.fullNewtonFlag = False
+        tn.updateJacobian = False
+    else:
+        # as test/tadr_partition_mpi.py runs ImplicitEV: CFL-limited backward Euler, Newton, FCT after the solve
+        from proteus.TimeIntegration import BackwardEuler_cfl
+        tn.timeIntegration = BackwardEuler_cfl
+        tn.timeOrder = tn.nStagesTime = 1
+        tn.runCFL = 0.5
+        tn.levelNonlinearSolver = NonlinearSolvers.Newton
+        tn.fullNewtonFlag = True
+        tn.updateJacobian = True
+        tn.maxNonlinearIts = 100
+
+
+EDGE_FLUX_CASES = [(2, 1), (3, 1), (4, 1), (4, 2), (4, 3), (5, 1)]
+
+
+@pytest.mark.parametrize('stab,order', EDGE_FLUX_CASES)
+def test_levee_edge_flux_constant_concentration(levee_deck, stab, order):
+    """c0 = cin = 0.5 stays 0.5 when the edge-based TADR schemes advect with Richards' realized edge
+    fluxes (Richards STABILIZATION_TYPE 2 exports them), at every SSP order: the stage blends act on
+    the masses M c, not on c."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    _edge_flux_levee_transport(tp, tn, stab, order, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8] + [10.0 * i for i in range(1, 3)]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_%d_%d' % (stab, order))
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    deviation = np.abs(transport.u[0].dof - 0.5).max()
+    assert deviation < 1.0e-10
+
+
+DIAGNOSTIC_CASES = [
+    # (TADR type, TADR diagnostics, Richards FCT type, Richards diagnostics, log lines that must appear)
+    (4, ("boundary_flux", "dmp", "rowsum"), "semi-implicit", ("boundary_flux", "edge_flux", "fct"),
+     ("[TADR-BC]", "TADR_DMP t=", "TADR_ROWSUM", "[RICHARDS-BC]", "[RICHARDS-EDGE]", "[FCT-CONS]", "[FCT] ")),
+    (5, ("fct",), None, (),
+     ("TADR FCT sharpness",)),
+]
+
+
+@pytest.mark.parametrize('stab,tadr_diag,flow_fct,richards_diag,expected', DIAGNOSTIC_CASES)
+def test_levee_edge_flux_diagnostics_run(levee_deck, monkeypatch, stab, tadr_diag, flow_fct, richards_diag,
+                                         expected):
+    """Every run-time diagnostic, turned on through the Coefficients options, runs and logs without a probe failure
+    (the probes catch their own exceptions, so a broken one would only say so in the log), and leaves the
+    solution unchanged: c0 = cin = 0.5 stays 0.5."""
+    from proteus.richards import Richards
+    logged = []
+
+    def record(msg, level=1, *args, **kwargs):
+        logged.append(str(msg))
+
+    monkeypatch.setattr(TADR, 'logEvent', record)
+    monkeypatch.setattr(Richards, 'logEvent', record)
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.diagnostics = Richards._diagnostics(richards_diag)
+    if flow_fct is not None:
+        rp.coefficients.FCT = True
+        rp.coefficients.FCT_TYPE = flow_fct
+    _edge_flux_levee_transport(tp, tn, stab, 1, c0=0.5, cin=0.5)
+    tp.coefficients.diagnostics = TADR._diagnostics(tadr_diag)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_diagnostics_%d' % stab)
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+    assert not [m for m in logged if 'probe failed' in m]
+    for line in expected:
+        assert any(m.startswith(line) for m in logged), line
+
+
+def test_levee_edge_velocity(levee_deck):
+    """EDGE_VELOCITY: the transport advects with the velocity Richards rebuilds from its realized edge fluxes
+    (Richards STABILIZATION_TYPE 2), and a constant concentration still stays constant."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    _edge_flux_levee_transport(tp, tn, 5, 1, c0=0.5, cin=0.5)
+    tp.coefficients.EDGE_VELOCITY = True
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_velocity')
+    transport = ns.modelList[1].levelModelList[-1]
+    flow = ns.modelList[0].levelModelList[-1]
+    assert (transport._use_edge_flux, transport._use_edge_velocity) == (1, 1)
+    assert np.isfinite(flow.q[('velocity_edge', 0)]).all()
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+
+@pytest.mark.parametrize('model', ['TADR', 'Richards'])
+def test_an_unknown_diagnostic_is_refused(model):
+    from proteus.richards import Richards
+    module = {'TADR': TADR, 'Richards': Richards}[model]
+    with pytest.raises(ValueError, match="unknown %s diagnostics" % model):
+        module._diagnostics(("boundary_flux", "no_such_probe"))
+    assert module._diagnostics("boundary_flux") == frozenset(["boundary_flux"])
+
+
+def test_levee_implicit_ev_with_flow_fct(levee_deck):
+    """ImplicitEV (type 5) with Richards' semi-implicit FCT keeps c0 = cin = 0.5. Before a8508bdc the phase split
+    re-formed m_dof = theta rho(u^n) u^n while M carried rho(u^{n-1}): c reached about 550 by 10 d here."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'semi-implicit'
+    _edge_flux_levee_transport(tp, tn, 5, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_implicit_ev_flow_fct')
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+
+# --------------------------------------------------------------------------
+# which flow models the edge-flux coupling takes (review of the 2026-11-04 trains)
+# --------------------------------------------------------------------------
+
+
+class _Pattern(object):
+    def __init__(self, n):
+        self.rowptr, self.colind = np.array([0, n], 'i'), np.arange(n, dtype='i')
+
+    def getCSRrepresentation(self):
+        return self.rowptr, self.colind, None
+
+
+def _transport_stub(stab, vModel, n=4):
+    """The attributes TADR.LevelModel._refreshFluidMassFromFlow reads, on one rank."""
+    from types import SimpleNamespace
+    return SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=stab, vModel=vModel, EDGE_VELOCITY=False),
+                           edgeFlux=np.zeros(n), MC_global=_Pattern(n), M_dof=np.zeros(n), theta_nodal=np.full(n, -1.0),
+                           _M_dof_initialized=True, _edge_flux_checked=False, _use_edge_flux=0, _use_edge_velocity=0)
+
+
+def test_a_galerkin_flow_model_does_not_turn_on_edge_fluxes():
+    """Richards allocates its edge-flux arrays for every type, but only its edge-based kernel fills them. A
+    Galerkin Richards (type 0, the bioswale deck) left the arrays at zero and TADR advected nothing; it now keeps
+    the transport on its own velocity, and a type-2 Richards still turns the coupling on."""
+    from types import SimpleNamespace
+    n = 4
+    for flow_type, expected in [(0, 0), (2, 1)]:
+        vModel = SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=flow_type),
+                                 edgeFluxInterior=np.zeros(n), MC_global=_Pattern(n), mn=np.zeros(n))
+        stub = _transport_stub(4, vModel, n)
+        try:
+            TADR.LevelModel._refreshFluidMassFromFlow(stub)
+        except Exception:
+            pass  # past the gate, the edge-flux branch needs a whole flow model; only the decision is checked
+        assert stub._use_edge_flux == expected, flow_type
+
+
+def test_a_flow_model_without_nodal_theta_leaves_it_to_the_projection():
+    """A flow model with a positive mn and no thetaW_dof (m_comp_co2) raised AttributeError; theta_nodal now stays
+    at zero, which tells the kernel to keep its own projection, and M is taken from mn."""
+    from types import SimpleNamespace
+    n = 4
+    vModel = SimpleNamespace(mn=np.full(n, 2.0))
+    stub = _transport_stub(5, vModel, n)
+    stub._edge_flux_checked = True
+    assert TADR.LevelModel._refreshFluidMassFromFlow(stub) == 0
+    np.testing.assert_array_equal(stub.theta_nodal, 0.0)
+    np.testing.assert_array_equal(stub.M_dof, 2.0)
+
+
+def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
+    """Richards' implicit FCT sets fctCorrectionApplied but leaves the accepted mass in mLow (its final solve);
+    the edge-flux coupling read mAccepted, all zeros, and drained its carried fluid mass every step. c0 = cin =
+    0.5 stays 0.5."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
+    flow = ns.modelList[0].levelModelList[-1]
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    assert flow.acceptedMass() is flow.mLow
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+
+def test_the_conservative_boundary_flux_is_opt_in():
+    """BC_CONS changes the boundary velocity a coupled transport sees, so existing decks keep the pointwise trace
+    unless they ask for it."""
+    from proteus.richards import Richards
+    import inspect
+    assert inspect.signature(Richards.Coefficients.__init__).parameters['BC_CONS'].default is False

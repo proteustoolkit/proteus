@@ -272,8 +272,9 @@ def main(argv):
     opts = parse(argv)
     ceilings = load_ceilings(opts['ceilings'], size)
     results = [run_one(opts, nn, ceilings) for nn in opts['nn']]
-    if rank == 0 and acc.perf_gate.ctl is not None:
-        print("PERFGATE pass=%s calls_counted=%d" % (acc.perf_gate.pattern, acc.perf_gate.calls))
+    counted = acc.perf_gate.counts(mpi)
+    if rank == 0 and counted is not None:
+        print("PERFGATE pass=%s calls_counted_per_rank=%s" % (acc.perf_gate.pattern, ",".join(map(str, counted))))
     if rank == 0:
         out = opts['out'] or 'baseline_%s_%s_%d.json' % (opts['kind'], platform.node().split('.')[0], size)
         with open(out, 'w') as f:

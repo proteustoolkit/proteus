@@ -454,28 +454,6 @@ cpdef void generateFromHexFile(CMesh cmesh,
     failed = cppm.readHex(cmesh.mesh,filebase.encode('utf8'),base);
     cppm.constructElementBoundaryElementsArray_hexahedron(cmesh.mesh);
 
-cpdef void generateFrom3DMFile(CMesh cmesh,
-                              unicode filebase,
-                              int base):
-    cdef int failed
-    failed = cppm.read3DM(cmesh.mesh,filebase.encode('utf8'),base);
-    cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh);
-    if exists(filebase+".bc"):
-        failed = cppm.readBC(cmesh.mesh,filebase.encode('utf8'),base);
-    else:
-        failed = False;
-    
-cpdef void generateFrom2DMFile(CMesh cmesh,
-                              unicode filebase,
-                              int base):
-    cdef int failed
-    failed = cppm.read2DM(cmesh.mesh,filebase.encode('utf8'),base);
-    cppm.constructElementBoundaryElementsArray_triangle(cmesh.mesh);
-    if exists(filebase+".bc"):
-        failed = cppm.readBC(cmesh.mesh,filebase.encode('utf8'),base);
-    else:
-        failed = False
-
 def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
                        elementMaterialTypes=None):
     """Fill a CMesh of simplices from arrays, the in-memory counterpart of the file readers.

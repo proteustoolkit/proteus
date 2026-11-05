@@ -84,10 +84,9 @@ def _piecewise_linear(domain, dimension):
 
 #: Classes that are a path and a format rather than geometry, by format name.
 _FILE_FORMATS = {
-    "Mesh2DMDomain": "2dm",
-    "Mesh3DMDomain": "3dm",
     "MeshHexDomain": "hex",
     "MeshTetgenDomain": "tetgen",
+    "MeshYmfDomain": "ymf",
 }
 
 #: Classes holding a live object, which no document can carry.
@@ -190,6 +189,9 @@ def from_ymf(block):
             raise DomainTranslationError(
                 "no proteus Domain reads format %r; known: %s"
                 % (fmt, ", ".join(sorted(_FILE_CLASSES))))
+        if fmt == "ymf":
+            # the block says the dimension; the mesh file need not be at hand
+            return Domain.MeshYmfDomain(block["path"], nd=block.get("dimension"))
         return _FILE_CLASSES[fmt](block["path"])
 
     if kind == "discrete":
