@@ -1455,7 +1455,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.vStar_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.wStar_psi_dof = np.zeros(self.u[0].dof.shape, 'd')
         self.smoothnessIndicatorIsStale = True
-        self._dofVecs = {}
         # mesh
         self.ebqe['x'] = np.zeros(
             (self.mesh.nExteriorElementBoundaries_global,
@@ -2256,25 +2255,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     if (j % nSpace == 0):
                         self.colind_1D[offset_1D[j//nSpace]] = self.colind[offset]//nSpace
                 ith_row += 1
-
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a velocity-space dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
-        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
 
     def updateSmoothnessIndicator(self):
         """Smoothness indicator psi of ARTIFICIAL_VISCOSITY=3, from the lagged star velocities.

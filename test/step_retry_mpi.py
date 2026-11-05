@@ -7,8 +7,8 @@ key, x, y, z, value), accepted.txt (the accepted system times), retries.txt (how
 the deck's own history files. ATOL=a sets every model's nonlinear atol to a (linear a/100); without it the deck's
 tolerances apply; MAXITS=n raises every model's maxNonlinearIts to n.
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
-step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (a TwoStageNewton
-ignores a failed first stage, so a FAILAT there must land on a second stage). REPLAY=<file> makes the system step
+step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
+TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
 land on the times in the file instead of choosing them, which gives the run a failure-free run with the same steps
 (not the first step: its dt comes from initialize_dt_system). NORESTORE=1 turns off the restore before a retry.
 FT and OPTS set the final time and the deck's other options; DIR and SO run another deck under DIR instead: SO is

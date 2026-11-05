@@ -66,6 +66,23 @@ CASES = {
     "rising_bubble_rans3p-pressure": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
                                           OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
                                           MAXITS=200, FAILMODEL="pressure0", FAILAT=4),
+    # FAILAT=3 fails a first stage of the TwoStageNewton (NCLS3P, RDLS elliptic): main ran the second stage, which
+    # reset the failure, and took the step
+    "rising_bubble_rans3p-ncls3p-first-stage": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                                    OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
+                                                    MAXITS=200, FAILMODEL="ls_p", FAILAT=3),
+    "rising_bubble_rans3p-rdls-first-stage": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                                  OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
+                                                  MAXITS=200, FAILMODEL="redist_p", FAILAT=3),
+    "rising_bubble_rans3p-vof3p-first-stage": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
+                                                   OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
+                                                   MAXITS=200, FAILMODEL="vof_p", FAILAT=3),
+    # k-epsilon: Kappa's and Dissipation's postStep move u_old_dof; a Dissipation failure left Kappa's at the failed
+    # attempt (main: 5.8e-7 in kappa, 1.4e-7 in dissipation)
+    "damBreakLevelSet-turbulence-dissipation": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 turbulence=1", FT=0.1,
+                                                    ATOL=1e-10, MAXITS=1000, FAILMODEL="dissipation", FAILAT=5),
+    "damBreakLevelSet-turbulence-kappa": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 turbulence=1", FT=0.1,
+                                              ATOL=1e-10, MAXITS=1000, FAILMODEL="kappa", FAILAT=5),
     "damBreakLevelSet-rans2p-clsvof": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 interface=1", FT=0.1, ATOL=1e-10,
                                            MAXITS=1000, FAILMODEL="clsvof", FAILAT=6),
     "circular_damBreak-sw2dcv": dict(DIR="SWFlow", SO="--SWEs circular_damBreak.py",

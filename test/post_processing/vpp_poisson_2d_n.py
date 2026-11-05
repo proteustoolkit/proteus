@@ -47,7 +47,8 @@ linearSolverConvergenceTest = 'r-true'
 linearSmoother = None
 linTolFac = 0.0
 l_atol_res = 1.0e-13
-nLayersOfOverlapForParallel = int(os.environ.get("VPP_OVERLAP", "1"))
+# LDG reads the velocity of a face neighbour, solved from that element's faces: two layers
+nLayersOfOverlapForParallel = int(os.environ.get("VPP_OVERLAP", "2" if space == "ldg" else "1"))
 parallelPartitioningType = MeshParallelPartitioningTypes.node
 numericalFluxType = ConstantAdvection_Diffusion_SIPG_exterior
 if space == "dg":

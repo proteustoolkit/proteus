@@ -99,3 +99,16 @@ def test_tadr_with_a_varying_porosity_on_two_ranks_is_the_serial_answer(tmp_path
     assert numpy.abs(serial - _field(2, tmp_path / "2", **options)).max() < 1e-8
     assert numpy.abs(serial - _field(2, tmp_path / "3", NOTHETASCAT=1, **options)).max() > 1e-4
 
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+def test_tadr_taylor_galerkin_entropy_viscosity_on_two_ranks_is_the_serial_answer(tmp_path):
+    """STABILIZATION_TYPE=1 (Taylor-Galerkin, entropy viscosity normalized over the whole domain, no FCT) on the disk
+    at cfl 0.1 (at the deck's 0.5 Taylor-Galerkin diverges, in serial too). Measured 4.2e-11 (2 ranks), 4.7e-11 (4);
+    the control keeps each rank's own normalization: 6.3e-3."""
+    for d in ("1", "2", "3"):
+        (tmp_path / d).mkdir()
+    options = dict(STAB=1, OPTS="cfl=0.1")
+    serial = _field(1, tmp_path / "1", **options)
+    assert numpy.abs(serial - _field(2, tmp_path / "2", **options)).max() < 1e-8
+    assert numpy.abs(serial - _field(2, tmp_path / "3", NOREDUCE=1, **options)).max() > 1e-3
