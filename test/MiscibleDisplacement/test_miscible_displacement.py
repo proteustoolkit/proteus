@@ -13,9 +13,13 @@ import types
 
 import numpy as np
 
+from proteus.iproteus import opts
 from proteus import Context, NumericalSolution, default_s, default_so
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# bare-name deck modules; 1.9.x has no conftest that drops them after a test
+DECK_MODULES = ("miscible_displacement", "md_flow_p", "md_flow_ncp1_n",
+                "md_trans_p", "md_trans_c0p1_n")
 
 
 def _so_module(name, pnList, tnList):
@@ -31,11 +35,15 @@ def _so_module(name, pnList, tnList):
     return so
 
 
-def test_miscible_displacement(opts, tmp_path):
+def test_miscible_displacement(tmp_path):
+    cwd = os.getcwd()
+    saved_context = Context.contextOptionsString
     os.chdir(tmp_path)
     Context.contextOptionsString = ("unstructured_mesh=False refinement_level=8 "
                                     "ndays=500.0 nDTout=2")
     sys.path.insert(0, HERE)
+    for name in DECK_MODULES:
+        sys.modules.pop(name, None)
     try:
         import md_flow_p, md_flow_ncp1_n, md_trans_p, md_trans_c0p1_n
         pList = [md_flow_p, md_trans_p]
@@ -48,6 +56,10 @@ def test_miscible_displacement(opts, tmp_path):
         failed = ns.calculateSolution("md_test")
     finally:
         sys.path.remove(HERE)
+        for name in DECK_MODULES:
+            sys.modules.pop(name, None)
+        Context.contextOptionsString = saved_context
+        os.chdir(cwd)
     assert not failed
     flow = ns.modelList[0].levelModelList[-1]
     trans = ns.modelList[1].levelModelList[-1]
