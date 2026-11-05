@@ -438,25 +438,32 @@ class ParametersModelRANS2P(ParametersModelBase):
             self.OptDB.setValue(prefix+'pc_type', 'lu')
             self.OptDB.setValue(prefix+'pc_factor_mat_solver_type', 'superlu_dist')
         elif self.n.linearSmoother == LinearSolvers.SimpleNavierStokes3D:
-            # GMRES + ASM with an LU per subdomain. Since 2.0 (C19 round 2, measured on damBreakLevelSet):
-            # classical Gram-Schmidt (one reduction per iteration, not one per basis vector); PETSc's own LU
-            # with nested-dissection ordering on the blocks (its symbolic factorization is kept, superlu's
-            # was redone at every setup); right preconditioning with PETSc's convergence test on the true
-            # residual (it replaces the Python r-true callback that built the solution every iteration);
-            # and one preconditioner setup per Newton solve (pc_lag_newton).
+            # Since 2.0 (C19 round 2, measured on damBreakLevelSet, cekees/proteus#198): GMRES, right-
+            # preconditioned with PETSc's convergence test on the true residual, and an upper block-triangular
+            # Schur complement preconditioner on the (velocity, pressure) split that SimpleNavierStokes3D
+            # defines. The velocity block and the selfp Schur approximation A11 - A10 diag(A00)^-1 A01 get one
+            # BoomerAMG V-cycle each, set up once per Newton solve (pc_lag_newton). KSP iterations stay at 3-4
+            # from 4 to 96 ranks; GMRES + ASM with an LU per subdomain (the default before 2.0) took 20-56 and
+            # was 7.9-9.3x slower at 24-96 ranks. The ASM options are kept below the active ones for
+            # reference (-rans2p_pc_type asm ... restores them).
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
-            self.OptDB.setValue(prefix+'pc_type', 'asm')
-            self.OptDB.setValue(prefix+'pc_asm_type', 'basic')
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
             self.OptDB.setValue(prefix+'ksp_pc_side', 'right')
             self.OptDB.setValue(prefix+'ksp_converged_use_initial_residual_norm', True)
-            self.OptDB.setValue(prefix+'sub_ksp_type', 'preonly')
-            self.OptDB.setValue(prefix+'sub_pc_type', 'lu')
-            self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'petsc')
-            self.OptDB.setValue(prefix+'sub_pc_factor_mat_ordering_type', 'nd')
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
+            self.OptDB.setValue(prefix+'pc_type', 'fieldsplit')
+            self.OptDB.setValue(prefix+'pc_fieldsplit_type', 'schur')
+            self.OptDB.setValue(prefix+'pc_fieldsplit_schur_fact_type', 'upper')
+            self.OptDB.setValue(prefix+'pc_fieldsplit_schur_precondition', 'selfp')
+            for block in ('velocity', 'pressure'):
+                self.OptDB.setValue(prefix+'fieldsplit_'+block+'_ksp_type', 'preonly')
+                self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_type', 'hypre')
+                self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_hypre_type', 'boomeramg')
             self.OptDB.setValue(prefix+'pc_lag_newton', True)
+            # GMRES + ASM alternative (2.0, before the fieldsplit default): classical Gram-Schmidt, right PC,
+            # -rans2p_pc_type asm -rans2p_pc_asm_type basic -rans2p_sub_ksp_type preonly -rans2p_sub_pc_type lu
+            # -rans2p_sub_pc_factor_mat_solver_type petsc -rans2p_sub_pc_factor_mat_ordering_type nd
             if self.n.linearSolverConvergenceTest == 'r-true':
                 self.n.linearSolverConvergenceTest = 'r'
         elif self.n.linearSmoother == LinearSolvers.NavierStokes_TwoPhasePCD:
