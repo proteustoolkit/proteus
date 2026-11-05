@@ -514,8 +514,17 @@ _DEFAULTS_MODULES = ("proteus.default_p", "proteus.default_n", "proteus.default_
 
 def _snapshot_defaults():
     """The namespaces of default_p/default_n/default_so, their dicts and lists copied (a
-    deck that sets n.femSpaces[0] changes the dict, not the name)."""
+    deck that sets n.femSpaces[0] changes the dict, not the name).
+
+    proteus.defaults goes first: when it is first imported it takes its lists of
+    physics and numerics option names from dir(default_p) and dir(default_n), so
+    first imported by a deck in the middle of changing them, it would count that
+    deck's names (p.rdomain) as Proteus options, and Physics_base() would fail
+    once they were put back. (It imports petsc4py, as the first test module
+    collected would; Comm.init hands Comm.argv to the options database when PETSc
+    has already started.)"""
     import importlib
+    import proteus.defaults  # noqa: F401
     snapshot = {}
     for name in _DEFAULTS_MODULES:
         namespace = vars(importlib.import_module(name))
