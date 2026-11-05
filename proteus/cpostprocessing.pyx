@@ -490,22 +490,6 @@ def getElementBDM2velocityValuesLagrangeRep(np.ndarray q_v,
                                                <double*>(p1_vdofs.data),
                                                <double*>(q_velocity.data))
     
-def getElementLDGvelocityValuesLagrangeRep(np.ndarray q_v,
-                                           np.ndarray vdofs,
-                                           np.ndarray q_velocity):
-    cdef int nVDOF_element =vdofs.shape[1]
-    cdef int nDOF_trial_element=q_v.shape[2]
-    if  vdofs.ndim > 1:
-        assert nVDOF_element == q_v.shape[2]*q_velocity.shape[2]
-    pp.getElementLDGvelocityValuesLagrangeRep(q_velocity.shape[0],
-                                              q_velocity.shape[1],
-                                              q_velocity.shape[2],
-                                              nDOF_trial_element,
-                                              nVDOF_element,
-                                              <double*>(q_v.data),
-                                              <double*>(vdofs.data),
-                                              <double*>(q_velocity.data))
-
 def getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(np.ndarray elementBoundaryElementsArray,
                                                                   np.ndarray exteriorElementBoundariesArray,
                                                                   np.ndarray ebqe_v,

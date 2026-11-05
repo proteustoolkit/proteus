@@ -1,7 +1,8 @@
 """Numerics for vpp_poisson_2d_p: P1 or P2 (VPP_ORDER), the post-processing variant from VPP_VARIANT.
 
-The space is C0 unless VPP_SPACE is dg (interior penalty, SIPG) or ldg (local DG, the mixed form whose velocity the
-transport computes itself); the discontinuous spaces are partitioned by element. C0 Dirichlet conditions are weak (SIPG
+The space is C0 unless VPP_SPACE is nc (P1 nonconforming, Crouzeix-Raviart, for p1-nc; node partition), dg (interior
+penalty, SIPG) or ldg (local DG, the mixed form whose velocity the transport computes itself); the discontinuous spaces
+are partitioned by element. C0 Dirichlet conditions are weak (SIPG
 exterior flux) unless VPP_STRONG=1.
 """
 import os
@@ -16,7 +17,9 @@ nDTout = 1
 
 order = int(os.environ.get("VPP_ORDER", "1"))
 space = os.environ.get("VPP_SPACE", "c0")
-if space == "c0":
+if space == "nc":
+    femSpaces = {0: NC_AffineLinearOnSimplexWithNodalBasis}
+elif space == "c0":
     femSpaces = {0: C0_AffineLinearOnSimplexWithNodalBasis if order == 1 else C0_AffineQuadraticOnSimplexWithNodalBasis}
 else:
     femSpaces = {0: DG_AffineLinearOnSimplexWithNodalBasis if order == 1 else DG_AffineQuadraticOnSimplexWithNodalBasis}
@@ -51,7 +54,7 @@ if space == "dg":
     numericalFluxType = Advection_DiagonalUpwind_Diffusion_SIPG
 elif space == "ldg":
     numericalFluxType = Diffusion_LDG
-if space != "c0":
+if space in ("dg", "ldg"):
     # a discontinuous space couples elements only through face fluxes, so each rank owns whole elements
     parallelPartitioningType = MeshParallelPartitioningTypes.element
 if os.environ.get("VPP_ELEMENT_PARTITION"):
