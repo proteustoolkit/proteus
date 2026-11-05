@@ -33,7 +33,8 @@ own until 2026-11-03: the C routine indexed the face and the shape functions wro
 face quadrature points as the number of shape functions, and with P2 it evaluated the linear representation with the
 quadratic basis. Its face fluxes missed the numerical flux by 0.5 (P1) and 1.3 (P2, 25 x 25 nodes).
 
-point-eval-gwvd was removed
+p1-nc (Chou-Tang RT0 from a Crouzeix-Raviart potential, VPP_SPACE=nc) is element-local: it balances every element,
+converges at first order and gives the serial answer on any partition without an exchange. point-eval-gwvd was removed
 on 2026-11-05 (cekees): it post-processed nothing, and its evaluator read degrees of freedom nothing set.
 
 Every run checks the linear solver's converged reason: a solve stopped at the iteration limit makes every variant
@@ -281,6 +282,38 @@ def test_the_low_k_variant_in_parallel_is_the_serial_answer(tmp_path, ranks, ove
     assert numpy.abs(parallel[:, 3]).max() < LOW_K
     assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 10 * LOW_K
 
+
+
+def test_p1_nc_balances_every_element(tmp_path):
+    """Measured 1.7e-16 (13 x 13 nodes; 2.5e-16 on 7, 1.1e-16 on 25)."""
+    rows = _run(1, tmp_path, "p1-nc", 1, space="nc")
+    assert len(rows) == 288
+    assert numpy.abs(rows[:, 3]).max() < 1e-13
+    assert numpy.abs(rows[:, 2] - rows[:, 3]).max() < 1e-13
+
+
+def test_p1_nc_converges_at_first_order(tmp_path):
+    """L2 velocity error 0.115, 0.0594, 0.0303 on 7, 13, 25 nodes (rates 0.95, 0.97)."""
+    errors = []
+    for nn in (7, 13, 25):
+        _run(1, tmp_path / str(nn), "p1-nc", 1, space="nc", nn=nn)
+        errors.append(_summary(tmp_path / str(nn))["l2_velocity_error"])
+    rates = numpy.log2(numpy.array(errors[:-1]) / numpy.array(errors[1:]))
+    assert numpy.abs(rates - 1.0).max() < 0.1, (errors, rates)
+
+
+P1NC_PARALLEL = [(2, 0), (4, 0), (2, 1), (4, 1)]
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("ranks,overlap", P1NC_PARALLEL, ids=["%dranks-overlap%d" % case for case in P1NC_PARALLEL])
+def test_p1_nc_in_parallel_is_the_serial_answer(tmp_path, ranks, overlap):
+    """Each element's velocity needs only its own potential and coefficients: 9e-14 measured, no exchange."""
+    serial = _run(1, tmp_path / "1", "p1-nc", 1, space="nc")
+    parallel = _run(ranks, tmp_path / "2", "p1-nc", 1, overlap, space="nc")
+    assert numpy.abs(serial[:, :2] - parallel[:, :2]).max() < 1e-12
+    assert numpy.abs(parallel[:, 3]).max() < 1e-13
+    assert numpy.abs(serial[:, 4:] - parallel[:, 4:]).max() < 1e-12
 
 
 def test_an_unknown_variant_is_refused_by_name(tmp_path):
