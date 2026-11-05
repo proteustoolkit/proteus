@@ -2,11 +2,13 @@
 // damBreakLevelSet configuration) as a coefficient functor plus a scalar SUPG kernel that does not know it is VOF.
 //
 //   m = porosity u,  f = porosity v u          (VOFCoefficients: the part a generator writes)
-//   R_i = sum_q [ m_t w_i - f . grad w_i + tau R(u) L*(w_i) + nu_last grad u . grad w_i ] dV      (scalarSUPGElement)
+//   R_i = sum_q [ m_t w_i - f . grad w_i + H w_i + tau R(u) L*(w_i) + nu_last grad u . grad w_i ] dV  (scalarSUPGElement)
+//
+// (NCLS, ncls.h, is the same element kernel with a Hamiltonian H = v . grad u in place of f: a = df + dH below.)
 //       + sum over exterior faces of F(u) w_i dS                                                   (scalarUpwindFace)
 //
-// with m_t = alpha m + beta (BDF1, beta the stored history at the point), the strong residual R(u) = m_t + df . grad u,
-// the adjoint L*(w) = -df . grad w, the metric tau = 1/sqrt(4 dm_t^2 + df . G df + 1e-8), G = J^{-T} J^{-1}, and the shock
+// with m_t = alpha m + beta (BDF1, beta the stored history at the point), a = df + dH, the strong residual R(u) = m_t + a . grad u,
+// the adjoint L*(w) = -a . grad w, the metric tau = 1/sqrt(4 dm_t^2 + a . G a + 1e-8), G = J^{-T} J^{-1}, and the shock
 // capturing viscosity nu = c |R(u) - sc_drop_time m_t| (grad u . G grad u)^{-(2-beta)/2} (uref sqrt(G:G))^{1-beta}: computed
 // here and returned, used one step later (lagged). Two things the Terms/elementKernelSpace path cannot express and this
 // kernel adds, because every two-phase model needs them (C19_GENERATOR_GAP_NOTE_2026-11-03.md, G1 and G5-G7):
@@ -24,10 +26,13 @@
 
 namespace adrh
 {
+  // What a scalar coefficient functor returns at a point: mass m(u), an advective flux f(u) (weak form -f . grad w) and a
+  // Hamiltonian H(u, grad u) (weak form H w), with their derivatives. A functor declares which of f and H it has (hasF, hasH);
+  // the kernel compiles only those terms, so VOF (f only) and NCLS (H only) cost what they did as separate kernels.
   template <int nS>
   struct ScalarTerms
   {
-    double m, dm, f[nS], df[nS];
+    double m, dm, f[nS], df[nS], H, dH[nS];
   };
 
   // VOF's coefficients (mprans/VOF.h evaluateCoefficients), in the form a generator emits: fields = (v_0..v_{nS-1}, porosity).
@@ -35,7 +40,8 @@ namespace adrh
   struct VOFCoefficients
   {
     static constexpr int nSpace = nS_, nFields = nS_ + 1;
-    ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, ScalarTerms<nS_> &T) const
+    static constexpr bool hasF = true, hasH = false;
+    ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, const double *, ScalarTerms<nS_> &T) const
     {
       const double porosity = fld[nS_];
       T.m = porosity * u;
@@ -84,8 +90,16 @@ namespace adrh
         u += ue[b] * w[b];
         for (int I = 0; I < nS; ++I) gu[I] += ue[b] * gw[b][I];
       }
-      C.evaluate(fields + q * nF, u, T);
+      C.evaluate(fields + q * nF, u, gu, T);
       const double m_t = P.alpha * T.m + beta[q], dm_t = P.alpha * T.dm;
+      // the characteristic velocity of the strong residual, its adjoint and tau: df + dH (only the terms the functor has)
+      double a[nS];
+      for (int I = 0; I < nS; ++I)
+      {
+        if constexpr (Coefficients::hasF && Coefficients::hasH) a[I] = T.df[I] + T.dH[I];
+        else if constexpr (Coefficients::hasH) a[I] = T.dH[I];
+        else a[I] = T.df[I];
+      }
       // the metric tensor G = Jinv^T Jinv (CompKernel calculateG)
       double Gm[nS][nS], G_dd_G = 0.0;
       for (int I = 0; I < nS; ++I)
@@ -99,11 +113,11 @@ namespace adrh
       double vGv = 0.0, nrm_v = 0.0, dfgu = 0.0, guGgu = 0.0;
       for (int I = 0; I < nS; ++I)
       {
-        nrm_v += T.df[I] * T.df[I];
-        dfgu += T.df[I] * gu[I];
+        nrm_v += a[I] * a[I];
+        dfgu += a[I] * gu[I];
         for (int K = 0; K < nS; ++K)
         {
-          vGv += T.df[I] * Gm[I][K] * T.df[K];
+          vGv += a[I] * Gm[I][K] * a[K];
           guGgu += gu[I] * Gm[I][K] * gu[K];
         }
       }
@@ -119,31 +133,44 @@ namespace adrh
       }
       const double nu = numDiffLast[q];
       double Lstar[nD], dR[nD];
-      for (int a = 0; a < nD; ++a)
+      for (int i = 0; i < nD; ++i)
       {
-        double dfgw = 0.0;
-        for (int I = 0; I < nS; ++I) dfgw += T.df[I] * gw[a][I];
-        Lstar[a] = -dfgw * dV;
-        dR[a] = dm_t * w[a] + dfgw;
+        double agw = 0.0;
+        for (int I = 0; I < nS; ++I) agw += a[I] * gw[i][I];
+        Lstar[i] = -agw * dV;
+        dR[i] = dm_t * w[i] + agw;
       }
-      for (int a = 0; a < nD; ++a)
+      for (int i = 0; i < nD; ++i)
       {
-        double fgw = 0.0, gugw = 0.0;
-        for (int I = 0; I < nS; ++I)
+        double gugw = 0.0;
+        for (int I = 0; I < nS; ++I) gugw += gu[I] * gw[i][I];
+        double weak = m_t * w[i] * dV;
+        if constexpr (Coefficients::hasF)
         {
-          fgw += T.f[I] * gw[a][I];
-          gugw += gu[I] * gw[a][I];
+          double fgw = 0.0;
+          for (int I = 0; I < nS; ++I) fgw += T.f[I] * gw[i][I];
+          weak -= fgw * dV;
         }
-        Rloc[a] += m_t * w[a] * dV - fgw * dV + subgridError * Lstar[a] + nu * gugw * dV;
-        for (int b = 0; b < nD; ++b)
+        if constexpr (Coefficients::hasH) weak += T.H * w[i] * dV;
+        Rloc[i] += weak + subgridError * Lstar[i] + nu * gugw * dV;
+        for (int j = 0; j < nD; ++j)
         {
-          double dfgwa = 0.0, gwbgwa = 0.0;
-          for (int I = 0; I < nS; ++I)
+          double gwjgwi = 0.0;
+          for (int I = 0; I < nS; ++I) gwjgwi += gw[j][I] * gw[i][I];
+          double dweak = dm_t * w[j] * w[i] * dV;
+          if constexpr (Coefficients::hasF)
           {
-            dfgwa += T.df[I] * gw[a][I];
-            gwbgwa += gw[b][I] * gw[a][I];
+            double dfgwi = 0.0;
+            for (int I = 0; I < nS; ++I) dfgwi += T.df[I] * gw[i][I];
+            dweak -= dfgwi * w[j] * dV;
           }
-          Jloc[a][b] += dm_t * w[b] * w[a] * dV - dfgwa * w[b] * dV - tau * dR[b] * Lstar[a] + nu * gwbgwa * dV;
+          if constexpr (Coefficients::hasH)
+          {
+            double dHgwj = 0.0;
+            for (int I = 0; I < nS; ++I) dHgwj += T.dH[I] * gw[j][I];
+            dweak += dHgwj * w[i] * dV;
+          }
+          Jloc[i][j] += dweak - tau * dR[j] * Lstar[i] + nu * gwjgwi * dV;
         }
       }
     }
@@ -179,7 +206,7 @@ namespace adrh
       const double dS = qwf[q] * vn;
       double u = 0.0;
       for (int b = 0; b < nD; ++b) u += ue[b] * w[b];
-      C.evaluate(fields + q * nF, u, T);
+      C.evaluate(fields + q * nF, u, nullptr, T);
       double flow = 0.0;
       for (int I = 0; I < nS; ++I) flow += nrm[I] * T.df[I];
       double F, dF;
