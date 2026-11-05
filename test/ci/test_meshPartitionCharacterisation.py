@@ -321,8 +321,9 @@ def test_rank_interface_flag(run, serial, case, n):
     """A face the partition cut -- exterior to the subdomain, interior to the
     mesh -- reads -1 where the mesh gave it no flag (0), and keeps a positive
     flag (the interior wall, 5). A real boundary face keeps its flag, 0
-    included. The ``files`` path (parun -F) does not mark: its cut faces keep 0
-    (MeshTools.partitionMeshFromFiles never calls _markRankInterfaces)."""
+    included. The ``files`` path (parun -F) has no global mesh to compare
+    with; its partitioners ask each face's owner (markRankInterfacesByOwner)
+    and mark the same faces."""
     S = serial(case[0])
     got, ranks = run(*(case + (n,)))
     P = pieces(S, ranks)
@@ -333,8 +334,7 @@ def test_rank_interface_flag(run, serial, case, n):
         serialFace = p.face[exterior]
         cut = S.interior[serialFace]
         want = S.faceFlags[serialFace].copy()
-        if case[1] != 'files':
-            want[cut & (want == 0)] = RANK_INTERFACE
+        want[cut & (want == 0)] = RANK_INTERFACE
         assert np.array_equal(flags[exterior], want), p.rank
         interior = np.setdiff1d(np.arange(len(flags)), exterior)
         assert np.all(flags[interior] != RANK_INTERFACE), p.rank

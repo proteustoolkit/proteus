@@ -1630,31 +1630,92 @@ std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector
 /* MPI: the new numbers of the file nodes `wanted`, asked of the ranks whose
    default chunk (nodeOffsets_old) holds them. Two exchanges (requests,
    answers), no file. Every rank calls it, wanted or not. */
+namespace
+{
+  /* MPI: ask, for every key, the rank whose range of offsets holds it, and
+     return key -> that rank's answer(key). Two exchanges; collective. */
+  template<class Answer>
+  std::map<int,int> askOwningRanks(const MPI_Comm& comm, const std::vector<int>& offsets,
+                                   const std::set<int>& keys, Answer answer)
+  {
+    int size;
+    MPI_Comm_size(comm, &size);
+    std::vector<std::vector<int> > requests(size);
+    for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
+      requests[rankOfNumber(offsets, *k)].push_back(*k);
+    //which ranks asked what, so the answers go back in the same order
+    std::vector<int> requestCounts(size), askedCounts(size);
+    for (int r = 0; r < size; r++)
+      requestCounts[r] = int(requests[r].size());
+    MPI_Alltoall(requestCounts.data(), 1, MPI_INT, askedCounts.data(), 1, MPI_INT, comm);
+    std::vector<int> asked = exchangeInts(comm, requests);
+    std::vector<std::vector<int> > answers(size);
+    for (int r = 0, i = 0; r < size; r++)
+      for (int k = 0; k < askedCounts[r]; k++, i++)
+        answers[r].push_back(answer(asked[i]));
+    std::vector<int> answered = exchangeInts(comm, answers);
+    std::map<int,int> result;
+    for (int r = 0, i = 0; r < size; r++)
+      for (int k = 0; k < requestCounts[r]; k++, i++)
+        result[requests[r][k]] = answered[i];
+    return result;
+  }
+}
+
 std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
                                         const std::vector<int>& old2new_chunk, const std::set<int>& wanted)
+{
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+  const int begin = nodeOffsets_old[rank];
+  return askOwningRanks(comm, nodeOffsets_old, wanted,
+                        [&](int nN_old) { return old2new_chunk[nN_old - begin]; });
+}
+
+/* MPI: give the faces the partition cut the reserved flag -1, for a
+   partitioner that has no global mesh to compare with (the parun -F path; the
+   in-memory partitioners are marked by MeshTools._markRankInterfaces). A
+   subdomain face is cut when it is exterior to the subdomain and interior to
+   the mesh. The rank that owns a face owns one of its nodes, so it holds every
+   element of that node, both neighbours included: its subdomain knows whether
+   the face is exterior to the mesh. Every other rank asks it, for the faces
+   exterior to its own subdomain. Like _markRankInterfaces, only flag 0 is
+   replaced: a positive flag on a cut face is a condition the mesh put there.
+   Needs the subdomain mesh, elementBoundaryOffsets_subdomain_owned and
+   elementBoundaryNumbering_subdomain2global. Collective. Returns the number
+   of faces marked on this rank. */
+int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh)
 {
   int rank, size;
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
-  std::vector<std::vector<int> > requests(size);
-  for (std::set<int>::const_iterator nN = wanted.begin(); nN != wanted.end(); nN++)
-    requests[rankOfNumber(nodeOffsets_old, *nN)].push_back(*nN);
-  //which ranks asked what, so the answers go back in the same order
-  std::vector<int> requestCounts(size), askedCounts(size);
-  for (int r = 0; r < size; r++)
-    requestCounts[r] = int(requests[r].size());
-  MPI_Alltoall(requestCounts.data(), 1, MPI_INT, askedCounts.data(), 1, MPI_INT, comm);
-  std::vector<int> asked = exchangeInts(comm, requests);
-  std::vector<std::vector<int> > answers(size);
-  for (int r = 0, i = 0; r < size; r++)
-    for (int k = 0; k < askedCounts[r]; k++, i++)
-      answers[r].push_back(old2new_chunk[asked[i] - nodeOffsets_old[rank]]);
-  std::vector<int> answered = exchangeInts(comm, answers);
-  std::map<int,int> old2new;
-  for (int r = 0, i = 0; r < size; r++)
-    for (int k = 0; k < requestCounts[r]; k++, i++)
-      old2new[requests[r][k]] = answered[i];
-  return old2new;
+  Mesh& sub = *mesh.subdomainp;
+  const std::vector<int> offsets(mesh.elementBoundaryOffsets_subdomain_owned,
+                                 mesh.elementBoundaryOffsets_subdomain_owned + size + 1);
+  std::map<int,int> global2subdomain;
+  std::set<int> askAbout;
+  for (int ebN = 0; ebN < sub.nElementBoundaries_global; ebN++)
+    {
+      const int ebN_global = mesh.elementBoundaryNumbering_subdomain2global[ebN];
+      global2subdomain[ebN_global] = ebN;
+      const bool exterior = sub.elementBoundaryElementsArray[ebN*2+1] == -1;
+      const bool owned = ebN_global >= offsets[rank] && ebN_global < offsets[rank+1];
+      if (exterior && !owned && sub.elementBoundaryMaterialTypes[ebN] == 0)
+        askAbout.insert(ebN_global);
+    }
+  std::map<int,int> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](int ebN_global) {
+      std::map<int,int>::const_iterator it = global2subdomain.find(ebN_global);
+      assert(it != global2subdomain.end());
+      return int(sub.elementBoundaryElementsArray[it->second*2+1] == -1);
+    });
+  int marked = 0;
+  for (std::map<int,int>::const_iterator it = meshExterior.begin(); it != meshExterior.end(); it++)
+    if (!it->second)
+      {
+        sub.elementBoundaryMaterialTypes[global2subdomain[it->first]] = -1;
+        marked++;
+      }
+  return marked;
 }
 
 /* Local: what the -F partitioners take from the elements of one subdomain
@@ -3383,6 +3444,8 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   newMesh.edgeNumbering_subdomain2global = new int[newMesh.subdomainp->nEdges_global];
   for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
     newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
+  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh);
   //cleanup
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
@@ -4700,9 +4763,11 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   H5Sclose(filespace);
   H5Sclose(memspace);
   H5Pclose(plist_id);
-  //(the mappings file is closed right after the numbering write and again
-  //after the chunked read loop; nothing is open here any more)
+  //(the mappings file is closed right after the numbering write; nothing is
+  //open here any more)
   /* out of core */
+  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh);
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);

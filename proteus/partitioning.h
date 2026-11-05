@@ -337,6 +337,12 @@ namespace proteus
   extern std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
                                                  const std::vector<int>& old2new_chunk, const std::set<int>& wanted);
 
+  /* MPI: flag -1 the subdomain faces the partition cut (exterior to the
+     subdomain, interior to the mesh) whose flag is 0, asking each face's owner
+     whether it is exterior to the mesh. For partitioners without the global
+     mesh (parun -F). Returns the number marked on this rank. Collective. */
+  extern int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh);
+
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,

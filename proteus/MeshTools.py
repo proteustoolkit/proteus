@@ -1069,6 +1069,7 @@ class Mesh(object):
         #nodeNumbering_subdomain2global refers to.
         self.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(self.cmesh)
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+        self.subdomainMesh.rankInterfacesMarked = True     #the -F partitioners flag the cut faces -1 (markRankInterfacesByOwner)
         self._reduceSubdomainMeshSize(comm)
         self.subdomainMesh.nElements_owned = self.elementOffsets_subdomain_owned[comm.rank()+1] - self.elementOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nNodes_owned = self.nodeOffsets_subdomain_owned[comm.rank()+1] - self.nodeOffsets_subdomain_owned[comm.rank()]
