@@ -512,9 +512,11 @@ jobs:
   # The coverage ratchet (C3.7). The two suites of the coverage leg are measured separately; this combines them, publishes
   # the per-subpackage and per-module tables in the run's summary, and fails if a module's statement coverage fell below
   # its floor in .github/coverage/floors.json (recorded from main at 9fca0b95, proteustoolkit run 41631333572, main
-  # suite only, 52.5% of 87,237 statements). Lowering a floor is a reviewed edit in the pull request that lowers it;
-  # raising them is `python .github/coverage/ratchet.py coverage.xml .github/coverage/floors.json --write-floors` on a
-  # combined report. It waits for the whole matrix, so its result arrives with the last leg's.
+  # suite only, 52.5% of 87,237 statements; raised from main at ce43b736, cekees run 41992269368, both suites, 54.3% of
+  # 87,612). Lowering a floor is a reviewed edit in the pull request that lowers it; raising them is
+  # `python .github/coverage/ratchet.py coverage.xml .github/coverage/floors.json --write-floors` on a combined report
+  # (it raises the modules at least a point above their floor). It waits for the whole matrix, so its result arrives
+  # with the last leg's.
   coverage:
     needs: build-and-test
     if: always() && needs.build-and-test.result != 'cancelled'
