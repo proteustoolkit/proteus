@@ -249,8 +249,6 @@ namespace proteus
   extern int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
                                        std::vector<int>& parents);
 
-  extern int partitionElementsOriginal(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap);
-
   extern int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nNodes_overlap,
                             const int* nodeOwners=NULL, const int* nodeWeights=NULL);
 
