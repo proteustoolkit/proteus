@@ -468,8 +468,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             if comm.size() > 1: 
                 fname= 'mappings.h5'
                 with h5py.File(fname,'r') as f:
-                    vname=list(f.keys())[0]
-                    old2new=np.asarray(f[vname])       
+                    #written by the parun -F partitioners; name it, the file
+                    #held other numberings before 2026-11 (keys()[0] was one)
+                    old2new=np.asarray(f['nodeNumbering_old2new'])       
                 sub2glob=mesh.nodeNumbering_subdomain2global                                   
                 indx=[]
                 for i in range (0, len(sub2glob)):  
