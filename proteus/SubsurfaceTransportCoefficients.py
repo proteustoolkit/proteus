@@ -374,6 +374,9 @@ class ConservativeHeadRichardsMualemVanGenuchten(TC_base):
     """
     from .ctransportCoefficients import conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2
     from .ctransportCoefficients import conservativeHeadRichardsMualemVanGenuchten_sd_het
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2 = staticmethod(conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2)
+    conservativeHeadRichardsMualemVanGenuchten_sd_het = staticmethod(conservativeHeadRichardsMualemVanGenuchten_sd_het)
     def __init__(self,
                  nd,
                  Ksw_types,
@@ -971,6 +974,9 @@ class RE_NCP1_OneLevelTransport(Transport.OneLevelTransport):
 ########################################
 class TwophaseDarcyFlow_base(TC_base):
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_vol_frac,generateSplineTables
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_vol_frac = staticmethod(twophaseDarcy_vol_frac)
+    generateSplineTables = staticmethod(generateSplineTables)
     """base class for two-phase flow implementations 
 
     holds information for:
@@ -1272,6 +1278,8 @@ class TwophaseDarcy_fc(TwophaseDarcyFlow_base):
 
     # slight compressibility assumed in spatial gradients
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_fc_sd_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_fc_sd_het_matType = staticmethod(twophaseDarcy_fc_sd_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -1654,6 +1662,8 @@ class TwophaseDarcy_fc_pp(TwophaseDarcyFlow_base):
 
     # """
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_fc_pp_sd_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_fc_pp_sd_het_matType = staticmethod(twophaseDarcy_fc_pp_sd_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -2299,6 +2309,8 @@ class TwophaseDarcy_incompressible_split_pressure(TwophaseDarcy_split_pressure_b
 #
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_sd_pressure_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_sd_pressure_het_matType = staticmethod(twophaseDarcy_incompressible_split_sd_pressure_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -2536,6 +2548,8 @@ class TwophaseDarcy_incompressible_split_saturation(TwophaseDarcy_split_saturati
 #
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_sd_saturation_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_sd_saturation_het_matType = staticmethod(twophaseDarcy_incompressible_split_sd_saturation_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -2784,6 +2798,9 @@ class TwophaseDarcy_compressible_split_pressure(TwophaseDarcy_split_pressure_bas
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_slightCompressible_split_sd_pressure_het_matType
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_compressibleN_split_sd_pressure_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_slightCompressible_split_sd_pressure_het_matType = staticmethod(twophaseDarcy_slightCompressible_split_sd_pressure_het_matType)
+    twophaseDarcy_compressibleN_split_sd_pressure_het_matType = staticmethod(twophaseDarcy_compressibleN_split_sd_pressure_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -3061,6 +3078,9 @@ class TwophaseDarcy_compressible_split_saturation(TwophaseDarcy_split_saturation
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_slightCompressible_split_sd_saturation_het_matType
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_compressibleN_split_sd_saturation_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_slightCompressible_split_sd_saturation_het_matType = staticmethod(twophaseDarcy_slightCompressible_split_sd_saturation_het_matType)
+    twophaseDarcy_compressibleN_split_sd_saturation_het_matType = staticmethod(twophaseDarcy_compressibleN_split_sd_saturation_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -3525,6 +3545,8 @@ class TwophaseDarcy_incompressible_split_pp_pressure(TwophaseDarcy_split_pp_pres
 #
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_sd_pressure_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_sd_pressure_het_matType = staticmethod(twophaseDarcy_incompressible_split_sd_pressure_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -3757,6 +3779,8 @@ class TwophaseDarcy_incompressible_split_pp_saturation(TwophaseDarcy_split_pp_sa
 #
 #      Figure out if really need to evaluate potential interpolation points
     from proteus.cTwophaseDarcyCoefficients import twophaseDarcy_incompressible_split_pp_sd_saturation_het_matType
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    twophaseDarcy_incompressible_split_pp_sd_saturation_het_matType = staticmethod(twophaseDarcy_incompressible_split_pp_sd_saturation_het_matType)
     def __init__(self,
                  nd=1,
                  dimensionless_gravity=[-1.0],
@@ -4475,6 +4499,8 @@ class PressurePressureIncompressibleFractionalFlowSaturationMualemVanGenuchten(T
 ########################################
 class GroundwaterTransportCoefficients(TC_base):
     from proteus.ctransportCoefficients import groundwaterTransportCoefficientsEvaluate_hetMat
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    groundwaterTransportCoefficientsEvaluate_hetMat = staticmethod(groundwaterTransportCoefficientsEvaluate_hetMat)
     """ groundwater advection-dispersion equation with coefficients
     varying by material type and variable velocity """
     def __init__(self,nc=1,nd=2,
@@ -4615,6 +4641,8 @@ class GroundwaterTransportCoefficients(TC_base):
 ########################################
 class MultiphaseGroundwaterTransportCoefficients(TC_base):
     from proteus.ctransportCoefficients import variablySaturatedGroundwaterTransportCoefficientsEvaluate_hetMat
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    variablySaturatedGroundwaterTransportCoefficientsEvaluate_hetMat = staticmethod(variablySaturatedGroundwaterTransportCoefficientsEvaluate_hetMat)
     """ groundwater advection-dispersion equation with coefficients
     varying by material type and variable velocity """
     def __init__(self,nc=1,nd=2,
@@ -4761,6 +4789,8 @@ class MultiphaseGroundwaterTransportCoefficients(TC_base):
 
 class VariablySaturatedGroundwaterEnergyTransportCoefficients(MultiphaseGroundwaterTransportCoefficients):
     from proteus.ctransportCoefficients import variablySaturatedGroundwaterEnergyTransportCoefficientsEvaluate_hetMat
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    variablySaturatedGroundwaterEnergyTransportCoefficientsEvaluate_hetMat = staticmethod(variablySaturatedGroundwaterEnergyTransportCoefficientsEvaluate_hetMat)
     """ groundwater heat equation with coefficients varying by material
     type and variable velocity """
     def __init__(self,nc=1,nd=2,
