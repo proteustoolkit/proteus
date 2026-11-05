@@ -920,6 +920,11 @@ class TwoStageNewton(Newton):
         ######################################
         if hasStage==False:
             return self.failedFlag
+        elif self.failedFlag:
+            # the second stage starts from the first one's solution: a failed first stage fails the step, which
+            # the step controller cuts and retries (the second stage's solve would reset failedFlag)
+            logEvent(" FIRST STAGE failed, skipping the second stage",level=1)
+            return self.failedFlag
         else:
             logEvent(" SECOND STAGE",level=1)
             self.F.stage = 2

@@ -7,6 +7,7 @@
 #include "richards.h"
 #include "lowOrder.h"
 #include "vof.h"
+#include "ncls.h"
 #include <stdexcept>
 #include <string>
 
@@ -476,6 +477,55 @@ PYBIND11_MODULE(adrh_proto, m)
                                      isFlux.data() + f * nQf, gflux.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
                                      flux.mutable_data() + f * nQf, uUp.mutable_data() + f * nQf);
       return py::make_tuple(R, J, flux, uUp);
+    });
+  });
+
+  // NCLS (ncls.h): the same element kernel with H = v . grad u, fields (nE, nQ, nS) = the velocity; returns R, J, numDiff, cfl
+  // as vof_supg does.
+  m.def("ncls_supg", [](int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr numDiffLast, Arr h,
+                        double alpha, double sc_c, double sc_uref, double sc_beta, double sc_drop_time) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::NCLSCoefficients<nS>;
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
+      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
+      py::array_t<int> cut(nE);
+      double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
+      int *cutp = cut.mutable_data();
+      const double *X = xn.data(), *U = u.data(), *F = fields.data(), *B = beta.data(), *NL = numDiffLast.data(), *H = h.data();
+      {
+        py::gil_scoped_release release;
+        for (int eN = 0; eN < nE; ++eN)
+        {
+          adrh::scalarSUPGElement<C, S>(C(), P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), F + eN * nQ * C::nFields,
+                                        B + eN * nQ, NL + eN * nQ, H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
+          cutp[eN] = adrh::signChangeElement<nD>(U + eN * nD) ? 1 : 0;
+        }
+      }
+      return py::make_tuple(R, J, nd_, cfl, cut);
+    });
+  });
+  // NCLS exterior faces: as vof_faces, with rd (nF, nQf) the redistanced trace in place of the flux condition. Returns R, J,
+  // the trace u and its normalized gradient (nF, nQf, nS).
+  m.def("ncls_faces", [](int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi, Arr qwf, Arr fields, IArrV isDirichlet, Arr g, Arr rd) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::NCLSCoefficients<nS>;
+      const int nF = xn.shape(0), nQf = qwf.shape(0);
+      py::array_t<double> R({nF, nD}), J({nF, nD, nD}), uT({nF, nQf}), gN({nF, nQf, nS});
+      double *Rp = R.mutable_data(), *Jp = J.mutable_data();
+      for (int i = 0; i < nF * nD; ++i) Rp[i] = 0.0;
+      for (int i = 0; i < nF * nD * nD; ++i) Jp[i] = 0.0;
+      const int *fl = faceLocal.data();
+      for (int f = 0; f < nF; ++f)
+        adrh::scalarInflowPenaltyFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS,
+                                            qwf.data(), fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf,
+                                            g.data() + f * nQf, rd.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
+                                            uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
+      return py::make_tuple(R, J, uT, gN);
     });
   });
 }

@@ -2901,9 +2901,9 @@ class Diffusion_LDG(NF_base):
                         for cj in range(self.nc):
                             if (ck,cj) in dphi:
                                 if self.vt.sd:
-                                    cnumericalFlux.updateExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],
+                                    cnumericalFlux.updateExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(self.isDiffusiveFluxBoundary[ci],
+                                                                                                              self.vt.coefficients.sdInfo[(ci,ck)][0],
                                                                                                               self.vt.coefficients.sdInfo[(ci,ck)][1],
-                                                                                                              self.isDiffusiveFluxBoundary[ci],
                                                                                                               self.mesh.exteriorElementBoundariesArray,
                                                                                                               self.mesh.elementBoundaryElementsArray,
                                                                                                               self.mesh.elementBoundaryLocalElementBoundariesArray,
@@ -3496,7 +3496,7 @@ class HamiltonJacobi_DiagonalLesaintRaviart_Diffusion_IIPG(NF_base):
             for ck in range(self.nc):
                 if ('a',ci,ck) in ebqe:
                     if self.vt.sd:
-                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][0],
+                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][1],
                                                                                   self.mesh.exteriorElementBoundariesArray,
                                                                                   self.mesh.elementBoundaryElementsArray,
                                                                                   self.mesh.elementBoundaryLocalElementBoundariesArray,
@@ -3720,7 +3720,7 @@ class HamiltonJacobi_DiagonalLesaintRaviart_Diffusion_SIPG_exterior(Diffusion_SI
             for ck in range(self.nc):
                 if ('a',ci,ck) in ebqe:
                     if self.vt.sd:
-                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][0],
+                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][1],
                                                                                   self.mesh.exteriorElementBoundariesArray,
                                                                                   self.mesh.elementBoundaryElementsArray,
                                                                                   self.mesh.elementBoundaryLocalElementBoundariesArray,
@@ -3873,7 +3873,7 @@ class HamiltonJacobi_Pressure_DiagonalLesaintRaviart_Diffusion_SIPG_exterior(Ham
             for ck in range(self.nc):
                 if ('a',ci,ck) in ebqe:
                     if self.vt.sd:
-                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][0],
+                        cnumericalFlux.calculateExteriorNumericalDiffusiveFlux_sd(self.vt.coefficients.sdInfo[(ci,ck)][0],self.vt.coefficients.sdInfo[(ci,ck)][1],
                                                                                   self.mesh.exteriorElementBoundariesArray,
                                                                                   self.mesh.elementBoundaryElementsArray,
                                                                                   self.mesh.elementBoundaryLocalElementBoundariesArray,
@@ -3935,8 +3935,8 @@ class DarcyFCFF_IIPG_exterior(NF_base):
             self.vt.coefficients.updateToMovingDomain(self.vt.timeIntegration.t,self.ebqe)
         if self.vt.sd:
             cnumericalFlux.calculateGlobalExteriorNumericalFluxDarcyFCFF_sd(self.vt.coefficients.sdInfo[(0,1)][0],self.vt.coefficients.sdInfo[(0,1)][1],
-                                                                            self.vt.coefficients.sdInfo[(0,1)][0],self.vt.coefficients.sdInfo[(1,0)][1],
-                                                                            self.vt.coefficients.sdInfo[(0,1)][0],self.vt.coefficients.sdInfo[(1,1)][1],
+                                                                            self.vt.coefficients.sdInfo[(1,0)][0],self.vt.coefficients.sdInfo[(1,0)][1],
+                                                                            self.vt.coefficients.sdInfo[(1,1)][0],self.vt.coefficients.sdInfo[(1,1)][1],
                                                                             self.mesh.exteriorElementBoundariesArray,
                                                                             self.mesh.elementBoundaryElementsArray,
                                                                             self.mesh.elementBoundaryLocalElementBoundariesArray,

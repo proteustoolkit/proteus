@@ -249,8 +249,6 @@ namespace proteus
   extern int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
                                        std::vector<int>& parents);
 
-  extern int partitionElementsOriginal(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap);
-
   extern int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nNodes_overlap,
                             const int* nodeOwners=NULL, const int* nodeWeights=NULL);
 
@@ -304,6 +302,48 @@ namespace proteus
                                     int* nodeNumbering_subdomain2global,
                                     std::map<int,int>& nodeNumbering_global2subdomainMap,
                                     double* nodeArray, int* nodeMaterialTypes);
+
+  /* I/O, local: stream a Triangle or TetGen .ele file and keep, in file order,
+     the elements with a node among the keys of `nodes` (0-based file
+     numbers): their file numbers, their file nodes (simplexDim each, in
+     elementNodes) and, when the header announces attributes, the first
+     (elementIds). False if the file cannot be opened. */
+  extern bool readSimplexElementsTouching(const std::string& elementFileName, const char* format, int simplexDim,
+                                          int indexBase, int nNodes_global, const std::map<int,int>& nodes,
+                                          int& nElements_global, int& hasElementMarkers,
+                                          std::vector<int>& elements, std::vector<int>& elementNodes,
+                                          std::vector<double>& elementIds);
+
+  /* I/O, local: stream a Triangle/TetGen .face or .edge file (nNodesPerEntity
+     nodes per line) and keep, in file order, the entities with a node among
+     the keys of `nodes`: file numbers, file nodes and (headerHasMarkers and the
+     header says so) markers. With headerHasMarkers false the header gives only
+     the count and markers are not read. False if the file cannot be opened. */
+  extern bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
+                                             int nNodesPerEntity, int indexBase, bool headerHasMarkers,
+                                             const std::map<int,int>& nodes, int& nEntities_global, int& hasMarkers,
+                                             std::vector<int>& numbers, std::vector<int>& entityNodes,
+                                             std::vector<int>& ids);
+
+  /* MPI: file number -> new number of the nodes this rank owns after
+     repartitioning, sent by the ranks whose default chunk (nodeOffsets_old)
+     computed them (old2new_chunk). One exchange. */
+  extern std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                                  const std::vector<int>& nodeOffsets_new,
+                                                  const std::vector<int>& old2new_chunk);
+
+  /* MPI: the new numbers of the file nodes `wanted`, from the ranks whose
+     default chunk holds them. Collective: every rank calls it. */
+  extern std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                                 const std::vector<int>& old2new_chunk, const std::set<int>& wanted);
+
+  /* MPI: flag -1 the subdomain faces the partition cut (exterior to the
+     subdomain, interior to the mesh) whose flag is 0, asking each face's owner
+     whether it is exterior to the mesh. For partitioners without the global
+     mesh (parun -F). Returns the number marked on this rank. Collective.
+     flagsFromFile false: the face flags are the builder's exterior 1 /
+     interior 0, so every exterior cut face is marked, whatever its flag. */
+  extern int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFile=true);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
 

@@ -35,13 +35,13 @@ def _vortex(out, ti, order, mode, n, endn=None):
     env = _env(**({"HS_ENDN": endn} if endn is not None else {}))
     cmd = [sys.executable, os.path.join(harness, "run_case.py"), str(out), ti, str(order), mode] + \
           ([str(n)] if mode != "full" else [])
-    subprocess.run(cmd, env=env, check=True, capture_output=True)
+    subprocess.run(cmd, env=env, check=True, capture_output=True, timeout=600)
 
 
 def _rkev(out, mode, n, endn=None):
     env = _env(**({"HS_ENDN": endn} if endn is not None else {}))
     subprocess.run([sys.executable, os.path.join(harness, "run_rkev.py"), str(out), mode, str(n)],
-                   env=env, check=True, capture_output=True)
+                   env=env, check=True, capture_output=True, timeout=600)
 
 
 def _difference(a, b, step, fields):
@@ -91,7 +91,7 @@ def _hot_with_other_order(tmp_path, mode):
     _vortex(tmp_path / "hot", "vbdf", 2, "stop", 6)
     env = _env(HS_SONAME="hs_vbdf2", HS_HOTMODE=mode, HS_ENDN=8)
     return subprocess.run([sys.executable, os.path.join(harness, "run_case.py"), str(tmp_path / "hot"),
-                           "vbdf", "1", "hot", "6"], env=env, capture_output=True, text=True)
+                           "vbdf", "1", "hot", "6"], env=env, capture_output=True, text=True, timeout=600)
 
 
 def test_continue_stops_and_names_a_changed_step_policy(tmp_path):

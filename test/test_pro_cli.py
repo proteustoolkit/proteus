@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def pro(*args, cwd=None):
     """Run ``python -m proteus.cli`` (no installed ``pro`` needed)."""
     return subprocess.run([sys.executable, "-m", "proteus.cli"] + list(args),
-                          cwd=cwd, capture_output=True, text=True)
+                          cwd=cwd, capture_output=True, text=True, timeout=600)
 
 
 def test_help_does_not_start_mpi_or_petsc():
@@ -32,7 +32,7 @@ def test_help_does_not_start_mpi_or_petsc():
             "build_parser().format_help(); "
             "print('petsc4py' in sys.modules, 'mpi4py' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code],
-                         capture_output=True, text=True, check=True)
+                         capture_output=True, text=True, check=True, timeout=600)
     assert out.stdout.split() == ["False", "False"]
 
 
@@ -146,7 +146,7 @@ def test_iproteus_is_a_shim_over_runtime(tmp_path):
             "print(type(opts) is runtime.RunOptions, comm.size(), "
             "NumericalSolution.__name__, callable(reload))\n")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                         cwd=tmp_path)
+                         cwd=tmp_path, timeout=600)
     assert out.returncode == 0, out.stderr
     assert "warned: proteus.iproteus is deprecated" in out.stdout
     assert out.stdout.splitlines()[-1] == "True 1 proteus.NumericalSolution True"
@@ -172,7 +172,7 @@ def test_run_matches_parun_bitwise(tmp_path):
         for s in sources:
             shutil.copy(s, tmp_path / name)
     ran = subprocess.run(["parun", "ladr_2d_p.py", "ladr_2d_n.py"],
-                         cwd=tmp_path / "parun", capture_output=True, text=True)
+                         cwd=tmp_path / "parun", capture_output=True, text=True, timeout=600)
     assert ran.returncode == 0, ran.stderr[-2000:]
     ran = pro("run", "ladr_2d_p.py", "ladr_2d_n.py", cwd=tmp_path / "pro")
     assert ran.returncode == 0, ran.stderr[-2000:]
@@ -238,7 +238,7 @@ def test_msh_then_run_without_meshing(tmp_path):
     reference = tmp_path / "parun"
     _copy_ci_models(reference)
     ran = subprocess.run(["parun"] + TETGEN_MODEL, cwd=reference,
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, timeout=600)
     assert ran.returncode == 0, ran.stderr[-2000:]
     import numpy as np
     expected = _datasets(reference / "poisson_tetgen_0.h5")
@@ -381,7 +381,7 @@ def test_shell_batch_run_matches_parun(tmp_path):
 
     _copy_ladr(tmp_path / "parun")
     ran = subprocess.run(["parun"] + LADR, cwd=tmp_path / "parun",
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, timeout=600)
     assert ran.returncode == 0, ran.stderr[-2000:]
     expected = _datasets(tmp_path / "parun" / "ladr_2d.h5")
     actual = _datasets(tmp_path / "shell" / "ladr_2d.h5")
@@ -395,7 +395,7 @@ def test_shell_prompt_reads_python(tmp_path):
     out = subprocess.run(
         [sys.executable, "-m", "proteus.cli", "shell", *LADR, "-l", "0"],
         cwd=tmp_path / "shell", input="print('model is', so.name, opts.hotStart)\n",
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=600)
     assert out.returncode == 0, out.stderr[-2000:]
     assert "model is ladr_2d False" in out.stdout
 
@@ -403,7 +403,7 @@ def test_shell_prompt_reads_python(tmp_path):
 def test_shell_without_a_model(tmp_path):
     out = subprocess.run(
         [sys.executable, "-m", "proteus.cli", "shell", "-l", "0"], cwd=tmp_path,
-        input="run()\n", capture_output=True, text=True)
+        input="run()\n", capture_output=True, text=True, timeout=600)
     assert "no model loaded: load('model_so.py') first" in out.stderr
 
 
@@ -786,7 +786,7 @@ def test_json_output_survives_what_mpi_prints_to_stdout():
             "print('from Python, after')\n"
             "print('{\"ok\": true}', file=out, flush=True)\n"
             "os.write(1, b'[UCX] at exit\\n')\n")
-    ran = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    ran = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=600)
     assert ran.returncode == 0, ran.stderr
     assert json.loads(ran.stdout) == {"ok": True}
     assert "UCX ERROR" in ran.stderr and "from Python, after" in ran.stderr

@@ -39,7 +39,7 @@ def VelocityPostProcessingChooser(transport):
             elif 'pwl' in transport.conservativeFlux[ci]:
                 ppcomps.append(ci)
                 pptypes[ci] = transport.conservativeFlux[ci]
-            elif transport.conservativeFlux[ci] in ['point-eval','dg-point-eval','point-eval-gwvd']: #tjp addin for gwvd
+            elif transport.conservativeFlux[ci] in ['point-eval','dg-point-eval']:
                 ppcomps.append(ci)
                 pptypes[ci] = transport.conservativeFlux[ci]
             elif transport.conservativeFlux[ci] == 'pwc':
@@ -52,7 +52,9 @@ def VelocityPostProcessingChooser(transport):
                 ppcomps.append(ci)
                 pptypes[ci] = transport.conservativeFlux[ci]
             else:
-                logEvent("Unrecognized conservative flux", transport.conservativeFlux[ci])
+                raise ValueError("unknown conservativeFlux %r for component %s; the variants are %s"
+                                 % (transport.conservativeFlux[ci], ci,
+                                    ", ".join(sorted(AggregateVelocityPostProcessor.vpp_types))))
         #for ci
         velocityPostProcessor = AggregateVelocityPostProcessor(pptypes,transport)
     #conservative flux specified
@@ -2902,86 +2904,6 @@ class VPP_POINT_EVAL(VelocityPostProcessingAlgorithmBase):
         #
         return vx
 
-#########################
-#  GWVD Post Processing Classes; gwvd addin tjp
-#########################
-class VPP_POINT_EVAL_GWVD(VelocityPostProcessingAlgorithmBase):
-    """
-    Velocity calculation for evaluating coarse grid velocity solution
-    at fine grid quadrature points; assumes that the coarse velocity degrees of
-    freedom from the LDG solution are known
-
-    Currently only working for P=1 and P=2
-
-    It post-processes nothing: the velocity is the one the transport's LDG
-    (mixed-form) flux writes into q[('velocity',ci)] (sparse diffusion only),
-    and no face velocities are set. Without an LDG flux the velocity would be
-    zero, so other fluxes are refused. evaluateElementVelocityField needs
-    q[('velocity_dofs',ci)], which nothing in proteus sets (the 2011 code's
-    calculateVelocityQuadrature_MixedForm2_vdof_sd was never wrapped).
-    """
-    from .cpostprocessing import getElementLDGvelocityValuesLagrangeRep
-    def __init__(self,vectorTransport=None,vtComponents=[0]):
-        VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='point-eval-gwvd',
-                                                     vectorTransport=vectorTransport,
-                                                     vtComponents=vtComponents)
-        from .NumericalFlux import Diffusion_LDG
-        if not (isinstance(self.vt.numericalFlux,Diffusion_LDG) and self.vt.sd):
-            raise RuntimeError("conservativeFlux 'point-eval-gwvd' keeps the velocity an LDG numerical flux "
-                               "(Diffusion_LDG or a subclass, sparse diffusion) computes; with %s there is none"
-                               % type(self.vt.numericalFlux).__name__)
-        #how is the local velocity represented, 1=P1 Lagrange, 2=P2 Lagrange
-
-        self.testSpace=None
-        for ci in self.vtComponents:
-            self.testSpace=self.vt.u[ci].femSpace
-
-
-
-    def postprocess_component(self,ci,verbose=0):
-        """
-       may need to compute velocity field at the desired velocity dofs if this step is not
-       included in the getResidual step of the solution
-        """
-        pass
-
-
-    def evaluateElementVelocityField(self,x,ci):
-        """
-        evaluate velocity field assuming velocity_dofs already calculated
-        for now assumes x shaped like nE x nq x 3
-        TODO:
-           put python loops in c
-        """
-        assert len(x.shape) == 3, "wrong shape for x= %s " % x.shape
-        if ('velocity_dofs',ci) not in self.q:
-            raise RuntimeError("point-eval-gwvd evaluates [P^k]^d velocity degrees of freedom in q[('velocity_dofs',%d)], "
-                               "and nothing in proteus sets them" % ci)
-        nE = x.shape[0]; nq = x.shape[1]; nd = self.vt.nSpace_global
-        vx = numpy.zeros((nE,nq,nd),'d')
-        #have to evaluate shape functions at new points. This is painful
-        xiArray = numpy.zeros(x.shape,'d')
-        vArray  = numpy.zeros((nE,nq,self.testSpace.max_nDOF_element),'d')
-        invJ    = numpy.zeros((nE,nq,self.vt.q['inverse(J)'].shape[2],self.vt.q['inverse(J)'].shape[3]),
-                                'd')
-        for ie in range(nE):
-            for iq in range(nq):
-                invJ[ie,iq,:,:] = self.vt.q['inverse(J)'][ie,0,:,:] #assume affine
-            #iq
-        #iq
-
-        self.testSpace.elementMaps.getInverseValues(invJ,x,xiArray)
-        self.testSpace.getBasisValuesAtArray(xiArray,vArray)
-
-        cpostprocessing.getElementLDGvelocityValuesLagrangeRep(vArray,
-                                                                self.q[('velocity_dofs',ci)],
-                                                                vx)
-
-        return vx
-
-    def archiveVelocityValues(self,archive,t,tCount,initialPhase=False,meshChanged=False):
-        pass
-
 #########################################################################
 #Begin trying "fixes" for material interface jumps
 class VPP_LOW_K_IB_PWL_RT0(VPP_PWL_RT0):
@@ -3194,7 +3116,6 @@ class AggregateVelocityPostProcessor(object):
                  'sun-gs-rt0':VPP_SUN_GS_RT0,    #Sun and Wheeler local Gauss-Seidel, RT_0 velocity repres.
                  'point-eval':VPP_POINT_EVAL,    #direct pointwise evaluation of fluxes
                  'dg-point-eval':VPP_POINT_EVAL, #pointwise evaluation for dg
-                 'point-eval-gwvd':VPP_POINT_EVAL_GWVD, #pointwise evaluation for dg using LDG method vel_DoFs, add in tjp
                  'dg':VPP_DG_RT0,            #dg scheme, RT_0 local velocity repres
                  'dg-bdm':VPP_DG_BDM,        #dg scheme,  Brezzi Douglas Marini linear velocity repres
                  'pwl-ib-fix-0':VPP_LOW_K_IB_PWL_RT0} #hack to enforce zero flux manually around low perm regions

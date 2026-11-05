@@ -5,7 +5,7 @@ Partitions one of the stored unstructured meshes in meshPartition/ and writes
 every array the partitioner produced on this rank to OUTDIR/rank<r>.npz, so
 the test can check them against the serial mesh and against each other.
 
-Usage: meshPartition_mpi.py MESH PATH OWNERS OVERLAP OUTDIR
+Usage: meshPartition_mpi.py MESH PATH OWNERS OVERLAP OUTDIR [FILEBASE]
 
 MESH     tri  meshPartition/pslg.{node,ele,edge}      (Triangle, 154 nodes)
          tet  meshPartition/plc.{node,ele,face,edge}  (TetGen, 131 nodes)
@@ -14,11 +14,14 @@ PATH     serial   no partitioning: the global mesh as the reader builds it
          element  partitionElements on the mesh read into memory
          files    partitionNodesFromTriangleFiles / partitionNodesFromTetgenFiles
                   (``parun -F``): the partitioner reads the files itself
+         files-element  parun -F asked for an element partition: checks every
+                  rank raises the ValueError that says -F is node-only
 OWNERS   scatter  prescribed owners, a deterministic hash of the index
          graph    none: MatPartitioning decides; run it with
                   -mat_partitioning_type current to get the default contiguous
                   chunks, which is what makes it reproducible
 OVERLAP  layers of overlap (the files path supports only 1)
+FILEBASE another mesh of the same kind (a variant of the stored one)
 
 Prints ``RESULT ... calls=<partitioner>:<owners given> petsc=<0|1>``. calls is
 which cpartitioning entry point ran and whether it was handed owners: the proof
@@ -38,7 +41,7 @@ rank, size = comm.rank(), comm.size()
 mpi = comm.comm.tompi4py()
 meshKind, path, ownersKind, overlap, outdir = sys.argv[1:6]
 overlap = int(overlap)
-filebase = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[meshKind])
+filebase = sys.argv[6] if len(sys.argv) > 6 else os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[meshKind])
 nd = {'tri': 2, 'tet': 3}[meshKind]
 
 # Record which partitioner entry point ran and whether it was given owners.
@@ -91,6 +94,22 @@ nodeType = MeshTools.MeshParallelPartitioningTypes.node
 elementType = MeshTools.MeshParallelPartitioningTypes.element
 Mesh = {'tri': MeshTools.TriangularMesh, 'tet': MeshTools.TetrahedralMesh}[meshKind]
 arrays = {}
+if path == 'files-element':
+    #parun -F partitions by nodes only: element partitioning must say so, on every rank
+    Multilevel = {'tri': MeshTools.MultilevelTriangularMesh, 'tet': MeshTools.MultilevelTetrahedralMesh}[meshKind]
+    mlMesh = Multilevel(0, 0, 0, skipInit=True, nLayersOfOverlap=overlap, parallelPartitioningType=elementType)
+    generate = getattr(mlMesh, {'tri': 'generatePartitionedMeshFromTriangleFiles',
+                                'tet': 'generatePartitionedMeshFromTetgenFiles'}[meshKind])
+    try:
+        generate(filebase, 1, Mesh(), 1, nLayersOfOverlap=overlap, parallelPartitioningType=elementType)
+        error = 'none'
+    except ValueError as e:
+        error = 'ValueError' if 'only parallelPartitioningType = MeshParallelPartitioningTypes.node' in str(e) else repr(e)
+    errors = mpi.allgather(error)
+    if rank == 0:
+        print("RESULT mesh=%s path=%s ranks=%d errors=%s calls=%s" % (meshKind, path, size, ','.join(errors),
+                                                                     ','.join(calls) or 'none'))
+    sys.exit(0)
 if path == 'files':
     assert ownersKind == 'graph', 'the files path has no prescribed owners'
     mesh = Mesh()
