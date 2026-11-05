@@ -3026,7 +3026,7 @@ class RusanovNumericalFlux_Diagonal(Advection_DiagonalUpwind):
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
-                 getPeriodicConditions):
+                 getPeriodicConditions=None):
         Advection_DiagonalUpwind.__init__(self,vt,
                                           getPointwiseBoundaryConditions,
                                           getAdvectiveFluxBoundaryConditions,
@@ -3270,7 +3270,7 @@ class ConvexOneSonicPointNumericalFlux(Advection_DiagonalUpwind):
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
-                 getPeriodicBoundaryConditions,
+                 getPeriodicBoundaryConditions=None,
                  sonicPoint=0.0,sonicFlux=0.0):
         Advection_DiagonalUpwind.__init__(self,vt,getPointwiseBoundaryConditions,
                                           getAdvectiveFluxBoundaryConditions,
@@ -4722,10 +4722,12 @@ class RusanovNumericalFlux(RusanovNumericalFlux_Diagonal):
 
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
-                 getDiffusiveFluxBoundaryConditions):
+                 getDiffusiveFluxBoundaryConditions,
+                 getPeriodicConditions=None):
         RusanovNumericalFlux_Diagonal.__init__(self,vt,getPointwiseBoundaryConditions,
                                                getAdvectiveFluxBoundaryConditions,
-                                               getDiffusiveFluxBoundaryConditions)
+                                               getDiffusiveFluxBoundaryConditions,
+                                               getPeriodicConditions)
 
         self.ebqe['eigen_bound']=numpy.copy(self.ebqe[('u',0)])
         if 'eigen_bound' not in self.vt.q:
