@@ -24,6 +24,8 @@ def pytest_configure(config):
     """
     import signal
     import threading
+    config.addinivalue_line('markers', 'mumps(reason): needs a PETSc built with MUMPS '
+                            '(skipped without it, except under GitHub Actions)')
     if (threading.current_thread() is threading.main_thread()
             and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL):
         signal.signal(signal.SIGTERM, _end_launches_on_sigterm)
@@ -78,6 +80,42 @@ def pytest_ignore_collect(collection_path, config):
         if top in spec['paths']:
             return True
     return None
+
+
+# MUMPS. Every CI leg's PETSc (conda-forge) has it; a PETSc built without it (the fleet's
+# pip-built dev_pip prefix, a hand-built PETSc) cannot run a test that names MUMPS or that needs
+# the direct solve it stands for: the singular and saddle-point systems whose fallback,
+# `linear_solver: petsc` with PETSc's default GMRES+ILU(0), fails or diverges (a known gap:
+# proteus has no scalable no-MUMPS solver for them yet). Such a test carries
+# @pytest.mark.mumps(reason) and is skipped there, with the reason in the summary, instead of
+# failing 22 times a night. Under GitHub Actions nothing is skipped: a CI environment that lost
+# MUMPS must fail, not go quietly green. The probe runs once, in a subprocess (importing petsc4py
+# here would start PETSc before a test could give it its own options), and only when a marked test
+# is about to run.
+_MUMPS = []
+
+
+def petsc_has_mumps():
+    """Whether the PETSc that petsc4py loads was built with MUMPS (probed once per process)."""
+    if not _MUMPS:
+        probe = ("import petsc4py; petsc4py.init([]); from petsc4py import PETSc; "
+                 "print(int(PETSc.Sys.hasExternalPackage('mumps')))")
+        try:
+            out = subprocess.run([sys.executable, '-c', probe], capture_output=True, text=True,
+                                 timeout=120).stdout.strip()
+            _MUMPS.append(out.endswith('1'))
+        except (OSError, subprocess.SubprocessError):
+            _MUMPS.append(True)     # cannot tell: run the test and let it say
+    return _MUMPS[0]
+
+
+def pytest_runtest_setup(item):
+    marker = item.get_closest_marker('mumps')
+    if marker is None or os.environ.get('GITHUB_ACTIONS') == 'true':
+        return
+    if not petsc_has_mumps():
+        why = marker.args[0] if marker.args else marker.kwargs.get('reason', 'it solves with MUMPS')
+        pytest.skip('this PETSc was built without MUMPS, and ' + why)
 
 
 def pytest_report_header(config):

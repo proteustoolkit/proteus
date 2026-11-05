@@ -1231,6 +1231,7 @@ POISEUILLE = """\
 
 
 @needs_mpiexec
+@pytest.mark.mumps("the pressure null space is solved through MUMPS; the fallback without it (GMRES+ILU(0)) fails" " in ILU: proteus has no scalable no-MUMPS solver for singular saddle-point systems yet")
 def test_a_pressure_null_space_runs_on_two_ranks(tmp_path):
     """Taylor-Hood (each rank's DOFs blocked by component) and SUPG/PSPG P1/P1
     (interleaved, block size 3), the pressure fixed only up to a constant."""

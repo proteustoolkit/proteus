@@ -208,6 +208,7 @@ DG_PARALLEL = [("dg", 1, 2), ("dg", 2, 4), ("dg-bdm", 1, 4), ("dg-bdm", 2, 2)]
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("its parallel DG solve is LU through MUMPS (vpp_partition_mpi.py)")
 @pytest.mark.parametrize("variant,order,ranks", DG_PARALLEL, ids=["%s-P%d-%dranks" % case for case in DG_PARALLEL])
 def test_a_dg_variant_in_parallel_is_the_serial_answer(tmp_path, variant, order, ranks):
     """Element partition, one layer of overlap: every owned element has its neighbours. 4e-12 measured."""

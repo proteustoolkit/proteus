@@ -191,6 +191,7 @@ def _rans3pf(ranks, cwd, **overrides):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("its pressure and momentum solves are LU through MUMPS")
 def test_rans3pf_projection_scheme_on_two_ranks_gives_the_serial_answer(tmp_path):
     """Momentum flux on the rank cut: 2.4706e-03 on two ranks without the zero-flux entry,
     2.4886e-03 with it and on one rank."""
@@ -224,6 +225,7 @@ def _clsvof(ranks, cwd, **overrides):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("its CLSVOF solve is LU through MUMPS")
 def test_clsvof_on_a_partition_with_overlap_gives_the_serial_answer_and_without_is_refused(tmp_path):
     """CLSVOF's lumped projections are not summed across ranks: a partition without overlap
     gave a 3e-3 relative error in the first step, so it is refused."""
