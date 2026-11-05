@@ -349,6 +349,22 @@ def report(problem, rows):
         previous = (size, errors)
 
 
+def split_reason(doc, entry):
+    """Why a discretization split into sub-problems is not run: ymf_run solves
+    the model as one ADR system. Says what the dispatch (proteus.Dispatch)
+    maps it onto, or why the dispatch refuses it."""
+    from proteus.Dispatch import DispatchError, dispatch
+    head = "%s: split into sub-problems (%s); ymf_run solves the model as one ADR system" % (
+        entry["name"], ", ".join(s.get("name", "?") for s in entry["subproblems"]))
+    try:
+        found = dispatch(doc, entry["name"])
+    except DispatchError as e:
+        return "%s, and the dispatch refuses it: %s" % (head, e)
+    return ("%s. It dispatches to %s; running a split discretization from the dispatch is not "
+            "wired up yet" % (head, ", ".join("%s %s" % (m.subproblem, m.module.rpartition(".")[2])
+                                              for m in found)))
+
+
 def blockers(doc, problem, entry):
     """Why one discretization cannot close in this run: what ymf says it
     lacks (with ymf's hints), then what Proteus cannot run. Empty if it can.
@@ -372,9 +388,7 @@ def blockers(doc, problem, entry):
     if entry.get("subproblems"):
         # solving the whole model as one system would run a different
         # discretization under this branch's name
-        return ["%s: split into sub-problems (%s); ymf_run solves the model as one ADR "
-                "system, and mapping sub-problems onto Proteus's models is not wired up yet"
-                % (name, ", ".join(s.get("name", "?") for s in entry["subproblems"]))]
+        return [split_reason(doc, entry)]
     method = stabilization_of(doc, entry)
     if method not in STABILIZATIONS:
         # running it without would solve a different weak form under this
@@ -545,6 +559,25 @@ def _run(args, prog, mesh_only, comm):
             print("  %s: %s" % (key, why))
         if not args.prune:
             raise SystemExit("refusing to drop them: rerun with --prune, or use another --outdir")
+
+    # A split discretization is not one ADR system, and a model that only a
+    # split can solve (two-phase level-set flow) is not one either: say what
+    # each would dispatch to before classifying the model as one.
+    split = [d for d in doc["solution_paths"]["discretizations"]
+             if d["name"] in selected and d.get("subproblems")]
+    others = [n for n in selected if n not in [d["name"] for d in split]]
+    if split and args.ignore and others:
+        for entry in split:
+            print("\n%s -- left out (--ignore): %s" % (entry["name"], split_reason(doc, entry)))
+        selected = others
+    elif split:
+        print("\n%s: nothing was run:" % (prog,), file=sys.stderr)
+        for entry in split:
+            print("  " + split_reason(doc, entry), file=sys.stderr)
+        if others:
+            print("Choose the others with --discretization (%s), or rerun with --ignore."
+                  % ", ".join(others), file=sys.stderr)
+        return 2
 
     problem = adr_problem(doc)
     print("%s: %s" % (args.input, doc["model"]["name"]))
