@@ -21,7 +21,7 @@ iteration, through a run of the case under ``mpiexec``:
 
 Usage: model_baseline_mpi.py CASE.py [context='k=v ...'] [ceilings=FILE] [out=FILE] [datadir=DIR]
                              [warmup=3] [superlu=0|1] [petsc='-k v -k2 v2 !-k3'] [ctest=r|r-true]
-                             [solution=PREFIX] [n='model.attr=value ...']
+                             [solution=PREFIX] [n='model.attr=value ...'] [params='model.attr=value ...']
 
 ``superlu=0`` overrides the case's ``SystemNumerics.useSuperlu`` before the models are set up, so
 every model gets TwoPhaseFlow's iterative PETSc options (RANS2P: GMRES + ASM with LU blocks; VOF,
@@ -35,6 +35,8 @@ that builds the true residual every Krylov iteration). ``solution`` writes every
 solution, per rank, to PREFIX.<rank>.npz, to compare two solver choices on the same partition, and
 prints each model's integral of u over the domain (VOF: the water volume). ``n`` sets numerics-module
 attributes of a model (``n='rans2p.nl_atol_res=1e-12'``: a tightly converged reference run).
+``params`` sets attributes of a TwoPhaseFlow model's Parameters object before the problem initializes
+(``params='rans2p.preconditioner=schur_boomeramg'``).
 
 CASE.py is a TwoPhaseFlow case module (test/TwoPhaseFlow/damBreak.py, marin.py); the
 context string is the case's ``-C`` options (``'final_time=0.05 he=0.05'``). Run from a
@@ -66,7 +68,8 @@ def parse(argv):
     if not argv or not argv[0].endswith('.py'):
         raise SystemExit(__doc__)
     opts = {'case': argv[0], 'context': None, 'ceilings': None, 'out': None, 'datadir': '.',
-            'warmup': '3', 'superlu': None, 'petsc': '', 'ctest': None, 'solution': None, 'n': ''}
+            'warmup': '3', 'superlu': None, 'petsc': '', 'ctest': None, 'solution': None, 'n': '',
+            'params': ''}
     for arg in argv[1:]:
         key, _, value = arg.partition('=')
         if key not in opts:
@@ -269,15 +272,22 @@ def newton_table(warmup):
     return table
 
 
-def load_case(case_path, context, superlu=None):
+def load_case(case_path, context, superlu=None, params=''):
     from proteus import Context, Profiling
     from proteus.cli.run import _load
-    if superlu is not None:
+    if superlu is not None or params:
         from proteus.TwoPhaseFlow.TwoPhaseFlowProblem import TwoPhaseFlowProblem
         initializeAll = TwoPhaseFlowProblem.initializeAll
 
         def initialize_with_solver_choice(self):
-            self.SystemNumerics.useSuperlu = bool(int(superlu))
+            if superlu is not None:
+                self.SystemNumerics.useSuperlu = bool(int(superlu))
+            for item in params.split():
+                target, _, value = item.partition('=')
+                model, _, attr = target.partition('.')
+                for key, m in self.SystemPhysics.modelDict.items():
+                    if model in (key, m.name):
+                        setattr(m, attr, value)
             return initializeAll(self)
         TwoPhaseFlowProblem.initializeAll = initialize_with_solver_choice
 
@@ -343,7 +353,7 @@ def main(argv):
     runopts.dataDir = opts['datadir']
     instrument_classes()
     instrument_linear_solvers()
-    so, pList, nList, sList, two_phase = load_case(opts['case'], opts['context'], opts['superlu'])
+    so, pList, nList, sList, two_phase = load_case(opts['case'], opts['context'], opts['superlu'], opts['params'])
     apply_solver_overrides(opts, pList, nList)
     ceilings = acc.load_ceilings(opts['ceilings'], size)
     simFlagsList = [{"simulationName": p.name, "simulationNameProc": p.name + repr(rank),

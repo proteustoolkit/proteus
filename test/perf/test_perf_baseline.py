@@ -79,8 +79,8 @@ def test_model_baseline_one_rank(tmp_path):
 
 def test_model_baseline_level_set_iterative(tmp_path):
     """damBreakLevelSet with TwoPhaseFlow's iterative solvers (superlu=0), one rank: RANS2P's defaults
-    (right-preconditioned GMRES, Schur fieldsplit with BoomerAMG blocks, one setup per Newton solve) run,
-    the KSP iterations are counted per Newton iteration, and solution= writes the fields and the VOF volume."""
+    (right-preconditioned GMRES, ASM with PETSc's LU per block, one setup per Newton solve) run, the KSP
+    iterations are counted per Newton iteration, and solution= writes the fields and the VOF volume."""
     ci = os.path.join(HERE, os.pardir, "TwoPhaseFlow")
     for name in os.listdir(ci):
         if name.startswith("meshDambreak"):
