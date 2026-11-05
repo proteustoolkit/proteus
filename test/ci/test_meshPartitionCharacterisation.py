@@ -692,3 +692,32 @@ def test_files_node_number_exchange(tmp_path, n):
     for nNodes, seed in ((1, 0), (37, 1), (1000, 2)):
         got = _launch([nNodes, seed], n, cwd=tmp_path, script='meshPartition_exchange_mpi.py')
         assert got == {'ranks': str(n), 'owned': str(nNodes), 'asked': got['asked']}
+
+
+@pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
+                                                         ('plc.face', 3, True), ('plc.edge', 2, False)])
+def test_files_reader_faces_and_edges(ext, nNodes, headerHasMarkers):
+    """The .face/.edge reads of the parun -F partitioners: each rank streams
+    the file and keeps, in file order, the entities with a node of one of its
+    subdomain's elements; the partitioners do nothing with the others. Both
+    read Triangle's .edge as element boundaries with markers, and every .edge
+    as edges without (the header's marker count and the marker column are not
+    read: what they have always done)."""
+    from proteus import cpartitioning
+    filename = os.path.join(HERE, 'meshPartition', ext)
+    table = np.loadtxt(filename, skiprows=1, comments='#', ndmin=2).astype(int)
+    numbers, nodes, markers = table[:, 0] - 1, table[:, 1:1 + nNodes] - 1, table[:, 1 + nNodes]
+    n = nodes.max() + 1
+    rng = np.random.default_rng(32)
+    for keep in (rng.choice(n, size=n // 5, replace=False), np.arange(n), np.array([], dtype=int)):
+        count, hasMarkers, got, gotNodes, gotMarkers = cpartitioning.readSimplexSubentitiesTouching(
+            filename, nNodes, 1, headerHasMarkers, keep.tolist())
+        touches = np.isin(nodes, keep).any(axis=1)
+        assert count == len(table) and hasMarkers == int(headerHasMarkers)
+        assert np.array_equal(got, numbers[touches])
+        assert np.array_equal(gotNodes, nodes[touches])
+        assert np.array_equal(gotMarkers, markers[touches] if headerHasMarkers else [])
+    if headerHasMarkers:
+        assert markers.any()
+    with pytest.raises(IOError):
+        cpartitioning.readSimplexSubentitiesTouching(filename + '_missing', nNodes, 1, headerHasMarkers, [0])

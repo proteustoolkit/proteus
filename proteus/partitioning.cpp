@@ -1511,6 +1511,65 @@ bool readSimplexElementsTouching(const std::string& elementFileName, const char*
   return true;
 }
 
+/* I/O, local: stream a Triangle or TetGen face (.face) or edge (.edge) file,
+   nNodesPerEntity nodes per line, and keep, in file order, the entities with a
+   node among the keys of `nodes` (0-based file numbers): their file numbers,
+   file nodes and, when headerHasMarkers and the header announces them,
+   markers. With headerHasMarkers false only the count is read from the header
+   and markers are never read (what both -F partitioners do with .edge files).
+   Entities with no such node are skipped: the -F partitioners do nothing with
+   them. Returns false, having said why, if the file cannot be opened. */
+bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
+                                    int nNodesPerEntity, int indexBase, bool headerHasMarkers,
+                                    const std::map<int,int>& nodes, int& nEntities_global, int& hasMarkers,
+                                    std::vector<int>& numbers, std::vector<int>& entityNodes, std::vector<int>& ids)
+{
+  using namespace IOutils;
+  std::ifstream file(fileName.c_str());
+  if (!file.good())
+    {
+      std::cerr<<"cannot open "<<format<<" "<<what<<" file "
+               <<fileName<<std::endl;
+      return false;
+    }
+  hasMarkers = 0;
+  if (headerHasMarkers)
+    file >> eatcomments >> nEntities_global >> hasMarkers >> eatline;
+  else
+    file >> eatcomments >> nEntities_global >> eatline;
+  assert(nEntities_global > 0);
+  numbers.clear(); entityNodes.clear(); ids.clear();
+  std::vector<int> entity_nodes(nNodesPerEntity);
+  for (int i = 0; i < nEntities_global; i++)
+    {
+      int n, nv, id(0);
+      file >> eatcomments >> n;
+      bool touches = false;
+      for (int iv = 0; iv < nNodesPerEntity; iv++)
+        {
+          file >> nv;
+          nv -= indexBase;
+          entity_nodes[iv] = nv;
+          if (nodes.find(nv) != nodes.end())
+            touches = true;
+        }
+      if (hasMarkers > 0)
+        file >> id;
+      n -= indexBase;
+      assert(0 <= n && n < nEntities_global && file.good());
+      file >> eatline;
+      if (touches)
+        {
+          numbers.push_back(n);
+          entityNodes.insert(entityNodes.end(), entity_nodes.begin(), entity_nodes.end());
+          if (hasMarkers > 0)
+            ids.push_back(id);
+        }
+    }
+  file.close();
+  return true;
+}
+
 namespace
 {
   //the rank whose range [offsets[r],offsets[r+1]) holds n
@@ -2355,20 +2414,18 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //for all element boundaries on this subdomain, which we'll use to
   //grab element boundaries from the bit array
   logEvent("Generating global face numbering and ownership corresponding to new subdomain ownership",5);
-  std::ifstream elementBoundaryFile(elementBoundaryFileName.c_str());
-
-  if (!elementBoundaryFile.good())
-    {
-      std::cerr<<"cannot open Tetgen face file "
-               <<elementBoundaryFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the faces with a node of a subdomain element; the others play no part below
   bool hasElementBoundaryMarkers = false;
   int nElementBoundaries_global;
   int ihasElementBoundaryMarkers(0);
-  elementBoundaryFile >> eatcomments >> nElementBoundaries_global >> ihasElementBoundaryMarkers >> eatline ;
+  vector<int> ebNumbers, ebNodes, ebIds;
+  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "Tetgen", "face", 3, indexBase, true,
+                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
+                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nElementBoundaries_global > 0);
   if (ihasElementBoundaryMarkers > 0)
     {
@@ -2382,17 +2439,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,valarray<int>> elementBoundariesMap;
   set<int> supportedElementBoundaries;
   set<int> elementBoundaries_subdomain;
-  for (int ieb = 0; ieb < nElementBoundaries_global; ieb++)
+  for (size_t k = 0; k < ebNumbers.size(); k++)
     {
-      int neb,nn0,nn1,nn2; int ebId(0);
-      elementBoundaryFile >> eatcomments >> neb >> nn0 >> nn1 >> nn2;
-      if (ihasElementBoundaryMarkers > 0)
-        elementBoundaryFile >> ebId;
-      neb -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      nn2 -= indexBase;
-      assert(0 <= neb && neb < nElementBoundaries_global && elementBoundaryFile.good());
+      const int neb = ebNumbers[k], nn0 = ebNodes[3*k], nn1 = ebNodes[3*k+1], nn2 = ebNodes[3*k+2];
+      const int ebId = ebIds.empty() ? 0 : ebIds[k];
       //grab the element boundaries for the node if the node is owned by the subdomain
       //this will miss the element boundaries on the "outside boundary" of the star, which we'll grab later
       //
@@ -2424,7 +2474,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
       //so the check on nodes[1] will always be false
       const int nodes[3] = {nn0_new,nn1_new,nn2_new};
       NodeTuple<3> nodeTuple(nodes);
-      elementBoundaryFile >> eatline;
       if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
         {
           elementBoundaries_subdomain.insert(neb);
@@ -2465,7 +2514,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
         }
     }
   //done reading element boundaries
-  elementBoundaryFile.close();
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
     nElementBoundaries_owned_new=0;
@@ -2710,20 +2758,19 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //4c,5c. Repeate the process for edges
   //
   logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
-  std::ifstream edgeFile(edgeFileName.c_str());
-
-  if (!edgeFile.good())
-    {
-      std::cerr<<"cannot open Tetgen edge file"
-               <<edgeFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the edges with a node of a subdomain element; the others play no part below.
+  //The .edge markers are not read (header count only), as always.
   bool hasEdgeMarkers = false;
   int nEdges_global;
   int ihasEdgeMarkers(0);
-  edgeFile >> eatcomments >> nEdges_global >> eatline;// edge file doesn currently contain markers >> ihasEdgeMarkers >> eatline ;
+  vector<int> edNumbers, edNodes, edIds;
+  if (!readSimplexSubentitiesTouching(edgeFileName, "Tetgen", "edge", 2, indexBase, false,
+                                      nodes_old2new_subdomain_map, nEdges_global,
+                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nEdges_global > 0);
   if (ihasEdgeMarkers > 0)
     {
@@ -2736,16 +2783,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,valarray<int> > elementEdgesMap;
   map<int,pair<int,int> > edgeNodesMap;
   set<int> supportedEdges;
-  for (int ied = 0; ied < nEdges_global; ied++)
+  for (size_t k = 0; k < edNumbers.size(); k++)
     {
-      int ned,nn0,nn1; int edId(0);
-      edgeFile >> eatcomments >> ned >> nn0 >> nn1;
-      if (ihasEdgeMarkers > 0)
-        edgeFile >> edId;
-      ned -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= ned && ned < nEdges_global && edgeFile.good());
+      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
+      const int edId = edIds.empty() ? 0 : edIds[k];
       int nn0_new = -1;
       if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
         nn0_new = nodes_old2new_subdomain_map[nn0];
@@ -2764,7 +2805,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      edgeFile >> eatline;
       if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
         {
           if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
@@ -2792,7 +2832,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
             }
         }
     }//end iv
-  edgeFile.close();
   int nEdges_owned_subdomain=edges_subdomain_owned.size(),
     nEdges_owned_new=0;
   MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
@@ -3811,21 +3850,18 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //In 2D, the element boundaries are edges and not faces.
   //nodeElementBoundariesArray maps an element
 
-  std::ifstream elementBoundaryFile(elementBoundaryFileName.c_str());
-
-  if (!elementBoundaryFile.good())
-    {
-      std::cerr<<"cannot open triangle edge file "
-               <<elementBoundaryFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the faces with a node of a subdomain element; the others play no part below
   bool hasElementBoundaryMarkers = false;
   int nElementBoundaries_global;
   int ihasElementBoundaryMarkers(0);
-
-  elementBoundaryFile >> eatcomments >> nElementBoundaries_global >>ihasElementBoundaryMarkers >> eatline ;
+  vector<int> ebNumbers, ebNodes, ebIds;
+  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "triangle", "edge", 2, indexBase, true,
+                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
+                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nElementBoundaries_global > 0);
   if (ihasElementBoundaryMarkers > 0)
     {
@@ -3838,16 +3874,10 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,int> elementBoundaryMaterialTypesMap;
   map<int,vector<int> > elementBoundariesMap;
   set<int> supportedElementBoundaries;
-  for (int ieb = 0; ieb < nElementBoundaries_global; ieb++)
+  for (size_t k = 0; k < ebNumbers.size(); k++)
     {
-      int neb,nn0,nn1; int ebId(0);
-      elementBoundaryFile >> eatcomments >> neb >> nn0 >> nn1;
-      if (ihasElementBoundaryMarkers > 0)
-        elementBoundaryFile >> ebId;
-      neb -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= neb && neb < nElementBoundaries_global && elementBoundaryFile.good());
+      const int neb = ebNumbers[k], nn0 = ebNodes[2*k], nn1 = ebNodes[2*k+1];
+      const int ebId = ebIds.empty() ? 0 : ebIds[k];
       //grab the element boundaries for the node if the node is owned by the subdomain
       //this will miss the element boundaries on the "outside boundary" of the star, which will grab later
       int nn0_new = -1;
@@ -3868,7 +3898,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      elementBoundaryFile >> eatline;
       if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
         {
           if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
@@ -3908,7 +3937,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
     }
   elementBoundaryElementsMap.clear();
   //done reading element boundaries
-  elementBoundaryFile.close();
   //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
     nElementBoundaries_owned_new=0;
@@ -3998,20 +4026,19 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   //4c,5c. Repeate the process for edges
   //
-  std::ifstream edgeFile(edgeFileName.c_str());
-
-  if (!edgeFile.good())
-    {
-      std::cerr<<"cannot open Triangle edge file"
-               <<edgeFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the edges with a node of a subdomain element; the others play no part below.
+  //The .edge markers are not read (header count only), as always.
   bool hasEdgeMarkers = false;
   int nEdges_global;
   int ihasEdgeMarkers(0);
-  edgeFile >> eatcomments >> nEdges_global >> eatline;// edge file doesn currently contain markers >> ihasEdgeMarkers >> eatline ;
+  vector<int> edNumbers, edNodes, edIds;
+  if (!readSimplexSubentitiesTouching(edgeFileName, "Triangle", "edge", 2, indexBase, false,
+                                      nodes_old2new_subdomain_map, nEdges_global,
+                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nEdges_global > 0);
   if (ihasEdgeMarkers > 0)
     {
@@ -4025,16 +4052,10 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,vector<int> > elementEdgesMap;
   map<int,pair<int,int> > edgeNodesMap;
   set<int> supportedEdges;
-  for (int ied = 0; ied < nEdges_global; ied++)
+  for (size_t k = 0; k < edNumbers.size(); k++)
     {
-      int ned,nn0,nn1; int edId(0);
-      edgeFile >> eatcomments >> ned >> nn0 >> nn1;
-      if (ihasEdgeMarkers > 0)
-        edgeFile >> edId;
-      ned -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= ned && ned < nEdges_global && edgeFile.good());
+      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
+      const int edId = edIds.empty() ? 0 : edIds[k];
       int nn0_new = -1;
       if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
         nn0_new = nodes_old2new_subdomain_map[nn0];
@@ -4053,7 +4074,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      edgeFile >> eatline;
       if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
         {
           if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
@@ -4082,7 +4102,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
     }//end iv
   edgeElementsMap.clear();
-  edgeFile.close();
   int nEdges_owned_subdomain=edges_subdomain_owned.size(),
     nEdges_owned_new=0;
   MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);

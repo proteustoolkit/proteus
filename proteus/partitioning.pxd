@@ -72,6 +72,13 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                          int& nElements_global, int& hasElementMarkers,
                                                                                          vector[int]& elements, vector[int]& elementNodes,
                                                                                          vector[double]& elementIds)
+    extern cppbool c_readSimplexSubentitiesTouching "proteus::readSimplexSubentitiesTouching" (const string& fileName, const char* format,
+                                                                                               const char* what, int nNodesPerEntity,
+                                                                                               int indexBase, cppbool headerHasMarkers,
+                                                                                               const cppmap[int,int]& nodes,
+                                                                                               int& nEntities_global, int& hasMarkers,
+                                                                                               vector[int]& numbers, vector[int]& entityNodes,
+                                                                                               vector[int]& ids)
     extern cppmap[int,int] c_ownedNodesByFileNumber "proteus::ownedNodesByFileNumber" (const MPI_Comm& comm,
                                                                                        const vector[int]& nodeOffsets_old,
                                                                                        const vector[int]& nodeOffsets_new,

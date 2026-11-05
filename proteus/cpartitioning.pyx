@@ -53,6 +53,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_readSimplexNodeStars,
                                    c_readSubdomainVertices,
                                    c_readSimplexElementsTouching,
+                                   c_readSimplexSubentitiesTouching,
                                    c_ownedNodesByFileNumber,
                                    c_newNumbersOfFileNodes,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
@@ -458,6 +459,25 @@ def readSimplexElementsTouching(object filebase, int simplexDim, int indexBase, 
         raise IOError("cannot open element file %s" % name.decode())
     return (nElements_global, hasElementMarkers, np.array(elements, dtype=np.intc),
             np.array(elementNodes, dtype=np.intc).reshape(-1, simplexDim), np.array(elementIds, dtype=np.double))
+
+def readSimplexSubentitiesTouching(object filename, int nNodesPerEntity, int indexBase, bint headerHasMarkers, object nodes):
+    """The .face/.edge reads of the parun -F partitioners: the entities of
+    filename with a node in `nodes` (0-based file numbers), in file order.
+    Returns (nEntities_global, hasMarkers, numbers, entityNodes
+    (n, nNodesPerEntity), markers), file numbering. No MPI."""
+    if not isinstance(filename, bytes):
+        filename = filename.encode()
+    cdef string name = filename
+    cdef cppmap[int,int] nodeMap
+    for k in nodes:
+        nodeMap[k] = 0
+    cdef int nEntities_global = 0, hasMarkers = 0
+    cdef vector[int] numbers, entityNodes, ids
+    if not c_readSimplexSubentitiesTouching(name, b"simplex", b"face/edge", nNodesPerEntity, indexBase, headerHasMarkers,
+                                            nodeMap, nEntities_global, hasMarkers, numbers, entityNodes, ids):
+        raise IOError("cannot open %s" % name.decode())
+    return (nEntities_global, hasMarkers, np.array(numbers, dtype=np.intc),
+            np.array(entityNodes, dtype=np.intc).reshape(-1, nNodesPerEntity), np.array(ids, dtype=np.intc))
 
 def fileNodeNumbers(Comm comm, object nodeOffsets_old, object nodeOffsets_new, object old2new_chunk, object wanted):
     """The two exchanges of the parun -F partitioners' second element read.

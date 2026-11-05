@@ -314,6 +314,17 @@ namespace proteus
                                           std::vector<int>& elements, std::vector<int>& elementNodes,
                                           std::vector<double>& elementIds);
 
+  /* I/O, local: stream a Triangle/TetGen .face or .edge file (nNodesPerEntity
+     nodes per line) and keep, in file order, the entities with a node among
+     the keys of `nodes`: file numbers, file nodes and (headerHasMarkers and the
+     header says so) markers. With headerHasMarkers false the header gives only
+     the count and markers are not read. False if the file cannot be opened. */
+  extern bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
+                                             int nNodesPerEntity, int indexBase, bool headerHasMarkers,
+                                             const std::map<int,int>& nodes, int& nEntities_global, int& hasMarkers,
+                                             std::vector<int>& numbers, std::vector<int>& entityNodes,
+                                             std::vector<int>& ids);
+
   /* MPI: file number -> new number of the nodes this rank owns after
      repartitioning, sent by the ranks whose default chunk (nodeOffsets_old)
      computed them (old2new_chunk). One exchange. */
