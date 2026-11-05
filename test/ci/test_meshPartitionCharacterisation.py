@@ -721,3 +721,15 @@ def test_files_reader_faces_and_edges(ext, nNodes, headerHasMarkers):
         assert markers.any()
     with pytest.raises(IOError):
         cpartitioning.readSimplexSubentitiesTouching(filename + '_missing', nNodes, 1, headerHasMarkers, [0])
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_path_refuses_element_partitioning(tmp_path, mesh):
+    """parun -F partitions by nodes only. Asking it for an element partition
+    used to stop at a bare assert in generatePartitionedMeshFrom*Files, past
+    which partitionMeshFromFiles called cpartitioning.partitionElementsFromTetgenFiles,
+    which does not exist. Now every rank raises a ValueError that says what to
+    do, before any partitioner runs. 2 ranks."""
+    got = _launch([mesh, 'files-element', 'graph', 1, tmp_path / 'out'], 2, cwd=tmp_path)
+    assert got == {'mesh': mesh, 'path': 'files-element', 'ranks': '2', 'errors': 'ValueError,ValueError',
+                   'calls': 'none'}

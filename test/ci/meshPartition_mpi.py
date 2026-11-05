@@ -14,6 +14,8 @@ PATH     serial   no partitioning: the global mesh as the reader builds it
          element  partitionElements on the mesh read into memory
          files    partitionNodesFromTriangleFiles / partitionNodesFromTetgenFiles
                   (``parun -F``): the partitioner reads the files itself
+         files-element  parun -F asked for an element partition: checks every
+                  rank raises the ValueError that says -F is node-only
 OWNERS   scatter  prescribed owners, a deterministic hash of the index
          graph    none: MatPartitioning decides; run it with
                   -mat_partitioning_type current to get the default contiguous
@@ -91,6 +93,22 @@ nodeType = MeshTools.MeshParallelPartitioningTypes.node
 elementType = MeshTools.MeshParallelPartitioningTypes.element
 Mesh = {'tri': MeshTools.TriangularMesh, 'tet': MeshTools.TetrahedralMesh}[meshKind]
 arrays = {}
+if path == 'files-element':
+    #parun -F partitions by nodes only: element partitioning must say so, on every rank
+    Multilevel = {'tri': MeshTools.MultilevelTriangularMesh, 'tet': MeshTools.MultilevelTetrahedralMesh}[meshKind]
+    mlMesh = Multilevel(0, 0, 0, skipInit=True, nLayersOfOverlap=overlap, parallelPartitioningType=elementType)
+    generate = getattr(mlMesh, {'tri': 'generatePartitionedMeshFromTriangleFiles',
+                                'tet': 'generatePartitionedMeshFromTetgenFiles'}[meshKind])
+    try:
+        generate(filebase, 1, Mesh(), 1, nLayersOfOverlap=overlap, parallelPartitioningType=elementType)
+        error = 'none'
+    except ValueError as e:
+        error = 'ValueError' if 'only parallelPartitioningType = MeshParallelPartitioningTypes.node' in str(e) else repr(e)
+    errors = mpi.allgather(error)
+    if rank == 0:
+        print("RESULT mesh=%s path=%s ranks=%d errors=%s calls=%s" % (meshKind, path, size, ','.join(errors),
+                                                                     ','.join(calls) or 'none'))
+    sys.exit(0)
 if path == 'files':
     assert ownersKind == 'graph', 'the files path has no prescribed owners'
     mesh = Mesh()
