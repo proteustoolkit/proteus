@@ -657,9 +657,12 @@ class AR_base(object):
                 if step_is_global:
                     #one already-global grid: its pieces are the archive
                     g = grids[0]
-                    add_uniform_step(domain, t, g["topology"], g["geometry"],
-                                     g.get("attributes", []),
-                                     collection=collection_name)
+                    space = add_uniform_step(domain, t, g["topology"], g["geometry"],
+                                             g.get("attributes", []),
+                                             collection=collection_name)
+                    #a mesh's own keys (its tagged facets, its provenance with
+                    #the mesh fingerprint) travel with it
+                    space.update((k, g[k]) for k in ("facets", "provenance") if k in g)
                 else:
                     #one grid per rank, presented as a single instant
                     add_spatial_step(domain, t, grids,

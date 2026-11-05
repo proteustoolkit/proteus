@@ -91,9 +91,13 @@ def test_a_global_archive_reads_back_in_the_input_order_from_any_rank_count(pref
         np.testing.assert_array_equal(canonical.nodeMaterialTypes, info.nodeMaterialTypes)
         np.testing.assert_array_equal(canonical.elementMaterialTypes, info.elementMaterialTypes)
         assert MeshTools.meshFingerprint(canonical.nodeArray, canonical.elementNodesArray) == expected
+        # recorded in the mesh grid's provenance, the same from every rank count, and checked on that read
+        assert MeshTools.archivedMeshFingerprint(str(outdir / "mesh")) == expected
+        assert canonical.fingerprint == expected
 
 
 def test_contiguous_owners_keep_the_input_order_and_write_no_map(tmp_path):
+    """(The fingerprint is still recorded: the grid is the whole input mesh.)"""
     info, expected = _input(SQUARE)
     fingerprint, renumbered = _archive(SQUARE, 2, "contiguous", "global", tmp_path)
     assert (fingerprint, renumbered) == (expected, False)
@@ -102,6 +106,49 @@ def test_contiguous_owners_keep_the_input_order_and_write_no_map(tmp_path):
     np.testing.assert_array_equal(archived.nodeArray, info.nodeArray)
     with h5py.File(tmp_path / "mesh.h5", "r") as f:
         assert not [name for name in f if name.startswith(("NodeMapInput", "CellMapInput"))]
+
+
+def test_a_restart_checks_the_archive_holds_its_mesh(tmp_path):
+    """checkArchivedMesh compares the recorded fingerprint with a live mesh: no arrays read."""
+    _archive(SQUARE, 2, "scatter", "global", tmp_path)
+    square = MeshTools._meshFromYmf(SQUARE)
+    assert MeshTools.checkArchivedMesh(str(tmp_path / "mesh"), square) == _input(SQUARE)[1]
+    with pytest.raises(ValueError, match="holds data on mesh"):
+        MeshTools.checkArchivedMesh(str(tmp_path / "mesh"), MeshTools._meshFromYmf(CUBE))
+
+
+def test_an_archive_whose_arrays_are_not_the_recorded_mesh_is_refused(tmp_path):
+    _archive(CUBE, 3, "reversed", "global", tmp_path)
+    with h5py.File(tmp_path / "mesh.h5", "r+") as f:
+        name = next(n for n in f if n.startswith("nodes"))
+        nodes = f[name][()]
+        nodes[5, 0] += 1e-9
+        f[name][...] = nodes
+    MeshTools.readMeshFromArchive(str(tmp_path / "mesh"))           # in archive order nothing is checked
+    with pytest.raises(ValueError, match="not the recorded"):
+        MeshTools.readMeshFromArchive(str(tmp_path / "mesh"), inputOrder=True)
+
+
+def test_no_fingerprint_where_the_grid_is_not_the_whole_input_mesh(tmp_path):
+    """Per-rank grids are pieces; once the nodes move, the archived geometry is not the input mesh."""
+    _archive(CUBE, 2, "reversed", "per-rank", tmp_path / "per-rank")
+    assert MeshTools.archivedMeshFingerprint(str(tmp_path / "per-rank" / "mesh")) is None
+    from proteus import Comm
+    Comm.init()
+    mesh = MeshTools._meshFromYmf(SQUARE)
+    mesh.partitionMesh(nLayersOfOverlap=1, nodeOwners=np.zeros(mesh.nNodes_global, dtype=np.intc))
+    sub = mesh.subdomainMesh
+    ar = Archiver.XdmfArchive(str(tmp_path), "moving", global_sync=True)
+    sub.writeMeshXdmf(ar, "Spatial_Domain", t=0.0, init=True, meshChanged=True, tCount=0)
+    ar.sync()
+    sub.nodeArray[:, 0] *= 2.0
+    sub.writeMeshXdmf(ar, "Spatial_Domain", t=1.0, meshChanged=True, tCount=1)
+    ar.sync()
+    ar.close()
+    domain = Archiver.readArchiveDomain("moving", str(tmp_path))
+    steps = Archiver.archive_collections(domain)[0]["data"]
+    assert steps[0]["provenance"]["fingerprint"]["sha256"] == _input(SQUARE)[1]
+    assert "provenance" not in steps[1]
 
 
 def test_each_rank_grid_of_a_per_rank_archive_names_its_input_rows(tmp_path):

@@ -1204,6 +1204,7 @@ class Mesh(object):
             # rank count (inInputOrder, meshFingerprint).
             if self.globalMesh is not None:
                 self._writeInputNumbering(ar, name, tCount, init or meshChanged)
+                self._writeFingerprint(ar, init, meshChanged)
             #
             #material types
             #
@@ -1263,6 +1264,28 @@ class Mesh(object):
                 ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[len(data)],
                                dataset=attribute+str(rank)+name+str(tCount), text_stem=attribute+name,
                                write_data=write_data)
+
+    def _writeFingerprint(self, ar, init, meshChanged):
+        """Record the mesh's fingerprint in this grid's ymf provenance (C7.1, cekees 2026-11-05).
+
+        Only on a grid that is the whole mesh (global_sync, or one rank) and whose geometry is still the
+        input mesh's: once the nodes have moved (meshChanged after the first write), the archived geometry
+        is no longer the mesh the fingerprint names, and it is not recorded again.
+        """
+        if init:
+            self._archivedGeometryIsInput = True
+        elif meshChanged:
+            self._archivedGeometryIsInput = False
+        if not self.__dict__.get("_archivedGeometryIsInput", True):
+            return
+        if not (ar.global_sync or ar.comm.size() == 1):
+            return
+        digest = _wholeMeshFingerprint(self.globalMesh)
+        if digest is None:
+            return
+        from ymf.archive import provenance
+        from . import __version__
+        self.arGrid["provenance"] = provenance("proteus", version=__version__, fingerprint=digest)
 
     def inputFingerprint(self):
         """meshFingerprint of this global mesh in its input order: the same on any number of ranks.
@@ -7081,23 +7104,59 @@ def inputNumbering(globalMesh):
 
 
 def meshFingerprint(nodeArray, elementNodesArray):
-    """SHA-256 of a mesh's geometry and topology, in the order given.
+    """``ymf.mesh.fingerprint``: SHA-256 of a mesh's geometry and topology, in the order given.
 
-    Nodes as little-endian float64 with three columns (planar nodes padded with z = 0), elements as
-    int64. Hashed in the input mesh's order (:func:`inputNumbering`), the digest does not depend on how
-    many ranks wrote the mesh.
+    Nodes as float64 with three columns, elements as int64 (the bytes are ymf's, method ``ymf-mesh-1``,
+    so any writer computes the same digest). Hashed in the input mesh's order (:func:`inputNumbering`),
+    the digest does not depend on how many ranks wrote the mesh.
     """
-    import hashlib
-    nodes = np.asarray(nodeArray, dtype='<f8')
-    if nodes.ndim == 2 and nodes.shape[1] < 3:
-        nodes = np.hstack([nodes, np.zeros((nodes.shape[0], 3 - nodes.shape[1]))])
-    nodes = np.ascontiguousarray(nodes, dtype='<f8')
-    elements = np.ascontiguousarray(elementNodesArray, dtype='<i8')
-    digest = hashlib.sha256(b"proteus mesh fingerprint 1\0")
-    digest.update(np.array(nodes.shape + elements.shape, dtype='<i8').tobytes())
-    digest.update(nodes.tobytes())
-    digest.update(elements.tobytes())
-    return digest.hexdigest()
+    try:
+        from ymf.mesh import fingerprint
+    except ImportError:
+        raise ImportError("a mesh fingerprint needs ymf.mesh.fingerprint (cekees/ymf#11); update ymf")
+    return fingerprint(nodeArray, elementNodesArray)
+
+
+def _wholeMeshFingerprint(globalMesh):
+    """The global mesh's inputFingerprint, or None when it does not hold the whole mesh (a mesh generated
+    per rank) or this ymf cannot compute one."""
+    g = globalMesh
+    nodes, elements = getattr(g, "nodeArray", None), getattr(g, "elementNodesArray", None)
+    if nodes is None or elements is None or len(nodes) != g.nNodes_global or len(elements) != g.nElements_global:
+        return None
+    try:
+        return g.inputFingerprint()
+    except ImportError:
+        return None
+
+
+def archivedMeshFingerprint(archive_base, MeshTag="Spatial_Domain"):
+    """The fingerprint an archive records for its mesh (the last step of ``MeshTag``), or None.
+
+    Reads the metadata only, no arrays: what a restart compares with the mesh it is about to run on
+    (:func:`checkArchivedMesh`).
+    """
+    dataDir, filename = os.path.split(archive_base)
+    domain = readArchiveDomain(filename, dataDir or '.')
+    grid = findArchiveGrid(domain, MeshTag)
+    recorded = (grid.get("provenance") or {}).get("fingerprint")
+    return None if recorded is None else recorded["sha256"]
+
+
+def checkArchivedMesh(archive_base, mesh, MeshTag="Spatial_Domain"):
+    """Raise if the archive records the fingerprint of another mesh than ``mesh`` (a global mesh).
+
+    Returns the recorded digest, or None when the archive records none (older archives, per-rank
+    archives, a mesh that moved, a mesh generated per rank), which checks nothing.
+    """
+    recorded = archivedMeshFingerprint(archive_base, MeshTag)
+    if recorded is None:
+        return None
+    mine = mesh.inputFingerprint()
+    if mine != recorded:
+        raise ValueError("%s holds data on mesh %s..., not on this mesh (%s...)"
+                         % (archive_base, recorded[:12], mine[:12]))
+    return recorded
 
 
 def inInputOrder(nodeArray, elementNodesArray, nodeNumbering_input=None, elementNumbering_input=None,
@@ -7298,7 +7357,8 @@ def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0, in
     """The mesh described by one grid of ``domain``, its arrays read from ``h5_path``.
 
     With ``inputOrder`` the arrays come back in the input mesh's order, when the writer recorded the
-    partition's renumbering; otherwise in the archive's, the maps in ``nodeNumbering_input`` and
+    partition's renumbering, and are checked against the fingerprint the grid records (``fingerprint``,
+    None if none); otherwise in the archive's, the maps in ``nodeNumbering_input`` and
     ``elementNumbering_input`` (None when the archive is in input order already).
     """
 
@@ -7381,12 +7441,23 @@ def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0, in
                 MeshInfo.nodeNumbering_input = values
             else:
                 MeshInfo.elementNumbering_input = values
+    recorded = (Grid.get("provenance") or {}).get("fingerprint")
+    MeshInfo.fingerprint = None if recorded is None else recorded["sha256"]
     if inputOrder:
         (MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeMaterialTypes,
          MeshInfo.elementMaterialTypes) = inInputOrder(
              MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeNumbering_input,
              MeshInfo.elementNumbering_input, MeshInfo.nodeMaterialTypes, MeshInfo.elementMaterialTypes)
         MeshInfo.nodeNumbering_input = MeshInfo.elementNumbering_input = None
+        if MeshInfo.fingerprint is not None:
+            # the grid says which mesh it holds: check the arrays are that mesh before anyone reads data on them
+            from ymf.mesh import check_fingerprint
+            try:
+                check_fingerprint(Grid, os.path.dirname(h5_path),
+                                  digest=meshFingerprint(MeshInfo.nodeArray, MeshInfo.elementNodesArray))
+            except Exception as error:
+                hdf5.close()
+                raise ValueError("%s: %s" % (h5_path, error))
     ###only serial for now
     MeshInfo.nNodes_owned = MeshInfo.nNodes_global
     MeshInfo.nElements_owned = MeshInfo.nElements_global
