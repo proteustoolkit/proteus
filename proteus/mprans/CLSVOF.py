@@ -191,6 +191,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     #: interface locator copied for output; and the interface locator itself, which a failed solve leaves set and
     #: the frozen-interface loop of the next solve reads before the kernel recomputes it. A failed system step that
     #: is retried must start from the values before it (NumericalSolution.restoreSystemStepState).
+    #: ``disc_ICs`` is state too: the solver's spin-up for a discontinuous initial condition runs in the first solve
+    #: and clears it, so a retried first step (or a hot start) that kept it cleared would skip the spin-up and start
+    #: from the raw characteristic function, and one that kept it set would spin up a smooth field again.
     _state_model_arrays = ("u_dof_old", "quantDOFs", "interface_locator")
 
     def state(self):
@@ -201,6 +204,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         st["q_v_old"] = self.q_v_old.copy()
         nf = m.norm_factor_lagged
         st["norm_factor_lagged"] = float(nf) if np.ndim(nf) == 0 else np.array(nf, copy=True)
+        st["disc_ICs"] = bool(self.disc_ICs)
         return st
 
     def set_state(self, state):
@@ -213,6 +217,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         if "norm_factor_lagged" in state:
             nf = state["norm_factor_lagged"]
             m.norm_factor_lagged = float(nf) if np.ndim(nf) == 0 else np.array(nf, copy=True)
+        if "disc_ICs" in state:
+            self.disc_ICs = bool(state["disc_ICs"])
 
     def postStep(self,t,firstStep=False):
         self.model.quantDOFs[:] = self.model.interface_locator

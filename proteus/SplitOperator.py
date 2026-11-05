@@ -4,7 +4,8 @@ A class hierarchy for split operator methods.
 .. inheritance-diagram:: proteus.SplitOperator
    :parts: 1
 """
-from .Profiling import logEvent 
+import numpy
+from .Profiling import logEvent
 
 class System(object):
     def __init__(self):
@@ -38,6 +39,7 @@ class SO_base(object):
         self.updateAfterModelStep=True
         self.stepExactEps = 1.0e-12
         self.stepFailures = 0
+        self.stepSchedule = None
         #self.atol_iso=1.e-8 #tjp added for iterative SO routine tolerance
     def state(self):
         """Nothing to carry beyond the solution (the state contract, see TimeIntegration.TI_base.state)."""
@@ -54,6 +56,34 @@ class SO_base(object):
             return True
         else:
             return False
+    def setStepSchedule(self, times):
+        """Land the system steps on ``times`` instead of choosing them (a replay of another run's steps).
+
+        ``times`` are the ``t_system`` of the steps to take (for a replay, the accepted steps of the run being
+        replayed). Every step that starts before the last of them ends on the next one after ``t_system_last``,
+        the first step included: ``initialize_dt_system`` and ``choose_dt_system`` take the scheduled step in place
+        of the one they would choose, before they hand it to the models (so the models' time histories are
+        initialized with it). Past the last time the controller chooses as usual. A scheduled step that fails is
+        retried at the same size, so a replay that fails stops after the controller's retries. ``None`` clears the
+        schedule. The so-module option ``systemStepSchedule`` sets it.
+        """
+        if times is None:
+            self.stepSchedule = None
+        else:
+            self.stepSchedule = numpy.sort(numpy.atleast_1d(numpy.asarray(times, dtype=float)))
+
+    def scheduled_dt(self, dt):
+        """The step from ``t_system_last`` to the next scheduled time, or ``dt`` when none is left."""
+        if self.stepSchedule is None:
+            return dt
+        t = self.t_system_last
+        later = self.stepSchedule[self.stepSchedule > t + 1.0e-12*abs(t) + 1.0e-15]
+        if len(later) == 0:
+            return dt
+        logEvent("System step from the schedule: t_system_last= %s t_system= %s (the controller chose dt= %s)"
+                 % (t, later[0], dt), level=3)
+        return later[0] - t
+
     def stepExact_system(self,tExact):
         if (self.dt_system > 0.0):
             if(self.t_system_last + self.dt_system >= tExact*(1.0-self.stepExactEps)):
@@ -78,7 +108,7 @@ class SO_base(object):
             model.stepController.setSubsteps([self.t_system])
     def choose_dt_system(self):
         #fixed step
-        self.dt_system = self.dt_system_fixed
+        self.dt_system = self.scheduled_dt(self.dt_system_fixed)
         self.t_system = self.t_system_last+self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         for model in self.modelList:
@@ -89,7 +119,7 @@ class SO_base(object):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = self.dt_system_fixed
+        self.dt_system = self.scheduled_dt(self.dt_system_fixed)
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         logEvent("Initializing time step on system %s to dt = %12.5e" %
@@ -156,6 +186,7 @@ class SO_base(object):
         """
         self.stepExact = soOptions.systemStepExact
         self.dt_system_fixed = soOptions.dt_system_fixed
+        self.setStepSchedule(getattr(soOptions, "systemStepSchedule", None))
 
 Sequential_FixedStep = SO_base
 
@@ -322,7 +353,7 @@ class Sequential_MinModelStep(SO_base):
             model.stepController.setSubsteps([self.t_system])
 
     def choose_dt_system(self):
-        self.dt_system = min([model.stepController.dt_model for model  in self.modelList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.modelList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,model) for model in self.modelList]
         for model in self.modelList:
@@ -334,7 +365,7 @@ class Sequential_MinModelStep(SO_base):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min(min([model.stepController.dt_model for model in self.modelList]),tOut-t0)
+        self.dt_system = self.scheduled_dt(min(min([model.stepController.dt_model for model in self.modelList]),tOut-t0))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         for model in self.modelList:
@@ -390,7 +421,7 @@ class Sequential_MinFLCBDFModelStep(SO_base):
             model.stepController.setSubsteps([self.t_system])
 
     def choose_dt_system(self):
-        self.dt_system = min([model.stepController.dt_model for model  in self.flcbdfList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.flcbdfList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,model) for model in self.modelList]
         for model in self.modelList:
@@ -399,7 +430,7 @@ class Sequential_MinFLCBDFModelStep(SO_base):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min([model.stepController.dt_model for model in self.modelList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model in self.modelList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         for model in self.modelList:
@@ -518,9 +549,9 @@ class Sequential_MinAdaptiveModelStep(SO_base):
 
     def choose_dt_system(self):
         if self.dt_system_fixed is not None:
-            self.dt_system = min([model.stepController.dt_model for model  in self.controllerList]+[self.dt_system_fixed])
+            self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.controllerList]+[self.dt_system_fixed]))
         else:
-            self.dt_system = min([model.stepController.dt_model for model  in self.controllerList])
+            self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.controllerList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,model) for model in self.modelList]
         for model in self.modelList:
@@ -531,7 +562,7 @@ class Sequential_MinAdaptiveModelStep(SO_base):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min(tOut-t0,min([model.stepController.dt_model for model in self.controllerList]))
+        self.dt_system = self.scheduled_dt(min(tOut-t0,min([model.stepController.dt_model for model in self.controllerList])))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         for model in self.modelList:
@@ -648,7 +679,7 @@ class ISO_fixed_MinAdaptiveModelStep(SO_base):
             model.stepController.setSubsteps([self.t_system])
 
     def choose_dt_system(self):
-        self.dt_system = min([model.stepController.dt_model for model  in self.controllerList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.controllerList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,model) for model in self.modelList]
         for model in self.modelList:
@@ -659,7 +690,7 @@ class ISO_fixed_MinAdaptiveModelStep(SO_base):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min([model.stepController.dt_model for model in self.controllerList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model in self.controllerList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
         for model in self.modelList:
@@ -781,6 +812,7 @@ class Sequential_MinAdaptiveModelStep_SS(SO_base):
         self.max_its = max([model.solver.solverList[-1].its for model  in self.controllerList])
         if self.max_its < 3:
             self.dt_system = self.dt_system_last*1.1
+        self.dt_system = self.scheduled_dt(self.dt_system)
         self.dt_system_last = self.dt_system
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,model) for model in self.modelList]
@@ -792,7 +824,7 @@ class Sequential_MinAdaptiveModelStep_SS(SO_base):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min([model.stepController.dt_model for model in self.controllerList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model in self.controllerList]))
         self.dt_system_last = self.dt_system
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]
@@ -879,7 +911,7 @@ class SequentialNotInOrder_MinFLCBDFModelStep(Sequential_MinFLCBDFModelStep):
             model.stepController.setSubsteps([self.t_system])
 
     def choose_dt_system(self):
-        self.dt_system = min([model.stepController.dt_model for model  in self.flcbdfList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.flcbdfList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,self.modelList[i]) for i in self.modelSequenceList]
         for model in self.modelList:
@@ -888,7 +920,7 @@ class SequentialNotInOrder_MinFLCBDFModelStep(Sequential_MinFLCBDFModelStep):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min([model.stepController.dt_model for model in self.modelList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model in self.modelList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,self.modelList[i]) for i in self.modelSequenceList]
         for model in self.modelList:
@@ -936,7 +968,7 @@ class SequentialNotInOrder_MinAdaptiveModelStep(Sequential_MinAdaptiveModelStep)
             model.stepController.setSubsteps([self.t_system])
 
     def choose_dt_system(self):
-        self.dt_system = min([model.stepController.dt_model for model  in self.controllerList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model  in self.controllerList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,self.modelList[i]) for i in self.modelSequenceList]
         for model in self.modelList:
@@ -947,7 +979,7 @@ class SequentialNotInOrder_MinAdaptiveModelStep(Sequential_MinAdaptiveModelStep)
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
-        self.dt_system = min([model.stepController.dt_model for model in self.modelList])
+        self.dt_system = self.scheduled_dt(min([model.stepController.dt_model for model in self.modelList]))
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,self.modelList[i]) for i in self.modelSequenceList]
         for model in self.modelList:

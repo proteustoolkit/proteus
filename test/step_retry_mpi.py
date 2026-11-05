@@ -9,8 +9,8 @@ tolerances apply; MAXITS=n raises every model's maxNonlinearIts to n.
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
-land on the times in the file instead of choosing them, which gives the run a failure-free run with the same steps
-(not the first step: its dt comes from initialize_dt_system). NORESTORE=1 turns off the restore before a retry.
+land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
+the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry.
 FT and OPTS set the final time and the deck's other options; DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
@@ -41,6 +41,9 @@ def boundary_integral_gauges(pList, nList):
 
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
+    if os.environ.get("REPLAY"):
+        # the system steps land on the replayed run's accepted times, the first step included
+        so.systemStepSchedule = np.loadtxt(os.environ["REPLAY"])
     if os.environ.get("BIGAUGES"):
         boundary_integral_gauges(pList, nList)
     if os.environ.get("ATOL"):
@@ -97,22 +100,6 @@ elif os.environ.get("FAILMODEL"):
 # the system step controllers the decks use: the adaptive one (TwoPhaseFlow, so files) and the default (SWFlow)
 CONTROLLERS = (SplitOperator.Sequential_MinAdaptiveModelStep, SplitOperator.Sequential_MinModelStep)
 
-if os.environ.get("REPLAY"):
-    times = np.loadtxt(os.environ["REPLAY"])
-    def replaying(_choose):
-        def choose_dt_system(self):
-            _choose(self)
-            later = times[times > self.t_system_last * (1 + 1e-12) + 1e-15]
-            if len(later):
-                self.dt_system = later[0] - self.t_system_last
-                self.t_system = later[0]
-                self.stepSequence = [(self.t_system, model) for model in self.modelList]
-                for model in self.modelList:
-                    model.stepController.dt_model = self.dt_system
-                    model.stepController.set_dt_allLevels()
-        return choose_dt_system
-    for cls in CONTROLLERS:
-        cls.choose_dt_system = replaying(cls.choose_dt_system)
 
 accepted = []
 def recording(_taken):
