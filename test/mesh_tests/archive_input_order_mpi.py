@@ -36,7 +36,10 @@ def main(prefix, owners, sync, outdir):
     mesh.subdomainMesh.writeMeshXdmf(ar, "Spatial_Domain", init=True, meshChanged=True)
     ar.sync()
     ar.close()
-    fingerprint = mesh.inputFingerprint()
+    try:
+        fingerprint = mesh.inputFingerprint()
+    except ImportError:                       # a ymf before cekees/ymf#11
+        fingerprint = "none"
     renumbered = int(any(m is not None for m in MeshTools.inputNumbering(mesh)))
     if rank == 0:
         print("fingerprint=%s renumbered=%d" % (fingerprint, renumbered))

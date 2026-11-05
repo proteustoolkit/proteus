@@ -18,6 +18,13 @@ import pytest
 
 from proteus import Archiver, MeshTools
 
+try:
+    from ymf.mesh import fingerprint as _ymf_fingerprint  # noqa: F401
+    HAS_FINGERPRINT = True
+except ImportError:                           # a ymf before cekees/ymf#11: maps only
+    HAS_FINGERPRINT = False
+needs_fingerprint = pytest.mark.skipif(not HAS_FINGERPRINT, reason="this ymf has no mesh fingerprint (cekees/ymf#11)")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SQUARE = os.path.join(HERE, "ymf_meshes", "square4x4_tagged")
 CUBE = os.path.join(HERE, "ymf_meshes", "cube_3x3x3")
@@ -69,7 +76,7 @@ def _archive(prefix, n_ranks, owners, sync, outdir):
 
 def _input(prefix):
     info = MeshTools.readMeshYmf(prefix)
-    return info, MeshTools.meshFingerprint(info.nodeArray, info.elementNodesArray)
+    return info, (MeshTools.meshFingerprint(info.nodeArray, info.elementNodesArray) if HAS_FINGERPRINT else "none")
 
 
 @pytest.mark.parametrize("owners", ["scatter", "reversed"])
@@ -90,10 +97,11 @@ def test_a_global_archive_reads_back_in_the_input_order_from_any_rank_count(pref
         np.testing.assert_array_equal(canonical.elementNodesArray, info.elementNodesArray)
         np.testing.assert_array_equal(canonical.nodeMaterialTypes, info.nodeMaterialTypes)
         np.testing.assert_array_equal(canonical.elementMaterialTypes, info.elementMaterialTypes)
-        assert MeshTools.meshFingerprint(canonical.nodeArray, canonical.elementNodesArray) == expected
-        # recorded in the mesh grid's provenance, the same from every rank count, and checked on that read
-        assert MeshTools.archivedMeshFingerprint(str(outdir / "mesh")) == expected
-        assert canonical.fingerprint == expected
+        if HAS_FINGERPRINT:
+            assert MeshTools.meshFingerprint(canonical.nodeArray, canonical.elementNodesArray) == expected
+            # recorded in the mesh grid's provenance, the same from every rank count, and checked on that read
+            assert MeshTools.archivedMeshFingerprint(str(outdir / "mesh")) == expected
+            assert canonical.fingerprint == expected
 
 
 def test_contiguous_owners_keep_the_input_order_and_write_no_map(tmp_path):
@@ -108,6 +116,7 @@ def test_contiguous_owners_keep_the_input_order_and_write_no_map(tmp_path):
         assert not [name for name in f if name.startswith(("NodeMapInput", "CellMapInput"))]
 
 
+@needs_fingerprint
 def test_a_restart_checks_the_archive_holds_its_mesh(tmp_path):
     """checkArchivedMesh compares the recorded fingerprint with a live mesh: no arrays read."""
     _archive(SQUARE, 2, "scatter", "global", tmp_path)
@@ -117,6 +126,7 @@ def test_a_restart_checks_the_archive_holds_its_mesh(tmp_path):
         MeshTools.checkArchivedMesh(str(tmp_path / "mesh"), MeshTools._meshFromYmf(CUBE))
 
 
+@needs_fingerprint
 def test_an_archive_whose_arrays_are_not_the_recorded_mesh_is_refused(tmp_path):
     _archive(CUBE, 3, "reversed", "global", tmp_path)
     with h5py.File(tmp_path / "mesh.h5", "r+") as f:
@@ -129,6 +139,7 @@ def test_an_archive_whose_arrays_are_not_the_recorded_mesh_is_refused(tmp_path):
         MeshTools.readMeshFromArchive(str(tmp_path / "mesh"), inputOrder=True)
 
 
+@needs_fingerprint
 def test_no_fingerprint_where_the_grid_is_not_the_whole_input_mesh(tmp_path):
     """Per-rank grids are pieces; once the nodes move, the archived geometry is not the input mesh."""
     _archive(CUBE, 2, "reversed", "per-rank", tmp_path / "per-rank")
@@ -178,6 +189,7 @@ def test_each_rank_grid_of_a_per_rank_archive_names_its_input_rows(tmp_path):
     assert sorted(np.concatenate(owned).tolist()) == list(range(len(info.elementNodesArray)))
 
 
+@needs_fingerprint
 def test_the_fingerprint_is_of_geometry_and_topology_in_order():
     info, expected = _input(SQUARE)
     moved = info.nodeArray.copy()
