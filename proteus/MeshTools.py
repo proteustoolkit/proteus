@@ -858,6 +858,7 @@ class Mesh(object):
                                                                                  nodeWeights)
         else:
             assert nodeOwners is None and nodeWeights is None, "prescribed owners and node weights need node partitioning"
+            self.inputFingerprint()     # before partitionElements rearranges the global arrays
             (self.elementOffsets_subdomain_owned,
              self.elementNumbering_subdomain2global,
              self.nodeOffsets_subdomain_owned,
@@ -1198,6 +1199,11 @@ class Mesh(object):
                                dataset='cellMapL2G'+str(rank)+name+str(tCount),
                                text_stem='cellMapL2G'+name,
                                write_data=init or meshChanged)
+            # The partition's renumbering, as each archived row's index in the input mesh (written only
+            # when it is not the identity): what puts an archive back in the input order, whatever the
+            # rank count (inInputOrder, meshFingerprint).
+            if self.globalMesh is not None:
+                self._writeInputNumbering(ar, name, tCount, init or meshChanged)
             #
             #material types
             #
@@ -1235,6 +1241,41 @@ class Mesh(object):
                                    self.elementBoundaryMaterialTypes, tCount,
                                    center="Cell", dimensions=[self.nElementBoundaries_global])
             #done with material types
+
+    def _writeInputNumbering(self, ar, name, tCount, write_data):
+        """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering)."""
+        g = self.globalMesh
+        nodes_input, elements_input = inputNumbering(g)
+        rank = ar.comm.rank()
+        nodes = np.asarray(g.nodeNumbering_subdomain2global)
+        cells = np.asarray(g.elementNumbering_subdomain2global)[:self.nElements_owned]
+        for attribute, new2old, local, offsets, n_global, center in (
+                ("NodeMapInput", nodes_input, nodes, g.nodeOffsets_subdomain_owned, g.nNodes_global, "Node"),
+                ("CellMapInput", elements_input, cells, g.elementOffsets_subdomain_owned, g.nElements_global, "Cell")):
+            if new2old is None:
+                continue
+            data = new2old[local]
+            if ar.global_sync:
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[n_global],
+                               sync_offsets=offsets, sync_data=data[:offsets[rank+1] - offsets[rank]],
+                               dataset=attribute+name+str(tCount), write_data=write_data)
+            else:
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[len(data)],
+                               dataset=attribute+str(rank)+name+str(tCount), text_stem=attribute+name,
+                               write_data=write_data)
+
+    def inputFingerprint(self):
+        """meshFingerprint of this global mesh in its input order: the same on any number of ranks.
+
+        A node partition leaves the global arrays in the input order (only the maps say the new numbers);
+        an element partition rearranges them in place, so partitionMesh takes the fingerprint first.
+        """
+        cached = self.__dict__.get("_inputFingerprint")
+        if cached is None:
+            cached = meshFingerprint(self.nodeArray, self.elementNodesArray)
+            self.__dict__["_inputFingerprint"] = cached
+        return cached
+
     def buildFromC(self,cmesh):
         from . import cmeshTools
         #
@@ -7004,6 +7045,82 @@ def _dataitem_dataset(node, label):
     return text.split(':/')[-1]
 
 
+#: the archive attributes that give, for each archived node and cell, its index in the input mesh
+INPUT_NUMBERING_ATTRIBUTES = ("NodeMapInput", "CellMapInput")
+
+
+def _new2old(old2new):
+    """The inverse permutation, or None when ``old2new`` is unknown or the identity."""
+    if old2new is None:
+        return None
+    old2new = np.asarray(old2new)
+    if np.array_equal(old2new, np.arange(len(old2new))):
+        return None
+    new2old = np.empty_like(old2new)
+    new2old[old2new] = np.arange(len(old2new), dtype=old2new.dtype)
+    return new2old
+
+
+def inputNumbering(globalMesh):
+    """(nodes, elements): for each node and element of a partitioned global mesh, its index in the input mesh.
+
+    The partitioner numbers the global nodes and elements so each rank's owned ones are contiguous, and the
+    archive writes in that numbering (decision 7 of the ymf mesh plan keeps it as a separate map). A
+    per-rank archive's input numbering is this composed with its NodeMapL2G/CellMapL2G.
+    Either array is None when the renumbering is the identity or unknown: a mesh generated per rank, or
+    an element partition, which renumbers the nodes without saying how. Computed once per mesh.
+    """
+    if globalMesh is None:
+        return None, None
+    cached = globalMesh.__dict__.get("_inputNumbering")
+    if cached is None:
+        cached = (_new2old(getattr(globalMesh, "nodeNumbering_global_old2new", None)),
+                  _new2old(getattr(globalMesh, "elementNumbering_global_old2new", None)))
+        globalMesh.__dict__["_inputNumbering"] = cached
+    return cached
+
+
+def meshFingerprint(nodeArray, elementNodesArray):
+    """SHA-256 of a mesh's geometry and topology, in the order given.
+
+    Nodes as little-endian float64 with three columns (planar nodes padded with z = 0), elements as
+    int64. Hashed in the input mesh's order (:func:`inputNumbering`), the digest does not depend on how
+    many ranks wrote the mesh.
+    """
+    import hashlib
+    nodes = np.asarray(nodeArray, dtype='<f8')
+    if nodes.ndim == 2 and nodes.shape[1] < 3:
+        nodes = np.hstack([nodes, np.zeros((nodes.shape[0], 3 - nodes.shape[1]))])
+    nodes = np.ascontiguousarray(nodes, dtype='<f8')
+    elements = np.ascontiguousarray(elementNodesArray, dtype='<i8')
+    digest = hashlib.sha256(b"proteus mesh fingerprint 1\0")
+    digest.update(np.array(nodes.shape + elements.shape, dtype='<i8').tobytes())
+    digest.update(nodes.tobytes())
+    digest.update(elements.tobytes())
+    return digest.hexdigest()
+
+
+def inInputOrder(nodeArray, elementNodesArray, nodeNumbering_input=None, elementNumbering_input=None,
+                 nodeMaterialTypes=None, elementMaterialTypes=None):
+    """Arrays in partition order (an archive's, a partitioned global mesh's) put back in the input order.
+
+    ``*Numbering_input[i]`` is the input index of row ``i``; None means the rows are in input order already.
+    Returns (nodes, elements, nodeMaterialTypes, elementMaterialTypes), the material types None if not given.
+    """
+    nodes, elements = np.asarray(nodeArray), np.asarray(elementNodesArray)
+    nodeTypes, elementTypes = nodeMaterialTypes, elementMaterialTypes
+    if nodeNumbering_input is not None:
+        order = np.argsort(nodeNumbering_input)         # input index -> row
+        nodes = nodes[order]
+        nodeTypes = None if nodeTypes is None else np.asarray(nodeTypes)[order]
+        elements = np.asarray(nodeNumbering_input)[elements]
+    if elementNumbering_input is not None:
+        order = np.argsort(elementNumbering_input)
+        elements = elements[order]
+        elementTypes = None if elementTypes is None else np.asarray(elementTypes)[order]
+    return nodes, elements, nodeTypes, elementTypes
+
+
 def findArchiveGrid(domain, MeshTag='Spatial_Domain', id_in_collection=-1, verbose=0):
     """One grid of an archive's domain: a step of the collection named by ``MeshTag``.
 
@@ -7133,14 +7250,16 @@ def readMixedElementTopologyFromXdmf(elementTopologyName,Topology,hdf5,topologyi
 
     return nElements_global, elementNodesArray, elementNodes_offset
 
-def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0):
+def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0,inputOrder=False):
     """Read a mesh back from a proteus archive, from its hdf5 file alone
 
     ``archive_base`` is the archive's path without the ``.h5`` extension.
     Its metadata (version 1, the XDMF fragments proteus <= 1.9.x stored, or
     version 2) describes every step; the last step of the collection named
     by ``MeshTag`` is read, so no ``.xmf`` is needed. Serial only: a
-    per-subdomain archive yields its first subdomain.
+    per-subdomain archive yields its first subdomain. ``inputOrder`` puts a
+    partitioned run's mesh back in the input mesh's order (see
+    :func:`inputNumbering`), so it reads the same from any rank count.
 
     :return: a BasicMeshInfo object with the minimal information read
 
@@ -7154,7 +7273,7 @@ def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0):
     assert domain is not None and archive_collections(domain), \
         ("%s holds no proteus archive metadata; a mesh in an XDMF file written "
          "by another tool is read with readMeshXdmf" % (h5_path,))
-    return _readMeshFromDomain(domain, h5_path, MeshTag=MeshTag, verbose=verbose)
+    return _readMeshFromDomain(domain, h5_path, MeshTag=MeshTag, verbose=verbose, inputOrder=inputOrder)
 
 def readMeshXdmf(xmf_archive_base,heavy_file_base,MeshTag="Spatial_Domain",hasHDF5=True,verbose=0):
     """Read a mesh from an XDMF file, assuming heavy data is in hdf5
@@ -7175,8 +7294,13 @@ def readMeshXdmf(xmf_archive_base,heavy_file_base,MeshTag="Spatial_Domain",hasHD
     domain, _ = read_xdmf(xmf_archive_base+'.xmf')
     return _readMeshFromDomain(domain, heavy_file_base+'.h5', MeshTag=MeshTag, verbose=verbose)
 
-def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0):
-    """The mesh described by one grid of ``domain``, its arrays read from ``h5_path``."""
+def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0, inputOrder=False):
+    """The mesh described by one grid of ``domain``, its arrays read from ``h5_path``.
+
+    With ``inputOrder`` the arrays come back in the input mesh's order, when the writer recorded the
+    partition's renumbering; otherwise in the archive's, the maps in ``nodeNumbering_input`` and
+    ``elementNumbering_input`` (None when the archive is in input order already).
+    """
 
     ###information about allowed Xdmf topologies
     #Xdmf cell type id to Name
@@ -7248,6 +7372,21 @@ def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0):
     else:
         MeshInfo.elementMaterialTypes = np.zeros((MeshInfo.nElements_global,),'i')
     #
+    # the partition's renumbering, if the writer recorded one (INPUT_NUMBERING_ATTRIBUTES)
+    MeshInfo.nodeNumbering_input = MeshInfo.elementNumbering_input = None
+    for attribute in Grid.get("attributes", []):
+        if attribute.get("name") in INPUT_NUMBERING_ATTRIBUTES:
+            values = hdf5["/"+_dataitem_dataset(attribute, attribute["name"])][:]
+            if attribute["name"] == "NodeMapInput":
+                MeshInfo.nodeNumbering_input = values
+            else:
+                MeshInfo.elementNumbering_input = values
+    if inputOrder:
+        (MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeMaterialTypes,
+         MeshInfo.elementMaterialTypes) = inInputOrder(
+             MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeNumbering_input,
+             MeshInfo.elementNumbering_input, MeshInfo.nodeMaterialTypes, MeshInfo.elementMaterialTypes)
+        MeshInfo.nodeNumbering_input = MeshInfo.elementNumbering_input = None
     ###only serial for now
     MeshInfo.nNodes_owned = MeshInfo.nNodes_global
     MeshInfo.nElements_owned = MeshInfo.nElements_global
