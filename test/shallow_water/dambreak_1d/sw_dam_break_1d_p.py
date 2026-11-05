@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 
-"""
+r"""
 This is a 1D dam break (Riemann) problem on the flat domain [0,L] and time interval [0,T].
 
 .. math ::
