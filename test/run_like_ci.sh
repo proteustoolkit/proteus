@@ -48,16 +48,22 @@ export PATH="$BIN:$PATH"
 if [ "$INPLACE" = 1 ]; then
   # The scripts setup.py installs (parun, povgen.py, ...) are copies in the environment's bin from whatever build was
   # installed there last, and tests launch them by name: a 10-25 parun with no --hotStartMode failed every hot start
-  # on 11-05. Put wrappers that run this checkout's scripts first on PATH.
+  # on 11-05. Put this checkout's copies first on PATH, installed as pip does: a python shebang becomes this
+  # environment's python. (Copies, not shell wrappers: the *_mpi.py helpers runpy.run_path(which('parun')).)
   SCRIPTS="$(mktemp -d "${TMPDIR:-/tmp}/proteus-scripts.XXXXXX")"
   "$PY" - "$REPO" "$SCRIPTS" <<'PYEOF' || exit 1
 import ast, os, re, sys
 repo, out = sys.argv[1], sys.argv[2]
 listed = re.search(r"scripts\s*=\s*(\[[^\]]*\])", open(os.path.join(repo, "setup.py")).read())
 for rel in ast.literal_eval(listed.group(1)):
+    with open(os.path.join(repo, rel), "rb") as f:
+        text = f.read()
+    first, nl, rest = text.partition(b"\n")
+    if first.startswith(b"#!") and b"python" in first:
+        text = b"#!" + sys.executable.encode() + nl + rest
     path = os.path.join(out, os.path.basename(rel))
-    with open(path, "w") as f:
-        f.write('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, os.path.join(repo, rel)))
+    with open(path, "wb") as f:
+        f.write(text)
     os.chmod(path, 0o755)
 PYEOF
   export PATH="$SCRIPTS:$PATH"
