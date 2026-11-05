@@ -8,7 +8,7 @@ RUN = "cd %s; parun -C \"gen_mesh={gen} usePUMI=True adapt={adapt} fixedTimeStep
 
 #@pytest.mark.slowTest
 
-def test_MeshAdaptRestart(verbose=0):
+def test_MeshAdaptRestart(case_copy, verbose=0):
     """Generate the PUMI mesh, run the baseline and the adapted restart, and compare their gauges.
 
     The runs read the mesh the first one writes and the comparison reads their output, so they
@@ -16,7 +16,7 @@ def test_MeshAdaptRestart(verbose=0):
 
     The point gauges (pressure) and the line integral gauges (equivalent water height) are
     rebuilt after each adapt, and must continue the baseline's output."""
-    currentPath = os.path.dirname(os.path.abspath(__file__))
+    currentPath = str(case_copy(os.path.dirname(os.path.abspath(__file__))))    # run's files stay out of the checkout
     for gen_mesh, adapt, name in (("True", 0, "baseline"),  # generate the PUMI mesh
                                   ("False", 0, "baseline"),  # baseline data
                                   ("False", 1, "adapt_0")):  # restart workflow

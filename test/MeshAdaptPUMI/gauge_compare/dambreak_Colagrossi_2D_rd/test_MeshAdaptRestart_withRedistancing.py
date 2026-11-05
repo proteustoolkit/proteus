@@ -8,11 +8,11 @@ RUN = "cd %s; parun -C \"gen_mesh={gen} usePUMI=True adapt={adapt} fixedTimeStep
 
 
 @pytest.mark.slowTest
-def test_MeshAdaptRestart_withRedistancing(verbose=0):
+def test_MeshAdaptRestart_withRedistancing(case_copy, verbose=0):
     """Generate the mesh, run the baseline and the adapted restart, and compare their pressure
     gauges. The runs read the mesh the first one writes and the comparison reads their output,
     so they are one test: it does not depend on another test having run, or on where one ran."""
-    currentPath = os.path.dirname(os.path.abspath(__file__))
+    currentPath = str(case_copy(os.path.dirname(os.path.abspath(__file__))))    # run's files stay out of the checkout
     for gen_mesh, adapt, name in (("True", 0, "baseline"),  # generate the PUMI mesh
                                   ("False", 0, "baseline"),  # baseline data
                                   ("False", 1, "adapt_0")):  # restart workflow

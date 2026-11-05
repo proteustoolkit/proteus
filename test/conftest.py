@@ -339,6 +339,22 @@ def _end_launches_on_sigterm(signum, frame):
 
 
 @pytest.fixture
+def case_copy(tmp_path):
+    """``case_copy(directory)``: a copy of a case directory (its decks and inputs) under tmp_path.
+
+    A test that runs a case in its own source directory leaves the run's output there (meshes,
+    logs, .h5 and gauge files), so a checkout looks edited after a run and the next run starts from
+    the last one's files. Run the case in the copy instead."""
+    import shutil
+
+    def copy(directory):
+        dest = tmp_path / os.path.basename(os.path.normpath(str(directory)))
+        shutil.copytree(str(directory), str(dest), ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        return dest
+    return copy
+
+
+@pytest.fixture
 def launch_policy():
     """The launch policy's pieces, for the tests of it (a conftest is not importable under
     --import-mode=importlib, so they reach them through this fixture)."""

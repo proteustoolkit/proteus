@@ -22,17 +22,15 @@ def teardown_method():
         else:
             pass
 
-def test_runTwoPhaseFlow_wPorosity_2D():
-    teardown_method()
-    """Test restart workflow"""
-    currentPath = os.path.dirname(os.path.abspath(__file__))
+def test_runTwoPhaseFlow_wPorosity_2D(case_copy):
+    """Test restart workflow (in a copy of this directory, so the run's files stay out of the checkout)"""
+    currentPath = str(case_copy(os.path.dirname(os.path.abspath(__file__))))
     runCommand = "cd "+currentPath+"; parun --TwoPhaseFlow -l5 -v -C \"T=20. he=0.025 openTop=False genMesh=False\" sloshing.py;"
     subprocess.run(runCommand,shell=True, check=True, timeout=600)
-    check_massConservation_wPorosity_2D()
+    check_massConservation_wPorosity_2D(currentPath)
 
-def check_massConservation_wPorosity_2D(mcorr_nl_atol_res=1e-10):
+def check_massConservation_wPorosity_2D(currentPath, mcorr_nl_atol_res=1e-10):
     """Reads the sloshing.log the run above writes, so it is part of that test."""
-    currentPath = os.path.dirname(os.path.abspath(__file__))
     file=open(currentPath+'/sloshing.log','r')
     lines=file.readlines()
     mcorr=[]
