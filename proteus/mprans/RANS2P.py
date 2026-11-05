@@ -76,6 +76,23 @@ class SubgridError(proteus.SubgridError.SGE_base):
         #default behavior is to set v_last to point to cq[('velocity')]
         self.v_last = self.cq[('velocity', 0)]
 
+    def state(self):
+        """The lag machine (the state contract, see TimeIntegration.TI_base.state): ``nSteps``, and
+        ``v_last``, which is the velocity at the quadrature points itself until the switch to lagging and a
+        copy after it (the lagged velocity the momentum kernel stabilizes with)."""
+        alias = self.v_last is self.cq[('velocity', 0)]
+        st = {'nSteps': int(self.nSteps), 'alias': bool(alias)}
+        if not alias:
+            st['v_last'] = numpy.array(self.v_last, copy=True)
+        return st
+
+    def set_state(self, state):
+        self.nSteps = int(state['nSteps'])
+        if state['alias']:
+            self.v_last = self.cq[('velocity', 0)]
+        else:
+            self.v_last = numpy.array(state['v_last'], copy=True)
+
     def updateSubgridErrorHistory(self, initializationPhase=False):
         if self.lag:
             if self.nSteps > self.nStepsToDelay:
@@ -111,7 +128,7 @@ class NumericalFlux(proteus.NumericalFlux.NavierStokes_Advection_DiagonalUpwind_
         self.hasInterior = False
 
 
-class ShockCapturing(proteus.ShockCapturing.ShockCapturing_base):
+class ShockCapturing(proteus.ShockCapturing.DelayedLagState, proteus.ShockCapturing.ShockCapturing_base):
     def __init__(self, coefficients, nd, shockCapturingFactor=0.25, lag=False, nStepsToDelay=1):
         proteus.ShockCapturing.ShockCapturing_base.__init__(self, coefficients, nd, shockCapturingFactor, lag)
         self.nStepsToDelay = nStepsToDelay

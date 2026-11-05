@@ -87,6 +87,66 @@ def _with_numerics_petsc_options(method):
     return wrapper
 
 
+class _CoupledFields(object):
+    """The fields at the quadrature points and faces that other models read from a level model
+    (NS_base.COUPLED_FIELD_NAMES), as a solver-state owner: a hot start puts them back as the
+    archived step left them.
+
+    They are the values of the model's last residual evaluation, not of its dofs: a model whose dofs
+    are changed after its solve (VOF and NCLS by MCorr, NCLS by RDLS) leaves the next step's first
+    models reading its last Newton iterate. Rebuilt from the archived dofs they differ (damBreakLevelSet:
+    VOF's ('u', 0) by 7e-2 at the restart), and the hot start drifts from the uninterrupted run."""
+
+    def __init__(self, ns, lm):
+        self.ns, self.lm = ns, lm
+
+    @staticmethod
+    def _key(store, key):
+        return "%s|%s|%d" % (store, key[0], key[1])
+
+    def state(self):
+        return {self._key(store, key): v.copy() for (store, key), v in self.ns._coupledFields(self.lm)} or None
+
+    def set_state(self, state):
+        for (store, key), v in self.ns._coupledFields(self.lm):
+            k = self._key(store, key)
+            if k in state and numpy.shape(state[k]) == v.shape:
+                v[:] = state[k]
+
+
+class _SolverUnknowns(object):
+    """A model's nonlinear unknowns on its finest level (``uList[-1]``) as a solver-state owner. They are the
+    solver's last iterate, which its next solve starts from and the next step's dof history is shifted from;
+    they need not be the dofs the step ended with (RDLS and MCorr change NCLS's and VOF's dofs after their
+    solves), so a hot start that rebuilt them from the archived dofs started each Newton from another guess."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def state(self):
+        return {"u": numpy.array(self.model.uList[-1], copy=True)}
+
+    def set_state(self, state):
+        if numpy.shape(state["u"]) == self.model.uList[-1].shape:
+            self.model.uList[-1][:] = state["u"]
+
+
+class _SystemStep(object):
+    """The next system step, as the system step controller chose it after the archived step, as a
+    solver-state owner. A hot start's ``initialize_dt_system`` chooses afresh from the restart state,
+    without the history that capped the uninterrupted run's choice (damBreakLevelSet restarted at 0.005
+    stepped to 0.01, the uninterrupted run to 0.0075)."""
+
+    def __init__(self, controller):
+        self.controller = controller
+
+    def state(self):
+        return {"dt_system": float(self.controller.dt_system)}
+
+    def set_state(self, state):
+        self.controller.setNextStep(state["dt_system"])
+
+
 class NS_base(object):  # (HasTraits):
     r"""
     The base class for managing the numerical solution of  PDE's.
@@ -1263,6 +1323,11 @@ class NS_base(object):  # (HasTraits):
             obj = getattr(lm, owner, None)
             if obj is not None and hasattr(obj, "state"):
                 yield owner, obj
+        if model is self.modelList[0]:
+            # one system step for all the models: kept with the first
+            yield "systemStep", _SystemStep(self.systemStepController)
+        yield "coupledFields", _CoupledFields(self, lm)
+        yield "unknowns", _SolverUnknowns(model)
 
     def _solver_state_fingerprint(self, model, index):
         """What the rank-local lag arrays are tied to: the number of ranks and this rank's

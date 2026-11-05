@@ -11,7 +11,8 @@ step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever i
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
 land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
 the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry.
-FT and OPTS set the final time and the deck's other options; DIR and SO run another deck under DIR instead: SO is
+FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
+HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -138,7 +139,13 @@ if SO:
     # SO may be several words: "vos_p.py vos_n.py", or "--SWEs circular_damBreak.py"
     sys.argv = ['parun'] + SO.split() + ['-l' + os.environ.get('LOGL', '1'), '-C', os.environ.get("OPTS", "")]
 else:
-    sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l1', '-C',
-                'final_time=%s dt_output=%s %s' % (os.environ.get("FT", "0.05"), os.environ.get("FT", "0.05"),
+    sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l' + os.environ.get('LOGL', '1'), '-C',
+                'final_time=%s dt_output=%s %s' % (os.environ.get("FT", "0.05"),
+                                                   os.environ.get("DTOUT", os.environ.get("FT", "0.05")),
                                                    os.environ.get("OPTS", "he=0.1"))]
-runpy.run_path(shutil.which('parun'), run_name='__main__')
+if os.environ.get("HOTSTART"):
+    # continue the archive in this directory from its latest step at or before HOTSTART
+    sys.argv += ['-H', '-t', os.environ["HOTSTART"], '--hotStartMode', os.environ.get("HOTSTARTMODE", "continue")]
+# the source tree's driver when there is one: an installed parun is a copy made at install time
+PARUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "scripts", "parun")
+runpy.run_path(PARUN if os.path.isfile(PARUN) else shutil.which('parun'), run_name='__main__')

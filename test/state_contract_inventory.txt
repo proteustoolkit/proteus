@@ -4,6 +4,11 @@
 # until it is added here.
 #
 #   state       defines state()/set_state(): archived per rank in solver_state/ and restored after the spin-up
+#               (BackwardEuler's state is m_last, and BackwardEuler_cfl's also dtLast; PsiTCtte, PsiTCtte_new, SSP,
+#               the RKEVs and TADR's CompatibleBackwardEuler inherit it, which does not say that they carry nothing
+#               more. Measured by test/test_hotstart_levelset.py, with the mprans.RANS2P shock capturing and
+#               subgrid error lag machines and NumericalSolution's own owners: the coupled fields, the solver's
+#               unknowns and the next system step)
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
@@ -34,7 +39,7 @@ SC mprans.Dissipation ShockCapturing unmeasured
 SC mprans.Kappa ShockCapturing unmeasured
 SC mprans.NCLS ShockCapturing state
 SC mprans.NCLS3P ShockCapturing unmeasured
-SC mprans.RANS2P ShockCapturing unmeasured
+SC mprans.RANS2P ShockCapturing state
 SC mprans.RANS3PF ShockCapturing state
 SC mprans.RANS3PSed ShockCapturing unmeasured
 SC mprans.RDLS ShockCapturing rebuilt
@@ -68,7 +73,7 @@ SG mprans.Dissipation SubgridError unmeasured
 SG mprans.Kappa SubgridError unmeasured
 SG mprans.NCLS SubgridError unmeasured
 SG mprans.NCLS3P SubgridError unmeasured
-SG mprans.RANS2P SubgridError unmeasured
+SG mprans.RANS2P SubgridError state
 SG mprans.RANS3PF SubgridError rebuilt
 SG mprans.RANS3PSed SubgridError unmeasured
 SG mprans.RDLS SubgridError unmeasured
@@ -103,8 +108,8 @@ STEP StepControl PsiTCtte_controller unmeasured
 STEP mprans.MCorr Newton_controller rebuilt
 STEP mprans.MCorr3P Newton_controller unmeasured
 STEP mprans.RDLS PsiTC unmeasured
-TI TimeIntegration BackwardEuler rebuilt
-TI TimeIntegration BackwardEuler_cfl rebuilt
+TI TimeIntegration BackwardEuler state
+TI TimeIntegration BackwardEuler_cfl state
 TI TimeIntegration CentralDifference_2ndD unmeasured
 TI TimeIntegration ExplicitRK_base unmeasured
 TI TimeIntegration FLCBDF state
@@ -117,18 +122,18 @@ TI TimeIntegration IMEX_HJ_Euler unmeasured
 TI TimeIntegration LinearSSPRKPIintegration unmeasured
 TI TimeIntegration LinearSSPRKintegration unmeasured
 TI TimeIntegration OuterTheta unmeasured
-TI TimeIntegration PsiTCtte unmeasured
-TI TimeIntegration PsiTCtte_new unmeasured
-TI TimeIntegration SSP unmeasured
+TI TimeIntegration PsiTCtte state
+TI TimeIntegration PsiTCtte_new state
+TI TimeIntegration SSP state
 TI TimeIntegration SSPRKPIintegration unmeasured
 TI TimeIntegration VBDF state
 TI mprans.GN_SW2DCV RKEV state
-TI mprans.NCLS RKEV rebuilt
+TI mprans.NCLS RKEV state
 TI mprans.SW2DCV RKEV state
 # CompatibleBackwardEuler: the compatible transport's carried storage M lives on TADR.LevelModel
 # (carriedStorage); a hot start reseeds it with the flow's m^n
-TI mprans.TADR CompatibleBackwardEuler unmeasured
-TI mprans.TADR RKEV unmeasured
-TI mprans.VOF RKEV rebuilt
-TI mprans.VOF3P RKEV unmeasured
-TI mprans.VOS3P RKEV unmeasured
+TI mprans.TADR CompatibleBackwardEuler state
+TI mprans.TADR RKEV state
+TI mprans.VOF RKEV state
+TI mprans.VOF3P RKEV state
+TI mprans.VOS3P RKEV state

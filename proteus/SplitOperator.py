@@ -49,6 +49,18 @@ class SO_base(object):
         """Restore what ``state()`` returned; see TimeIntegration.TI_base.state."""
         pass
 
+    def setNextStep(self, dt_system):
+        """Take ``dt_system`` as the next system step from ``t_system_last`` and hand it to the models, as
+        ``choose_dt_system`` leaves it (before ``stepExact_system``). A hot start puts back the step the
+        uninterrupted run chose after the archived step (NumericalSolution's ``systemStep`` owner)."""
+        self.dt_system = float(dt_system)
+        self.t_system = self.t_system_last + self.dt_system
+        self.stepSequence = [(self.t_system, m) for (_, m) in self.stepSequence]
+        for model in self.modelList:
+            model.stepController.dt_model = self.dt_system
+            model.stepController.set_dt_allLevels()
+            model.stepController.t_model = self.t_system
+
     def converged(self):
         #no iteration
         if self.its > 0:
