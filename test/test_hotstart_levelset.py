@@ -72,6 +72,24 @@ def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
     assert _worst(full, hot) > 1e-3
 
 
+def test_a_continue_on_another_partition_warns_once(tmp_path):
+    """A continue hot start whose archived solver state another partition wrote (the global mesh path with an
+    unpinned graph partitioner) goes on as a restart. It said so per model in the log only; now one
+    RuntimeWarning on the first rank names the models and the reason."""
+    dtout, t, ft = CASES["lagged"]
+    _run(tmp_path / "hot", FT=t, DTOUT=dtout)
+    env = dict(os.environ, OMP_NUM_THREADS="1", DECK="damBreakLevelSet.py", FT=str(ft), DTOUT=str(dtout),
+               HOTSTART=str(t), OTHERPARTITION="1")
+    env.setdefault("FI_PROVIDER", "tcp")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    out = subprocess.run([sys.executable, HELPER], capture_output=True, text=True, timeout=1800, env=env,
+                         cwd=str(tmp_path / "hot"))
+    assert out.returncode == 0, out.stderr[-2000:]
+    warned = [line for line in out.stderr.splitlines() if "RuntimeWarning: hot start (continue)" in line]
+    assert len(warned) == 1, out.stderr[-3000:]
+    assert "different partition" in warned[0] and all(m in warned[0] for m in ("rans2p", "vof", "mcorr"))
+
+
 def test_a_driver_without_hot_start_mode_continues(tmp_path):
     """Options without ``hotStartMode`` (a parun installed before the option existed: setup.py copies the script
     at install time, editable install or not) take the default, continue, instead of failing in the restore."""

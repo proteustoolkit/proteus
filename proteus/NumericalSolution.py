@@ -201,6 +201,7 @@ class NS_base(object):  # (HasTraits):
     def __init__(self,so,pList,nList,sList,opts,simFlagsList=None,TwoPhaseFlow=False):
         # a driver that predates the option (an installed parun is a copy made at install time) gets the default
         self.hotStartMode = getattr(opts, 'hotStartMode', 'continue')
+        self._solverStateRefused = []
         if self.hotStartMode not in ('continue', 'restart'):
             raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (self.hotStartMode,))
         from . import Comm
@@ -764,7 +765,9 @@ class NS_base(object):  # (HasTraits):
             #the spin-up above, and the step controllers' initializeTimeHistory
             #in initialize_dt_system, rebuilt the lag state from the restart
             #state; put back the state the archived step ended with
+            self._solverStateRefused = []
             restored = [self.restoreSolverState(m,index,self.tCount) for index,m in enumerate(self.modelList)]
+            self._warnSolverStateRefused()
             if all(restored):
                 #the models' first-step branches (a low-order first step, no extrapolation from the
                 #previous solutions) belong to a run with no history; this one has its history back
@@ -1503,6 +1506,24 @@ class NS_base(object):  # (HasTraits):
                 if hook is not None:
                     hook()
 
+    def _warnSolverStateRefused(self):
+        """One warning, on the first rank, when a continue hot start could not restore some model's solver state
+        and so goes on as a restart: the run then differs from the uninterrupted one, which the per-model log
+        lines alone made easy to miss (a hot start through the global mesh path re-partitions with the graph
+        partitioner, and an unpinned partitioner need not reproduce the archived partition)."""
+        if not self._solverStateRefused:
+            return
+        reasons = sorted(set(why for _, why in self._solverStateRefused))
+        message = ("hot start (continue): no solver state restored for %s (%s), so the run continues as a restart "
+                   "and will differ from the uninterrupted run; restart on the archived partition (same ranks; "
+                   "the per-rank mesh views, or -mat_partitioning_type current) to continue exactly, or use "
+                   "--hotStartMode restart to ask for a restart"
+                   % (", ".join(name for name, _ in self._solverStateRefused), "; ".join(reasons)))
+        logEvent("WARNING: " + message, level=0)
+        if self.comm.isMaster():
+            import warnings
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
     def restoreSolverState(self, model, index, tCount):
         """Hot start: put back what archiveSolverState wrote at ``tCount``,
         after the spin-up has rebuilt (and so overwritten) the lag state.
@@ -1539,18 +1560,25 @@ class NS_base(object):  # (HasTraits):
                                "run's (%s); use hotStartMode='restart' (--hot-start-mode restart) to continue "
                                "the solution with a new policy and rebuild the history from it"
                                % (model.name, "; ".join(everyone[0])))
-        found, mine = None, 0
+        found, mine, ranks = None, 0, 1
         if "%s/step%s" % (base, suffix) in hdf:
             found = int(hdf["%s/step%s" % (base, suffix)][...][0])
-            mine = int(found == tCount and numpy.array_equal(
-                hdf["%s/fingerprint%s" % (base, suffix)][...], self._solver_state_fingerprint(model, index)))
+            archived = hdf["%s/fingerprint%s" % (base, suffix)][...]
+            fingerprint = self._solver_state_fingerprint(model, index)
+            mine = int(found == tCount and numpy.array_equal(archived, fingerprint))
+            ranks = int(archived[0] == fingerprint[0])
+        #collective on every rank, whatever this rank found
+        ranks = comm.allreduce(int(found is not None and ranks), op=MPI.MIN)
         if not comm.allreduce(mine, op=MPI.MIN):
             if found is not None and found != tCount:
                 why = "the archive holds the state of step %d only" % found
-            else:
+            elif not ranks:
                 why = "none was archived, or it was written by a different number of ranks or partition"
+            else:
+                why = "it was written by a different partition"
             logEvent("Hot start: no solver state to restore at step %d for model %s (%s); "
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
+            self._solverStateRefused.append((model.name, why))
             return False
         for owner, obj in self._solver_state_owners(model):
             if obj.state() is None or not hasattr(obj, "set_state"):

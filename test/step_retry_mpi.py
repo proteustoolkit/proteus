@@ -60,6 +60,15 @@ def init(self, so, pList, nList, *args, **kwargs):
     return _init(self, so, pList, nList, *args, **kwargs)
 NS.NS_base.__init__ = init
 
+if os.environ.get("OTHERPARTITION"):
+    # the archived solver state looks as if another partition wrote it (its fingerprint differs)
+    _fingerprint = NS.NS_base._solver_state_fingerprint
+    def _other_partition(self, model, index):
+        f = _fingerprint(self, model, index)
+        f[3:] += 1  # same ranks and mesh, other pieces of it
+        return f
+    NS.NS_base._solver_state_fingerprint = _other_partition
+
 if os.environ.get("NORESTORE"):
     NS.NS_base.restoreSystemStepState = lambda self: None
 
