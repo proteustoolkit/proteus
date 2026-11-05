@@ -3563,7 +3563,7 @@ class OneLevelTransport(NonlinearEquation):
         if self.conservativeFlux is not None:
             for ci in list(self.conservativeFlux.keys()):
                 #don't need for p1-nc?
-                if self.conservativeFlux[ci] not in ['p1-nc','dg','dg-bdm','dg-point-eval','point-eval-gwvd'] and self.conservativeFlux[ci] is not None:
+                if self.conservativeFlux[ci] not in ['p1-nc','dg','dg-bdm','dg-point-eval'] and self.conservativeFlux[ci] is not None:
                     self.ebq[('velocity',ci)].fill(0.0)
                     #self.ebq_global[('velocity',ci)].fill(0.0)
                     self.ebq_global[('velocityAverage',ci)].fill(0.0)
