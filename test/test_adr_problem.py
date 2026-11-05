@@ -1571,3 +1571,119 @@ def test_ymfrun_says_why_a_discretization_cannot_close():
     (why,) = ymfrun.blockers(doc, None, {"name": "b", "method": "particle",
                                          "particle": {"spacing": 0.1, "kernel": "cubic_spline"}})
     assert why.startswith("b is missing an implementation: method particle")
+
+
+SQUARE_TAGGED_SPEC = """\
+model:
+  name: "Poisson on a square read as a mesh, conditions by facet tag"
+  physical_model: {provenance: human_specified, processes: [heat_conduction], assumptions: [steady]}
+  strong_form:
+    provenance: human_specified
+    unknowns: [u]
+    equation_formulation: "Poisson"
+    equations: ["-Δu = f  in Ω"]
+    domain: DOMAIN
+    boundary_regions:
+      - {name: sides, tags: [1, 2, 3, 4]}
+    boundary_conditions:
+      - {region: sides, variable: u, type: dirichlet, formula: "x² + x y"}
+    coefficients:
+      f: {value: -2.0}
+  weak_forms:
+    - label: galerkin
+      provenance: human_specified
+      derivation: "multiply by v, integrate by parts"
+      solution_spaces: {trial: H1, test: H1}
+      bilinear: "∫ ∇u·∇v"
+      linear: "∫ f v"
+      stabilization_method: "none"
+solution_paths:
+  analytical:
+    - name: exact
+      provenance: human_specified
+      method: closed_form
+      solution: {formula: "u = x² + x y"}
+  discretizations:
+    - name: P2
+      provenance: human_specified
+      finite_element: {fields: {family: CG, order: 2}}
+      mesh: {levels: [1, 2]}
+      solver: {type: linear, linear_solver: superlu, tolerance: 1.0e-12}
+"""
+
+
+def test_a_discrete_domain_solves_as_the_mesh_file_it_holds(tmp_path):
+    """The square4x4_tagged ymf mesh posed as kind: file and, inlined, as kind: discrete: the same outputs, bitwise,
+    and P2 exact on the quadratic."""
+    discretizations = pytest.importorskip("ymf.discretizations")
+    pytest.importorskip("ymf.mesh")
+    if not hasattr(discretizations, "mesh_from_domain"):
+        pytest.skip("this ymf predates discrete domains (cekees/ymf#8)")
+    from ymf import archive
+    tagged = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_tests", "ymf_meshes",
+                          "square4x4_tagged")
+    domain, _ = archive.read_ymf(tagged + ".ymf")
+    grid = domain["times"][0]["spaces"]["Spatial_Domain"]
+    # The arrays stay in the mesh's HDF5 file (absolute references), and no attributes: the form a ymf before
+    # cekees/ymf#11 can load (inline values read as text, no attributes key; the next test is the form after
+    # it). The attributes matter (the node tags of square4x4.bc make its
+    # interior vertex a Dirichlet node), so the file route reads the same grid without them too.
+    import copy
+    import shutil
+    shutil.copy(tagged + ".h5", tmp_path / "square.h5")
+    grid["attributes"] = []
+
+    def relocate(grid, where):
+        for _, owner in archive._data_items({"times": [{"time": 0.0, "spaces": {"m": grid}}]}):
+            if "data" in owner["data_item"]:
+                owner["data_item"]["data"] = where + ":" + owner["data_item"]["data"].rsplit(":", 1)[1]
+        return grid
+    discrete = relocate(copy.deepcopy(grid), str(tmp_path / "square.h5"))
+    discrete = dict((k, discrete[k]) for k in ("topology", "geometry", "facets") if k in discrete)
+    relocate(grid, "square.h5")
+    archive.write_ymf(domain, str(tmp_path / "square.ymf"))
+    domains = {"file": {"kind": "file", "format": "ymf", "path": str(tmp_path / "square"), "dimension": 2},
+               "discrete": dict(discrete, kind="discrete", dimension=2)}
+    _assert_same_solution(tmp_path, domains)
+
+
+def _assert_same_solution(tmp_path, domains):
+    """Pose SQUARE_TAGGED_SPEC on each domain block, run it, and compare the archives bitwise."""
+    import json
+    import numpy
+    from ymf import archive, closure
+    arrays = {}
+    for name, block in domains.items():
+        (tmp_path / (name + ".ymf")).write_text(
+            SQUARE_TAGGED_SPEC.replace("DOMAIN", json.dumps(block)), encoding="utf-8")
+        out = ymf_run(tmp_path / (name + ".ymf"), "--outdir", tmp_path / name)
+        assert out.returncode == 0, out.stderr[-2000:]
+        assert all(float(r[1]) < 1e-12 for r in rows(out.stdout)), out.stdout
+        _, outputs, _ = closure.load(tmp_path / name / (name + ".archive.ymf"))
+        # in level order: the keys end in a hash of the inputs, domain included, so their order is not the levels'
+        arrays[name] = [archive.domain_arrays(o["approximation"], tmp_path / name)
+                        for _, o in sorted(outputs.items(), key=lambda ko: ko[1]["realization"]["levels"])]
+    assert len(arrays["file"]) == len(arrays["discrete"]) == 2
+    for mine, theirs in zip(arrays["discrete"], arrays["file"]):
+        assert set(mine) == set(theirs)
+        assert all(numpy.array_equal(mine[k], theirs[k]) for k in theirs)
+
+
+def test_a_discrete_domain_inline_with_its_attributes_solves_as_its_file(tmp_path):
+    """With cekees/ymf#11 a discrete block in a spec file may hold its arrays inline and its attributes: the
+    whole square4x4_tagged mesh, node tags included (they make the interior vertex a Dirichlet node), solves
+    bit for bit as the file does."""
+    pytest.importorskip("ymf.mesh")
+    domain_module = pytest.importorskip("ymf.domain")
+    if not hasattr(domain_module, "type_discrete_block"):
+        pytest.skip("this ymf reads a spec's inline mesh as text (cekees/ymf#11)")
+    from ymf import archive
+    tagged = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_tests", "ymf_meshes",
+                          "square4x4_tagged")
+    domain, _ = archive.read_ymf(tagged + ".ymf")
+    grid = archive.inline_approximation(domain, os.path.dirname(tagged))["times"][0]["spaces"]["Spatial_Domain"]
+    discrete = dict((k, grid[k]) for k in ("topology", "geometry", "attributes", "facets") if k in grid)
+    assert discrete["attributes"]
+    _assert_same_solution(tmp_path, {
+        "file": {"kind": "file", "format": "ymf", "path": tagged, "dimension": 2},
+        "discrete": dict(discrete, kind="discrete", dimension=2)})

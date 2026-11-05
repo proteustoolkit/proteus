@@ -1038,17 +1038,32 @@ class MeshYmfDomain(D_base):
     writes: one space ``Spatial_Domain`` of triangles or tetrahedra, with node
     and element material types and, optionally, a facet list whose tags become
     the element boundary tags. ``nd`` is read from the file when not given.
+
+    Or the same mesh held in memory: ``grid`` is a ymf grid (``topology``,
+    ``geometry``, optional ``attributes``, ``facets``, ``provenance``), as a
+    ``discrete`` domain block holds it; ``fileprefix`` is then only a name.
+    Its HDF5 references, if any, resolve from the working directory.
     """
-    def __init__(self,fileprefix,nd=None):
+    def __init__(self,fileprefix=None,nd=None,grid=None):
+        if (fileprefix is None) == (grid is None) and grid is None:
+            raise ValueError("MeshYmfDomain reads a ymf mesh file (fileprefix) or a grid")
+        self.grid = grid
+        source = grid if grid is not None else fileprefix
         if nd is None:
             from .MeshTools import ymfMeshTopology
-            topology = ymfMeshTopology(fileprefix)
+            topology = ymfMeshTopology(source)
             nd = {"Triangle": 2, "Tetrahedron": 3}.get(topology)
             if nd is None:
-                raise ValueError("%s.ymf holds a %s mesh; MeshYmfDomain reads triangles and tetrahedra"
-                                 % (fileprefix, topology))
-        D_base.__init__(self,nd,name=fileprefix)
-        self.meshfile=fileprefix
+                raise ValueError("%s holds a %s mesh; MeshYmfDomain reads triangles and tetrahedra"
+                                 % ("the grid" if grid is not None else fileprefix + ".ymf", topology))
+        name = fileprefix if fileprefix is not None else (grid.get("name") or "ymf_mesh")
+        D_base.__init__(self,nd,name=name)
+        self.meshfile = None if grid is not None else fileprefix
+
+    @property
+    def ymfSource(self):
+        """What the mesh is read from: the grid, or the file prefix"""
+        return self.grid if self.grid is not None else self.meshfile
 
 
 class MeshHexDomain(D_base):
