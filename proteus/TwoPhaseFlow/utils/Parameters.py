@@ -438,16 +438,27 @@ class ParametersModelRANS2P(ParametersModelBase):
             self.OptDB.setValue(prefix+'pc_type', 'lu')
             self.OptDB.setValue(prefix+'pc_factor_mat_solver_type', 'superlu_dist')
         elif self.n.linearSmoother == LinearSolvers.SimpleNavierStokes3D:
+            # GMRES + ASM with an LU per subdomain. Since 2.0 (C19 round 2, measured on damBreakLevelSet):
+            # classical Gram-Schmidt (one reduction per iteration, not one per basis vector); PETSc's own LU
+            # with nested-dissection ordering on the blocks (its symbolic factorization is kept, superlu's
+            # was redone at every setup); right preconditioning with PETSc's convergence test on the true
+            # residual (it replaces the Python r-true callback that built the solution every iteration);
+            # and one preconditioner setup per Newton solve (pc_lag_newton).
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
             self.OptDB.setValue(prefix+'pc_type', 'asm')
             self.OptDB.setValue(prefix+'pc_asm_type', 'basic')
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
-            self.OptDB.setValue(prefix+'ksp_gmres_modifiedgramschmidt', 1)
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
+            self.OptDB.setValue(prefix+'ksp_pc_side', 'right')
+            self.OptDB.setValue(prefix+'ksp_converged_use_initial_residual_norm', True)
             self.OptDB.setValue(prefix+'sub_ksp_type', 'preonly')
-            self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'superlu')
-            self.OptDB.setValue(prefix+'ksp_knoll', 1)
             self.OptDB.setValue(prefix+'sub_pc_type', 'lu')
+            self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'petsc')
+            self.OptDB.setValue(prefix+'sub_pc_factor_mat_ordering_type', 'nd')
+            self.OptDB.setValue(prefix+'ksp_knoll', 1)
+            self.OptDB.setValue(prefix+'pc_lag_newton', True)
+            if self.n.linearSolverConvergenceTest == 'r-true':
+                self.n.linearSolverConvergenceTest = 'r'
         elif self.n.linearSmoother == LinearSolvers.NavierStokes_TwoPhasePCD:
             # Options for PCD
             # Global KSP options

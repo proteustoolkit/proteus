@@ -77,6 +77,27 @@ def test_model_baseline_one_rank(tmp_path):
     assert all(v['bytes'] > 0 and v['calls'] > 0 for v in residual)
 
 
+def test_model_baseline_level_set_iterative(tmp_path):
+    """damBreakLevelSet with TwoPhaseFlow's iterative solvers (superlu=0), one rank: RANS2P's GMRES + ASM
+    defaults (right preconditioning, PETSc LU per block, one setup per Newton solve) run, the KSP
+    iterations are counted per Newton iteration, and solution= writes the fields and the VOF volume."""
+    ci = os.path.join(HERE, os.pardir, "TwoPhaseFlow")
+    for name in os.listdir(ci):
+        if name.startswith("meshDambreak"):
+            shutil.copy(os.path.join(ci, name), tmp_path)
+    out = run('model_baseline_mpi.py',
+              [os.path.join(ci, 'damBreakLevelSet.py'), 'context=final_time=0.03 dt_output=0.03 he=0.1',
+               'warmup=1', 'superlu=0', 'solution=sol', 'out=model.json'], tmp_path)
+    ksp = [line for line in out.splitlines() if line.startswith('KSP rans2p')]
+    assert len(ksp) == 1 and float(ksp[0].split()[2]) > 0, out[-2000:]
+    assert any(line.startswith('INTEGRAL vof') for line in out.splitlines())
+    with open(tmp_path / 'model.json') as f:
+        r = json.load(f)
+    x = r['newton']['rans2p']['per_iteration_extras_mean']
+    assert x['ksp its'] > 0 and x['convergence test'] == 0.0  # PETSc's test, not the Python r-true callback
+    assert (tmp_path / 'sol.0.npz').exists()
+
+
 def _gate(monkeypatch, ctl, ack, pattern='femIntegrals.update'):
     sys.path.insert(0, HERE)
     try:
