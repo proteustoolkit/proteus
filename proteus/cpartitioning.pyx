@@ -56,6 +56,7 @@ from proteus.partitioning cimport (c_petscPartitioners,
                                    c_readSimplexSubentitiesTouching,
                                    c_ownedNodesByFileNumber,
                                    c_newNumbersOfFileNodes,
+                                   c_subdomainNumbersByDirectory,
                                    buildQuadraticSubdomain2GlobalMappings_1d,
                                    buildQuadraticSubdomain2GlobalMappings_2d,
                                    buildQuadraticSubdomain2GlobalMappings_3d,
@@ -492,6 +493,19 @@ def fileNodeNumbers(Comm comm, object nodeOffsets_old, object nodeOffsets_new, o
     owned = c_ownedNodesByFileNumber(comm.ob_mpi, off_old, off_new, chunk)
     answered = c_newNumbersOfFileNodes(comm.ob_mpi, off_old, chunk, want)
     return dict(owned), dict(answered)
+
+def subdomainNumbers(Comm comm, int nGlobal, int ownedBegin, object owned, object subdomain):
+    """The directory exchange of the parun -F partitioners' element, face and
+    edge numberings: file -> new number of the entities in subdomain, the
+    owned ones (a subset) numbered ownedBegin, ownedBegin+1, ... in ascending
+    file order, the others asked of the rank whose default chunk of
+    [0,nGlobal) holds them. Collective."""
+    cdef cppset[int] own, sub
+    for k in owned:
+        own.insert(k)
+    for k in subdomain:
+        sub.insert(k)
+    return dict(c_subdomainNumbersByDirectory(comm.ob_mpi, nGlobal, ownedBegin, own, sub))
 
 def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVertexMarkers,
                           object nodes_old2new, int ownedBegin, int ownedEnd, object overlap):

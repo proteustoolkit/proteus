@@ -1120,198 +1120,6 @@ delete [] mesh.elementBoundaryOffsets_subdomain_owned;
   return 0;
 }
 
-namespace {
-  //Reopening the mappings file read-only.
-  //
-  //The numbering datasets are written collectively through the MPI-IO driver
-  //and then reopened read-only by every rank. Nothing used to check the
-  //reopen: on Carpenter at >=384 ranks some ranks saw
-  //
-  //  H5F__super_read(): truncated file:
-  //      eof = 115343360, sblock->base_addr = 0, stored_eof = 116070216
-  //
-  //(93 of 1536 in one run), H5Dopen1 returned -1, H5Dread failed on an invalid
-  //id, and the ZERO-initialised destination valarray became the numbering --
-  //every old id mapping to new id 0. That is the origin of the degenerate
-  //face numbering and of edgeNodesArray left at its -1 initialiser.
-  //
-  //Closing the writer before every reopen (beb3ba81) is necessary but NOT
-  //sufficient. A standalone reproduction on Carpenter (HDF5 1.14.6, Lustre,
-  //7680 ranks on 40 nodes, production-sized datasets; torino_flume
-  //debug/stale_eof) showed what the failures depend on:
-  //  - NOT time: waiting 5, 50 or 500 ms after the barrier fails as often as
-  //    not waiting, and a stat() right after a failed open always shows the
-  //    correct size;
-  //  - concurrency on one node: a node's first opener never failed, while
-  //    ranks opening at the same moment as many others on their node did
-  //    (up to ~100 of 7680 per reopen);
-  //  - one real H5Fopen per node first fixes it: with the node leader opening
-  //    before the rest, 4 failures in 61,440 opens. A leader that only
-  //    fstat()s the file and sees the right size does not help.
-  //The likely cause is the Lustre client handing some of many concurrent
-  //openers its stale cached size for a file another client just changed.
-  //
-  //So the reopen is LOCAL and node-leader-first: each rank opens the file
-  //with HDF5's default (sec2) driver, one rank per node before the others,
-  //and a failed open is retried with a short jittered backoff. Reads are
-  //ordinary per-rank POSIX reads whose sieve buffer coalesces the point
-  //selections, and the close is not collective, so one slow rank no longer
-  //holds every other rank in an MPI_File_close barrier. Same build, mesh and
-  //ranks (7680, 14.7M nodes): "Collecting elements" 704 s vs 1215 s with the
-  //world MPI-IO reopen, partitioning 882 s vs 1426 s; one MPI-IO run took
-  //8981 s when a single straggler rank held the other 7679 in that barrier.
-  //
-  //PROTEUS_MAPPINGS_READ_DRIVER=mpio restores the world MPI-IO reopen
-  //(collective, not retried) as a fallback.
-  bool mappingsReadUsesMPIIO()
-  {
-    static const bool use_mpio = []() {
-      const char* driver = std::getenv("PROTEUS_MAPPINGS_READ_DRIVER");
-      return driver != NULL && std::string(driver) == "mpio";
-    }();
-    return use_mpio;
-  }
-
-  //Transfer mode for a read from a file opened by openMappingsReadOnly. HDF5
-  //rejects collective transfer on a non-MPI driver ("collective access for
-  //MPI-based drivers only"), so collective is only requested on the MPI-IO
-  //path; on the local path the read is an ordinary independent read.
-  herr_t setMappingsReadXfer(hid_t dxpl)
-  {
-    if (mappingsReadUsesMPIIO())
-      return H5Pset_dxpl_mpio(dxpl, H5FD_MPIO_COLLECTIVE);
-    return 0;
-  }
-
-  //Ranks sharing this rank's node (and its Lustre client), split once.
-  MPI_Comm mappingsNodeComm(const MPI_Comm& comm)
-  {
-    static MPI_Comm node = MPI_COMM_NULL;
-    static MPI_Comm split_from = MPI_COMM_NULL;
-    if (node == MPI_COMM_NULL || split_from != comm)
-      {
-        int rank = 0;
-        MPI_Comm_rank(comm, &rank);
-        MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node);
-        split_from = comm;
-      }
-    return node;
-  }
-
-  //A local read-only open, retried: 10 quick attempts with 10-60 ms of
-  //jitter (the failure is a collision with the node's other openers, not a
-  //window that closes with time), then up to 5 more 1 s apart. Returns the
-  //file id or -1, and the number of attempts used.
-  hid_t openLocalWithRetry(const char* name, hid_t fapl, int rank, int& attempts)
-  {
-    unsigned int seed = 2654435761u * (unsigned int)(rank + 1);
-    const int quick = 10, slow = 5;
-    hid_t fid = -1;
-    attempts = 0;
-    while (attempts < quick + slow)
-      {
-        H5E_BEGIN_TRY {
-          fid = H5Fopen(name, H5F_ACC_RDONLY, fapl);
-        } H5E_END_TRY;
-        attempts++;
-        if (fid >= 0 || attempts == quick + slow)
-          break;
-        if (attempts < quick)
-          usleep(10000 + rand_r(&seed) % 50000);
-        else
-          sleep(1);
-      }
-    return fid;
-  }
-
-  //A rank that exhausts its retries writes what it saw to
-  //mappings_open_fail.<rank>.txt before the caller aborts: the abort can
-  //drop that rank's stderr (it did on Carpenter, job 3180113).
-  void reportMappingsOpenFailure(int rank, const char* name, int attempts)
-  {
-    char path[64];
-    snprintf(path, sizeof(path), "mappings_open_fail.%d.txt", rank);
-    FILE* f = fopen(path, "w");
-    if (f == NULL)
-      f = stderr;
-    struct stat st;
-    int sr = stat(name, &st);
-    fprintf(f, "rank %d: H5Fopen(%s, RDONLY) failed %d times\n", rank, name, attempts);
-    if (sr == 0)
-      fprintf(f, "stat: st_size %lld\n", (long long)st.st_size);
-    else
-      fprintf(f, "stat failed: %s\n", strerror(errno));
-    H5Eprint2(H5E_DEFAULT, f);
-    if (f != stderr)
-      fclose(f);
-  }
-
-  //Collective: every rank must call this (barrier and the retry count reduction).
-  hid_t openMappingsReadOnly(const MPI_Comm& comm, const char* name)
-  {
-    const bool use_mpio = mappingsReadUsesMPIIO();
-    int rank = 0;
-    MPI_Comm_rank(comm, &rank);
-    static bool reported = false;
-    if (!reported)
-      {
-        if (use_mpio)
-          logEvent("mappings file read-only reopen: MPI-IO driver (PROTEUS_MAPPINGS_READ_DRIVER=mpio)",3);
-        else
-          logEvent("mappings file read-only reopen: local sec2 driver",3);
-        reported = true;
-      }
-    MPI_Barrier(comm);
-    hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
-    if (fapl < 0) return fapl;
-    if (use_mpio)
-      H5Pset_fapl_mpio(fapl, comm, MPI_INFO_NULL);
-    hid_t fid = -1;
-    int attempts = 1;
-    int node_rank = 0;
-    if (use_mpio)
-      {
-        //the world MPI-IO open is collective and must not be retried per rank
-        H5E_BEGIN_TRY {
-          fid = H5Fopen(name, H5F_ACC_RDONLY, fapl);
-        } H5E_END_TRY;
-      }
-    else
-      {
-        //node leader first, then the rest of the node
-        MPI_Comm node = mappingsNodeComm(comm);
-        MPI_Comm_rank(node, &node_rank);
-        if (node_rank == 0)
-          fid = openLocalWithRetry(name, fapl, rank, attempts);
-        MPI_Barrier(node);
-        if (node_rank != 0)
-          fid = openLocalWithRetry(name, fapl, rank, attempts);
-      }
-    if (fid < 0)
-      {
-        //reopen once more with error reporting on, to capture the HDF5 stack
-        fid = H5Fopen(name, H5F_ACC_RDONLY, fapl);
-        if (fid < 0)
-          reportMappingsOpenFailure(rank, name, attempts + 1);
-      }
-    H5Pclose(fapl);
-    int counts[4] = {(attempts > 1 && node_rank == 0) ? 1 : 0,
-                     (attempts > 1 && node_rank != 0) ? 1 : 0,
-                     (fid < 0) ? 1 : 0,
-                     attempts};
-    int totals[3] = {0, 0, 0}, maxAttempts = 0;
-    MPI_Allreduce(counts, totals, 3, MPI_INT, MPI_SUM, comm);
-    MPI_Allreduce(&counts[3], &maxAttempts, 1, MPI_INT, MPI_MAX, comm);
-    if (totals[0] + totals[1] + totals[2] > 0)
-      {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "mappings file reopen: %d node leader(s) and %d other rank(s) needed a retry (max %d attempts), %d failed (stale size on a parallel filesystem)",
-                 totals[0], totals[1], maxAttempts, totals[2]);
-        logEvent(msg,3);
-      }
-    return fid;
-  }
-}
 
 /* I/O, local: stream a Triangle or TetGen element file (simplexDim nodes per
    element; format names it in the error) and keep what a rank whose default
@@ -1670,6 +1478,59 @@ std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<
   const int begin = nodeOffsets_old[rank];
   return askOwningRanks(comm, nodeOffsets_old, wanted,
                         [&](int nN_old) { return old2new_chunk[nN_old - begin]; });
+}
+
+/* MPI: file number -> new number for the entities `subdomain` (elements,
+   faces or edges of this rank's subdomain, file numbers), given the ones this
+   rank owns. The owned entities, in ascending file order, take the new
+   numbers ownedBegin, ownedBegin+1, ... (ownedBegin = the count owned by lower
+   ranks). The others' new numbers come from a directory: every rank pushes
+   its (old, new) pairs to the rank whose default chunk of [0,nGlobal) holds
+   the old number (one exchange), then asks that rank for the entities it
+   needs (askOwningRanks, two exchanges). Memory per rank is O(subdomain +
+   nGlobal/size); no file, no global array. Collective. `owned` must be a
+   subset of `subdomain`; the result holds exactly the keys of `subdomain`. */
+std::map<int,int> subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
+                                              const std::set<int>& owned, const std::set<int>& subdomain)
+{
+  int rank, size;
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
+  const std::valarray<int> chunks = defaultChunkOffsets(nGlobal, size);
+  const std::vector<int> offsets(std::begin(chunks), std::end(chunks));
+  std::map<int,int> old2new;
+  std::vector<std::vector<int> > pairs(size);
+  int nNew = ownedBegin;
+  for (std::set<int>::const_iterator it = owned.begin(); it != owned.end(); it++, nNew++)
+    {
+      old2new[*it] = nNew;
+      std::vector<int>& to = pairs[rankOfNumber(offsets, *it)];
+      to.push_back(*it);
+      to.push_back(nNew);
+    }
+  std::vector<int> received = exchangeInts(comm, pairs);
+  const int begin = offsets[rank];
+  std::vector<int> directory(offsets[rank+1] - begin, -1);
+  for (size_t i = 0; i < received.size(); i += 2)
+    directory[received[i] - begin] = received[i+1];
+  std::set<int> wanted;
+  for (std::set<int>::const_iterator it = subdomain.begin(); it != subdomain.end(); it++)
+    if (old2new.find(*it) == old2new.end())
+      wanted.insert(*it);
+  std::map<int,int> ghosts = askOwningRanks(comm, offsets, wanted,
+                                            [&](int n_old) { return directory[n_old - begin]; });
+  old2new.insert(ghosts.begin(), ghosts.end());
+  assert(old2new.size() == subdomain.size());
+  return old2new;
+}
+
+/* The inverse of a one-to-one map. */
+std::map<int,int> invertedMap(const std::map<int,int>& m)
+{
+  std::map<int,int> inverse;
+  for (std::map<int,int>::const_iterator it = m.begin(); it != m.end(); it++)
+    inverse[it->second] = it->first;
+  return inverse;
 }
 
 /* MPI: give the faces the partition cut the reserved flag -1, for a
@@ -2138,45 +1999,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   H5Sclose(nodes_new2old_memspace_id);
   H5Sclose(nodes_new2old_filespace_id);
   H5Fclose(file_id);
-  //
-  //test out of core
-  //
-  IS nodeNumberingIS_global_old2new;
-  const PetscInt *nodeNumbering_global_old2new;
-  valarray<int> nodeNumbering_global_new2old;
-  if (test)
-    {
-      ISAllGather(nodeNumberingIS_subdomain_old2new,&nodeNumberingIS_global_old2new);
-      ISGetIndices(nodeNumberingIS_global_old2new,&nodeNumbering_global_old2new);
-      nodeNumbering_global_new2old.resize(nNodes_global);
-      for (int nN = 0; nN < nNodes_global; nN++)
-        nodeNumbering_global_new2old[nodeNumbering_global_old2new[nN]] = nN;
-      herr_t status;
-      valarray<int> nodeNumbering_old2new_read(nNodes_global);
-      file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-      assert(file_id != H5I_INVALID_HID);
-      hid_t nodeNumbering_old2new_dataset_id = H5Dopen1(file_id, "/nodeNumbering_old2new");
-      status = H5Dread(nodeNumbering_old2new_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                       &nodeNumbering_old2new_read[0]);
-      status = H5Dclose(nodeNumbering_old2new_dataset_id);
-      for (int i=0;i<nNodes_global;i++)
-        {
-          assert(nodeNumbering_global_old2new[i] == nodeNumbering_old2new_read[i]);
-        }
-      std::cout<<"==================out of core old2new nodes is correct!===================="<<std::endl;
-      hid_t nodeNumbering_new2old_dataset_id = H5Dopen2(file_id, "/nodeNumbering_new2old", H5P_DEFAULT);
-      valarray<int> nodeNumbering_new2old_read(nNodes_global);
-      status = H5Dread(nodeNumbering_new2old_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                       &nodeNumbering_new2old_read[0]);
-      status = H5Dclose(nodeNumbering_new2old_dataset_id);
-      H5Fclose(file_id);
-      for (int i=0;i<nNodes_global;i++)
-      {
-        assert(nodeNumbering_global_new2old[i] == nodeNumbering_new2old_read[i]);
-      }
-      std::cout<<"==================out of core new2old nodes is correct!===================="<<std::endl;
-      nodeNumbering_global_new2old.resize(0);
-    }
   //nodes_subdomain_old2new_array stays live: readSubdomainElements answers
   //other ranks' old->new requests from it.
   //ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
@@ -2358,118 +2180,16 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   H5Sclose(e_old2new_filespace_id);
   H5Fclose(file_id);
   //
-  //now get maps for all the elements on the subdomain, not just owned elements
+  //the new numbers of every element of the subdomain, owned or not, from a
+  //directory on the default chunks of the file numbers (no mappings-file read)
   //
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Reading numberings from hdf5 to get subdomain map");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  logEvent("Reading element numberings from hdf5 to get subdomain map",5);
-
-  valarray<hsize_t> old_element_indices_subdomain(static_cast<hsize_t>(elementNodesArrayMap.size()));
-  valarray<int> new_element_indices_subdomain(elementNodesArrayMap.size());
-  int eN_old_subdomain = 0;
-  for (auto it = elementNodesArrayMap.begin(); it != elementNodesArrayMap.end(); it++, eN_old_subdomain++)
-    {
-      old_element_indices_subdomain[eN_old_subdomain] = it->first;
-    }
-  file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-  if (file_id < 0)
-    {
-      H5Eprint2(H5E_DEFAULT, stderr);
-      SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                  "could not reopen the mappings file; see the HDF5 stack above");
-    }
-  e_old2new_dataset_id = H5Dopen1(file_id, "/elementNumbering_old2new");
-  e_old2new_filespace_id = H5Dget_space(e_old2new_dataset_id);
-  status = H5Sselect_elements(e_old2new_filespace_id, H5S_SELECT_SET, 
-                              elementNodesArrayMap.size(), &old_element_indices_subdomain[0]);
-  hsize_t e_subdomain_count[]={static_cast<hsize_t>(elementNodesArrayMap.size())};
-  hid_t e_old2new_subdomain_memspace_id = H5Screate_simple(ARRAY_RANK, e_subdomain_count, NULL);
-  hid_t e_old2new_subdomain_plist_id = H5Pcreate(H5P_DATASET_XFER);
-  status = setMappingsReadXfer(e_old2new_subdomain_plist_id);
-  status = H5Dread(e_old2new_dataset_id, H5T_NATIVE_INT, 
-                   e_old2new_subdomain_memspace_id, e_old2new_filespace_id, 
-                   H5P_DEFAULT, &new_element_indices_subdomain[0]);
-  H5Pclose(e_old2new_subdomain_plist_id);
-  H5Sclose(e_old2new_subdomain_memspace_id);
-  H5Dclose(e_old2new_dataset_id);
-  H5Sclose(e_old2new_filespace_id);
-  H5Fclose(file_id);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Constructing element subdomain maps");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  map<int,int> elementNumbering_old2new_subdomain_map;
-  map<int,int> elementNumbering_new2old_subdomain_map;
-  for (int i=0;i<elementNodesArrayMap.size();i++)
-    {
-      elementNumbering_old2new_subdomain_map[old_element_indices_subdomain[i]] = new_element_indices_subdomain[i];
-      elementNumbering_new2old_subdomain_map[new_element_indices_subdomain[i]] = old_element_indices_subdomain[i];
-    }
-  if (test)
-  {
-    //these were needed inside the last test section, which was in a loop, so release now
-    ISRestoreIndices(nodeNumberingIS_global_old2new,&nodeNumbering_global_old2new);
-    ierr=ISDestroy(&nodeNumberingIS_global_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    //set up global element numbering
-    IS elementNumberingIS_subdomain_new2old;
-    const PetscInt *elementNumbering_global_new2old;//needs to be restored
-    valarray<int> elementNumbering_global_old2new(nElements_global);
-    ISCreateGeneral(PROTEUS_COMM_WORLD,elements_subdomain_owned.size(),
-                    &elementNumbering_subdomain_new2old[0],PETSC_COPY_VALUES,
-                    &elementNumberingIS_subdomain_new2old);
-    IS elementNumberingIS_global_new2old;
-    ISAllGather(elementNumberingIS_subdomain_new2old,&elementNumberingIS_global_new2old);
-    ISGetIndices(elementNumberingIS_global_new2old,&elementNumbering_global_new2old);
-    //construct reverse mapping
-    for (int eN = 0; eN < nElements_global; eN++)
-      {
-        elementNumbering_global_old2new[elementNumbering_global_new2old[eN]] = eN;
-      }
-    //check old2new
-    valarray<int> elementNumbering_global_old2new_read(nElements_global);
-    file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-    hid_t e_old2new_dataset_id = H5Dopen1(file_id, "/elementNumbering_old2new");
-    status = H5Dread(e_old2new_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                      &elementNumbering_global_old2new_read[0]);
-    status = H5Dclose(e_old2new_dataset_id);
-    for (int i=0;i<nElements_global;i++)
-    {
-      assert(elementNumbering_global_old2new[i] == elementNumbering_global_old2new_read[i]);
-    }
-    std::cout<<"==================out of core elements old2new is correct!===================="<<std::endl;
-    for (auto it = elementNodesArrayMap.begin(); it != elementNodesArrayMap.end(); it++)
-      assert(elementNumbering_old2new_subdomain_map[it->first] == 
-             elementNumbering_global_old2new_read[it->first]);
-    std::cout<<"==================out of core elements old2new map is correct!===================="<<std::endl;
-    //check new2old
-    valarray<int> elementNumbering_global_new2old_read(nElements_global);
-    hid_t e_new2old_dataset_id = H5Dopen1(file_id, "/elementNumbering_new2old");
-    status = H5Dread(e_new2old_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                     &elementNumbering_global_new2old_read[0]);
-    status = H5Dclose(e_new2old_dataset_id);
-    status = H5Fclose(file_id);
-    //assert() is compiled out by -DNDEBUG, so this verification has to
-    //count and report rather than assert, or the whole block is cost
-    //with no signal.
-    {
-      long bad_=0, first_=-1;
-      for (int i=0;i<nElements_global;i++)
-        if (elementNumbering_global_new2old[i] != elementNumbering_global_new2old_read[i]) { if (first_<0) first_=i; bad_++; }
-      if (bad_)
-        {
-          std::cerr<<"PROTEUS numbering check failed: elementNumbering_global_new2old vs elementNumbering_global_new2old_read, "
-                   <<bad_<<" of "<<nElements_global<<" differ, first at "<<first_<<std::endl;
-          SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_PLIB,
-                      "out-of-core numbering does not match in-core");
-        }
-    }
-    std::cout<<"==================out of core elements new2old is correct!===================="<<std::endl;
-    for (size_t i=0;i< new_element_indices_subdomain.size(); i++)
-    {
-      int eN = new_element_indices_subdomain[i];
-      assert(elementNumbering_new2old_subdomain_map[eN] == elementNumbering_global_new2old_read[eN]);
-    }
-    std::cout<<"==================out of core elements new2old map is correct!===================="<<std::endl;
-    ISRestoreIndices(elementNumberingIS_global_new2old,&elementNumbering_global_new2old);
-    ierr=ISDestroy(&elementNumberingIS_global_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    ierr=ISDestroy(&elementNumberingIS_subdomain_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  }
+  set<int> elements_subdomain;
+  for (auto it = elementNodesArrayMap.begin(); it != elementNodesArrayMap.end(); it++)
+    elements_subdomain.insert(elements_subdomain.end(), it->first);
+  map<int,int> elementNumbering_old2new_subdomain_map =
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
+                                elements_subdomain_owned, elements_subdomain);
+  map<int,int> elementNumbering_new2old_subdomain_map = invertedMap(elementNumbering_old2new_subdomain_map);
   PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_faces_event;
@@ -2697,125 +2417,11 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   H5Dclose(eb_old2new_dataset_id);
   H5Sclose(eb_old2new_filespace_id);
   H5Fclose(file_id);
-  //now get maps for all the elements on the subdomain, not just owned
-  //
-  valarray<hsize_t> old_elementBoundary_indices_subdomain(elementBoundaries_subdomain.size());
-  valarray<int> new_elementBoundary_indices_subdomain(elementBoundaries_subdomain.size());
-  int ebN_subdomain = 0;
-  for (auto it = elementBoundaries_subdomain.begin(); 
-       it != elementBoundaries_subdomain.end(); 
-       it++, ebN_subdomain++)
-    {
-      old_elementBoundary_indices_subdomain[ebN_subdomain] = static_cast<hsize_t>(*it);
-    }
-  file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-  if (file_id < 0)
-    {
-      H5Eprint2(H5E_DEFAULT, stderr);
-      SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                  "could not reopen the mappings file; see the HDF5 stack above");
-    }
-  eb_old2new_filespace_id = H5Screate_simple(ARRAY_RANK, eb_dims, NULL);
-  eb_old2new_dataset_id = H5Dopen1(file_id, "/elementBoundaryNumbering_old2new");
-  status = H5Sselect_elements(eb_old2new_filespace_id, H5S_SELECT_SET, 
-                              elementBoundaries_subdomain.size(), 
-                              &old_elementBoundary_indices_subdomain[0]);
-  hsize_t eb_subdomain_count[]={static_cast<hsize_t>(elementBoundaries_subdomain.size())};
-  hid_t eb_old2new_subdomain_memspace_id = H5Screate_simple(ARRAY_RANK, eb_subdomain_count, NULL);
-  hid_t eb_old2new_subdomain_plist_id = H5Pcreate(H5P_DATASET_XFER);
-  setMappingsReadXfer(eb_old2new_subdomain_plist_id);  
-  status = H5Dread(eb_old2new_dataset_id, H5T_NATIVE_INT, 
-                   eb_old2new_subdomain_memspace_id, eb_old2new_filespace_id, 
-                   H5P_DEFAULT, &new_elementBoundary_indices_subdomain[0]);
-  H5Pclose(eb_old2new_subdomain_plist_id);
-  H5Sclose(eb_old2new_subdomain_memspace_id);
-  H5Sclose(eb_old2new_filespace_id);
-  H5Dclose(eb_old2new_dataset_id);
-  H5Fclose(file_id);
-  map<int,int> elementBoundaryNumbering_old2new_subdomain_map;
-  map<int,int> elementBoundaryNumbering_new2old_subdomain_map;
-  for (int i=0;i<elementBoundaries_subdomain.size();i++)
-    {
-      elementBoundaryNumbering_old2new_subdomain_map[old_elementBoundary_indices_subdomain[i]] = new_elementBoundary_indices_subdomain[i];
-      elementBoundaryNumbering_new2old_subdomain_map[new_elementBoundary_indices_subdomain[i]] = old_elementBoundary_indices_subdomain[i];
-    }
-  IS elementBoundaryNumberingIS_subdomain_new2old;
-  ISCreateGeneral(PROTEUS_COMM_WORLD,elementBoundaries_subdomain_owned.size(),&elementBoundaryNumbering_new2old[0],PETSC_COPY_VALUES,&elementBoundaryNumberingIS_subdomain_new2old);
-  if (test)
-  {
-    IS elementBoundaryNumberingIS_global_new2old;
-    const PetscInt *elementBoundaryNumbering_global_new2old;
-    valarray<int> elementBoundaryNumbering_global_old2new(nElementBoundaries_global);
-    ISAllGather(elementBoundaryNumberingIS_subdomain_new2old,&elementBoundaryNumberingIS_global_new2old);
-    elementBoundaryNumbering_global_old2new.resize(newMesh.nElementBoundaries_global);
-    ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    ISGetIndices(elementBoundaryNumberingIS_global_new2old,&elementBoundaryNumbering_global_new2old);
-    for (int i=0;i<nElementBoundaries_global;i++)
-    {
-      elementBoundaryNumbering_global_old2new[elementBoundaryNumbering_global_new2old[i]]=i;
-    }
-    
-    herr_t status;
-    valarray<int> elementBoundaryNumbering_old2new_read(nElementBoundaries_global);
-    file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-    eb_old2new_dataset_id = H5Dopen1(file_id, "/elementBoundaryNumbering_old2new");
-    status = H5Dread(eb_old2new_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                     &elementBoundaryNumbering_old2new_read[0]);
-    status = H5Dclose(eb_old2new_dataset_id);
-    //assert() is compiled out by -DNDEBUG, so this verification has to
-    //count and report rather than assert, or the whole block is cost
-    //with no signal.
-    {
-      long bad_=0, first_=-1;
-      for (int i=0;i<nElementBoundaries_global;i++)
-        if (elementBoundaryNumbering_global_old2new[i] != elementBoundaryNumbering_old2new_read[i]) { if (first_<0) first_=i; bad_++; }
-      if (bad_)
-        {
-          std::cerr<<"PROTEUS numbering check failed: elementBoundaryNumbering_global_old2new vs elementBoundaryNumbering_old2new_read, "
-                   <<bad_<<" of "<<nElementBoundaries_global<<" differ, first at "<<first_<<std::endl;
-          SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_PLIB,
-                      "out-of-core numbering does not match in-core");
-        }
-    }
-    std::cout<<"==================out of core old2new elementBoundaries is correct!===================="<<std::endl;
-    hid_t eb_new2old_dataset_id = H5Dopen1(file_id, "/elementBoundaryNumbering_new2old");
-    valarray<int> elementBoundaryNumbering_new2old_read(nElementBoundaries_global);
-    status = H5Dread(eb_new2old_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                     &elementBoundaryNumbering_new2old_read[0]);
-    status = H5Dclose(eb_new2old_dataset_id);
-    status = H5Fclose(file_id);
-    //assert() is compiled out by -DNDEBUG, so this verification has to
-    //count and report rather than assert, or the whole block is cost
-    //with no signal.
-    {
-      long bad_=0, first_=-1;
-      for (int i=0;i<nElementBoundaries_global;i++)
-        if (elementBoundaryNumbering_global_new2old[i] != elementBoundaryNumbering_new2old_read[i]) { if (first_<0) first_=i; bad_++; }
-      if (bad_)
-        {
-          std::cerr<<"PROTEUS numbering check failed: elementBoundaryNumbering_global_new2old vs elementBoundaryNumbering_new2old_read, "
-                   <<bad_<<" of "<<nElementBoundaries_global<<" differ, first at "<<first_<<std::endl;
-          SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_PLIB,
-                      "out-of-core numbering does not match in-core");
-        }
-    }
-    std::cout<<"==================out of core new2old elementBoundaries is correct!===================="<<std::endl;
-    for (int i=0;i<elementBoundaries_subdomain.size();i++)
-    {
-      int ebN = old_elementBoundary_indices_subdomain[i];
-      assert(elementBoundaryNumbering_global_old2new[ebN] == elementBoundaryNumbering_old2new_subdomain_map[ebN]);
-    }
-    std::cout<<"==================out of core elementBoundaries old2new subdomain_map is correct!===================="<<std::endl;
-    for (int i=0;i<elementBoundaries_subdomain.size();i++)
-    {
-      int ebN = new_elementBoundary_indices_subdomain[i];
-      assert(elementBoundaryNumbering_global_new2old[ebN] == elementBoundaryNumbering_new2old_subdomain_map[ebN]);
-    }
-    std::cout<<"==================out of core elementBoundaries new2old subdomain_map is correct!===================="<<std::endl;
-    ISRestoreIndices(elementBoundaryNumberingIS_global_new2old,&elementBoundaryNumbering_global_new2old);
-    ierr=ISDestroy(&elementBoundaryNumberingIS_subdomain_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    ierr=ISDestroy(&elementBoundaryNumberingIS_global_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  } 
+  //the new numbers of every face of the subdomain, owned or not, from the
+  //directory (no mappings-file read)
+  map<int,int> elementBoundaryNumbering_old2new_subdomain_map =
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
+                                elementBoundaries_subdomain_owned, elementBoundaries_subdomain);
   PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_edges_event;
@@ -3029,120 +2635,14 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   H5Sclose(ed_old2new_filespace_id);
   H5Fclose(file_id);
   //
-  //now get maps for all the edges on the subdomain, not just owned
-  valarray<hsize_t> old_edge_indices_subdomain(edgeNodesMap.size());
-  valarray<int> new_edge_indices_subdomain(edgeNodesMap.size());
-  int edN_old_subdomain = 0;
-  for (auto it = edgeNodesMap.begin(); it != edgeNodesMap.end(); it++, edN_old_subdomain++)
-    {
-      old_edge_indices_subdomain[edN_old_subdomain] = static_cast<hsize_t>(it->first);
-    }
-  file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-  if (file_id < 0)
-    {
-      H5Eprint2(H5E_DEFAULT, stderr);
-      SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                  "could not reopen the mappings file; see the HDF5 stack above");
-    }
-  ed_old2new_dataspace_id = H5Dopen1(file_id, "/edgeNumbering_old2new");
-  ed_old2new_filespace_id = H5Screate_simple(ARRAY_RANK, ed_dims, NULL);
-  status = H5Sselect_elements(ed_old2new_filespace_id, H5S_SELECT_SET, 
-                              edgeNodesMap.size(), &old_edge_indices_subdomain[0]);
-  hsize_t ed_subdomain_count[]={static_cast<hsize_t>(edgeNodesMap.size())};
-  hid_t ed_old2new_subdomain_memspace_id = H5Screate_simple(ARRAY_RANK, ed_subdomain_count, NULL);
-  hid_t ed_old2new_subdomain_plist_id = H5Pcreate(H5P_DATASET_XFER);
-  setMappingsReadXfer(ed_old2new_subdomain_plist_id);
-  status = H5Dread(ed_old2new_dataspace_id, H5T_NATIVE_INT, ed_old2new_subdomain_memspace_id, 
-                   ed_old2new_filespace_id, 
-                   H5P_DEFAULT, &new_edge_indices_subdomain[0]);
-  H5Pclose(ed_old2new_subdomain_plist_id);
-  H5Sclose(ed_old2new_subdomain_memspace_id);
-  H5Sclose(ed_old2new_filespace_id);
-  H5Dclose(ed_old2new_dataspace_id);
-  H5Fclose(file_id);
-  map<int,int> edgeNumbering_old2new_subdomain_map;
-  map<int,int> edgeNumbering_new2old_subdomain_map;
-  for (int i=0;i<edgeNodesMap.size();i++)
-    {
-      edgeNumbering_old2new_subdomain_map[old_edge_indices_subdomain[i]] = new_edge_indices_subdomain[i];
-      edgeNumbering_new2old_subdomain_map[new_edge_indices_subdomain[i]] = old_edge_indices_subdomain[i];
-    }
-  if (test)
-  {
-    IS edgeNumberingIS_subdomain_new2old;
-    ISCreateGeneral(PROTEUS_COMM_WORLD,edges_subdomain_owned.size(),&edgeNumbering_new2old[0],PETSC_COPY_VALUES,&edgeNumberingIS_subdomain_new2old);
-    IS edgeNumberingIS_global_new2old;
-    ISAllGather(edgeNumberingIS_subdomain_new2old,&edgeNumberingIS_global_new2old);
-    const PetscInt *edgeNumbering_global_new2old;
-    ISGetIndices(edgeNumberingIS_global_new2old,&edgeNumbering_global_new2old);
-    valarray<int> edgeNumbering_global_old2new(newMesh.nEdges_global);
-    ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Setting edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    for (int edN=0;edN<newMesh.nEdges_global;edN++)
-      {
-        edgeNumbering_global_old2new[edgeNumbering_global_new2old[edN]] = edN;
-      }
-
-    herr_t status;
-    valarray<int> edgeNumbering_old2new_read(nEdges_global);
-    file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-    hid_t ed_old2new_dataset_id = H5Dopen1(file_id, "/edgeNumbering_old2new");
-    status = H5Dread(ed_old2new_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                     &edgeNumbering_old2new_read[0]);
-    status = H5Dclose(ed_old2new_dataset_id);
-    //assert() is compiled out by -DNDEBUG, so this verification has to
-    //count and report rather than assert, or the whole block is cost
-    //with no signal.
-    {
-      long bad_=0, first_=-1;
-      for (int i=0;i<nEdges_global;i++)
-        if (edgeNumbering_global_old2new[i] != edgeNumbering_old2new_read[i]) { if (first_<0) first_=i; bad_++; }
-      if (bad_)
-        {
-          std::cerr<<"PROTEUS numbering check failed: edgeNumbering_global_old2new vs edgeNumbering_old2new_read, "
-                   <<bad_<<" of "<<nEdges_global<<" differ, first at "<<first_<<std::endl;
-          SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_PLIB,
-                      "out-of-core numbering does not match in-core");
-        }
-    }
-    std::cout<<"==================out of core old2new edges is correct!===================="<<std::endl;
-    hid_t ed_new2old_dataset_id = H5Dopen1(file_id, "/edgeNumbering_new2old");
-    valarray<int> edgeNumbering_new2old_read(nEdges_global);
-    status = H5Dread(ed_new2old_dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                     &edgeNumbering_new2old_read[0]);
-    status = H5Dclose(ed_new2old_dataset_id);
-    status = H5Fclose(file_id);
-    //assert() is compiled out by -DNDEBUG, so this verification has to
-    //count and report rather than assert, or the whole block is cost
-    //with no signal.
-    {
-      long bad_=0, first_=-1;
-      for (int i=0;i<nEdges_global;i++)
-        if (edgeNumbering_global_new2old[i] != edgeNumbering_new2old_read[i]) { if (first_<0) first_=i; bad_++; }
-      if (bad_)
-        {
-          std::cerr<<"PROTEUS numbering check failed: edgeNumbering_global_new2old vs edgeNumbering_new2old_read, "
-                   <<bad_<<" of "<<nEdges_global<<" differ, first at "<<first_<<std::endl;
-          SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_PLIB,
-                      "out-of-core numbering does not match in-core");
-        }
-    }
-    std::cout<<"==================out of core new2old edges is correct!===================="<<std::endl;
-
-    for (auto it = edgeNodesMap.begin(); it != edgeNodesMap.end(); ++it)
-    {
-      assert(edgeNumbering_global_old2new[it->first] == edgeNumbering_old2new_subdomain_map[it->first]);
-    }
-    std::cout<<"==================out of core edgeNumbering old2new subdomain is correct!===================="<<std::endl;
-    for (int i = 0; i < edgeNodesMap.size(); i++)
-    {
-      int edN = new_edge_indices_subdomain[i];
-      assert(edgeNumbering_global_new2old[edN] == edgeNumbering_new2old_subdomain_map[edN]);
-    }
-    std::cout<<"==================out of core edgeNumbering new2old subdomain is correct!===================="<<std::endl;
-    ISRestoreIndices(edgeNumberingIS_global_new2old,&edgeNumbering_global_new2old);
-    ierr=ISDestroy(&edgeNumberingIS_subdomain_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    ierr=ISDestroy(&edgeNumberingIS_global_new2old);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  }
+  //the new numbers of every edge of the subdomain, owned or not, from the
+  //directory (no mappings-file read)
+  set<int> edges_subdomain;
+  for (auto it = edgeNodesMap.begin(); it != edgeNodesMap.end(); it++)
+    edges_subdomain.insert(edges_subdomain.end(), it->first);
+  map<int,int> edgeNumbering_old2new_subdomain_map =
+    subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
+                                edges_subdomain_owned, edges_subdomain);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
   //6. Figure out what is in the node stars but not locally owned, create ghost information
