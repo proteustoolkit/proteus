@@ -1683,8 +1683,12 @@ std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<
    replaced: a positive flag on a cut face is a condition the mesh put there.
    Needs the subdomain mesh, elementBoundaryOffsets_subdomain_owned and
    elementBoundaryNumbering_subdomain2global. Collective. Returns the number
-   of faces marked on this rank. */
-int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh)
+   of faces marked on this rank. flagsFromFile false says the face flags did
+   not come from the mesh files but from the subdomain builder (exterior 1,
+   interior 0), so a cut face reads 1 there; then every exterior face is
+   asked about, and a cut face reads -1 as on the in-memory path (where such a
+   mesh gives an interior face 0). */
+int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFile)
 {
   int rank, size;
   MPI_Comm_rank(comm, &rank);
@@ -1700,7 +1704,7 @@ int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh)
       global2subdomain[ebN_global] = ebN;
       const bool exterior = sub.elementBoundaryElementsArray[ebN*2+1] == -1;
       const bool owned = ebN_global >= offsets[rank] && ebN_global < offsets[rank+1];
-      if (exterior && !owned && sub.elementBoundaryMaterialTypes[ebN] == 0)
+      if (exterior && !owned && (!flagsFromFile || sub.elementBoundaryMaterialTypes[ebN] == 0))
         askAbout.insert(ebN_global);
     }
   std::map<int,int> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](int ebN_global) {
@@ -3451,7 +3455,7 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
     newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
   //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
-  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh);
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
   //cleanup
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
@@ -4600,7 +4604,7 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //open here any more)
   /* out of core */
   //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
-  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh);
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);

@@ -812,3 +812,39 @@ def test_files_node_flags_without_vertex_markers_are_initialised(tmp_path, mesh)
         assert np.all(flags[~onExterior] == 0)
         assert set(flags[onExterior].tolist()) <= set(np.maximum(faceFlags, 0).tolist())
         assert onExterior.any() and (~onExterior).any()
+
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_marks_rank_interfaces_without_face_flags(tmp_path, mesh):
+    """Element-boundary files without markers (.face, or Triangle's .edge, header
+    ``n 0``): the subdomain builder flags every subdomain-exterior face 1, cut
+    faces included, so marking only flag-0 faces marked nothing. The -F path
+    must mark the same faces -1 as the in-memory node partition of the same
+    files on the same ranks: the cut faces, here all of them. 2 ranks."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    boundary = 'face' if mesh == 'tet' else 'edge'
+    base = str(tmp_path / 'nofaceflags')
+    for ext in ('node', 'ele', 'edge', 'face') if mesh == 'tet' else ('node', 'ele', 'edge'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    with open(stored + '.' + boundary) as f:
+        lines = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    nNodes = 3 if boundary == 'face' else 2
+    with open(base + '.' + boundary, 'w') as f:
+        f.write('\n'.join(['%s 0' % lines[0][0]] + [' '.join(l[:1 + nNodes]) for l in lines[1:]]) + '\n')
+    d = tmp_path / 'node'
+    os.makedirs(str(d))
+    _launch([mesh, 'node', 'graph', 1, d / 'out', base], 2, cwd=str(d))
+    node = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(2)]
+    _, files = run_files(tmp_path / 'files', mesh, 2, base)
+    marked = 0
+    for a, b in zip(files, node):
+        def cutFaces(z):
+            nodes = z['map.nodeNumbering_subdomain2global'][z['sub.elementBoundaryNodesArray']]
+            faces = z['sub.elementBoundaryMaterialTypes'] == RANK_INTERFACE
+            return sorted(tuple(sorted(f)) for f in nodes[faces].tolist())
+        assert cutFaces(a) == cutFaces(b)
+        exterior = a['sub.exteriorElementBoundariesArray']
+        assert set(a['sub.elementBoundaryMaterialTypes'][exterior].tolist()) == {1, RANK_INTERFACE}
+        marked += len(cutFaces(a))
+    assert marked > 0
