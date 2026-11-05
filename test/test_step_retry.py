@@ -56,6 +56,8 @@ def _worst(a, b):
     return worst
 
 
+_LU = "-rans2p_ksp_type preonly -rans2p_pc_type lu -rans2p_pc_factor_mat_solver_type superlu"
+
 CASES = {
     "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10, BIGAUGES="1,2,3,4"),
     "fillingTank-pressureIncrement": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="pressureIncrement", FAILAT=10),
@@ -85,6 +87,13 @@ CASES = {
                                               ATOL=1e-10, MAXITS=1000, FAILMODEL="kappa", FAILAT=5),
     "damBreakLevelSet-rans2p-clsvof": dict(DECK="damBreakLevelSet.py", OPTS="he=0.1 interface=1", FT=0.1, ATOL=1e-10,
                                            MAXITS=1000, FAILMODEL="clsvof", FAILAT=6),
+    # RANS2P_IB with a rigid and a flexible beam (the beam bends in postStep, after an accepted step only): measured
+    # 0.0, the failed attempt leaving no row in the deflection history
+    "beam_channel-rans2p_ib": dict(DIR="rans2p_ib", SO="beam_channel_p.py beam_channel_n.py", OPTS="beamRigid=True",
+                                   PETSC_OPTIONS=_LU, FAILMODEL="beam_channel", FAILAT=3),
+    "beam_channel-rans2p_ib-flexible": dict(DIR="rans2p_ib", SO="beam_channel_p.py beam_channel_n.py",
+                                            OPTS="beamRigid=False", PETSC_OPTIONS=_LU, FAILMODEL="beam_channel",
+                                            FAILAT=3),
     "circular_damBreak-sw2dcv": dict(DIR="SWFlow", SO="--SWEs circular_damBreak.py",
                                      OPTS="sw_model=0 final_time=0.1 dt_output=0.1", FAILMODEL="sw", FAILAT=6),
     "circular_damBreak-gn_sw2dcv": dict(DIR="SWFlow", SO="--SWEs circular_damBreak.py",
@@ -104,6 +113,12 @@ def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, case):
     replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
     assert int(open(os.path.join(str(tmp_path / "forced"), "retries.txt")).read()) >= 1, "the failure was not retried"
     assert _worst(forced, replay) < 1e-10
+    # the failed attempt leaves no row in the beam deflection history (RANS2P_IB, a flexible beam)
+    deflection = os.path.join(str(tmp_path / "forced"), "deflectionHistory.txt")
+    if os.path.exists(deflection):
+        numpy.testing.assert_array_equal(numpy.loadtxt(deflection),
+                                         numpy.loadtxt(os.path.join(str(tmp_path / "replay"), "deflectionHistory.txt")))
+        numpy.testing.assert_array_equal(numpy.loadtxt(deflection)[:, 0], numpy.loadtxt(accepted))
     # the failed attempt leaves no row in the histories RANS2P/RANS3PF write
     history = os.path.join(str(tmp_path / "forced"), "timeHistory.txt")
     if os.path.exists(history):
