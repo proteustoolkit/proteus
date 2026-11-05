@@ -62,24 +62,6 @@ DEFERRED = {
     # cekees/proteus#203 deletes this class
     "proteus.PostProcessingTools": {
         "VPP_POINT_EVAL_GWVD.getElementLDGvelocityValuesLagrangeRep"},
-    # C17/C14 territory
-    "proteus.TimeIntegration": {
-        "PsiTCtte.psiTCtteDT",
-        "PsiTCtte_new.psiTCtteDT",
-        "DGlimiterP1Lagrange1d.applyDGlimitingP1Lagrange1d",
-        "DGlimiterP2Lagrange1d.applyDGlimitingP1Lagrange1d",
-        "DGlimiterPkMonomial1d.applyDGlimitingP1Lagrange1d",
-        "UnstructuredLimiter_base.computeElementNeighborShapeGradients",
-        "CockburnNotesLimiter2d_base.computeCockburnDGlimiterArrays2d",
-        "DGlimiterP1Lagrange2d.applyCockburnDGlimiterP1Lagrange2d",
-        "DGlimiterP2Lagrange2d.applyCockburnDGlimiterP1Lagrange2d",
-        "DGlimiterPkMonomial2d.applyCockburnDGlimiterP1Lagrange2d",
-        "DGlimiterDurlofskyP1Lagrange2d.applyDurlofskyDGlimiterP1Lagrange2d",
-        "DGlimiterDurlofskyP1Lagrange3d.applyDurlofskyDGlimiterP1Lagrange3d",
-        "DGlimiterP1Lagrange1d_Sw.applyDGlimitingP1Lagrange1d_withVacuumTol",
-        "DGlimiterP2Lagrange1d_Sw.applyDGlimitingP1Lagrange1d_withVacuumTol",
-        "DGlimiterPkMonomial1d_Sw.applyDGlimitingP1Lagrange1d_withVacuumTol",
-        "DGlimiterDurlofskyP1Lagrange2d_Sw.applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol"},
     # C0 territory, after C0 round 5 lands
     "proteus.mprans.Dissipation": _KEPS,
     "proteus.mprans.Kappa": _KEPS,
