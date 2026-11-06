@@ -82,7 +82,10 @@ def test_a_later_models_failure_is_retried_from_the_step_start(tmp_path, opts):
     Measured, largest relative difference over each model's dofs (rigid and flexible alike):
       main: 9.2e-2. The retry skipped RANS2P_IB (Sequential_MinModelStep had already moved its last step's end to
             the failed attempt's end), which then ran one step behind the dye and never reached T.
-      RANS2P_IB stepped again, without its state(): 6.4e-6, the lagged beam drag of the failed attempt."""
+      RANS2P_IB stepped again, without its state(): 6.4e-6, the lagged beam drag of the failed attempt.
+      With RANS2P_IB.Coefficients.state(): 0.0. (Restoring the drag but not the beam: 6.6e-7, and the flexible
+      beam's deflection at the retried step 1.8e-3 off.)
+    A flexible beam's deflection history has no row from the failed attempt and is the replay's."""
     import numpy
     forced, accepted = _retry_run(tmp_path / "forced", OPTS=opts, FAILMODEL="dye", FAILAT="3")
     replay, _ = _retry_run(tmp_path / "replay", OPTS=opts, REPLAY=accepted)
@@ -93,4 +96,9 @@ def test_a_later_models_failure_is_retried_from_the_step_start(tmp_path, opts):
     for key in numpy.unique(forced[:, 0]):
         k = forced[:, 0] == key
         worst = numpy.abs(forced[k, 4] - replay[k, 4]).max() / numpy.abs(replay[k, 4]).max()
-        assert worst < 1e-5, (key, worst)  # the lagged drag: next commit
+        assert worst < 1e-12, (key, worst)
+    deflection = tmp_path / "forced" / "deflectionHistory.txt"
+    if opts == "beamRigid=False":
+        numpy.testing.assert_array_equal(numpy.loadtxt(str(deflection)),
+                                         numpy.loadtxt(str(tmp_path / "replay" / "deflectionHistory.txt")))
+        numpy.testing.assert_array_equal(numpy.loadtxt(str(deflection))[:, 0], times)

@@ -118,6 +118,7 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
         RANS2P.Coefficients.attachModels(self, modelList)
         self.initializeBeams()
         self.netBeamDrag = np.array([0.0])
+        self.vel_avg = np.array([0.0, 0.0, 0.0])  # set by beamStep after each step; here so state() has it from the start
 
     def initializeElementQuadrature(self, t, cq):
         RANS2P.Coefficients.initializeElementQuadrature(self, t, cq)
@@ -140,6 +141,47 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
             self.dragCoefficientHistory = open("dragCoefficientHistory.txt", "w")
             if self.beamRigid == False:
                 self.deflectionHistory = open("deflectionHistory.txt", "w")
+
+    #: what a step leaves for the next one in the coefficients. The drag the residual reads is lagged: the
+    #: LevelModel's beamStep, after each model step, spreads it from the beams' quadrature points (q_dragBeam*,
+    #: ebqe_dragBeam*) and integrates the beam loads (q1-q3, with vel_avg and netBeamDrag); postStep then moves a
+    #: flexible beam (xv..zq; updateBeams falls back to the last step's coordinates when a deflected beam would cross
+    #: z = 0)
+    BEAM_STATE = ("q_dragBeam1", "q_dragBeam2", "q_dragBeam3", "ebqe_dragBeam1", "ebqe_dragBeam2", "ebqe_dragBeam3",
+                  "q1", "q2", "q3", "vel_avg", "netBeamDrag", "xv", "yv", "zv", "xq", "yq", "zq")
+
+    def state(self):
+        """What a step leaves for the next that the solution does not determine: the lagged beam drag and loads, the
+        beams (their coordinates, each beam solver's rotations Phi and vertex coordinates) and the beam file counter,
+        plus what RANS2P.Coefficients keeps, if anything (its LevelModel arrays are not in this older copy, so nothing
+        today).
+
+        beamStep and postStep run after this model's step, before the later models of the system step: without this
+        a later model's failure left the drag of the failed attempt (and a flexible beam moved), and the retry started
+        from them."""
+        if not hasattr(self, "Beam_Solver"):
+            return None
+        st = dict(super().state() or {})
+        for name in self.BEAM_STATE:
+            st["beam_" + name] = getattr(self, name).copy()
+        for I, b in enumerate(self.Beam_Solver):
+            for name in ("Phi", "x", "y", "z"):
+                st["beam%d_%s" % (I, name)] = np.array(getattr(b, name), dtype=float)
+        st["beam_tStep"] = int(self.tStep)
+        return st
+
+    def set_state(self, state):
+        if any(not k.startswith("beam") for k in state):
+            super().set_state({k: v for k, v in state.items() if not k.startswith("beam")})
+        for name in self.BEAM_STATE:
+            # vel_avg is rebound by beamStep (a new array): restore by value into whatever is bound now
+            getattr(self, name)[...] = numpy.reshape(state["beam_" + name], getattr(self, name).shape)
+        for I, b in enumerate(self.Beam_Solver):
+            # updateSolution changes Phi in place and the fallback replaces it with a copy: replace it here too
+            b.Phi = np.array(state["beam%d_Phi" % I], dtype=float)
+            for name in ("x", "y", "z"):
+                getattr(b, name)[:] = state["beam%d_%s" % (I, name)]
+        self.tStep = int(state["beam_tStep"])
 
     def postStep(self, t, firstStep=False):
         # Not RANS2P.Coefficients.postStep: this LevelModel is an older copy of RANS2P's, without the lagged dV and
