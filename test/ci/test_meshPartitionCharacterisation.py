@@ -697,10 +697,13 @@ def test_files_node_number_exchange(tmp_path, n):
     default chunk to the new owner, and asks the chunk owners for the new
     numbers of the other nodes its elements touch. Checked under a random
     permutation and uneven new ranges (meshPartition_exchange_mpi.py), which the
-    stored-mesh cases never produce."""
+    stored-mesh cases never produce. The element, face and edge numberings go
+    through a directory on the default chunks (subdomainNumbers), checked in
+    the same script under random owners and random ghosts."""
     for nNodes, seed in ((1, 0), (37, 1), (1000, 2)):
         got = _launch([nNodes, seed], n, cwd=tmp_path, script='meshPartition_exchange_mpi.py')
-        assert got == {'ranks': str(n), 'owned': str(nNodes), 'asked': got['asked']}
+        assert got == {'ranks': str(n), 'owned': str(nNodes), 'asked': got['asked'],
+                       'directory': got['directory']}
 
 
 @pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
