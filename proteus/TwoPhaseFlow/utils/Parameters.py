@@ -1385,7 +1385,7 @@ class ParametersModelVOF(ParametersModelBase):
         else:
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
             self.OptDB.setValue(prefix+'pc_type', 'hypre')
-            self.OptDB.setValue(prefix+'pc_pc_hypre_type', 'boomeramg')
+            self.OptDB.setValue(prefix+'pc_hypre_type', 'boomeramg')
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
@@ -1497,7 +1497,7 @@ class ParametersModelNCLS(ParametersModelBase):
         else:
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
             self.OptDB.setValue(prefix+'pc_type', 'hypre')
-            self.OptDB.setValue(prefix+'pc_pc_hypre_type', 'boomeramg')
+            self.OptDB.setValue(prefix+'pc_hypre_type', 'boomeramg')
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
@@ -1594,14 +1594,14 @@ class ParametersModelRDLS(ParametersModelBase):
         else:
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
             self.OptDB.setValue(prefix+'pc_type', 'asm')
-            self.OptDB.setValue(prefix+'pc_pc_asm_type', 'basic')
+            self.OptDB.setValue(prefix+'pc_asm_type', 'basic')
             self.OptDB.setValue(prefix+'ksp_gmres_modifiedgramschmidt', 1)
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
             self.OptDB.setValue(prefix+'sub_ksp_type', 'preonly')
             self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'superlu')
             self.OptDB.setValue(prefix+'sub_pc_type', 'lu')
-            self.OptDB.setValue(prefix+'max_it', 2000)
+            self.OptDB.setValue(prefix+'ksp_max_it', 2000)
 
 class ParametersModelMCorr(ParametersModelBase):
     """
@@ -1695,7 +1695,7 @@ class ParametersModelMCorr(ParametersModelBase):
         else:
             self.OptDB.setValue(prefix+'ksp_type', 'fgmres')
             self.OptDB.setValue(prefix+'pc_type', 'hypre')
-            self.OptDB.setValue(prefix+'pc_pc_hypre_type', 'boomeramg')
+            self.OptDB.setValue(prefix+'pc_hypre_type', 'boomeramg')
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
 
 class ParametersModelAddedMass(ParametersModelBase):
