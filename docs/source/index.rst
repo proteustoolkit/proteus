@@ -75,7 +75,7 @@ Running
 
 If you have successfully compiled and tested Proteus then you should be able to do::
 
-   % cd $PROTEUS/tests/ci
+   % cd $PROTEUS/test/ci
    % $PROTEUS_PREFIX/bin/parun poisson_3d_p.py poisson_3d_c0p1_n.py
 
 The solution will be saved in an HDF5 file ending in .h5, described by
@@ -107,7 +107,7 @@ Test problems and some analytical solutions have been implemented for
 
 * Poisson's equation
 * The heat equation
-* Linear advection-diffusion-reaction equations
+* Linear advection-diffusion-reaction equations, including problems with interfaces that do not follow the mesh (CutFEM for embedded boundaries, immersed finite elements for immersed interfaces, and the hybrid CutFEM-IFEM method; see :ref:`adr`)
 * Singly degenerate nonlinear advection-diffusion-reaction equations (including various forms of Burger's equation)
 * Doubly degenerate nonlinear advection-diffusion-reaction equations
 * The eikonal (signed distance) equation
@@ -194,6 +194,9 @@ These are not hard and fast rules, and there is no time table for releases.
 References
 ==========
 
+* Hybrid CutFEM-IFEM Model for Embedded and Immersed Interfaces with
+  Triply-Cut Cells for the 2D Poisson Problem (2026) D. Nathawani and
+  C.E. Kees, submitted.
 * `An Unstructured Finite Element Model for Incompressible Two-Phase
   Flow Based on a Monolithic Conservative Level Set Method
   <https://doi.org/10.1002/fld.4817>`_
@@ -336,6 +339,7 @@ Source Code Documentation
    :caption: Models
    :name: sec-models
 
+   models/adr
    models/navier_stokes
    models/SWFlow
    models/free_surface

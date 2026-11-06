@@ -619,6 +619,8 @@ class FLCBDF(TI_base):
 
 class PsiTCtte(BackwardEuler_cfl):
     from .ctimeIntegration import psiTCtteDT
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    psiTCtteDT = staticmethod(psiTCtteDT)
     def __init__(self,transport):
         runCFL=0.1
         tau=1.0e-2
@@ -692,6 +694,8 @@ dt_history[0]=%g dt_history[1]=%g nsteps=%d """ %(self.dt_history[0],self.dt_his
 
 class PsiTCtte_new(BackwardEuler):
     from .ctimeIntegration import psiTCtteDT
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    psiTCtteDT = staticmethod(psiTCtteDT)
     def __init__(self,transport):
         runCFL=0.9
         tau=1.0e-2
@@ -2597,6 +2601,8 @@ class DGlimiterP1Lagrange1d(object):
     assumes all solution fem spaces are identical
     """
     from .ctimeIntegration import applyDGlimitingP1Lagrange1d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d = staticmethod(applyDGlimitingP1Lagrange1d)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0):
         self.mesh= mesh
         self.nSpace = nSpace
@@ -2644,6 +2650,8 @@ class DGlimiterP2Lagrange1d(object):
     local approximation space has P2 Lagrange basis
     """
     from .ctimeIntegration import applyDGlimitingP1Lagrange1d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d = staticmethod(applyDGlimitingP1Lagrange1d)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0):
         self.mesh= mesh
         self.nSpace = nSpace
@@ -2737,6 +2745,8 @@ class DGlimiterPkMonomial1d(object):
     local approximation space has Pk monomial basis
     """
     from .ctimeIntegration import applyDGlimitingP1Lagrange1d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d = staticmethod(applyDGlimitingP1Lagrange1d)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0):
         self.mesh   = mesh
         self.nSpace = nSpace
@@ -2869,6 +2879,8 @@ class DGlimiterPkMonomial1d(object):
 ########## 2d limiters ##########
 class UnstructuredLimiter_base(object):
     from .ctimeIntegration import computeElementNeighborShapeGradients
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    computeElementNeighborShapeGradients = staticmethod(computeElementNeighborShapeGradients)
     def __init__(self,mesh,nSpace):
         self.mesh  = mesh
         self.nSpace= nSpace
@@ -2949,6 +2961,8 @@ class UnstructuredLimiter_base(object):
 
 class CockburnNotesLimiter2d_base(UnstructuredLimiter_base):
     from .ctimeIntegration import computeCockburnDGlimiterArrays2d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    computeCockburnDGlimiterArrays2d = staticmethod(computeCockburnDGlimiterArrays2d)
     def __init__(self,mesh,nSpace):
         UnstructuredLimiter_base.__init__(self,mesh,nSpace)
         self.useC = True
@@ -3054,6 +3068,8 @@ class DGlimiterP1Lagrange2d(CockburnNotesLimiter2d_base):
     apply standard, Cockburn RKDG limiter in 2d (maybe)
     """
     from .ctimeIntegration import applyCockburnDGlimiterP1Lagrange2d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyCockburnDGlimiterP1Lagrange2d = staticmethod(applyCockburnDGlimiterP1Lagrange2d)
     def __init__(self,mesh,nSpace,u,transport=None,nu=1.5,M=0.0):
         CockburnNotesLimiter2d_base.__init__(self,mesh,nSpace)
         self.nc = len(u)
@@ -3152,6 +3168,8 @@ class DGlimiterP2Lagrange2d(CockburnNotesLimiter2d_base):
       move projection steps to c
     """
     from .ctimeIntegration import applyCockburnDGlimiterP1Lagrange2d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyCockburnDGlimiterP1Lagrange2d = staticmethod(applyCockburnDGlimiterP1Lagrange2d)
     def __init__(self,mesh,nSpace,u,transport=None,nu=1.5,M=0.0):
         CockburnNotesLimiter2d_base.__init__(self,mesh,nSpace)
         self.nc = len(u)
@@ -3313,6 +3331,8 @@ class DGlimiterPkMonomial2d(CockburnNotesLimiter2d_base):
     local approximation space has Pk monomial basis
     """
     from .ctimeIntegration import applyCockburnDGlimiterP1Lagrange2d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyCockburnDGlimiterP1Lagrange2d = staticmethod(applyCockburnDGlimiterP1Lagrange2d)
     def __init__(self,mesh,nSpace,u,transport=None,nu=1.5,M=0.0):
         CockburnNotesLimiter2d_base.__init__(self,mesh,nSpace)
         self.nc = len(u)
@@ -3435,6 +3455,8 @@ class DGlimiterPkMonomial2d(CockburnNotesLimiter2d_base):
 ##\todo put in DurlofskyP2 and Pk limiting
 class DGlimiterDurlofskyP1Lagrange2d(UnstructuredLimiter_base):
     from .ctimeIntegration import applyDurlofskyDGlimiterP1Lagrange2d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDurlofskyDGlimiterP1Lagrange2d = staticmethod(applyDurlofskyDGlimiterP1Lagrange2d)
     def __init__(self,mesh,nSpace,u,transport=None,killExtrema=1,allowMinWithUndershoot=0):
         UnstructuredLimiter_base.__init__(self,mesh,nSpace)
         self.nc = len(u)
@@ -3502,6 +3524,8 @@ class DGlimiterDurlofskyP1Lagrange2d(UnstructuredLimiter_base):
 #
 class DGlimiterDurlofskyP1Lagrange3d(UnstructuredLimiter_base):
     from .ctimeIntegration import applyDurlofskyDGlimiterP1Lagrange3d
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDurlofskyDGlimiterP1Lagrange3d = staticmethod(applyDurlofskyDGlimiterP1Lagrange3d)
     def __init__(self,mesh,nSpace,u,transport=None,killExtrema=1,allowMinWithUndershoot=1):
         UnstructuredLimiter_base.__init__(self,mesh,nSpace)
         self.nc = len(u)
@@ -3572,6 +3596,8 @@ class DGlimiterP1Lagrange1d_Sw(DGlimiterP1Lagrange1d):
       and more aggressive limiting elsewhere
     """
     from proteus.ctimeIntegration import applyDGlimitingP1Lagrange1d_withVacuumTol
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d_withVacuumTol = staticmethod(applyDGlimitingP1Lagrange1d_withVacuumTol)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0,h_eps=1.0e-3):
         DGlimiterP1Lagrange1d.__init__(self,mesh,nSpace,u,transport=transport,limiterFlag=limiterFlag)
         self.h_eps=h_eps
@@ -3625,6 +3651,8 @@ class DGlimiterP2Lagrange1d_Sw(DGlimiterP2Lagrange1d):
 
     """
     from .ctimeIntegration import applyDGlimitingP1Lagrange1d_withVacuumTol
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d_withVacuumTol = staticmethod(applyDGlimitingP1Lagrange1d_withVacuumTol)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0,h_eps=1.0e-2):
         DGlimiterP2Lagrange1d.__init__(self,mesh,nSpace,u,transport=transport,limiterFlag=limiterFlag)
         self.h_eps=h_eps
@@ -3682,6 +3710,8 @@ class DGlimiterPkMonomial1d_Sw(DGlimiterPkMonomial1d):
       and more aggressive limiting elsewhere
     """
     from .ctimeIntegration import applyDGlimitingP1Lagrange1d_withVacuumTol
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDGlimitingP1Lagrange1d_withVacuumTol = staticmethod(applyDGlimitingP1Lagrange1d_withVacuumTol)
     def __init__(self,mesh,nSpace,u,transport=None,limiterFlag=0,h_eps=1.0e-1):
         DGlimiterPkMonomial1d.__init__(self,mesh,nSpace,u,transport=transport,limiterFlag=limiterFlag)
         self.h_eps=h_eps
@@ -3720,6 +3750,8 @@ class DGlimiterPkMonomial1d_Sw(DGlimiterPkMonomial1d):
 
 class DGlimiterDurlofskyP1Lagrange2d_Sw(DGlimiterDurlofskyP1Lagrange2d):
     from .ctimeIntegration import applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol = staticmethod(applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol)
     def __init__(self,mesh,nSpace,u,transport=None,killExtrema=1,allowMinWithUndershoot=0,h_eps=2.0e-2):
         DGlimiterDurlofskyP1Lagrange2d.__init__(self,mesh,nSpace,u,transport=transport,killExtrema=killExtrema,
                                                 allowMinWithUndershoot=allowMinWithUndershoot)

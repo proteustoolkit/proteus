@@ -454,15 +454,8 @@ cpdef void generateFromHexFile(CMesh cmesh,
     failed = cppm.readHex(cmesh.mesh,filebase.encode('utf8'),base);
     cppm.constructElementBoundaryElementsArray_hexahedron(cmesh.mesh);
 
-def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
-                       elementMaterialTypes=None):
-    """Fill a CMesh of simplices from arrays, the in-memory counterpart of the file readers.
-
-    ``nodes`` is (nNodes, 3) coordinates, ``elements`` (nElements, 3 or 4)
-    zero-based node numbers; the material types default to zero. The element
-    boundaries are constructed as every file reader does, so the caller goes
-    on to allocate and compute the geometric info as after a read.
-    """
+def _fillNodesAndElements(CMesh cmesh, nodes, elements, nodeMaterialTypes=None, elementMaterialTypes=None):
+    """Allocate a CMesh's node and element arrays and copy the given ones in (checked)."""
     cdef double[:, ::1] x = np.ascontiguousarray(nodes, dtype=np.float64)
     cdef cppm.proteus_index_t[:, ::1] e = np.ascontiguousarray(elements, dtype=INDEX_DTYPE)
     cdef int[::1] nmt, emt
@@ -491,10 +484,79 @@ def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
         for j in range(nNodes_element):
             cmesh.mesh.elementNodesArray[nNodes_element*i + j] = e[i, j]
         cmesh.mesh.elementMaterialTypes[i] = emt[i]
-    if nNodes_element == 3:
+
+
+def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
+                       elementMaterialTypes=None):
+    """Fill a CMesh of simplices from arrays, the in-memory counterpart of the file readers.
+
+    ``nodes`` is (nNodes, 3) coordinates, ``elements`` (nElements, 3 or 4)
+    zero-based node numbers; the material types default to zero. The element
+    boundaries are constructed as every file reader does, so the caller goes
+    on to allocate and compute the geometric info as after a read.
+    """
+    _fillNodesAndElements(cmesh, nodes, elements, nodeMaterialTypes, elementMaterialTypes)
+    if cmesh.mesh.nNodes_element == 3:
         cppm.constructElementBoundaryElementsArray_triangle(cmesh.mesh)
     else:
         cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh)
+
+cdef extern from "mesh.h":
+    """
+    // new[]: the Mesh frees its arrays with delete[] (deleteMeshDataStructures)
+    static inline proteus_index_t* proteus_cmeshTools_newIndexArray(int n)
+    { return new proteus_index_t[n > 0 ? n : 1]; }
+    """
+    cppm.proteus_index_t* proteus_cmeshTools_newIndexArray(int n)
+
+
+def generateFromNumberedArrays(CMesh cmesh, nodes, elements, elementBoundaries, edges,
+                               nodeMaterialTypes, elementMaterialTypes, elementBoundaryMaterialTypes):
+    """Fill a CMesh of simplices whose element boundary and edge numbers are given, as a partitioner builds a subdomain.
+
+    ``elementBoundaries`` is (nElements, nElementBoundaries_element): each element's boundaries by number, and
+    ``edges`` (nEdges, 2) the edges in their numbering. The rest is built by the same
+    ``constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_*`` and geometric-info
+    routines partitioning.cpp calls on a subdomain, so a mesh rebuilt from a subdomain's arrays (a per-rank
+    view, MeshTools.subdomainViewMesh) is that subdomain, numbering included; generateFromArrays numbers the
+    boundaries and edges its own way. The element boundary material types are set last, as the partitioner
+    does.
+    """
+    cdef cppm.proteus_index_t[:, ::1] b = np.ascontiguousarray(elementBoundaries, dtype=INDEX_DTYPE)
+    cdef cppm.proteus_index_t[:, ::1] ed = np.ascontiguousarray(edges, dtype=INDEX_DTYPE).reshape(-1, 2)
+    cdef int[::1] ebmt = np.ascontiguousarray(elementBoundaryMaterialTypes, dtype=np.intc)
+    cdef int i, j
+    cdef int nElements = b.shape[0]
+    cdef int nEB = b.shape[1]
+    cdef int nEdges = ed.shape[0]
+    nNodes_element = np.ascontiguousarray(elements).shape[1]
+    if nEB != nNodes_element:
+        raise ValueError("a simplex has as many boundaries as nodes: %d, not %d" % (nNodes_element, nEB))
+    _fillNodesAndElements(cmesh, nodes, elements, nodeMaterialTypes, elementMaterialTypes)
+    if nElements != cmesh.mesh.nElements_global:
+        raise ValueError("elementBoundaries has %d rows for %d elements" % (nElements, cmesh.mesh.nElements_global))
+    cmesh.mesh.elementBoundariesArray = proteus_cmeshTools_newIndexArray(nElements * nEB)
+    for i in range(nElements):
+        for j in range(nEB):
+            cmesh.mesh.elementBoundariesArray[nEB*i + j] = b[i, j]
+    cmesh.mesh.nEdges_global = nEdges
+    cmesh.mesh.edgeNodesArray = proteus_cmeshTools_newIndexArray(2 * nEdges)
+    for i in range(nEdges):
+        cmesh.mesh.edgeNodesArray[2*i] = ed[i, 0]
+        cmesh.mesh.edgeNodesArray[2*i + 1] = ed[i, 1]
+    if nEB == 3:
+        cppm.constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_triangle(cmesh.mesh)
+        cppm.allocateGeometricInfo_triangle(cmesh.mesh)
+        cppm.computeGeometricInfo_triangle(cmesh.mesh)
+    else:
+        cppm.constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_tetrahedron(cmesh.mesh)
+        cppm.allocateGeometricInfo_tetrahedron(cmesh.mesh)
+        cppm.computeGeometricInfo_tetrahedron(cmesh.mesh)
+    if ebmt.shape[0] != cmesh.mesh.nElementBoundaries_global:
+        raise ValueError("%d element boundary material types for %d element boundaries"
+                         % (ebmt.shape[0], cmesh.mesh.nElementBoundaries_global))
+    for i in range(ebmt.shape[0]):
+        cmesh.mesh.elementBoundaryMaterialTypes[i] = ebmt[i]
 
 cpdef void computeGeometricInfo_tetrahedron(CMesh cmesh):
     cppm.computeGeometricInfo_tetrahedron(cmesh.mesh);

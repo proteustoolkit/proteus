@@ -28,6 +28,9 @@ import proteus.TransportCoefficients
 class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import levelSetConservationCoefficientsEvaluate
     from proteus.ctransportCoefficients import levelSetConservationCoefficientsEvaluate_sd
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    levelSetConservationCoefficientsEvaluate = staticmethod(levelSetConservationCoefficientsEvaluate)
+    levelSetConservationCoefficientsEvaluate_sd = staticmethod(levelSetConservationCoefficientsEvaluate_sd)
 
     def __init__(
             self,

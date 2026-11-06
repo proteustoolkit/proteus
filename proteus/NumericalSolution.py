@@ -305,7 +305,12 @@ class NS_base(object):  # (HasTraits):
         try:
             mlMesh = self.pList[0].domain.mesh
         except:
-            mlMesh = MeshTools.generateMesh(self.pList[0],self.nList[0],opts.generatePartitionedMeshFromFiles)
+            # a same-rank hot start reads the mesh from the archive's per-rank subdomain views (C7.1 Phase D);
+            # opts.hotStartMesh = 'global' generates and partitions it, as before
+            restartArchive = (self.ar[0] if opts.hotStart and getattr(opts, 'hotStartMesh', 'views') == 'views'
+                              else None)
+            mlMesh = MeshTools.generateMesh(self.pList[0],self.nList[0],opts.generatePartitionedMeshFromFiles,
+                                            restartArchive=restartArchive)
 
         theMesh = mlMesh.meshList[0].subdomainMesh
         

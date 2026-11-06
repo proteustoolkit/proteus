@@ -98,6 +98,8 @@ class NumericalFlux(
 
 class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import ncLevelSetCoefficientsEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    ncLevelSetCoefficientsEvaluate = staticmethod(ncLevelSetCoefficientsEvaluate)
     def __init__(self,
                  V_model=0,
                  RD_model=None,
