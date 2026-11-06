@@ -1426,7 +1426,7 @@ class NS_base(object):  # (HasTraits):
         if ar.inline or ar.dataItemFormat != "HDF":
             return
         base = self._solver_state_group_path(model)
-        items = [("%s/fingerprint" % base, self._solver_state_fingerprint(model, index))]
+        items = []
         for owner, obj in self._solver_state_owners(model):
             st = obj.state()
             if st is None:
@@ -1437,6 +1437,10 @@ class NS_base(object):  # (HasTraits):
                     items.append(("%s/a.%s" % (path, key), value))
                 else:
                     items.append(("%s/s.%s" % (path, key), numpy.atleast_1d(numpy.asarray(value))))
+        #one order on every rank: a state's keys follow its dicts' insertion order, which can differ between
+        #ranks (RANS2P's numericalFlux.ebqe gets ('u', 0)..('u', 3) in an order set by the process's string
+        #hash seed), and the names must match rank for rank below
+        items = [("%s/fingerprint" % base, self._solver_state_fingerprint(model, index))] + sorted(items, key=lambda i: i[0])
         import json
         items.append(("%s/policy" % base, numpy.frombuffer(
             json.dumps(self._hot_start_policy(model, index), sort_keys=True, default=str).encode(), dtype='uint8')))
