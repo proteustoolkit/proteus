@@ -13,6 +13,9 @@ model's dofs at the end, hot start vs the uninterrupted run, with that piece lef
   the next system step (systemStep owner): restarted at 0.005 the first step went
   to 0.01 instead of 0.0075                                                           5.4e-1
 Before all of it: 5.1e-1 (velocity 7.3e-2, VOF 1.4e-2, forces ~1%). After: 0.0, forces 0.0.
+
+The same deck with CLSVOF (interface=1): 2.3e-3 (restart at 0.04) and 1.2e-2 (at 0.005) on main c09280cb, 0.0 with
+the owners above (CLSVOF's disc_ICs flag among them).
 """
 import os
 import shutil
@@ -47,14 +50,18 @@ def _worst(a, b):
 # (archive interval, hot start time, final time): 0.04 is past the switch to lagged shock capturing and
 # subgrid error; at 0.005 the step after the restart is capped by the history of the steps before it
 CASES = {"lagged": (0.02, 0.04, 0.1), "early": (0.005, 0.005, 0.03)}
+# the level-set family (VOF, NCLS, RDLS, MCorr) or CLSVOF
+INTERFACES = {"levelset": "he=0.1", "clsvof": "he=0.1 interface=1"}
 
 
+@pytest.mark.parametrize("interface", sorted(INTERFACES))
 @pytest.mark.parametrize("case", sorted(CASES))
-def test_hot_start_continues_the_uninterrupted_run(tmp_path, case):
+def test_hot_start_continues_the_uninterrupted_run(tmp_path, case, interface):
     dtout, t, ft = CASES[case]
-    full = _run(tmp_path / "full", FT=ft, DTOUT=dtout)
-    _run(tmp_path / "hot", FT=t, DTOUT=dtout)
-    hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t)
+    opts = INTERFACES[interface]
+    full = _run(tmp_path / "full", FT=ft, DTOUT=dtout, OPTS=opts)
+    _run(tmp_path / "hot", FT=t, DTOUT=dtout, OPTS=opts)
+    hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t, OPTS=opts)
     assert _worst(full, hot) == 0.0
     # every accepted step after the restart is the uninterrupted run's, and so is every force row
     after = numpy.loadtxt(str(tmp_path / "full" / "accepted.txt"))
