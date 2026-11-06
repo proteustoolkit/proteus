@@ -46,5 +46,6 @@ as the mesh velocity is calculated from the previous time step.
 Immersed Boundaries
 -------------------
 
-The immersed boundary (three-phase) implementation of Navier-Stokes, with
-source documentation available here: :py:mod:`proteus.mprans.RANS2P_IB`.
+The two-phase implementation of Navier-Stokes with immersed solid boundaries, with
+source documentation available here: :py:mod:`proteus.mprans.RANS2P_IB`. This is a different
+method from the immersed finite elements of the ADR model (:ref:`adr`).

@@ -1201,6 +1201,8 @@ class Mesh(object):
             if self.globalMesh is not None:
                 self._writeInputNumbering(ar, name, tCount, init or meshChanged)
                 self._writeFingerprint(ar, init, meshChanged)
+                if init and getattr(ar, "driver", None) == "per-rank" and ar.hdfFile is not None:
+                    _writeSubdomainView(self, ar, name)
             #
             #material types
             #
@@ -1242,16 +1244,15 @@ class Mesh(object):
     def _writeInputNumbering(self, ar, name, tCount, write_data):
         """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering)."""
         g = self.globalMesh
-        nodes_input, elements_input = inputNumbering(g)
+        nodes_input, elements_input = _localInputNumbering(g)
         rank = ar.comm.rank()
-        nodes = np.asarray(g.nodeNumbering_subdomain2global)
-        cells = np.asarray(g.elementNumbering_subdomain2global)[:self.nElements_owned]
-        for attribute, new2old, local, offsets, n_global, center in (
-                ("NodeMapInput", nodes_input, nodes, g.nodeOffsets_subdomain_owned, g.nNodes_global, "Node"),
-                ("CellMapInput", elements_input, cells, g.elementOffsets_subdomain_owned, g.nElements_global, "Cell")):
-            if new2old is None:
+        for attribute, local_input, offsets, n_global, center in (
+                ("NodeMapInput", nodes_input, g.nodeOffsets_subdomain_owned, g.nNodes_global, "Node"),
+                ("CellMapInput", None if elements_input is None else elements_input[:self.nElements_owned],
+                 g.elementOffsets_subdomain_owned, g.nElements_global, "Cell")):
+            if local_input is None:
                 continue
-            data = new2old[local]
+            data = local_input
             if ar.global_sync:
                 ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[n_global],
                                sync_offsets=offsets, sync_data=data[:offsets[rank+1] - offsets[rank]],
@@ -7099,6 +7100,21 @@ def inputNumbering(globalMesh):
     return cached
 
 
+def _localInputNumbering(globalMesh):
+    """(nodes, elements): the input index of each of this rank's subdomain nodes and elements (all of them,
+    overlap included), each None where the partition kept the input numbering.
+
+    From inputNumbering composed with the subdomain-to-global maps; a mesh built from a per-rank view
+    (subdomainViewMesh) has no global arrays and carries its own.
+    """
+    g = globalMesh
+    if "_viewInputNumbering" in g.__dict__:
+        return g._viewInputNumbering
+    nodes_input, elements_input = inputNumbering(g)
+    return (None if nodes_input is None else nodes_input[np.asarray(g.nodeNumbering_subdomain2global)],
+            None if elements_input is None else elements_input[np.asarray(g.elementNumbering_subdomain2global)])
+
+
 def meshFingerprint(nodeArray, elementNodesArray):
     """``ymf.mesh.fingerprint``: SHA-256 of a mesh's geometry and topology, in the order given.
 
@@ -7117,6 +7133,8 @@ def _wholeMeshFingerprint(globalMesh):
     """The global mesh's inputFingerprint, or None when it does not hold the whole mesh (a mesh generated
     per rank) or this ymf cannot compute one."""
     g = globalMesh
+    if g.__dict__.get("_inputFingerprint") is not None:
+        return g._inputFingerprint              # taken before an element partition, or read from a view
     nodes, elements = getattr(g, "nodeArray", None), getattr(g, "elementNodesArray", None)
     if nodes is None or elements is None or len(nodes) != g.nNodes_global or len(elements) != g.nElements_global:
         return None
@@ -7664,7 +7682,7 @@ def _owners(offsets, globalNumbers):
     return (np.searchsorted(np.asarray(offsets), np.asarray(globalNumbers), side="right") - 1).astype(np.int32)
 
 
-def subdomainYmfGrid(globalMesh, rank=None):
+def subdomainYmfGrid(globalMesh, rank=None, item=None):
     """One rank's piece of a partitioned mesh as a ymf grid, facets in the ``subdomain`` view (C7.1 step H).
 
     The grid holds the subdomain as the solver sees it, overlap included, in its local numbering (owned
@@ -7673,28 +7691,31 @@ def subdomainYmfGrid(globalMesh, rank=None):
     numbering composed with its inverse, see inputNumbering), ``NodeOwner`` and ``CellOwner`` (the rank
     owning each), and the material types; and ``facets``, every exterior face of the subdomain with its
     tag: 0 untagged, >0 a condition, -1 a face cut by the partition (ymf decision 2: -1 only here).
-    Arrays are inline. ``rank`` defaults to this process's; the global mesh must have been partitioned
-    (partitionMesh, or subdomainYmfGrids in one process).
+    Arrays are inline, unless ``item(key, array)`` makes the data items (a per-rank archive's view,
+    _writeSubdomainView, references its own datasets). ``rank`` defaults to this process's; the global mesh
+    must have been partitioned (partitionMesh, or subdomainYmfGrids in one process).
     """
     from ymf import archive as ymf_archive
     if rank is None:
         rank = Comm.get().rank()
     g, sub = globalMesh, globalMesh.subdomainMesh
-    nodes_input, elements_input = inputNumbering(g)
+    nodes_input, elements_input = _localInputNumbering(g)
     nodes_global = np.asarray(g.nodeNumbering_subdomain2global)
     cells_global = np.asarray(g.elementNumbering_subdomain2global)
-    def item(array):
-        return ymf_archive.data_item_for(np.ascontiguousarray(array), inline=True)
+    if item is None:
+        def item(key, array):
+            return ymf_archive.data_item_for(np.ascontiguousarray(array), inline=True)
     def attribute(name, values, center):
-        return ymf_archive.attribute(name, item(values), center=center)
-    nodeMapInput = nodes_global if nodes_input is None else nodes_input[nodes_global]
-    cellMapInput = cells_global if elements_input is None else elements_input[cells_global]
+        return ymf_archive.attribute(name, item(name, values), center=center)
+    nodeMapInput = nodes_global if nodes_input is None else nodes_input
+    cellMapInput = cells_global if elements_input is None else elements_input
     topologyName = {3: "Triangle", 4: "Tetrahedron"}[sub.nNodes_element]
     exterior = np.asarray(sub.exteriorElementBoundariesArray)
     faces = np.asarray(sub.elementBoundaryNodesArray)[exterior]
     grid = ymf_archive.uniform_grid(
-        ymf_archive.topology(topologyName, sub.nElements_global, item(np.asarray(sub.elementNodesArray, dtype=np.int32))),
-        ymf_archive.geometry(item(np.asarray(sub.nodeArray, dtype='d'))),
+        ymf_archive.topology(topologyName, sub.nElements_global,
+                             item("elements", np.asarray(sub.elementNodesArray, dtype=np.int32))),
+        ymf_archive.geometry(item("nodes", np.asarray(sub.nodeArray, dtype='d'))),
         [attribute("NodeMapInput", nodeMapInput.astype(np.int64), "Node"),
          attribute("CellMapInput", cellMapInput.astype(np.int64), "Cell"),
          attribute("NodeOwner", _owners(g.nodeOffsets_subdomain_owned, nodes_global), "Node"),
@@ -7704,8 +7725,8 @@ def subdomainYmfGrid(globalMesh, rank=None):
     grid["name"] = "subdomain %d" % rank
     grid["facets"] = ymf_archive.facets(
         ymf_archive.topology("Polyline" if faces.shape[1] == 2 else "Triangle", len(faces),
-                             item(faces.astype(np.int32)), nodes_per_element=faces.shape[1]),
-        item(np.asarray(sub.elementBoundaryMaterialTypes)[exterior].astype(np.int32)), view="subdomain")
+                             item("facets", faces.astype(np.int32)), nodes_per_element=faces.shape[1]),
+        item("facetTags", np.asarray(sub.elementBoundaryMaterialTypes)[exterior].astype(np.int32)), view="subdomain")
     return grid
 
 
@@ -7777,6 +7798,180 @@ def subdomainMeshFromYmf(grid):
     # rank), so the flags are marked, as partitionMesh leaves every rank's subdomain
     mesh.rankInterfacesMarked = True
     return mesh
+
+
+#: the group of a per-rank archive file holding the subdomain view of each mesh written to it, by name
+SUBDOMAIN_VIEW_GROUP = "subdomain_view"
+#: what a view written by this proteus says it is, so a reader can refuse another layout
+SUBDOMAIN_VIEW_FORMAT = "proteus-subdomain-view-1"
+#: the partition's maps, in the order partitionNodes and partitionElements return them
+_PARTITION_MAPS = ("elementOffsets_subdomain_owned", "elementNumbering_subdomain2global",
+                   "nodeOffsets_subdomain_owned", "nodeNumbering_subdomain2global",
+                   "elementBoundaryOffsets_subdomain_owned", "elementBoundaryNumbering_subdomain2global",
+                   "edgeOffsets_subdomain_owned", "edgeNumbering_subdomain2global")
+#: the subdomain arrays a view stores beyond its ymf grid: what generateFromNumberedArrays needs
+_VIEW_SUBDOMAIN_ARRAYS = (("elementBoundaries", "elementBoundariesArray"), ("edges", "edgeNodesArray"),
+                          ("elementBoundaryMaterialTypes", "elementBoundaryMaterialTypes"))
+#: the global mesh's scalars a view keeps, so a mesh built from views reports the global mesh's own
+_VIEW_GLOBAL_SCALARS = ("nNodes_global", "nElements_global", "nElementBoundaries_global", "nEdges_global",
+                        "nInteriorElementBoundaries_global", "nExteriorElementBoundaries_global",
+                        "max_nElements_node", "max_nNodeNeighbors_node", "nNodes_element",
+                        "nNodes_elementBoundary", "nElementBoundaries_element", "h", "hMin", "sigmaMax",
+                        "volume", "nLayersOfOverlap", "parallelPartitioningType")
+
+
+class SubdomainViewUnavailable(Exception):
+    """A per-rank archive holds no subdomain view this run can use; the reason is the message."""
+
+
+def _writeSubdomainView(subdomainMesh, ar, name):
+    """Write this rank's subdomain view of a partitioned mesh into its per-rank archive file (C7.1 Phase D).
+
+    The group ``subdomain_view/<name>`` of ``<archive>_p<rank>.h5`` holds the step-H view (subdomainYmfGrid,
+    its arrays as datasets beside it and its ymf grid in the ``ymf`` attribute) plus what rebuilding the
+    solver's subdomain needs: each element's boundary numbers, the edges, every element boundary's flag,
+    the partition's eight maps, and the global mesh's counts and scalars. subdomainViewMesh reads it back
+    on a hot start with the same number of ranks, with no global mesh and no partitioner. Written on the
+    mesh's first archive write; a hot start rewrites it.
+    """
+    from ymf import archive as ymf_archive
+    sub, g, f = subdomainMesh, subdomainMesh.globalMesh, ar.hdfFile
+    if sub.nNodes_element not in (3, 4) or not hasattr(g, "nodeNumbering_subdomain2global"):
+        return
+    rank = ar.comm.rank()
+    group = f.require_group(SUBDOMAIN_VIEW_GROUP)
+    if name in group:
+        del group[name]
+    view = group.create_group(name)
+    base = "%s:/%s/%s/" % (os.path.basename(ar.hdfFilename), SUBDOMAIN_VIEW_GROUP, name)
+
+    def item(key, array):
+        array = np.ascontiguousarray(array)
+        view.create_dataset(key, data=array)
+        return ymf_archive.data_item_for(array, base + key)
+    view.attrs["ymf"] = ymf_archive.dump_grid(subdomainYmfGrid(g, rank, item=item))
+    for key, attr in _VIEW_SUBDOMAIN_ARRAYS:
+        view.create_dataset(key, data=np.ascontiguousarray(getattr(sub, attr)))
+    for key in _PARTITION_MAPS:
+        view.create_dataset(key, data=np.ascontiguousarray(getattr(g, key)))
+    nodes_input, elements_input = _localInputNumbering(g)
+    view.attrs["renumbered"] = np.array([nodes_input is not None, elements_input is not None], dtype=np.int8)
+    for key in _VIEW_GLOBAL_SCALARS:
+        value = getattr(g, key, None)
+        if value is not None:
+            view.attrs[key] = value
+    view.attrs["format"] = SUBDOMAIN_VIEW_FORMAT
+    view.attrs["size"], view.attrs["rank"] = ar.comm.size(), rank
+    view.attrs["rankInterfacesMarked"] = int(bool(sub.__dict__.get("rankInterfacesMarked")))
+    digest = _wholeMeshFingerprint(g)
+    if digest is not None:
+        view.attrs["fingerprint"] = digest
+
+
+def _subdomainViewGroup(archive, name):
+    """This rank's view group in a per-rank archive (an open archive, or its path without ``_p<rank>.h5``),
+    and the file to close (None for an open archive)."""
+    rank = Comm.get().rank()
+    hdf = getattr(archive, "hdfFile", None)
+    if hdf is None and not isinstance(archive, str):
+        raise SubdomainViewUnavailable("the archive has no HDF5 file")
+    if getattr(archive, "driver", "per-rank") != "per-rank":
+        raise SubdomainViewUnavailable("the archive is not per-rank (driver %r)" % (archive.driver,))
+    opened = None
+    if hdf is None:
+        path = "%s_p%d.h5" % (archive, rank)
+        if not os.path.exists(path):
+            raise SubdomainViewUnavailable("no per-rank file %s" % (path,))
+        hdf = opened = h5py.File(path, "r")
+    view = hdf.get("%s/%s" % (SUBDOMAIN_VIEW_GROUP, name))
+    if view is None:
+        if opened is not None:
+            opened.close()
+        raise SubdomainViewUnavailable("%s holds no subdomain view of %r" % (hdf.filename, name))
+    return view, opened
+
+
+def subdomainViewMesh(archive, name="Spatial_Domain"):
+    """The partitioned mesh a per-rank archive's subdomain views hold, built on each rank from its own view.
+
+    ``archive`` is an open per-rank archive (an Archiver.AR_base, as a hot start has) or its path without
+    ``_p<rank>.h5``. Collective: every rank builds from its view, or every rank raises
+    SubdomainViewUnavailable (the reason of the first rank that cannot: no per-rank file, no view,
+    another number of ranks, another view format). The returned mesh stands for the global one as
+    cartesianSubdomain's does -- the global counts, scalars and the partition's maps, no arrays -- with
+    ``subdomainMesh`` the subdomain partitionMesh built when the archive was written: the same arrays,
+    element boundary and edge numbering included (cmeshTools.generateFromNumberedArrays), the same flags,
+    -1 on the cut faces.
+    """
+    from . import cmeshTools
+    comm = Comm.get()
+    reason, view, opened = None, None, None
+    try:
+        view, opened = _subdomainViewGroup(archive, name)
+        if view.attrs.get("format") != SUBDOMAIN_VIEW_FORMAT:
+            raise SubdomainViewUnavailable("view format %r, not %r" % (view.attrs.get("format"), SUBDOMAIN_VIEW_FORMAT))
+        if int(view.attrs["size"]) != comm.size() or int(view.attrs["rank"]) != comm.rank():
+            raise SubdomainViewUnavailable("written by rank %d of %d, read by rank %d of %d"
+                                           % (view.attrs["rank"], view.attrs["size"], comm.rank(), comm.size()))
+    except SubdomainViewUnavailable as why:
+        reason = str(why)
+    reasons = comm.comm.tompi4py().allgather(reason)
+    failed = [(r, why) for r, why in enumerate(reasons) if why is not None]
+    if failed:
+        if opened is not None:
+            opened.close()
+        raise SubdomainViewUnavailable("rank %d: %s" % failed[0])
+    try:
+        arrays = dict((key, view[key][()]) for key in view)
+        attrs = dict(view.attrs)
+    finally:
+        if opened is not None:
+            opened.close()
+    nNodes_element = arrays["elements"].shape[1]
+    mesh = {3: TriangularMesh, 4: TetrahedralMesh}[nNodes_element]()
+    mesh.comm = comm
+    mesh.cmesh = cmeshTools.CMesh()
+    sub = mesh.subdomainMesh = mesh.__class__()
+    sub.globalMesh = mesh
+    sub.cmesh = cmeshTools.CMesh()
+    cmeshTools.generateFromNumberedArrays(sub.cmesh, arrays["nodes"], arrays["elements"],
+                                          arrays["elementBoundaries"], arrays["edges"],
+                                          arrays["nodeMaterialTypes"], arrays["elementMaterialTypes"],
+                                          arrays["elementBoundaryMaterialTypes"])
+    for key in _PARTITION_MAPS:
+        setattr(mesh, key, arrays[key])
+    for key in _VIEW_GLOBAL_SCALARS:
+        if key in attrs:
+            value = attrs[key]
+            setattr(mesh, key, float(value) if isinstance(value, (float, np.floating)) else int(value))
+    mesh.nodeNumbering_global_old2new = None
+    mesh.elementNumbering_global_old2new = None
+    renumbered = attrs.get("renumbered", np.zeros(2))
+    mesh._viewInputNumbering = (arrays["NodeMapInput"] if renumbered[0] else None,
+                                arrays["CellMapInput"] if renumbered[1] else None)
+    if attrs.get("fingerprint") is not None:
+        mesh._inputFingerprint = str(attrs["fingerprint"])
+    mesh.fromSubdomainViews = True
+    mesh._finishPartitioning(comm)
+    sub.rankInterfacesMarked = bool(attrs.get("rankInterfacesMarked", 0))
+    return mesh
+
+
+def multilevelMeshFromSubdomainViews(archive, name="Spatial_Domain"):
+    """A one-level MultilevelMesh whose mesh is subdomainViewMesh(archive, name)."""
+    mesh = subdomainViewMesh(archive, name)
+    cls = {TriangularMesh: MultilevelTriangularMesh, TetrahedralMesh: MultilevelTetrahedralMesh}[mesh.__class__]
+    mlMesh = cls.__new__(cls)               # its __init__ generates; this hierarchy is read
+    MultilevelMesh.__init__(mlMesh)
+    mlMesh.meshList = [mesh]
+    mlMesh.nLevels = 1
+    mlMesh.generated = False
+    mlMesh.cmultilevelMesh = None
+    mlMesh.elementParentsArrayList = None
+    mlMesh.elementChildrenArrayList = None
+    mlMesh.elementChildrenOffsetsList = None
+    mlMesh.fromSubdomainViews = True
+    return mlMesh
 
 
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
@@ -8771,8 +8966,20 @@ def msh2simplex(fileprefix, nd):
 
     logEvent('msh2simplex: finished converting .msh to simplex files')
 
-def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
+def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False,restartArchive=None):
+    """The multilevel mesh of a run: generated, read, and partitioned among the ranks.
+
+    ``restartArchive``, on a hot start, is the run's open per-rank archive (or its path): when it holds
+    subdomain views written by this number of ranks (archive-modes layouts B and C), every rank builds
+    its subdomain from its own view, and the global mesh and the partitioner are skipped
+    (multilevelMeshFromSubdomainViews). Otherwise, and for a hierarchy of more than one level, the mesh
+    is generated and partitioned as on a cold start, and the log says why.
+    """
     meshOptions = chooseMeshOptions(physics, numerics)
+    if restartArchive is not None:
+        mlMesh = _meshFromRestartArchive(restartArchive, meshOptions)
+        if mlMesh is not None:
+            return mlMesh
     try:
         return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
     except Exception as first:
@@ -8789,6 +8996,23 @@ def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
             return _generateMesh(physics.domain, numerics, generatePartitionedMeshFromFiles, numerics)
         except Exception:
             raise first
+
+def _meshFromRestartArchive(archive, meshOptions, name="Spatial_Domain"):
+    """generateMesh's hot-start branch: the mesh from the archive's subdomain views, or None (logged)."""
+    nLevels = getattr(meshOptions, "nLevels", 1) or 1
+    if nLevels != 1:
+        logEvent("Hot start: %d mesh levels; the per-rank subdomain views hold one, so the mesh is "
+                 "generated and partitioned" % (nLevels,), level=1)
+        return None
+    try:
+        mlMesh = multilevelMeshFromSubdomainViews(archive, name)
+    except SubdomainViewUnavailable as why:
+        logEvent("Hot start: mesh generated and partitioned, not read from subdomain views (%s)" % (why,),
+                 level=1)
+        return None
+    logEvent("Hot start: the mesh is the archive's per-rank subdomain views; no global mesh, no partitioner",
+             level=1)
+    return mlMesh
 
 def chooseMeshOptions(physics, numerics):
     """The options :func:`generateMesh` meshes with.
