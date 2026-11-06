@@ -38,7 +38,7 @@ SC ShockCapturing ScalarAdvection_SC unmeasured
 SC mprans.Dissipation ShockCapturing unmeasured
 SC mprans.Kappa ShockCapturing unmeasured
 SC mprans.NCLS ShockCapturing state
-SC mprans.NCLS3P ShockCapturing unmeasured
+SC mprans.NCLS3P ShockCapturing state
 SC mprans.RANS2P ShockCapturing state
 SC mprans.RANS3PF ShockCapturing state
 SC mprans.RANS3PSed ShockCapturing unmeasured
@@ -46,7 +46,7 @@ SC mprans.RDLS ShockCapturing rebuilt
 SC mprans.SW2D ShockCapturing unmeasured
 SC mprans.TADR ShockCapturing unmeasured
 SC mprans.VOF ShockCapturing state
-SC mprans.VOF3P ShockCapturing unmeasured
+SC mprans.VOF3P ShockCapturing state
 SC mprans.VOS3P ShockCapturing unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
