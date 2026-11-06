@@ -375,3 +375,16 @@ def test_ymf_run_refuses_a_split_discretization_meshed_by_cells(tmp_path, capsys
     assert "convex_limited: a split discretization is meshed by element size, one level (mesh: {h: ...}); " \
         "this one gives cells [50, 100, 200]" in capsys.readouterr().err
     assert not os.listdir(str(tmp_path))
+
+
+def test_ymf_run_refuses_a_boundary_no_setter_imposes_before_anything_runs(tmp_path, capsys):
+    """level_set_clsvof dispatches (RANS2P + CLSVOF), but no sub-problem carries χ, so the closed atmosphere has
+    no χ inflow, and no BC_RANS setter imposes what is left (p = 0, zero velocity flux): refused up front, exit 2,
+    rather than imposing setAtmosphere's other data under the spec's name."""
+    from proteus.cli import ymfrun
+    assert ymfrun.main([os.path.join(HERE, "dambreak.ymf"), "--discretization", "level_set_clsvof",
+                        "--outdir", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "level_set_clsvof: split into sub-problems (flow, clsvof). It dispatches to flow RANS2P, clsvof CLSVOF, " \
+        "and cannot run: region top (side y+): no BC_RANS setter imposes its closed conditions" in err
+    assert not os.listdir(str(tmp_path))

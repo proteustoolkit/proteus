@@ -362,8 +362,10 @@ def split_blockers(doc, entry):
     can): what ymf says it lacks, then what the dispatch (proteus.Dispatch)
     refuses, then a family nothing realizes yet (proteus.DispatchRun)."""
     from ymf.discretizations import missing
-    from proteus import DispatchTable
+    from ymf.symbolic import SymbolicError
+    from ymf.symbolic.split import split_problem
     from proteus.Dispatch import DispatchError, dispatch
+    from proteus.DispatchRun import precheck
     name = entry["name"]
     head = "%s: split into sub-problems (%s)" % (
         name, ", ".join(s.get("name", "?") for s in entry["subproblems"]))
@@ -371,10 +373,11 @@ def split_blockers(doc, entry):
         found = dispatch(doc, name)
     except DispatchError as e:
         return ["%s, and the dispatch refuses it: %s" % (head, e)]
-    if found.family not in DispatchTable.REALIZERS:
-        return ["%s. It dispatches to %s, and nothing realizes family %s yet (it realizes %s)"
-                % (head, dispatches_to(found), found.family,
-                   ", ".join(sorted(DispatchTable.REALIZERS)))]
+    try:
+        precheck(doc, found, split_problem(doc, name))
+    except (DispatchError, SymbolicError) as e:
+        # what the run would be refused on, said before anything runs
+        return ["%s. It dispatches to %s, and cannot run: %s" % (head, dispatches_to(found), e)]
     lacking = missing(entry, doc["model"]["strong_form"].get("domain"))
     if lacking:
         return ["%s is missing %s: %s" % (name, m.what, m.hint) for m in lacking]

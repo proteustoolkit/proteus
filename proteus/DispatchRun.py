@@ -25,7 +25,8 @@ import numpy
 from proteus import DispatchTable as table
 from proteus.Dispatch import DispatchError, resolve
 
-__all__ = ["RealizeError", "Realized", "realize", "two_phase", "shallow_water", "check_built", "run",
+__all__ = ["RealizeError", "Realized", "realize", "precheck", "tank_sides", "two_phase", "shallow_water",
+           "check_built", "run",
            "petsc_options_restored"]
 
 
@@ -221,25 +222,27 @@ def _two_phase_values(doc, dim):
     return out
 
 
-def _tank(split, conditions, he, name, outdir, comm):
-    """The SpatialTools tank of the domain's box, its sides' BC_RANS set from the closed conditions of the regions
-    that hold them, meshed by triangle at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint)."""
-    from proteus import Domain
-    from proteus.mprans import SpatialTools as st
-    from proteus.ADRProblem import mesh_constraint
+def _box(split):
+    """(lower, upper) of a 2-D box domain; refused otherwise."""
     domain_data = split["domain"]
     if domain_data.get("region") is not None:
-        raise RealizeError("the two-phase realizer builds a box domain (a SpatialTools tank); this one is a %s "
-                           "region" % domain_data["region"].get("kind"))
+        raise RealizeError("the realizer builds a box domain; this one is a %s region"
+                           % domain_data["region"].get("kind"))
     lower, upper = [float(v) for v in domain_data["lower"]], [float(v) for v in domain_data["upper"]]
-    dim = len(lower)
-    if dim != 2:
-        raise RealizeError("the two-phase realizer builds 2-D tanks so far; this domain is %d-D" % dim)
+    if len(lower) != 2:
+        raise RealizeError("the realizer builds 2-D boxes so far; this domain is %d-D" % len(lower))
+    return lower, upper
+
+
+def tank_sides(split):
+    """{side: (region, BC_RANS setter, its arguments)} for the four sides of a SpatialTools Tank2D of the domain's
+    box, from the closed conditions of every sub-problem (one region per side, one setter per region's
+    conditions); refused (:class:`RealizeError`) otherwise. Data only: nothing is built."""
+    lower, upper = _box(split)
     size = [u - l for u, l in zip(upper, lower)]
-    domain = Domain.PlanarStraightLineGraphDomain()
-    coords = None if all(v == 0.0 for v in lower) else [(u + l) / 2.0 for u, l in zip(upper, lower)]
-    tank = st.Tank2D(domain, tuple(size), coords)
+    dim = 2
     tol = 1e-8 * max(size)
+    conditions = [c for sub in split["subproblems"] for c in sub.get("boundary_conditions") or []]
     # each side's points that tell which region it is in: its midpoint and quarter points (the corners belong to
     # two sides, so they are not asked)
     sides = {"x-": lambda s: (lower[0], lower[1] + s * size[1]), "x+": lambda s: (upper[0], lower[1] + s * size[1]),
@@ -250,7 +253,7 @@ def _tank(split, conditions, he, name, outdir, comm):
         key = (c["variable"], c["type"], c.get("component"), c.get("only"), repr(c.get("value")))
         if key not in [k for k, _ in regions[c["region"]]["conditions"]]:
             regions[c["region"]]["conditions"].append((key, c))
-    record = {}
+    out = {}
     for side, point in sides.items():
         found = sorted(r for r, data in regions.items()
                        if all(data["where"](point(s)) for s in (0.25, 0.5, 0.75)))
@@ -265,18 +268,36 @@ def _tank(split, conditions, he, name, outdir, comm):
         signature = _signature(have)
         setter = next((s for s in table.TWO_PHASE_BOUNDARY_SETTERS if _matches(s["signature"], signature)), None)
         if setter is None:
-            raise RealizeError("region %s (side %s): no BC_RANS setter imposes its conditions %s; the table knows %s"
-                               % (region, side, sorted(map(str, signature)),
-                                  ", ".join(s["name"] for s in table.TWO_PHASE_BOUNDARY_SETTERS)))
+            raise RealizeError("region %s (side %s): no BC_RANS setter imposes its closed conditions %s; the table "
+                               "knows %s" % (region, side, sorted(map(str, signature)),
+                                             ", ".join(s["name"] for s in table.TWO_PHASE_BOUNDARY_SETTERS)))
         kwargs = {}
         for argument, (variable, kind) in (setter.get("kwargs") or {}).items():
             value = next(c["value"] for c in have if (c["variable"], c["type"]) == (variable, kind))
             kwargs[argument] = float(value)
-        getattr(tank.BC[side], setter["setter"])(**kwargs)
-        record[side] = {"region": region, "setter": setter["setter"], **({"kwargs": kwargs} if kwargs else {})}
+        out[side] = (region, setter["setter"], kwargs)
+    return out
+
+
+def _tank(split, he, name, outdir, comm):
+    """The SpatialTools tank of the domain's box, its sides' BC_RANS set by :func:`tank_sides`, meshed by triangle
+    at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint)."""
+    from proteus import Domain
+    from proteus.mprans import SpatialTools as st
+    from proteus.ADRProblem import mesh_constraint
+    sides = tank_sides(split)
+    lower, upper = _box(split)
+    size = [u - l for u, l in zip(upper, lower)]
+    domain = Domain.PlanarStraightLineGraphDomain()
+    coords = None if all(v == 0.0 for v in lower) else [(u + l) / 2.0 for u, l in zip(upper, lower)]
+    tank = st.Tank2D(domain, tuple(size), coords)
+    record = {}
+    for side, (region, setter, kwargs) in sides.items():
+        getattr(tank.BC[side], setter)(**kwargs)
+        record[side] = {"region": region, "setter": setter, **({"kwargs": kwargs} if kwargs else {})}
     st.assembleDomain(domain)
     domain.MeshOptions.he = he
-    domain.MeshOptions.triangleOptions = mesh_constraint(he, dim)
+    domain.MeshOptions.triangleOptions = mesh_constraint(he, 2)
     domain.MeshOptions.triangleFlag = 0
     domain.MeshOptions.genMesh = True
     domain.polyfile = os.path.join(outdir, name)
@@ -362,8 +383,7 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("%s: mesh levels > 1 are not wired up for a split discretization" % found.discretization)
     comm = Comm.get()
     dim = split["dim"]
-    conditions = [c for sub in split["subproblems"] for c in sub.get("boundary_conditions") or []]
-    domain, sides = _tank(split, conditions, he, name, outdir, comm)
+    domain, sides = _tank(split, he, name, outdir, comm)
     final_time, outputs = _time(split, entry)
     solver, direct = _linear_solver(entry, ranks)
     values = _two_phase_values(doc, dim)
@@ -460,6 +480,36 @@ def _shallow_water_value(doc, name, dim):
         return _OfPoint(code, dim)
 
 
+def shallow_water_boundary(split):
+    """SWFlow's boundary treatment (an entry of the table's SHALLOW_WATER_BOUNDARY) for the closed conditions,
+    which must hold on the whole boundary; refused otherwise. Data only."""
+    (sub,) = split["subproblems"]
+    conditions = sub.get("boundary_conditions") or []
+    if any(c.get("where") is not None for c in conditions):
+        raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω)")
+    signature = _signature(conditions)
+    boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
+    if boundary is None:
+        raise RealizeError("the boundary conditions %s are none SWFlow imposes; the table knows %s"
+                           % (sorted(map(str, signature)),
+                              ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY)))
+    return boundary
+
+
+def precheck(doc, found, split):
+    """What :func:`realize` would refuse that the data alone decides (the family, the domain, the boundary, the
+    two-phase physical values), so that a runner refuses before anything runs. Raises :class:`RealizeError`."""
+    if found.family not in table.REALIZERS:
+        raise RealizeError("nothing realizes family %s yet (the table realizes %s)"
+                           % (found.family, ", ".join(sorted(table.REALIZERS))))
+    if found.family == "two_phase_level_set":
+        tank_sides(split)
+        _two_phase_values(doc, split["dim"])
+    elif found.family == "shallow_water":
+        _box(split)
+        shallow_water_boundary(split)
+
+
 def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     """An ``SWFlowProblem`` built from the dispatch, its p and n modules loaded as ``parun --SWEs`` loads them
     (proteus/SWFlow/models, reading the problem from Context), and checked."""
@@ -483,16 +533,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     comm = Comm.get()
     final_time, outputs = _time(split, entry)
 
-    # the boundary: one treatment for the whole boundary
     (sub,) = split["subproblems"]
-    conditions = sub.get("boundary_conditions") or []
-    if any(c.get("where") is not None for c in conditions):
-        raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω)")
-    signature = _signature(conditions)
-    boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
-    if boundary is None:
-        raise RealizeError("the boundary conditions %s are none SWFlow imposes; the table knows %s"
-                           % (sorted(map(str, signature)), ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY)))
+    boundary = shallow_water_boundary(split)
 
     # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
     lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
