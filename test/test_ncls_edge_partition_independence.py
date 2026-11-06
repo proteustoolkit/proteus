@@ -14,15 +14,19 @@ its tolerance is 1e-6: on CI the 2-rank answer differed from serial by 6e-8 on l
 9e-16 on macOS arm64, the same on every run of a host, so it is round-off through that branch, not a partition effect.
 The control runs without the scatter of psi and of the entropy residual and differs.
 """
+import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# a failed launch keeps its whole output (loaded by path: --import-mode=importlib)
+_spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HERE, "launch_output.py"))
+launch_output = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "ncls_edge_partition_mpi.py")
 
 
@@ -48,8 +52,7 @@ def _field(ranks, cwd, **overrides):
     env["PETSC_OPTIONS"] = "-ncls_ksp_rtol 1e-14 -ncls_ksp_atol 1e-40 -ncls_ksp_max_it 5000"
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
-    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     return numpy.loadtxt(os.path.join(str(cwd), "u.csv"), delimiter=",", skiprows=1)
 
 

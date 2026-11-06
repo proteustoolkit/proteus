@@ -8,11 +8,13 @@ low-order solution of the limiter and the limited solution; OLDVOL=1 sets the do
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm
+import rank_staging
 
-shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SWFlow", "circular_damBreak.py"),
-            "circular_damBreak.py")
-open("__init__.py", "w").close()
-open("circular_damBreak.py", "a").write("\nmySWFlowProblem.GN_swe_parameters['LUMPED_MASS_MATRIX'] = 1\n")
+# every rank stages the same files: atomically (rank_staging)
+rank_staging.write("circular_damBreak.py", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SWFlow",
+                                                          "circular_damBreak.py")).read()
+                   + "\nmySWFlowProblem.GN_swe_parameters['LUMPED_MASS_MATRIX'] = 1\n")
+rank_staging.write("__init__.py", "")
 
 from proteus.mprans import GN_SW2DCV as SW2DCV
 if os.environ.get("NOSCAT"):

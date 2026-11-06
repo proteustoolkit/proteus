@@ -13,15 +13,19 @@ deadlocked in the collective calls; it is a global norm over the owned dofs now.
 The run couples NCLS, VOF and MCorr. 2 ranks match serial to 1e-8 in all three; the control without the MCorr scatters
 differs; the KSP path agrees with the LU path in serial.
 """
+import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# a failed launch keeps its whole output (loaded by path: --import-mode=importlib)
+_spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HERE, "launch_output.py"))
+launch_output = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "mcorr_partition_mpi.py")
 
 
@@ -47,8 +51,7 @@ def _field(ranks, cwd, **overrides):
     env["PETSC_OPTIONS"] = "-ncls_ksp_rtol 1e-14 -ncls_ksp_atol 1e-40 -vof_ksp_rtol 1e-14 -vof_ksp_atol 1e-40 -mcorr_ksp_rtol 1e-14 -mcorr_ksp_atol 1e-40 -mcorr_ksp_max_it 5000"
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
-    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     result = numpy.load(os.path.join(str(cwd), "final.npz"))
     return {key: result[key][:, 2] for key in result.files}
 

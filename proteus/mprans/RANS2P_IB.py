@@ -61,40 +61,44 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
                  beam_nlTol=1.0e-5,
                  beamRigid=True):
 
+        # forward the arguments (this call passed the defaults, so every setting above was dropped)
         RANS2P.Coefficients.__init__(self,
-                                     epsFact=1.5,
-                                     sigma=72.8,
-                                     rho_0=998.2, nu_0=1.004e-6,
-                                     rho_1=1.205, nu_1=1.500e-5,
-                                     g=[0.0, 0.0, -9.8],
-                                     nd=3,
-                                     LS_model=None,
-                                     VF_model=None,
-                                     KN_model=None,
-                                     Closure_0_model=None,  # Turbulence closure model
-                                     Closure_1_model=None,  # Second possible Turbulence closure model
-                                     epsFact_density=None,
-                                     stokes=False,
-                                     sd=True,
-                                     movingDomain=False,
-                                     useVF=0.0,
-                                     useRBLES=0.0,
-                                     useMetrics=0.0,
-                                     useConstant_he=False,
-                                     dragAlpha=0.01,
-                                     dragBeta=0.0,
-                                     setParamsFunc=None,  # uses setParamsFunc if given
-                                     dragAlphaTypes=None,  # otherwise can use element constant values
-                                     dragBetaTypes=None,  # otherwise can use element constant values
-                                     porosityTypes=None,
-                                     killNonlinearDrag=False,
-                                     epsFact_solid=None,
-                                     eb_adjoint_sigma=1.0,
-                                     eb_penalty_constant=10.0,
-                                     forceStrongDirichlet=False,
-                                     turbulenceClosureModel=0,  # 0=No Model, 1=Smagorinksy, 2=Dynamic Smagorinsky, 3=K-Epsilon, 4=K-Omega
-                                     smagorinskyConstant=0.1,
-                                     barycenters=None)
+                                     epsFact=epsFact,
+                                     sigma=sigma,
+                                     rho_0=rho_0,
+                                     nu_0=nu_0,
+                                     rho_1=rho_1,
+                                     nu_1=nu_1,
+                                     g=g,
+                                     nd=nd,
+                                     LS_model=LS_model,
+                                     VF_model=VF_model,
+                                     KN_model=KN_model,
+                                     Closure_0_model=Closure_0_model,
+                                     Closure_1_model=Closure_1_model,
+                                     epsFact_density=epsFact_density,
+                                     stokes=stokes,
+                                     sd=sd,
+                                     movingDomain=movingDomain,
+                                     useVF=useVF,
+                                     useRBLES=useRBLES,
+                                     useMetrics=useMetrics,
+                                     useConstant_he=useConstant_he,
+                                     dragAlpha=dragAlpha,
+                                     dragBeta=dragBeta,
+                                     setParamsFunc=setParamsFunc,
+                                     dragAlphaTypes=dragAlphaTypes,
+                                     dragBetaTypes=dragBetaTypes,
+                                     porosityTypes=porosityTypes,
+                                     killNonlinearDrag=killNonlinearDrag,
+                                     epsFact_solid=epsFact_solid,
+                                     eb_adjoint_sigma=eb_adjoint_sigma,
+                                     eb_penalty_constant=eb_penalty_constant,
+                                     forceStrongDirichlet=forceStrongDirichlet,
+                                     turbulenceClosureModel=turbulenceClosureModel,
+                                     smagorinskyConstant=smagorinskyConstant,
+                                     barycenters=barycenters)
+        self.epsFact_source = epsFact_source
         self.beamFilename = beamFilename
         self.beamLength = beamLength
         self.beamRadius = np.array(beamRadius)
@@ -114,6 +118,7 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
         RANS2P.Coefficients.attachModels(self, modelList)
         self.initializeBeams()
         self.netBeamDrag = np.array([0.0])
+        self.vel_avg = np.array([0.0, 0.0, 0.0])  # set by beamStep after each step; here so state() has it from the start
 
     def initializeElementQuadrature(self, t, cq):
         RANS2P.Coefficients.initializeElementQuadrature(self, t, cq)
@@ -137,35 +142,69 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
             if self.beamRigid == False:
                 self.deflectionHistory = open("deflectionHistory.txt", "w")
 
-    def postStep(self, t, firstStep=False):
+    #: what a step leaves for the next one in the coefficients. The drag the residual reads is lagged: the
+    #: LevelModel's beamStep, after each model step, spreads it from the beams' quadrature points (q_dragBeam*,
+    #: ebqe_dragBeam*) and integrates the beam loads (q1-q3, with vel_avg and netBeamDrag); postStep then moves a
+    #: flexible beam (xv..zq; updateBeams falls back to the last step's coordinates when a deflected beam would cross
+    #: z = 0)
+    BEAM_STATE = ("q_dragBeam1", "q_dragBeam2", "q_dragBeam3", "ebqe_dragBeam1", "ebqe_dragBeam2", "ebqe_dragBeam3",
+                  "q1", "q2", "q3", "vel_avg", "netBeamDrag", "xv", "yv", "zv", "xq", "yq", "zq")
 
+    def state(self):
+        """What a step leaves for the next that the solution does not determine: the lagged beam drag and loads, the
+        beams (their coordinates, each beam solver's rotations Phi and vertex coordinates) and the beam file counter,
+        plus what RANS2P.Coefficients keeps, if anything (its LevelModel arrays are not in this older copy, so nothing
+        today).
+
+        beamStep and postStep run after this model's step, before the later models of the system step: without this
+        a later model's failure left the drag of the failed attempt (and a flexible beam moved), and the retry started
+        from them."""
+        if not hasattr(self, "Beam_Solver"):
+            return None
+        st = dict(super().state() or {})
+        for name in self.BEAM_STATE:
+            st["beam_" + name] = getattr(self, name).copy()
+        for I, b in enumerate(self.Beam_Solver):
+            for name in ("Phi", "x", "y", "z"):
+                st["beam%d_%s" % (I, name)] = np.array(getattr(b, name), dtype=float)
+        st["beam_tStep"] = int(self.tStep)
+        return st
+
+    def set_state(self, state):
+        if any(not k.startswith("beam") for k in state):
+            super().set_state({k: v for k, v in state.items() if not k.startswith("beam")})
+        for name in self.BEAM_STATE:
+            # vel_avg is rebound by beamStep (a new array): restore by value into whatever is bound now
+            getattr(self, name)[...] = numpy.reshape(state["beam_" + name], getattr(self, name).shape)
+        for I, b in enumerate(self.Beam_Solver):
+            # updateSolution changes Phi in place and the fallback replaces it with a copy: replace it here too
+            b.Phi = np.array(state["beam%d_Phi" % I], dtype=float)
+            for name in ("x", "y", "z"):
+                getattr(b, name)[:] = state["beam%d_%s" % (I, name)]
+        self.tStep = int(state["beam_tStep"])
+
+    def postStep(self, t, firstStep=False):
+        # Not RANS2P.Coefficients.postStep: this LevelModel is an older copy of RANS2P's, without the lagged dV and
+        # active-element arrays that one updates (and the RANS2P_IB kernel does not read them).
         self.beamDrag = np.array([0.0, 0.0, 0.0])
         if not self.beamRigid:
             self.updateBeams(t)
         else:
             self.updateBeamLoad()
         if self.comm.isMaster():
-            print("wettedAreas")
-            print(self.wettedAreas[:])
-            print("Forces_p")
-            print(self.netForces_p[:, :])
-            print("Forces_v")
-            print(self.netForces_v[:, :])
-            #self.wettedAreaHistory.write("%21.16e\n" % (self.wettedAreas[-1],))
-            #self.forceHistory_p.write("%21.16e %21.16e %21.16e\n" %tuple(self.netForces_p[-1,:]))
-            # self.forceHistory_p.flush()
-            #self.forceHistory_v.write("%21.16e %21.16e %21.16e\n" %tuple(self.netForces_v[-1,:]))
-            # self.forceHistory_v.flush()
-            #self.momentHistory.write("%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[-1,:]))
-            # self.momentHistory.flush()
-            #self.forceHistory_drag.write("%21.16e %21.16e %21.16e  %21.16e\n" %tuple([t,self.beamDrag[0], self.beamDrag[1], self.beamDrag[2]]))
-            # self.forceHistory_drag.flush()
-            #self.velocityAverage.write("%21.16e %21.16e %21.16e  %21.16e\n" %tuple([t,self.vel_avg[0], self.vel_avg[1], self.vel_avg[2]]))
-            # self.velocityAverage.flush()
-
+            # the rows RANS2P writes (these went to stdout instead, and the history files RANS2P opened stayed empty),
+            # and the beam drag
+            if self.legacyHistoryFiles:
+                self.deferWrite(self.timeHistory, "%21.16e\n" % (t,))
+                for bN in range(self.wettedAreas.shape[0]):
+                    self.deferWrite(self.wettedAreaHistory, "%21.16e\n" % (self.wettedAreas[bN],))
+                    self.deferWrite(self.forceHistory_p, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_p[bN, :]))
+                    self.deferWrite(self.forceHistory_v, "%21.16e %21.16e %21.16e\n" % tuple(self.netForces_v[bN, :]))
+                    self.deferWrite(self.momentHistory, "%21.15e %21.16e %21.16e\n" % tuple(self.netMoments[bN, :]))
+            self.deferWrite(self.forceHistory_drag, "%21.16e %21.16e %21.16e %21.16e\n" % ((t,) + tuple(self.beamDrag)))
             if self.beamRigid == False:
-                self.deflectionHistory.write("%21.16e %21.16e %21.16e %21.16e\n" % tuple([t, self.avgHeight, self.avgDeflection, self.avgAngle]))
-                self.deflectionHistory.flush()
+                self.deferWrite(self.deflectionHistory, "%21.16e %21.16e %21.16e %21.16e\n"
+                                % (t, self.avgHeight, self.avgDeflection, self.avgAngle))
 
     def delta_h(self, r):
         if r <= -2.0:
@@ -1393,7 +1432,7 @@ class LevelModel(proteus.mprans.RANS2P.LevelModel):
         argsDict["sdInfo_u_u_rowptr"] = self.coefficients.sdInfo[(1, 1)][0]
         argsDict["sdInfo_u_u_colind"] = self.coefficients.sdInfo[(1, 1)][1]
         argsDict["sdInfo_u_v_rowptr"] = self.coefficients.sdInfo[(1, 2)][0]
-        argsDict["sdInfo_u_v_colind"] = elf.coefficients.sdInfo[(1, 2)][1]
+        argsDict["sdInfo_u_v_colind"] = self.coefficients.sdInfo[(1, 2)][1]
         argsDict["sdInfo_u_w_rowptr"] = self.coefficients.sdInfo[(1, 3)][0]
         argsDict["sdInfo_u_w_colind"] = self.coefficients.sdInfo[(1, 3)][1]
         argsDict["sdInfo_v_v_rowptr"] = self.coefficients.sdInfo[(2, 2)][0]
@@ -1575,6 +1614,7 @@ class LevelModel(proteus.mprans.RANS2P.LevelModel):
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
         argsDict["hFactor"] = self.stabilization.hFactor
         argsDict["nElements_global"] = self.mesh.nElements_global
+        argsDict["nElements_owned"] = self.mesh.nElements_owned
         argsDict["nElementBoundaries_owned"] = self.mesh.nElementBoundaries_owned
         argsDict["useRBLES"] = self.coefficients.useRBLES
         argsDict["useMetrics"] = self.coefficients.useMetrics

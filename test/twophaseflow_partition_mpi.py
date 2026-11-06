@@ -12,13 +12,14 @@ whole -C string and FT is not used). FIXNULLSPACE=1 sets PresInc's fixNullSpace.
 """
 import glob, os, runpy, shutil, sys
 import numpy as np
+import rank_staging  # every rank stages the same files: atomically
 
 SO = os.environ.get("SO")
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.environ.get("DIR", "TwoPhaseFlow"))
 DECK = os.environ.get("DECK", "damBreak.py")
 for f in (glob.glob(os.path.join(SRC, "*")) if SO else [os.path.join(SRC, DECK)] + glob.glob(os.path.join(SRC, "mesh*"))):
     if os.path.isfile(f):
-        shutil.copy(f, ".")
+        rank_staging.copy(f, ".")
 
 from proteus import Comm
 from proteus import NumericalSolution as NS

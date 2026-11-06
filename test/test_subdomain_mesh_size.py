@@ -5,15 +5,19 @@ rank. For the NCLS disk with the Coupez term (sign() and the Coupez strength sca
 rank 1 had h = 0.035294 against 0.035538 serially, and 2 ranks differed from serial by 5.1e-7 at t=0.08 (3 ranks
 5.1e-7). With the sizes reduced over the ranks: 4.2e-11 and 1.6e-11. The control keeps each rank's own sizes.
 """
+import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# a failed launch keeps its whole output (loaded by path: --import-mode=importlib)
+_spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HERE, "launch_output.py"))
+launch_output = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "subdomain_mesh_size_mpi.py")
 
 
@@ -39,8 +43,7 @@ def _run(ranks, cwd, **overrides):
     env["PETSC_OPTIONS"] = "-ncls_ksp_rtol 1e-14 -ncls_ksp_atol 1e-40 -ncls_ksp_max_it 5000"
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
-    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     u = numpy.loadtxt(os.path.join(str(cwd), "u.csv"), delimiter=",", skiprows=1)
     sizes = numpy.atleast_2d(numpy.loadtxt(os.path.join(str(cwd), "h.csv"), delimiter=",", skiprows=1))
     return u, sizes

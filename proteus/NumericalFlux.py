@@ -48,6 +48,23 @@ UNUSED_FLUX_CLASSES_REFUSED_IN_PARALLEL = frozenset([
     "Stress_SIPG_exterior",
 ])
 
+#: Boundary-only (``hasInterior=False``) diffusion fluxes that refuse periodic conditions. NF_base marks the face
+#: points of a periodic pair as DOF boundary with no value, and these fluxes then apply their weak-Dirichlet diffusive
+#: flux there with the trace equal to the interior value: the residual keeps the one-sided consistent flux
+#: -a grad(u).n on each side of the seam (which does not cancel: grad(u) jumps across it) and the Jacobian a penalty
+#: the residual does not have. Measured on a C0 P1 periodic Poisson problem (-Laplace u = f on the unit square,
+#: periodic in x, u = 0 at y = 0, 1; 8x8 cells), L2 error and Newton iterations: Diffusion_IIPG_exterior 3.2e-2 in 1
+#: without the periodic pair (Dirichlet at x = 0, 1 instead), 3.5e-1 and no convergence in 30 with it;
+#: Diffusion_SIPG_exterior 4.3e-2 / 4.4e-1. The Stokes pair applies the same diffusive flux at the same points. Use
+#: StrongDirichlet (StrongDirichletFactory) for a periodic C0 problem: 4.7e-2 in 1, as ADRProblem does. Matched by
+#: exact class name: subclasses with their own exterior flux are not covered.
+PERIODIC_SEAM_REFUSED = frozenset([
+    "Diffusion_IIPG_exterior",
+    "Diffusion_SIPG_exterior",
+    "Stokes_Advection_DiagonalUpwind_Diffusion_IIPG_exterior",
+    "Stokes_Advection_DiagonalUpwind_Diffusion_SIPG_exterior",
+])
+
 
 class NF_base(object):
     useWeakDirichletConditions=True
@@ -92,6 +109,13 @@ class NF_base(object):
                  parallelPeriodic=False):
         import copy
         name = type(self).__name__
+        if getPeriodicBoundaryConditions is not None and name in PERIODIC_SEAM_REFUSED:
+            raise ValueError(
+                "%s cannot be used with periodic conditions: it applies its weak Dirichlet diffusive flux at the "
+                "periodic face points, which then carry a one-sided flux in the residual and a penalty in the "
+                "Jacobian (a C0 periodic Poisson problem: 10x the error, Newton does not converge). Use "
+                "NumericalFlux.StrongDirichlet (or StrongDirichletFactory) for a periodic problem; see "
+                "NumericalFlux.PERIODIC_SEAM_REFUSED" % name)
         if name in UNUSED_FLUX_CLASSES_REFUSED_IN_PARALLEL:
             from . import Comm
             comm = Comm.get()
@@ -3026,7 +3050,7 @@ class RusanovNumericalFlux_Diagonal(Advection_DiagonalUpwind):
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
-                 getPeriodicConditions):
+                 getPeriodicConditions=None):
         Advection_DiagonalUpwind.__init__(self,vt,
                                           getPointwiseBoundaryConditions,
                                           getAdvectiveFluxBoundaryConditions,
@@ -3270,7 +3294,7 @@ class ConvexOneSonicPointNumericalFlux(Advection_DiagonalUpwind):
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
-                 getPeriodicBoundaryConditions,
+                 getPeriodicBoundaryConditions=None,
                  sonicPoint=0.0,sonicFlux=0.0):
         Advection_DiagonalUpwind.__init__(self,vt,getPointwiseBoundaryConditions,
                                           getAdvectiveFluxBoundaryConditions,
@@ -4722,10 +4746,12 @@ class RusanovNumericalFlux(RusanovNumericalFlux_Diagonal):
 
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
-                 getDiffusiveFluxBoundaryConditions):
+                 getDiffusiveFluxBoundaryConditions,
+                 getPeriodicConditions=None):
         RusanovNumericalFlux_Diagonal.__init__(self,vt,getPointwiseBoundaryConditions,
                                                getAdvectiveFluxBoundaryConditions,
-                                               getDiffusiveFluxBoundaryConditions)
+                                               getDiffusiveFluxBoundaryConditions,
+                                               getPeriodicConditions)
 
         self.ebqe['eigen_bound']=numpy.copy(self.ebqe[('u',0)])
         if 'eigen_bound' not in self.vt.q:
