@@ -11,6 +11,13 @@ ct = Context.Options([
     ("STABILIZATION_TYPE", 2, "0: Galerkin (no stabilization), 2: entropy viscosity"),
     ("FCT", True, "apply the flux-corrected-transport limiter"),
     ("nnx", 161, "nodes per side: 41/81/161/321/641 = ref_2../ref_6"),
+    # IIPG weak-Dirichlet penalty: proteus forms  penalty = penalty_constant / h^power,
+    # so the h-scaling is already there and this constant is held FIXED across a
+    # refinement sweep.  Nitsche needs penalty >= C*a/h with C above the inverse-trace
+    # constant; here a = rho*k_rw*Ks <= Ks = 2.04, and the default penalty_constant=2.0
+    # gives C ~ 1 at the wet top -- right at the stability threshold, which shows up as
+    # an O(h) violation of the top Dirichlet value.
+    ("penalty", 2.0, "penalty_constant for the weak Dirichlet BC (default proteus 2.0)"),
 ], mutable=True)
 
 nd = 2
@@ -73,6 +80,8 @@ coefficients = Richards.Coefficients(nd,
                                      beta=0.0, #0.0001,
                                      diagonal_conductivity=True,
                                      PSK_type='Gardner',
+                                     penalty_constant=ct.penalty,
+                                     penalty_power=1.0,
                                      STABILIZATION_TYPE=ct.STABILIZATION_TYPE,
                                      ENTROPY_TYPE=1,
                                      LUMPED_MASS_MATRIX=False,

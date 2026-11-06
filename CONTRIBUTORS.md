@@ -27,7 +27,7 @@
 - Copyright 2019 Martin Renou martin.renou@quantstack.net
 - Copyright 2019 Eric Tovar eric.j.tovar@usace.army.mil
 - Copyright 2022 Jan Janssen janssen@lanl.gov
-- Copyright 2023 Arnob Barua abarua@lsu.edu
+- Copyright 2023 Arnob Barua abarua4@lsu.edu
 - Copyright 2026 Darsh Nathawani nathawanidarsh@gmail.com
 
 **Note for U.S. Federal Employees**

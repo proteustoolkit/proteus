@@ -599,7 +599,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # every step of the implicit FCT starts with the Galerkin predictor
         if hasattr(self, 'model') and hasattr(self.model, 'fct_phase'):
             self.model.fct_phase = 'predictor'
-        if self.exportTransportFluxes:
+        # per step: a coupled transport reads mAccepted only while this is set, and
+        # the edge-flux coupling (exportTransportFluxes off) reads it as well
+        if hasattr(self, 'model'):
             self.model.fctCorrectionApplied = False
         # Refresh coupled density every step from the transport (TADR) model,
         # mirroring how TADR refreshes velocity / aliases moisture content.
@@ -1808,8 +1810,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                         self.timeIntegration.dt), level=1)
         if rejected:
             self.u[0].dof[:] = uHigh
-            # the limited correction was thrown away, so it moved no water
+            # the limited correction was thrown away, so it moved no water, and the
+            # accepted mass is mLow, not an earlier step's mAccepted
             self.limitedFlux[:] = 0.0
+            self.fctCorrectionApplied = False
         else:
             # the corrected mass is the accepted m^{n+1}, whatever invert() made of it
             self.fctCorrectionApplied = True

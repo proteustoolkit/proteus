@@ -83,6 +83,7 @@ jobs:
             --ignore=../test/richards/bio2d --ignore=../test/richards/bio2d_FCT \
             --ignore=../test/richards/Raingarden --ignore=../test/richards/Tracy_convergence \
             --ignore=../test/richards/WRR_input_files --ignore=../test/richards/WRR_draft \
+            --ignore=../test/salinity/comp_geoscience_reproduce \
             --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_sdf \
             --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_ball \
             ../test

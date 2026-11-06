@@ -376,7 +376,8 @@ class _Pattern(object):
 def _transport_stub(stab, vModel, n=4):
     """The attributes TADR.LevelModel._refreshFluidMassFromFlow reads, on one rank."""
     from types import SimpleNamespace
-    return SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=stab, vModel=vModel, EDGE_VELOCITY=False),
+    return SimpleNamespace(coefficients=SimpleNamespace(STABILIZATION_TYPE=stab, vModel=vModel, EDGE_VELOCITY=False,
+                                                       VELOCITY_COUPLING=None),
                            edgeFlux=np.zeros(n), MC_global=_Pattern(n), M_dof=np.zeros(n), theta_nodal=np.full(n, -1.0),
                            _M_dof_initialized=True, _edge_flux_checked=False, _use_edge_flux=0, _use_edge_velocity=0)
 

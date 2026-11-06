@@ -1,0 +1,58 @@
+\begin{table}[h]
+\centering
+\begin{tabular}{c|cc|cc}
+\hline
+\multirow{2}{*}{$h_e$ [m]}
+& \multicolumn{2}{c|}{\textbf{Low Order}}
+& \multicolumn{2}{c}{\textbf{FCT}} \\
+\cline{2-5}
+& $\|e\|_{L^2}$ & Order
+& $\|e\|_{L^2}$ & Order \\
+\hline
+\hline
+
+\multicolumn{5}{c}{\textbf{$t = T/4 = 218.2$ s}} \\
+\hline
+$0.1$        & $1.641\times10^{-3}$ & --
+           & $2.000\times10^{-3}$ & -- \\
+$0.05$       & $8.302\times10^{-4}$ & $0.983$
+           & $8.835\times10^{-4}$ & $1.179$ \\
+$0.025$      & $4.174\times10^{-4}$ & $0.992$
+           & $3.829\times10^{-4}$ & $1.206$ \\
+$0.0125$     & $2.104\times10^{-4}$ & $0.988$
+           & $1.674\times10^{-4}$ & $1.194$ \\
+$0.00625$    & $1.136\times10^{-4}$ & $0.889$
+           & $7.619\times10^{-5}$ & $1.135$ \\
+\hline\hline
+
+\multicolumn{5}{c}{\textbf{$t = T/2 = 436.4$ s}} \\
+\hline
+$0.1$        & $5.077\times10^{-3}$ & --
+           & $4.897\times10^{-3}$ & -- \\
+$0.05$       & $2.687\times10^{-3}$ & $0.918$
+           & $2.181\times10^{-3}$ & $1.167$ \\
+$0.025$      & $1.380\times10^{-3}$ & $0.961$
+           & $9.047\times10^{-4}$ & $1.269$ \\
+$0.0125$     & $6.992\times10^{-4}$ & $0.981$
+           & $3.588\times10^{-4}$ & $1.334$ \\
+$0.00625$    & $3.656\times10^{-4}$ & $0.936$
+           & $1.447\times10^{-4}$ & $1.310$ \\
+\hline\hline
+
+\multicolumn{5}{c}{\textbf{$t = T = 872.8$ s}} \\
+\hline
+$0.1$        & $1.965\times10^{-2}$ & --
+           & $1.750\times10^{-2}$ & -- \\
+$0.05$       & $1.155\times10^{-2}$ & $0.767$
+           & $8.910\times10^{-3}$ & $0.974$ \\
+$0.025$      & $6.314\times10^{-3}$ & $0.871$
+           & $3.859\times10^{-3}$ & $1.207$ \\
+$0.0125$     & $3.315\times10^{-3}$ & $0.930$
+           & $1.468\times10^{-3}$ & $1.395$ \\
+$0.00625$    & $1.725\times10^{-3}$ & $0.942$
+           & $5.157\times10^{-4}$ & $1.509$ \\
+\hline
+\end{tabular}
+\caption{Two-way coupling (T3), $\Delta t\propto h$ at $\mathrm{Co}=0.5$: discrete $L^2$ error of the pressure head $\psi$ against the manufactured solution.}
+\label{tab:mms_t3_psi}
+\end{table}
