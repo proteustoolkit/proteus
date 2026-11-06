@@ -356,6 +356,7 @@ def test_the_emitted_p_file_carries_the_neumann_flux(tmp_path):
 CG1 = {"u": ("CG", 1)}
 
 
+@pytest.mark.mumps("an omitted linear_solver on a singular operator picks MUMPS only when PETSc has it")
 def test_the_linear_solver_choice_follows_the_spec():
     choice = ADRProblem.linear_solver_choice
     plain, singular = {}, {"up_to_constant": ["u"]}
@@ -388,7 +389,7 @@ def test_a_singular_operator_is_not_handed_to_superlu():
 
 
 @pytest.mark.parametrize("linear_solver, petsc_options", [
-    ("mumps", None),
+    pytest.param("mumps", None, marks=pytest.mark.mumps("it names linear_solver mumps")),
     ("petsc", {"ksp_type": "cg", "pc_type": "jacobi"}),
     ("petsc", None),                      # PETSc's own defaults
 ])
@@ -723,6 +724,7 @@ solution_paths:
     return path
 
 
+@pytest.mark.mumps("the pressure null space is solved through MUMPS; the fallback without it (GMRES+ILU(0)) fails")
 def test_a_pressure_up_to_a_constant_is_solved_in_the_null_space(kovasznay_spec, tmp_path):
     import numpy
     out = ymf_run(kovasznay_spec, "--outdir", tmp_path, "--emit-pn")
@@ -757,6 +759,7 @@ def test_a_pressure_up_to_a_constant_is_solved_in_the_null_space(kovasznay_spec,
     assert all(numpy.array_equal(mine[k], recorded[k]) for k in recorded)
 
 
+@pytest.mark.mumps("it names linear_solver mumps")
 def test_a_pinned_taylor_hood_pressure_solves_through_mumps(kovasznay_spec, tmp_path):
     """A kept pressure datum needs a diagonal the continuity equation lacks.
 
@@ -832,6 +835,7 @@ def _errors_by_branch(stdout):
     return found
 
 
+@pytest.mark.mumps("one of the linear solvers it compares is MUMPS")
 def test_a_periodic_problem_solves_the_same_through_each_linear_solver(tmp_path):
     """The serial periodic path under KSP_petsc4py.
 
@@ -903,6 +907,7 @@ solution_paths:
 """
 
 
+@pytest.mark.mumps("it names linear_solver mumps")
 def test_a_periodic_velocity_pressure_system_solves_through_mumps(tmp_path):
     """Mixed spaces, a pinned periodic pressure, and unequal free counts.
 
@@ -955,6 +960,7 @@ def _recorded_ranks(archive):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("it runs the spec's mumps branch")
 @pytest.mark.parametrize("ranks", [2, 3])
 def test_a_periodic_problem_solves_on_several_ranks_as_on_one(tmp_path, ranks):
     """Proteus's parallel periodic numbering, on an element partition without
@@ -983,6 +989,7 @@ ADVECTED_PERIODIC_POISSON = PERIODIC_POISSON.replace(
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("it runs the spec's mumps branch")
 @pytest.mark.parametrize("ranks", [2, 3])
 def test_an_advected_periodic_problem_solves_on_several_ranks_as_on_one(tmp_path, ranks):
     pytest.importorskip("ymf.symbolic")
@@ -1001,6 +1008,7 @@ def test_an_advected_periodic_problem_solves_on_several_ranks_as_on_one(tmp_path
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.mumps("it runs the spec's th_mumps branch, which without MUMPS is refused for that instead")
 def test_what_the_parallel_periodic_path_cannot_solve_is_refused(tmp_path):
     pytest.importorskip("ymf.symbolic")
     pytest.importorskip("strictyaml")
@@ -1092,7 +1100,8 @@ def test_advection_along_a_rank_interface_is_untouched(tmp_path):
     "Advection_DiagonalUpwind_Diffusion_IIPG_exterior",
     "Advection_DiagonalUpwind_Diffusion_SIPG_exterior",
     "Advection_DiagonalUpwind_Diffusion_NIPG_exterior"])
-@pytest.mark.parametrize("advonly", [0, 1])
+@pytest.mark.parametrize("advonly", [0, pytest.param(1, marks=pytest.mark.mumps(
+    "pure advection is solved through MUMPS when PETSc has it; the fallback (GMRES+ILU(0)) gives inf"))])
 def test_weak_advective_flux_classes_agree_with_serial_across_a_rank_cut(flux, advonly, tmp_path):
     """The CG weak-boundary upwind classes need no rank-interface mask.
 
