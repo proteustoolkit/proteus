@@ -2531,61 +2531,57 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   return false;
 }
 
-int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, 
-                                  Mesh& newMesh, int nNodes_overlap, double memHardLimit)
+/* Steps 0-4 of the parun -F partitioners, then steps 4b-8
+   (buildSubdomainFromFiles). One body for triangles (simplexDim 3: Triangle
+   .node/.ele, its .edge file as both faces and edges) and tetrahedra
+   (simplexDim 4: TetGen .node/.ele/.face/.edge). The global mesh is never
+   read on one rank:
+
+    1. Partition the nodes into the default contiguous chunks of the file
+       ordering (nodeOffsets_old)
+    2. Read the stars of the chunk's nodes from the element file and build
+       the node graph (readSimplexNodeStars)
+    3. Repartition the nodes with the PETSc graph partitioner
+       (MatPartitioning), number them by owner, and write
+       nodeNumbering_old2new, the one dataset mappings.h5 holds (SW2DCV and
+       GN_SW2DCV read it)
+    4. Reread the element file for the elements in the support of the owned
+       nodes, with the new numbers of their nodes from the ranks that
+       computed them (readSubdomainElements)
+    4b-8. buildSubdomainFromFiles
+
+   max_rss_gb <= 0 skips the memory checks. Returns nonzero on a failed read
+   (every rank reads; a missing file fails on every rank). Collective. */
+template<int simplexDim>
+int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
+                            Mesh& newMesh, int nNodes_overlap, double max_rss_gb)
 {
   using namespace std;
+  using namespace IOutils;
+  static_assert(simplexDim == 3 || simplexDim == 4, "triangles or tetrahedra");
+  const char* format = (simplexDim == 4) ? "Tetgen" : "triangle";
   PetscErrorCode ierr;
   PetscMPIInt size,rank;
-
   ierr = MPI_Comm_size(PROTEUS_COMM_WORLD,&size);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   ierr = MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //cek todo: decide whether to remove PETSc logging and just use proteus logging
   PetscLogStage partitioning_stage;
   PetscLogStageRegister("Mesh Partition",&partitioning_stage);
   PetscLogStagePush(partitioning_stage);
-
-  /***********************************************************************
-    partition domain based on the nodes without reading in the global mesh.
-
-    1. Partition nodes in the default partition of contiguous chunks with
-       input ordering
-
-    2. Determine nodal connectivity on local processor
-
-    3. Generate new nodal partition using PETSc interface
-
-    4. Collect subdomain elements: any that contain owned nodes; tag ownership
-
-    4a,b. Collect element boundaries and edges on the subdomain elements and tag ownership
-
-    5. Generate global element, element boundary, and edge  numbering for new subdomain ownership
-
-    6. Create overlap (ghost) information for nodes and elements
-
-    7. March through additional layers of overlap if requested,
-
-    8. Build subdomain meshes in new numbering
-  ***********************************************************************/
   //
-  //0. Set up tetgen files. Note, tetgen should have been run with -feen to get alll the faces and elements
+  //0. File names. Tetgen should have been run with -feen (all faces and
+  //   edges), triangle with -en (all edges and neighbors)
   //
-  bool failed = false;
-  const int simplexDim = 4;
-  using namespace IOutils;
-  std::string vertexFileName  = std::string(filebase) + ".node" ;
-  std::string elementFileName = std::string(filebase) + ".ele" ;
-  std::string elementBoundaryFileName  = std::string(filebase) + ".face" ;
-  std::string edgeFileName  = std::string(filebase) + ".edge" ;
+  const std::string vertexFileName  = std::string(filebase) + ".node" ;
+  const std::string elementFileName = std::string(filebase) + ".ele" ;
+  const std::string elementBoundaryFileName = std::string(filebase) + ((simplexDim == 4) ? ".face" : ".edge");
+  const std::string edgeFileName  = std::string(filebase) + ".edge" ;
   //
   //1. Build default nodal partition
   //
-  //compute offsets to build subdomain2global ordering for nodes
-  //in default partitioning of the domain into subdomains. All
-  //we need is the number of nodes in the global mesh
-  //
-  //read nodes for tetgen format
-  //first just read the number of nodes and whether or not there are node tags
+  //read the number of nodes and whether there are node tags; the node
+  //coordinates are read after partitioning (readSubdomainVertices), which
+  //just requires topology information
   logEvent("Building default partitioning",5);
   int read_elements_event;
   PetscLogEventRegister("Read eles",0,&read_elements_event);
@@ -2593,34 +2589,29 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   std::ifstream vertexFile(vertexFileName.c_str());
   if (!vertexFile.good())
     {
-      std::cerr<<"cannot open Tetgen node file "
+      std::cerr<<"cannot open "<<format<<" node file "
                <<vertexFileName<<std::endl;
-      failed = true;
-      return failed;
+      return 1;
     }
-  int hasVertexMarkers(0),hasVertexAttributes(0),nSpace(3),nNodes_global;
-  //read number of vertices and whether node flags are provided
+  int hasVertexMarkers(0),hasVertexAttributes(0),nSpace(simplexDim-1),nNodes_global;
   vertexFile >> eatcomments >> nNodes_global >> nSpace >> hasVertexAttributes >> hasVertexMarkers >> eatline ;
   assert(nNodes_global > 0);
-  assert(nSpace == 3);
+  assert(nSpace == simplexDim-1);
+  vertexFile.close();
   newMesh.nNodes_global = nNodes_global;
   newMesh.nNodes_element = simplexDim;
   newMesh.nNodes_elementBoundary = simplexDim-1;
   newMesh.nElementBoundaries_element = simplexDim;
   //cek todo: review the situation with tetgen and triangle atribs and markers
-  //every rank reads the attribute as the flag (as the in-memory reader and the
-  //Triangle -F path do); only the warning is rank 0's
+  //every rank reads the attribute as the flag (as the in-memory readers do);
+  //only the warning is rank 0's
   if (hasVertexAttributes > 0)
     {
       if (rank == 0)
-        std::cerr<<"WARNING Tetgen nodes hasAttributes= "<<hasVertexAttributes
+        std::cerr<<"WARNING "<<format<<" nodes hasAttributes= "<<hasVertexAttributes
                  <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
-  //the node coordinates are read after partitioning (readSubdomainVertices),
-  //which just requires topology information
-  vertexFile.close();
-  //
   //offsets provide the lower and upper bounds for the global numbering
   //first we just partition the nodes among the MPI ranks, approximately equally, ignoring connectivity
   valarray<int> nodeOffsets_old(size+1);
@@ -2636,35 +2627,27 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   sprintf(log_buffer,"First partitioning: Max nNodes_subdomain %d nNodes_global %d",nNodes_subdomain_max,nNodes_global);
   logEvent(log_buffer,5);
   //
-  //2. Determine nodal connectivity (nodeStarArray) for nodes on subdomain
+  //2. Determine nodal connectivity (nodeStar) for nodes on subdomain
   //
-  //connectivty commes from the topology (elements) file. We just grab the elements
+  //connectivity comes from the topology (elements) file. We just grab the elements
   //that contain currently owned nodes
   logEvent("Determining nodal connectivity to construct new partitioning",5);
   int nElements_global;
-  vector<set<int>> nodeStar;
-  if (!readSimplexNodeStars(elementFileName,"Tetgen",simplexDim,indexBase,nNodes_global,
+  vector<set<int> > nodeStar;
+  if (!readSimplexNodeStars(elementFileName,format,simplexDim,indexBase,nNodes_global,
                             nodeOffsets_old[rank],nodeOffsets_old[rank+1],
                             nElements_global,nodeStar))
-    {
-      failed = true;
-      return failed;
-    }
+    return 1;
   newMesh.nElements_global = nElements_global;
-  //cek todo: track c++ containers and put inside scope to reduce dynamic memory usage
   PetscLogEventEnd(read_elements_event,0,0,0,0);
   int repartition_nodes_event;
   PetscLogEventRegister("Repart nodes",0,&repartition_nodes_event);
   PetscLogEventBegin(repartition_nodes_event,0,0,0,0);
-  //done reading element file for first time; will need to read again after node partitioning
-  //build compact data structure for nodeStar, and
-  //find maximum number of nodes in any star
+  //compact graph for PETSc: the star sets are sorted, so each row's
+  //neighbors are ascending; nodes and edges are weighted by the star size
   int max_nNodeNeighbors_node=0;
   for (int nN=0;nN<nNodes_subdomain_old;nN++)
     max_nNodeNeighbors_node=max(max_nNodeNeighbors_node,static_cast<int>(nodeStar[nN].size()));
-  //build connectivity data structures for PETSc
-  PetscBool isInitialized;
-  PetscInitialized(&isInitialized);
   PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain,*weights_subdomain,*vertex_weights_subdomain;
   PetscReal *partition_weights;
   PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain_old+1),&nodeNeighborsOffsets_subdomain);
@@ -2675,24 +2658,11 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   for (int sd=0;sd<size;sd++)
     partition_weights[sd] = 1.0/double(size);
   nodeNeighborsOffsets_subdomain[0] = 0;
-  bool test=false;
   for (int nN = 0,offset=0; nN < nNodes_subdomain_old; nN++)
     {
       for (auto nN_star=nodeStar[nN].begin(); nN_star!=nodeStar[nN].end(); nN_star++,offset++)
-        {
-          nodeNeighbors_subdomain[offset] = *nN_star;
-        }
+        nodeNeighbors_subdomain[offset] = *nN_star;
       nodeNeighborsOffsets_subdomain[nN+1]=offset;
-      if (test)//make sure nodeNeighbors are sorted in ascending order ()
-      {
-        valarray<int> neighbors(nodeNeighborsOffsets_subdomain[nN+1]-nodeNeighborsOffsets_subdomain[nN]);
-        for (int i=0;i<neighbors.size();i++)
-          neighbors[i] = nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]+i];
-        sort(&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]],&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN+1]]);
-        for (int i=0;i<neighbors.size();i++)
-          assert(neighbors[i] == nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]+i]);
-      }
-      //weight nodes by size of star
       int weight= (nodeNeighborsOffsets_subdomain[nN+1] - nodeNeighborsOffsets_subdomain[nN]);
       vertex_weights_subdomain[nN] = weight;
       for (int k=nodeNeighborsOffsets_subdomain[nN];k<nodeNeighborsOffsets_subdomain[nN+1];k++)
@@ -2711,7 +2681,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
                          nodeNeighbors_subdomain,
                          weights_subdomain,
                          &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  const double max_rss_gb(memHardLimit/1024.0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating MPIAdj");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   MatPartitioning petscPartition;
   ierr = MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
@@ -2725,7 +2694,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   ierr = MatPartitioningApply(petscPartition,&nodePartitioningIS_new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   ierr = MatPartitioningDestroy(&petscPartition);CHKERRABORT(PROTEUS_COMM_WORLD, ierr); //gets petscAdjacency too I believe
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done applying partition");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-
   //determine the number of nodes per subdomain in new partitioning
   valarray<int> nNodes_subdomain_new(size);
   ISPartitioningCount(nodePartitioningIS_new,size,&nNodes_subdomain_new[0]);
@@ -2747,36 +2715,36 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   const PetscInt* nodes_subdomain_old2new_array;
   ISGetIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
   //
-  // out of core creation of global old2new mapping
+  //write nodeNumbering_old2new, each rank its default chunk, collectively
   //
-  //create the mappings file
-  logEvent("Writing/reading node numberings to hdf5",5);
+  logEvent("Writing node numbering to hdf5",5);
   hid_t mappings_plist_id = H5Pcreate(H5P_FILE_ACCESS);
+#ifdef H5_HAVE_PARALLEL
   H5Pset_fapl_mpio(mappings_plist_id, PROTEUS_COMM_WORLD, MPI_INFO_NULL);
+#endif
   const char* H5FILE_NAME("mappings.h5");
   hid_t file_id = H5Fcreate(H5FILE_NAME, H5F_ACC_TRUNC, H5P_DEFAULT, mappings_plist_id);
   assert(file_id != H5I_INVALID_HID);
   H5Pclose(mappings_plist_id);
-  //
-  //write old2new
-  //
   hsize_t nodes_global_count[]={static_cast<hsize_t>(nNodes_global)};
   const hsize_t ARRAY_RANK(1);
   hid_t nodes_old2new_filespace_id = H5Screate_simple(ARRAY_RANK, nodes_global_count, NULL);
-  hid_t nodes_old2new_dataset_id = H5Dcreate(file_id, "nodeNumbering_old2new", H5T_NATIVE_INT, 
+  hid_t nodes_old2new_dataset_id = H5Dcreate(file_id, "nodeNumbering_old2new", H5T_NATIVE_INT,
                                              nodes_old2new_filespace_id,
                                              H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
   hsize_t nodes_subdomain_count[]={static_cast<hsize_t>(nNodes_subdomain_old)};
   hsize_t nodes_subdomain_offset[]={static_cast<hsize_t>(nodeOffsets_old[rank])};
   hid_t nodes_old2new_memspace_id = H5Screate_simple(ARRAY_RANK, nodes_subdomain_count, NULL);
-  H5Sselect_hyperslab(nodes_old2new_filespace_id, H5S_SELECT_SET, 
-                      nodes_subdomain_offset, NULL, 
+  H5Sselect_hyperslab(nodes_old2new_filespace_id, H5S_SELECT_SET,
+                      nodes_subdomain_offset, NULL,
                       nodes_subdomain_count, NULL);
   hid_t nodes_old2new_plist_id = H5Pcreate(H5P_DATASET_XFER);
-  herr_t status = H5Pset_dxpl_mpio(nodes_old2new_plist_id, H5FD_MPIO_COLLECTIVE);
-  status = H5Dwrite(nodes_old2new_dataset_id, H5T_NATIVE_INT, 
-                    nodes_old2new_memspace_id, nodes_old2new_filespace_id,
-		                nodes_old2new_plist_id, nodes_subdomain_old2new_array);
+#ifdef H5_HAVE_PARALLEL
+  H5Pset_dxpl_mpio(nodes_old2new_plist_id, H5FD_MPIO_COLLECTIVE);
+#endif
+  H5Dwrite(nodes_old2new_dataset_id, H5T_NATIVE_INT,
+           nodes_old2new_memspace_id, nodes_old2new_filespace_id,
+           nodes_old2new_plist_id, nodes_subdomain_old2new_array);
   H5Pclose(nodes_old2new_plist_id);
   H5Dclose(nodes_old2new_dataset_id);
   H5Sclose(nodes_old2new_memspace_id);
@@ -2785,452 +2753,70 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //GN_SW2DCV read it; nothing reads the node new2old, element, face or edge
   //numberings, which were written here until 2026-11)
   H5Fclose(file_id);
-  //nodes_subdomain_old2new_array stays live until the subdomain is built:
-  //readSubdomainElements answers other ranks' old->new requests from it.
-
   PetscLogEventEnd(repartition_nodes_event,0,0,0,0);
-  int receive_element_mask_event;
-  PetscLogEventRegister("Recv. ele mask",0,&receive_element_mask_event);
-  PetscLogEventBegin(receive_element_mask_event,0,0,0,0);
+  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with masks");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
-  //4. To build subdomain meshes, go through and collect elements containing
-  //   the locally owned nodes. Assign processor ownership of elements
+  //4. Reread the element file for the elements in the support of the owned
+  //   nodes (OLD element numbers), and assign their ownership. The new
+  //   numbers of their nodes come from the ranks that computed them
+  //   (readSubdomainElements answers other ranks' old->new requests from
+  //   nodes_subdomain_old2new_array), not from the mappings file.
   //
   logEvent("Collecting elements containing locally owned nodes (element support of the subdomain nodes)",5);
-  PetscLogEventEnd(receive_element_mask_event,0,0,0,0);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with masks");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_reread_elements_event;
   PetscLogEventRegister("Reread eles",0,&build_subdomains_reread_elements_event);
   PetscLogEventBegin(build_subdomains_reread_elements_event,0,0,0,0);
-  //
-  //mark the unmarked elements on this subdomain and store element numbers (in old numbering)
-  //
-  //We need to find the elements in the support of nodes in the new
-  //partitioning, so we'll need to re-read the elements file to get
-  //the the elements for the nodes in the new partitioning. We will be collecting OLD element numbers.
-  //The new numbers of their nodes come from the ranks that computed them
-  //(readSubdomainElements), not from the mappings file.
   set<int> elements_subdomain_owned;
-  vector<set<int>> nodeElementsStar(nNodes_subdomain_new[rank]);
-  vector<set<int>> nodeStarNew(nNodes_subdomain_new[rank]);
+  vector<set<int> > nodeElementsStar(nNodes_subdomain_new[rank]);
+  vector<set<int> > nodeStarNew(nNodes_subdomain_new[rank]);
   map<int,vector<int> > elementNodesArrayMap;
   map<int,long int> elementMaterialTypesMap;
-  map<NodeTuple<3>,ElementNeighbors> elementBoundaryElementsMap;
-  map<NodeTuple<2>,set<pair<int,int>>> edgeElementsMap;
-  map<int, int> nodes_old2new_subdomain_map;
-  if (!readSubdomainElements<simplexDim,vector<int> >(PROTEUS_COMM_WORLD, elementFileName, "Tetgen", indexBase, nNodes_global,
-                                                        nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
-                                                        nElements_global, elements_subdomain_owned,
-                                                        nodeElementsStar, nodeStarNew, elementNodesArrayMap,
-                                                        elementMaterialTypesMap, elementBoundaryElementsMap,
-                                                        edgeElementsMap, nodes_old2new_subdomain_map))
-    {
-      failed = true;
-      return failed;
-    }
+  map<NodeTuple<simplexDim-1>,ElementNeighbors> elementBoundaryElementsMap;
+  map<NodeTuple<2>,set<pair<int,int> > > edgeElementsMap;
+  map<int,int> nodes_old2new_subdomain_map;
+  const bool readElements =
+    readSubdomainElements<simplexDim,vector<int> >(PROTEUS_COMM_WORLD, elementFileName, format, indexBase, nNodes_global,
+                                                   nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
+                                                   nElements_global, elements_subdomain_owned,
+                                                   nodeElementsStar, nodeStarNew, elementNodesArrayMap,
+                                                   elementMaterialTypesMap, elementBoundaryElementsMap,
+                                                   edgeElementsMap, nodes_old2new_subdomain_map);
+  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
+  ierr=ISDestroy(&nodeNumberingIS_subdomain_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  if (!readElements)
+    return 1;
   int nElements_owned_subdomain(elements_subdomain_owned.size()),
     nElements_owned_new=0;
   MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
   assert(nElements_owned_new == nElements_global);
   PetscLogEventEnd(build_subdomains_reread_elements_event,0,0,0,0);
-  if (buildSubdomainFromFiles<simplexDim>(PROTEUS_COMM_WORLD, rank, size, "Tetgen",
+  if (buildSubdomainFromFiles<simplexDim>(PROTEUS_COMM_WORLD, rank, size, format,
                                           elementBoundaryFileName, edgeFileName, vertexFileName,
                                           indexBase, hasVertexMarkers, nNodes_overlap, max_rss_gb, nElements_global,
                                           nNodes_subdomain_new, nodeOffsets_new, elements_subdomain_owned,
                                           nodeElementsStar, nodeStarNew, elementNodesArrayMap,
                                           elementMaterialTypesMap, elementBoundaryElementsMap,
                                           edgeElementsMap, nodes_old2new_subdomain_map, newMesh))
-    return failed;
-  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
-  ierr=ISDestroy(&nodeNumberingIS_subdomain_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+    return 1;
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   return 0;
 }
 
-int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap)
+int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
+                                  Mesh& newMesh, int nNodes_overlap, double memHardLimit)
 {
-  using namespace std;
-  PetscErrorCode ierr;
-  PetscMPIInt size,rank;
+  //memHardLimit is in MB (parun's memHardLimit); the checks take GB
+  return partitionNodesFromFiles<4>(PROTEUS_COMM_WORLD, filebase, indexBase, newMesh, nNodes_overlap,
+                                    memHardLimit/1024.0);
+}
 
-  ierr = MPI_Comm_size(PROTEUS_COMM_WORLD,&size);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  PetscLogStage partitioning_stage;
-  PetscLogStageRegister("Mesh Partition",&partitioning_stage);
-  PetscLogStagePush(partitioning_stage);
-
-  /***********************************************************************
-    partition domain based on the nodes without reading in the global mesh.
-
-    1. Partition nodes in the default partition of contiguous chunks with
-       input ordering
-
-    2. Determine nodal connectivity on local processor
-
-    3. Generate new nodal partition using PETSc interface
-
-    4. Collect subdomain elements: any that contain owned nodes; tag ownership
-
-    4a,b. Collect element boundaries and edges on the subdomain elements and tag ownership
-
-    5. Generate global element and edge numbering for new subdomain ownership
-
-    6. Create overlap (ghost) information for nodes and elements
-
-    7. March through additional layers of overlap if requested,
-
-    8. Build subdomain meshes in new numbering
-  ***********************************************************************/
-  //
-  //0. Set up triangle files. Note, triangle should have been run with -en to get all edges and neighbors
-  //
-  bool failed = false;
-  const int simplexDim = 3;
-  using namespace IOutils;
-  std::string vertexFileName  = std::string(filebase) + ".node" ;
-  std::string elementFileName = std::string(filebase) + ".ele" ;
-  std::string elementBoundaryFileName  = std::string(filebase) + ".edge" ;
-  std::string edgeFileName  = std::string(filebase) + ".edge" ;
-
-  //
-  //1. Build default nodal partition
-  //
-  //compute offsets to build subdomain2global ordering for nodes
-  //in default partitioning of the domain into subdomains. All
-  //we need is the number of nodes in the global mesh
-  //
-  //read nodes for triangle format
-  //first just read the number of nodes and whether or not there are node tags
-  int read_elements_event;
-  PetscLogEventRegister("Read eles",0,&read_elements_event);
-  PetscLogEventBegin(read_elements_event,0,0,0,0);
-  std::ifstream vertexFile(vertexFileName.c_str());
-  if (!vertexFile.good())
-    {
-      std::cerr<<"cannot open triangle node file "
-               <<vertexFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-  int hasVertexMarkers(0),hasVertexAttributes(0),nSpace(2),nNodes_global;
-  //read number of vertices and whether node flags are provided
-  vertexFile >> eatcomments >> nNodes_global >> nSpace >> hasVertexAttributes >> hasVertexMarkers >> eatline ;
-  assert(nNodes_global > 0);
-  assert(nSpace == 2);
-  newMesh.nNodes_global = nNodes_global;
-  newMesh.nNodes_element = simplexDim;
-  newMesh.nNodes_elementBoundary = simplexDim-1;
-  newMesh.nElementBoundaries_element = simplexDim;
-  if (hasVertexAttributes > 0)
-    {
-      std::cerr<<"WARNING triangle nodes hasAttributes= "<<hasVertexAttributes
-               <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
-      hasVertexMarkers = 1;
-    }
-  //the node coordinates are read after partitioning (readSubdomainVertices)
-  vertexFile.close();
-
-  //offsets provide the lower and upper bounds for the global numbering
-  //first we just partition the nodes approximately equally ignoring connectivity
-  valarray<int> nodeOffsets_old(size+1);
-  nodeOffsets_old[0] = 0;
-  for (int sdN=0; sdN < size; sdN++)
-    {
-      nodeOffsets_old[sdN+1] = nodeOffsets_old[sdN] +
-        int(nNodes_global)/size + (int(nNodes_global)%size > sdN);
-    }
-  int nNodes_subdomain_old = nodeOffsets_old[rank+1] - nodeOffsets_old[rank];
-
-  //
-  //2. Determine nodal connectivity (nodeStarArray) for nodes on subdomain
-  //
-  //connectivty commes from the topology (elements) file. We just grab the elements
-  //that contain currently owned nodes
-  int nElements_global;
-  vector<set<int> > nodeStar;
-  if (!readSimplexNodeStars(elementFileName,"triangle",simplexDim,indexBase,nNodes_global,
-                            nodeOffsets_old[rank],nodeOffsets_old[rank+1],
-                            nElements_global,nodeStar))
-    {
-      failed = true;
-      return failed;
-    }
-  newMesh.nElements_global = nElements_global;
-  PetscLogEventEnd(read_elements_event,0,0,0,0);
-  int repartition_nodes_event;
-  PetscLogEventRegister("Repart nodes",0,&repartition_nodes_event);
-  PetscLogEventBegin(repartition_nodes_event,0,0,0,0);
-  //done reading element file for first time; will need to read again after node partitioning
-  //build compact data structure for nodeStar
-  valarray<int> nodeStarOffsets(nNodes_subdomain_old+1);
-  nodeStarOffsets[0] = 0;
-  for (int nN=1;nN<nNodes_subdomain_old+1;nN++)
-    nodeStarOffsets[nN] = nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-  valarray<int> nodeStarArray(nodeStarOffsets[nNodes_subdomain_old]);
-  for (int nN=0,offset=0;nN<nNodes_subdomain_old;nN++)
-    for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
-      nodeStarArray[offset] = *nN_star;
-  //find maximum number of nodes in any star
-  int max_nNodeNeighbors_node=0;
-  for (int nN=0;nN<nNodes_subdomain_old;nN++)
-    max_nNodeNeighbors_node=max(max_nNodeNeighbors_node,nodeStarOffsets[nN+1]-nodeStarOffsets[nN]);
-  //build connectivity data structures for PETSc
-  PetscBool isInitialized;
-  PetscInitialized(&isInitialized);
-  PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain,*weights_subdomain,*vertex_weights_subdomain;
-  PetscReal *partition_weights;
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain_old+1),&nodeNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain_old*max_nNodeNeighbors_node),&nodeNeighbors_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain_old*max_nNodeNeighbors_node),&weights_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain_old),&vertex_weights_subdomain);
-  PetscMalloc(sizeof(PetscReal)*(size),&partition_weights);
-  for (int sd=0;sd<size;sd++)
-    partition_weights[sd] = 1.0/double(size);
-  nodeNeighborsOffsets_subdomain[0] = 0;
-  //I think we can simplify this now that nodeStarArray is local to the subdomain, could just use nodeStar instead of nodeStarArray
-  for (int nN = 0,offset=0; nN < nNodes_subdomain_old; nN++)
-    {
-      for (int offset_subdomain = nodeStarOffsets[nN];
-           offset_subdomain < nodeStarOffsets[nN+1];
-           offset_subdomain++)
-        {
-          nodeNeighbors_subdomain[offset++] = nodeStarArray[offset_subdomain];
-        }
-      nodeNeighborsOffsets_subdomain[nN+1]=offset;
-      sort(&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]],&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN+1]]);
-      //weight nodes by size of star
-      int weight= (nodeNeighborsOffsets_subdomain[nN+1] - nodeNeighborsOffsets_subdomain[nN]);
-      vertex_weights_subdomain[nN] = weight;
-      for (int k=nodeNeighborsOffsets_subdomain[nN];k<nodeNeighborsOffsets_subdomain[nN+1];k++)
-        weights_subdomain[k] = weight;
-    }
-  //
-  //3. Generate new nodal partition using PETSc interface
-  //
-  Mat petscAdjacency;
-  int nNodes_subdomain_max=0;
-  MPI_Allreduce(&nNodes_subdomain_old,
-                &nNodes_subdomain_max,
-                1,
-                MPI_INT,
-                MPI_MAX,
-                PROTEUS_COMM_WORLD);
-  if (rank ==  0)
-    std::cout<<"Max nNodes_subdomain "<<nNodes_subdomain_max<<" nNodes_global "<<nNodes_global<<std::endl;
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nNodes_subdomain_old,
-                         nNodes_global,
-                         nodeNeighborsOffsets_subdomain,
-                         nodeNeighbors_subdomain,
-                         weights_subdomain,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //const double max_rss_gb(0.75*3.25);//half max mem per  core  on topaz
-  const double max_rss_gb(10.0);
-  ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating MPIAdj");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  MatPartitioning petscPartition;
-  ierr = MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = MatPartitioningSetAdjacency(petscPartition,petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = MatPartitioningSetFromOptions(petscPartition);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-  ierr = MatPartitioningSetVertexWeights(petscPartition,vertex_weights_subdomain);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = MatPartitioningSetPartitionWeights(petscPartition,partition_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  //get petsc index set that has the new subdomain number for each node
-  IS nodePartitioningIS_new;
-  ierr = MatPartitioningApply(petscPartition,&nodePartitioningIS_new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = MatPartitioningDestroy(&petscPartition);CHKERRABORT(PROTEUS_COMM_WORLD, ierr); //gets petscAdjacency too I believe
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done applying partition");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-
-  //determine the number of nodes per subdomain in new partitioning
-  valarray<int> nNodes_subdomain_new(size);
-  ISPartitioningCount(nodePartitioningIS_new,size,&nNodes_subdomain_new[0]);
-
-  //need new offsets for subdomain to global numbering
-  valarray<int> nodeOffsets_new(size+1);
-  nodeOffsets_new[0] = 0;
-  for (int sdN = 0; sdN < size; sdN++)
-    {
-      nodeOffsets_new[sdN+1] = nodeOffsets_new[sdN] + nNodes_subdomain_new[sdN];
-    }
-
-  //get the new node numbers for nodes on this subdomain
-  IS nodeNumberingIS_subdomain_old2new;
-  ISPartitioningToNumbering(nodePartitioningIS_new,&nodeNumberingIS_subdomain_old2new);
-  //
-  //try out of core
-  //
-  /*
-   * Set up file access property list with parallel I/O access
-   */
-  hid_t plist_id = H5Pcreate(H5P_FILE_ACCESS);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_fapl_mpio(plist_id, PROTEUS_COMM_WORLD, MPI_INFO_NULL);
-#endif
-
-  /*
-   * Create a new file collectively and release property list identifier.
-   */
-  const char* H5FILE_NAME("mappings.h5");
-  hid_t file_id = H5Fcreate(H5FILE_NAME, H5F_ACC_TRUNC, H5P_DEFAULT, plist_id);
-  H5Pclose(plist_id);
-
-
-  /*
-   * Create the dataspace for the dataset.
-   */
-  hsize_t     dimsf[1];
-  dimsf[0] = nNodes_global;
-#define RANK   1
-  hid_t filespace = H5Screate_simple(RANK, dimsf, NULL);
-
-  /*
-   * Create the dataset with default properties and close filespace.
-   */
-  hid_t dset_id = H5Dcreate(file_id, "nodeNumbering_old2new", H5T_NATIVE_INT, filespace,
-                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-  H5Sclose(filespace);
-
-  /*
-   * Each process defines dataset in memory and writes it to the hyperslab
-   * in the file.
-   */
-  hsize_t       count[1];                 /* hyperslab selection parameters */
-  hsize_t       offset[1];
-  count[0] = nNodes_subdomain_old;
-  offset[0] = nodeOffsets_old[rank];
-  hid_t memspace = H5Screate_simple(RANK, count, NULL);
-
-  /*
-   * Select hyperslab in the file.
-   */
-  filespace = H5Dget_space(dset_id);
-  H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, NULL, count, NULL);
-
-  /*
-   * Initialize data buffer
-   */
-  // data = (int *) malloc(sizeof(int)*count[0]*count[1]);
-  // for (i=0; i < count[0]*count[1]; i++) {
-  //   data[i] = mpi_rank + 10;
-  // }
-  const PetscInt* data;
-  ISGetIndices(nodeNumberingIS_subdomain_old2new, &data);
-
-  /*
-   * Create property list for collective dataset write.
-   */
-  plist_id = H5Pcreate(H5P_DATASET_XFER);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE);
-#endif
-
-  herr_t status = H5Dwrite(dset_id, H5T_NATIVE_INT, memspace, filespace,
-                           plist_id, data);
-  //free(data);
-  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &data);
-  /*
-   * Close/release resources.
-   */
-  H5Dclose(dset_id);
-  //Close the write handle here. It used to stay open until the end of the
-  //function, so the read-only reopen below met a file that was still open
-  //for write and H5Fopen refused it -- PETSC_ERR_FILE_OPEN, MPI_Abort(65) on
-  //every rank within 20 s. Closing also flushes, which the read needs.
-  H5Fclose(file_id);
-  //
-  //end try out of core
-  //
-  //collect new node numbers for whole mesh so that subdomain reordering and renumbering
-  //can be done easily
-
-  //The ISAllGather that used to build nodeNumbering_global_old2new here is
-  //gone: it put the whole global node numbering on every rank. The element
-  //loop below now reads old->new in chunks and keeps only
-  //nodes_old2new_subdomain_map, the nodes this rank's elements actually touch.
-  //
-  //test out of core
-  //
-  //(the scratch out-of-core comparison block is gone with the gather it
-  //compared against)
-  //
-  //end test out of core
-  //
-  //reverse mapping for node numbers too
-  //cek hack, not needed
-  /*
-    valarray<int> nodeNumbering_global_new2old(nNodes_global);
-    for (int nN = 0; nN < nNodes_global; nN++)
-    nodeNumbering_global_new2old[nodeNumbering_global_old2new[nN]] = nN;
-  */
-  PetscLogEventEnd(repartition_nodes_event,0,0,0,0);
-  int receive_element_mask_event;
-  PetscLogEventRegister("Recv. ele mask",0,&receive_element_mask_event);
-  PetscLogEventBegin(receive_element_mask_event,0,0,0,0);
-  //
-  //4. To build subdomain meshes, go through and collect elements containing
-  //   the locally owned nodes. Assign processor ownership of elements
-  //
-  PetscLogEventEnd(receive_element_mask_event,0,0,0,0);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with masks");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  int build_subdomains_reread_elements_event;
-  PetscLogEventRegister("Reread eles",0,&build_subdomains_reread_elements_event);
-  PetscLogEventBegin(build_subdomains_reread_elements_event,0,0,0,0);
-  //
-  //mark the unmarked elements on this subdomain and store element numbers (in old numbering)
-  //
-  //We need to find the elements in the support of nodes in the new
-  //partitioning, so we'll need to re-read the elements file to get
-  //the the elements for the nodes in the new partitioning. We will be collecting OLD element numbers.
-  //
-  //The new numbers of their nodes come from the ranks that computed them
-  //(readSubdomainElements): no global old->new on any rank, and no read of the
-  //mappings file, which every rank used to read in chunks of 10000 nodes
-  //(the sec2-vs-mpio site; mappings.h5 is still written, SW2DCV reads it).
-  set<int> elements_subdomain_owned;
-  map<int,vector<int> > elementNodesArrayMap;
-  map<int,long int> elementMaterialTypesMap;
-  map<NodeTuple<2>,ElementNeighbors> elementBoundaryElementsMap;
-  map<NodeTuple<2>,set<pair<int,int> > > edgeElementsMap;
-  vector<set<int> > nodeElementsStar(nNodes_subdomain_new[rank]);
-  vector<set<int> > nodeStarNew(nNodes_subdomain_new[rank]);
-  map<int,int> nodes_old2new_subdomain_map;
-  const PetscInt* nodes_subdomain_old2new_array;
-  ISGetIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
-  bool readElements = readSubdomainElements<simplexDim,vector<int> >(PROTEUS_COMM_WORLD, elementFileName, "triangle", indexBase, nNodes_global,
-                                                                     nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
-                                                                     nElements_global, elements_subdomain_owned,
-                                                                     nodeElementsStar, nodeStarNew, elementNodesArrayMap,
-                                                                     elementMaterialTypesMap, elementBoundaryElementsMap,
-                                                                     edgeElementsMap, nodes_old2new_subdomain_map);
-  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
-  if (!readElements)
-    {
-      failed = true;
-      return failed;
-    }
-  int nElements_owned_subdomain(elements_subdomain_owned.size()),
-    nElements_owned_new=0;
-  MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  assert(nElements_owned_new == nElements_global);
-  PetscLogEventEnd(build_subdomains_reread_elements_event,0,0,0,0);
-  if (buildSubdomainFromFiles<simplexDim>(PROTEUS_COMM_WORLD, rank, size, "triangle",
-                                          elementBoundaryFileName, edgeFileName, vertexFileName,
-                                          indexBase, hasVertexMarkers, nNodes_overlap, 0.0, nElements_global,
-                                          nNodes_subdomain_new, nodeOffsets_new, elements_subdomain_owned,
-                                          nodeElementsStar, nodeStarNew, elementNodesArrayMap,
-                                          elementMaterialTypesMap, elementBoundaryElementsMap,
-                                          edgeElementsMap, nodes_old2new_subdomain_map, newMesh))
-    return failed;
-  ISDestroy(&nodePartitioningIS_new);
-  ISDestroy(&nodeNumberingIS_subdomain_old2new);
-  H5Sclose(filespace);
-  H5Sclose(memspace);
-  H5Pclose(plist_id);
-  PetscLogStagePop();
-  PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
-  //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  return 0;
+int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
+                                    Mesh& newMesh, int nNodes_overlap)
+{
+  //no memory checks (the Triangle path never had a limit argument)
+  return partitionNodesFromFiles<3>(PROTEUS_COMM_WORLD, filebase, indexBase, newMesh, nNodes_overlap, 0.0);
 }
 //todo add overlap for element based partitions
 /* The ownership rules of partitionElements, which follow from the owner of
