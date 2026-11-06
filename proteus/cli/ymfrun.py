@@ -248,11 +248,14 @@ def differences(recorded, rerun, outdir):
     import numpy
     from ymf.archive import domain_arrays
     out = []
-    a = recorded["transformations"]["strong_to_adr"]["adr"]
-    b = rerun["transformations"]["strong_to_adr"]["adr"]
-    if a != b:
-        out.append("the ADR form differs")
-    a, b = recorded["verification"]["l2_errors"], rerun["verification"]["l2_errors"]
+    for step, what in (("strong_to_adr", "the ADR form"), ("dispatch", "the dispatch")):
+        a = recorded["transformations"].get(step)
+        b = rerun["transformations"].get(step)
+        a, b = [{k: v for k, v in (x or {}).items() if k != "by"} for x in (a, b)]
+        if a != b:
+            out.append("%s differs" % what)
+    a = (recorded.get("verification") or {}).get("l2_errors") or {}
+    b = (rerun.get("verification") or {}).get("l2_errors") or {}
     for n in sorted(set(a) | set(b)):
         if a.get(n) != b.get(n):
             out.append("L2(%s): recorded %r, rerun %r" % (n, a.get(n), b.get(n)))
@@ -349,20 +352,87 @@ def report(problem, rows):
         previous = (size, errors)
 
 
-def split_reason(doc, entry):
-    """Why a discretization split into sub-problems is not run: ymf_run solves
-    the model as one ADR system. Says what the dispatch (proteus.Dispatch)
-    maps it onto, or why the dispatch refuses it."""
+def dispatches_to(found):
+    """``flow RANS2P, vof VOF, ...``: what a dispatched discretization runs."""
+    return ", ".join("%s %s" % (m.subproblem, m.module.rpartition(".")[2]) for m in found)
+
+
+def split_blockers(doc, entry):
+    """Why a discretization split into sub-problems cannot run (empty if it
+    can): what ymf says it lacks, then what the dispatch (proteus.Dispatch)
+    refuses, then a family nothing realizes yet (proteus.DispatchRun)."""
+    from ymf.discretizations import missing
+    from proteus import DispatchTable
     from proteus.Dispatch import DispatchError, dispatch
-    head = "%s: split into sub-problems (%s); ymf_run solves the model as one ADR system" % (
-        entry["name"], ", ".join(s.get("name", "?") for s in entry["subproblems"]))
+    name = entry["name"]
+    head = "%s: split into sub-problems (%s)" % (
+        name, ", ".join(s.get("name", "?") for s in entry["subproblems"]))
     try:
-        found = dispatch(doc, entry["name"])
+        found = dispatch(doc, name)
     except DispatchError as e:
-        return "%s, and the dispatch refuses it: %s" % (head, e)
-    return ("%s. It dispatches to %s; running a split discretization from the dispatch is not "
-            "wired up yet" % (head, ", ".join("%s %s" % (m.subproblem, m.module.rpartition(".")[2])
-                                              for m in found)))
+        return ["%s, and the dispatch refuses it: %s" % (head, e)]
+    if found.family not in DispatchTable.REALIZERS:
+        return ["%s. It dispatches to %s, and nothing realizes family %s yet (it realizes %s)"
+                % (head, dispatches_to(found), found.family,
+                   ", ".join(sorted(DispatchTable.REALIZERS)))]
+    lacking = missing(entry, doc["model"]["strong_form"].get("domain"))
+    if lacking:
+        return ["%s is missing %s: %s" % (name, m.what, m.hint) for m in lacking]
+    return []
+
+
+def solve_split(doc, name, realization, outdir, files, env):
+    """Run one split discretization on one realization from its dispatch,
+    through the deck machinery (proteus.DispatchRun); return its output
+    record: the dispatch and what the realization took from where, and the
+    approximation Proteus wrote."""
+    from proteus import DispatchRun, Profiling, runtime
+    from proteus.Dispatch import dispatch
+    from ymf.archive import read_ymf
+    from ymf import closure
+    from ymf.symbolic.split import split_problem
+    comm = runtime.start()
+    Profiling.logLevel = 1
+    Profiling.verbose = False
+    found = dispatch(doc, name)
+    split = split_problem(doc, name)
+    opts = runtime.RunOptions(dataDir=outdir)
+    cwd = os.getcwd()
+    os.chdir(outdir)
+    try:
+        with DispatchRun.petsc_options_restored():
+            realized = DispatchRun.realize(doc, found, split, realization, files, outdir,
+                                           comm.size())
+            DispatchRun.run(realized, files, opts)
+    finally:
+        os.chdir(cwd)
+    comm.barrier()
+    if not comm.isMaster():
+        return _bcast(comm, None)
+    domain, _ = read_ymf(os.path.join(outdir, files + ".ymf"))
+    os.remove(os.path.join(outdir, files + ".ymf"))
+    return _bcast(comm, {
+        "input": {"sha256": closure.input_digest(doc, name, realization)},
+        "realization": realization,
+        "transformations": {
+            "dispatch": dict({"by": "proteus.Dispatch %s" % env["proteus"]},
+                             **_plain(found.as_dict())),
+            "realize": dict({"by": "proteus.DispatchRun %s" % env["proteus"]},
+                            **_plain(realized.record)),
+            "solve": {"by": env, "created": now()},
+        },
+        "storage": files + ".h5",
+        "approximation": domain,
+    })
+
+
+def _plain(value):
+    """``value`` with string keys and lists for tuples, as the archive writes it."""
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
 
 
 def blockers(doc, problem, entry):
@@ -387,8 +457,8 @@ def blockers(doc, problem, entry):
                 % (name, entry["method"])]
     if entry.get("subproblems"):
         # solving the whole model as one system would run a different
-        # discretization under this branch's name
-        return [split_reason(doc, entry)]
+        # discretization under this branch's name: the dispatch runs it
+        return split_blockers(doc, entry)
     method = stabilization_of(doc, entry)
     if method not in STABILIZATIONS:
         # running it without would solve a different weak form under this
@@ -561,30 +631,45 @@ def _run(args, prog, mesh_only, comm):
             raise SystemExit("refusing to drop them: rerun with --prune, or use another --outdir")
 
     # A split discretization is not one ADR system, and a model that only a
-    # split can solve (two-phase level-set flow) is not one either: say what
-    # each would dispatch to before classifying the model as one.
+    # split can solve (two-phase level-set flow) is not one either: it runs
+    # from its dispatch (proteus.Dispatch, proteus.DispatchRun), checked
+    # before the model is classified as one system, and before anything runs.
     split = [d for d in doc["solution_paths"]["discretizations"]
              if d["name"] in selected and d.get("subproblems")]
     others = [n for n in selected if n not in [d["name"] for d in split]]
-    if split and args.ignore and others:
-        for entry in split:
-            print("\n%s -- left out (--ignore): %s" % (entry["name"], split_reason(doc, entry)))
-        selected = others
-    elif split:
-        print("\n%s: nothing was run:" % (prog,), file=sys.stderr)
-        for entry in split:
-            print("  " + split_reason(doc, entry), file=sys.stderr)
-        if others:
-            print("Choose the others with --discretization (%s), or rerun with --ignore."
-                  % ", ".join(others), file=sys.stderr)
+    blocked = [(d["name"], split_blockers(doc, d)) for d in split]
+    blocked = [(name, reasons) for name, reasons in blocked if reasons]
+    if blocked and not args.ignore:
+        print("\n%s: %s cannot run, so nothing was run:" % (
+            prog, "this discretization" if len(blocked) == 1 else
+            "%d discretizations" % len(blocked)), file=sys.stderr)
+        for name, reasons in blocked:
+            for reason in reasons:
+                print("  " + reason, file=sys.stderr)
+        print("Give what is missing, choose the branches with --discretization, or "
+              "rerun with --ignore to run the ones that can.", file=sys.stderr)
         return 2
+    for name, reasons in blocked:
+        print("\n%s -- left out (--ignore): %s" % (name, "; ".join(reasons)))
+    split = [d for d in split if d["name"] not in dict(blocked)]
 
-    problem = adr_problem(doc)
     print("%s: %s" % (args.input, doc["model"]["name"]))
-    print("unknowns: %s" % ", ".join("%s (%s)" % (n, ", ".join(c))
-                                    for n, c in problem["unknowns"].items()))
     env = software()
     planned = list(closure.planned_outputs(doc))
+    new, refused = [], []
+    if split and mesh_only:
+        print("\n%s: a split discretization meshes as part of its solve: %s"
+              % (prog, ", ".join(d["name"] for d in split)))
+        split = []
+    for entry in split:
+        _run_split(args, doc, entry, planned, outputs, new, refused, outdir, stem, env, comm)
+    if not others:
+        return _finish(args, comm, archive, doc, outputs, new, refused, outdir)
+
+    problem = adr_problem(doc)
+    print("unknowns: %s" % ", ".join("%s (%s)" % (n, ", ".join(c))
+                                    for n, c in problem["unknowns"].items()))
+    selected = others
 
     # Every selected branch is checked before anything is computed: what
     # ymf says it lacks (ymf.discretizations), and what Proteus can run.
@@ -647,7 +732,6 @@ def _run(args, prog, mesh_only, comm):
                                                  "meshes for them too)"))
         return 0
 
-    new, refused = [], []
     for name, entry, mine in runnable:
         method = stabilization_of(doc, entry)
         spaces = element_spaces(problem, entry.get("finite_element") or {})
@@ -698,7 +782,57 @@ def _run(args, prog, mesh_only, comm):
                              base=os.path.dirname(os.path.abspath(args.input)))
                 print("  %s: %s" % (key.split("/")[-1], ", ".join(map(os.path.basename, paths))))
 
-    if root:
+    return _finish(args, comm, archive, doc, outputs, new, refused, outdir)
+
+
+def _run_split(args, doc, entry, planned, outputs, new, refused, outdir, stem, env, comm):
+    """Run the outputs of one split discretization the archive lacks (with
+    --check, all of them, compared bitwise with their records), and report."""
+    from ymf import closure
+    from proteus.Dispatch import dispatch
+    name = entry["name"]
+    print("\n%s -- split, dispatched to %s" % (name, dispatches_to(dispatch(doc, name))))
+    for key, realization in [(k, r) for k, n, r in planned if n == name]:
+        mesh = ", ".join("%s %s" % (k, v) for k, v in realization.items())
+        if key in outputs and not args.check:
+            print("  %s  %s  in the archive" % (mesh, key.split("/")[-1]))
+            continue
+        n = 1
+        while ("%s~%d" % (key, n) if n > 1 else key) in outputs:
+            n += 1
+        slot = "%s~%d" % (key, n) if n > 1 else key
+        output = solve_split(doc, name, realization, outdir, closure.file_stem(stem, slot), env)
+        if key not in outputs:
+            outputs[key] = output
+            new.append(key)
+            status = "new"
+        else:
+            found = _bcast(comm, differences(outputs[key], output, outdir)
+                           if comm.isMaster() else None)
+            if not found:
+                if comm.isMaster():
+                    discard(output, outdir)
+                outputs[key].setdefault("reproduced", []).append(
+                    {"created": output["transformations"]["solve"]["created"], "by": env})
+                status = "reproduced, bitwise"
+            elif args.keep_different:
+                outputs[slot] = output
+                new.append(slot)
+                status = "DIFFERENT, kept"
+            else:
+                if comm.isMaster():
+                    discard(output, outdir)
+                refused.append((key, found))
+                status = "DIFFERENT, refused"
+        print("  %s  %s  %s" % (mesh, (slot if status == "DIFFERENT, kept" else key).split("/")[-1],
+                                status), flush=True)
+
+
+def _finish(args, comm, archive, doc, outputs, new, refused, outdir):
+    """Write the archive (rank 0) and report its state; the exit code."""
+    from ymf import closure
+    from ymf.cli import archive2xmf
+    if comm.isMaster():
         closure.write(archive, doc, outputs)
         if new:
             archive2xmf(archive, outdir, new)
@@ -713,8 +847,8 @@ def _run(args, prog, mesh_only, comm):
             print("  %s\n    %s" % (key, "\n    ".join(found)))
         return 1
     if args.check:
-        print("every rerun reproduced its record: same ADR form, same errors, "
-              "every array bitwise identical")
+        print("every rerun reproduced its record: same ADR form or dispatch, same "
+              "errors, every array bitwise identical")
     # 0 only when every run succeeded and the archive is closed. Which
     # non-zero code means what is still to be defined (PROTEUS_2.0_TASK_LIST).
     if state != "closed":

@@ -470,3 +470,70 @@ STEP_CONTROL = {
     ("shallow_water", "min_cfl"): "proteus.SplitOperator.Sequential_MinModelStep",
     ("dispersive_shallow_water", "min_cfl"): "proteus.SplitOperator.Sequential_MinModelStep",
 }
+
+
+# -----------------------------------------------------------------------------------------------------------------
+# Realization (C5 step 2): what proteus.DispatchRun needs to build a dispatched discretization through the decks'
+# own machinery (TwoPhaseFlowProblem, SWFlowProblem) and run it.
+# -----------------------------------------------------------------------------------------------------------------
+
+#: the deck machinery each family is realized through; a family without an entry dispatches but does not run yet
+REALIZERS = {
+    "two_phase_level_set": "proteus.DispatchRun.two_phase",
+}
+
+#: TwoPhaseFlow's Parameters class for each module: the deck machinery builds each model's p and n from it
+TWO_PHASE_PARAMETERS = {
+    "proteus.mprans.RANS2P": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS2P",
+    "proteus.mprans.RANS3PF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS3PF",
+    "proteus.mprans.PresInc": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureIncrement",
+    "proteus.mprans.Pres": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressure",
+    "proteus.mprans.PresInit": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureInitial",
+    "proteus.mprans.VOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelVOF",
+    "proteus.mprans.NCLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelNCLS",
+    "proteus.mprans.RDLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRDLS",
+    "proteus.mprans.MCorr": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelMCorr",
+    "proteus.mprans.CLSVOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelCLSVOF",
+}
+
+#: a dispatched numerics attribute -> where TwoPhaseFlow's Parameters takes it before it builds the n module.
+#: ``n.<a>.<b>`` is an options object of the n module; ``timeDiscretization`` is the Parameters' own switch, by the
+#: dispatched time integration. Anything else is built by the Parameters class itself and checked afterwards.
+TWO_PHASE_NUMERICS_KNOBS = {
+    "shockCapturing.shockCapturingFactor": "n.ShockCapturingOptions.shockCapturingFactor",
+    "shockCapturing.lag": "n.ShockCapturingOptions.lag",
+    "subgridError.lag": "n.SubgridErrorOptions.lag",
+    "maxNonlinearIts": "n.maxNonlinearIts",
+    "useEisenstatWalker": "n.useEisenstatWalker",
+    "conservativeFlux": "n.conservativeFlux",
+}
+TWO_PHASE_TIME_DISCRETIZATION = {
+    "proteus.TimeIntegration.BackwardEuler_cfl": "be",
+    "proteus.TimeIntegration.VBDF": "vbdf",
+}
+
+#: the model's coefficients TwoPhaseFlow takes as SystemPhysics values, by name in the family file (ymf gives a
+#: coefficient no meaning beyond its formula, so the family's names are the vocabulary). Phase 0 is where the
+#: phase indicator (the coefficient that is heaviside of the level set) is 0, phase 1 where it is 1.
+TWO_PHASE_COEFFICIENTS = {"density": "ρ", "dynamic_viscosity": "μ", "gravity": "g"}
+
+#: a boundary region's closed conditions (the expansion ymf writes, never the alias) -> the BC_RANS setter that
+#: imposes them. A signature is the set of (variable, type, component, only, value); values are numbers, a vector's
+#: per component. ``kwargs`` takes a setter argument from the value of one condition, by (variable, type).
+#: A region whose conditions match no signature is refused.
+TWO_PHASE_BOUNDARY_SETTERS = [
+    {"name": "free_slip", "setter": "setFreeSlip",
+     "signature": {("v", "dirichlet", "normal", None, 0.0), ("v", "neumann", "tangential", None, 0.0)}},
+    # setAtmosphere also sets the velocity's Dirichlet data to 0 (which RANS2P applies weakly), beyond the zero
+    # Neumann condition the expansion of `open` states: a question for C12, kept as the deck has it
+    {"name": "atmosphere", "setter": "setAtmosphere",
+     "signature": {("p", "dirichlet", None, None, 0.0), ("v", "neumann", None, None, "zero_vector"),
+                   ("χ", "dirichlet", None, "inflow", "any")},
+     "kwargs": {"vof_air": ("χ", "dirichlet")}},
+]
+
+#: a regularization by name -> Proteus's own implementation, so that an initial condition such as heaviside(φ)
+#: under smoothed_heaviside of width ε is the value the decks compute (smoothedHeaviside(ε, φ)) bit for bit
+REGULARIZED_FUNCTIONS = {
+    "smoothed_heaviside": "proteus.ctransportCoefficients.smoothedHeaviside",
+}

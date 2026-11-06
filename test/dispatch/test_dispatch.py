@@ -83,60 +83,18 @@ def _two_phase_deck(deck, options=None):
     return problem
 
 
-def _resolved(value, model):
-    if isinstance(value, str) and (value.startswith("proteus.") or value.startswith("{module}")):
-        return model.resolve(value)
-    if isinstance(value, dict):
-        return {k: _resolved(v, model) for k, v in value.items()}
-    return value
-
-
-def _equal(actual, expected):
-    if isinstance(expected, type) or callable(expected):
-        return actual is expected
-    if isinstance(expected, bool) or isinstance(actual, bool):
-        return bool(actual) == bool(expected)
-    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
-        return float(actual) == float(expected)
-    return actual == expected
-
-
 #: what every dispatched model must say, so that a comparison cannot pass by saying little
 REQUIRED_NUMERICS = {"timeIntegration", "stepController", "numericalFluxType", "subgridError", "shockCapturing",
                      "multilevelNonlinearSolver", "quadrature_order"}
 
 
 def _compare_model(model, p, n, nd):
-    """Every coefficient flag, physics attribute and numerics attribute the dispatch gives, against the objects."""
+    """Every coefficient flag, physics attribute and numerics attribute the dispatch gives, against the objects
+    (proteus.DispatchRun.differences: the check a run from the spec makes before it solves)."""
+    from proteus.DispatchRun import differences
     where = "%s (%s)" % (model.subproblem, model.cell)
     assert REQUIRED_NUMERICS <= set(model.numerics), where
-    assert type(p.coefficients) is model.resolve(model.coefficients_class), where
-    for flag, value in model.coefficients.items():
-        assert _equal(getattr(p.coefficients, flag), value), \
-            "%s: coefficients.%s is %r, dispatch says %r" % (where, flag, getattr(p.coefficients, flag), value)
-    for attribute, value in model.physics.items():
-        assert _equal(getattr(p, attribute), _resolved(value, model)), "%s: p.%s" % (where, attribute)
-    for attribute, value in model.numerics.items():
-        if attribute == "quadrature_order":
-            assert n.elementQuadrature.order == value, where
-            assert n.elementBoundaryQuadrature.order == value, where
-        elif "." in attribute:
-            owner, field = attribute.split(".")
-            obj = getattr(n, owner)
-            actual = obj.lagRequested if field == "lag" else getattr(obj, field)
-            assert _equal(actual, value), "%s: n.%s is %r, dispatch says %r" % (where, attribute, actual, value)
-        elif attribute in ("subgridError", "shockCapturing"):
-            obj = getattr(n, attribute)
-            if value is None:
-                assert obj is None, "%s: n.%s" % (where, attribute)
-            else:
-                assert type(obj) is model.resolve(value), "%s: n.%s" % (where, attribute)
-        else:
-            actual = getattr(n, attribute)
-            assert _equal(actual, _resolved(value, model)), \
-                "%s: n.%s is %r, dispatch says %r" % (where, attribute, actual, value)
-    expected = {i: resolve(b) for i, b in model.femSpaces(nd).items()}
-    assert n.femSpaces == expected, where
+    assert not differences(model, p, n, nd), "%s: %s" % (where, differences(model, p, n, nd))
 
 
 def _compare_two_phase(found, problem):
@@ -370,10 +328,40 @@ def test_without_hints_the_defaults_stand(dambreak):
 # ---- ymf_run -----------------------------------------------------------------------------------------------------
 
 def test_ymf_run_says_what_a_split_discretization_dispatches_to(tmp_path, capsys):
+    """ymf_run runs a split discretization from its dispatch (test_dispatch_run.py compares the run with the deck),
+    says what it dispatched to, and records the dispatch and the realization in the archive."""
     from proteus.cli import ymfrun
-    assert ymfrun.main([os.path.join(HERE, "dambreak.ymf"), "--outdir", str(tmp_path)]) == 2
+    from ymf import closure
+    from ymf.names import FUNCTION_NAMES
+    if "hypot" not in FUNCTION_NAMES:
+        pytest.skip("dambreak_short.ymf writes phi_init with hypot, which this ymf lacks (branch notation-hypot)")
+    assert ymfrun.main([os.path.join(HERE, "dambreak_short.ymf"), "--outdir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, mcorr MCorr" in out
+    assert "ymf_state: closed" in out
+    _, outputs, _ = closure.load(str(tmp_path / "dambreak_short.archive.ymf"), check_state=False)
+    (output,) = outputs.values()
+    steps = output["transformations"]
+    assert [m["cell"] for m in steps["dispatch"]["models"]] == \
+        ["rans2p_nonconservative", "vof", "ncls", "rdls", "mcorr"]
+    realized = steps["realize"]
+    assert realized["boundary"]["y+"] == {"region": "top", "setter": "setAtmosphere", "kwargs": {"vof_air": 1.0}}
+    assert {side: b["setter"] for side, b in realized["boundary"].items()} == \
+        {"x-": "setFreeSlip", "x+": "setFreeSlip", "y-": "setFreeSlip", "y+": "setAtmosphere"}
+    assert realized["initial"]["vof"] == {"vof": "smoothed_heaviside(1.5 h, φ0)"}
+    assert realized["system"]["nu_0"] == 1.004e-6 and realized["system"]["rho_1"] == 1.205
+
+
+def test_ymf_run_refuses_a_split_discretization_no_module_covers(tmp_path, capsys):
+    """A cell the table does not cover is refused before anything runs, saying which and why (exit 2)."""
+    from proteus.cli import ymfrun
+    spec = tmp_path / "conservative_projection.ymf"
+    spec.write_text("extends: %s\nsolution_paths:\n  discretizations:\n    - name: clsvof_projection\n"
+                    "      from_weak_form: conservative_inertia\n" % os.path.join(HERE, "dambreak.ymf"))
+    out = tmp_path / "out"
+    assert ymfrun.main([str(spec), "--discretization", "clsvof_projection", "--outdir", str(out)]) == 2
     err = capsys.readouterr().err
-    assert "level_set_five: split into sub-problems (flow, vof, ncls, rdls, mcorr)" in err
-    assert "It dispatches to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, mcorr MCorr" in err
-    assert "flow RANS3PF, pressureInc PresInc" in err
-    assert not os.listdir(tmp_path)
+    assert "clsvof_projection: split into sub-problems (clsvof, flow, pressureInc, pressure, pressureInit), " \
+        "and the dispatch refuses it: no Proteus module covers flow" in err
+    assert "rans3pf_projection: formulation conservative_inertia, the cell's is nonconservative_inertia" in err
+    assert not os.listdir(str(out))

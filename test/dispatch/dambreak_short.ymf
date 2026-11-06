@@ -1,0 +1,31 @@
+# The dam break of dambreak.ymf, level_set_five alone, for three output
+# intervals (0.01 s each) on the coarse mesh of damBreakLevelSet.py he=0.08
+# (h = 3.22 × 0.08 = 0.2576, which triangle meshes with 161 nodes), with the
+# deck's direct solves (useSuperlu: SuperLU on one rank, SuperLU_DIST on
+# several). test_dispatch_run.py runs it from the spec through ymf_run and
+# from the deck through parun, and compares the solutions bitwise.
+extends: dambreak.ymf
+remove:
+  - "solution_paths.discretizations[level_set_clsvof]"
+  - "solution_paths.discretizations[clsvof_projection]"
+
+model:
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 0.03]"
+    initial_conditions:                 # a list: replaced whole, not merged
+      - {field: v, type: constant, value: 0.0}
+      - {field: p, type: constant, value: 0.0}
+      # the same φ0 with hypot, as damBreakLevelSet.py computes it: the sqrt of
+      # a sum of squares rounds twice, and differs from the deck by one ulp at
+      # some nodes (2 of the 109 of its stored mesh), so no run could match it
+      - field: φ
+        type: function
+        formula: "hypot(max(x − 1.2, 0), max(y − 0.6, 0)) + min(max(x − 1.2, y − 0.6), 0)"
+        units: m
+
+solution_paths:
+  discretizations:
+    - name: level_set_five
+      mesh: {h: 0.2576}
+      discretization: {outputs: 3}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
