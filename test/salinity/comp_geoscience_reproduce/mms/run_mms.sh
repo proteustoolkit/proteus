@@ -16,7 +16,9 @@ cp "$DECK"/{mms_exact,domain_mms,flow_p,flow_n,transport_p,transport_n,mms_so}.p
 cd "$RUN"
 
 source ~/miniforge3/etc/profile.d/conda.sh
-conda activate tadr-check
+set +u   # conda activate scripts read unset variables
+conda activate "${PROTEUS_ENV:-tadr-check}"
+set -u
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
 export RICHARDS_EDGE_VELOCITY=1

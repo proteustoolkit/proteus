@@ -18,7 +18,9 @@ DECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$(mkdir -p "${1:-$DECK/run}" && cd "${1:-$DECK/run}" && pwd)"
 
 source ~/miniforge3/etc/profile.d/conda.sh
-conda activate tadr-check
+set +u   # conda activate scripts read unset variables
+conda activate "${PROTEUS_ENV:-tadr-check}"
+set -u
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
 
@@ -28,8 +30,9 @@ unset PYTHONPATH
 # solution, not low order (ExplicitConsistentMassMatrixForVOF skips FCTStep).
 # ZALESAK_REF sets the refinement (4).
 OPTS="problem=1 nd=2 T=1.0 nDTout=1 refinement=${ZALESAK_REF:-4} STABILIZATION_TYPE=${ZALESAK_STAB:-5} cfl=0.5 SSPOrder=2"
-# the two variants are independent serial runs, so they run concurrently
-for v in low fct; do
+# the two variants are independent serial runs, so they run concurrently;
+# ZALESAK_VARIANTS picks the runs ("low fct")
+for v in ${ZALESAK_VARIANTS:-low fct}; do
   (
   mkdir -p "$RUN/$v"
   cp "$DECK"/thelper_tadr{,_p,_n}.py "$RUN/$v"/

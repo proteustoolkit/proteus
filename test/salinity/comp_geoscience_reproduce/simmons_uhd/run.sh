@@ -33,7 +33,9 @@ ln -sfn "$DECK/data" "$RUN/data"
 cd "$RUN"
 
 source ~/miniforge3/etc/profile.d/conda.sh
-conda activate tadr-check
+set +u   # conda activate scripts read unset variables
+conda activate "${PROTEUS_ENV:-tadr-check}"
+set -u
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
 export SIMMONS_CASE=UHD

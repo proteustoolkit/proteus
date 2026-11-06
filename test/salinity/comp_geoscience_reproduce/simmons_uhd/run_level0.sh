@@ -50,5 +50,6 @@ export SIMMONS_Q_FILE="${SIMMONS_Q_FILE:-data/q_UHD_ramp.csv}" SIMMONS_K0_PER_CE
 } > provenance.txt
 # uncommitted source edits at run time; the installed build may still differ
 git -C "$(git -C "$DECK" rev-parse --show-toplevel)" diff HEAD -- proteus > source.diff
-mpiexec -n 1 parun simmons_so.py -l3 -O petsc.options.superlu > run.out 2>&1
+# SIMMONS_NP sets the rank count (1); TADR_CONSERVATIVE_FORM=1 is serial only
+mpiexec -n "${SIMMONS_NP:-1}" parun simmons_so.py -l3 -O petsc.options.superlu > run.out 2>&1
 echo "exit $?" >> run.out
