@@ -79,3 +79,36 @@ def test_every_base_constructor_call_binds_and_forwards_the_periodic_conditions(
         if periodic and periodic[0] not in names + [kw.arg for kw in call.keywords]:
             wrong.append("%s:%d drops %s" % (name, line, periodic[0]))
     assert wrong == [], "\n".join(wrong)
+
+
+# Seven fluxes accept the periodic argument and pair no periodic faces. Measured on a C0 P1 periodic Poisson problem
+# (NumericalFlux.PERIODIC_SEAM_REFUSED says how): the four diffusion ones are wrong with periodic conditions and refuse
+# them; the other three are not changed by them and keep accepting them:
+#   StrongDirichlet: 4.6e-2 without the periodic pair, 4.7e-2 with it, 1 Newton iteration (ADRProblem's periodic
+#     problems use it through StrongDirichletFactory: test_adr_problem's periodic Poisson, channel, several ranks);
+#   DoNothing: no boundary term at all, the right one for a model without boundary conditions on a periodic C0 space
+#     (the MCorr and RDLS models of test/periodic and test/hotstart_measure use it);
+#   NoFlux: the same answer with and without the periodic pair (it imposes no Dirichlet condition either way).
+PERIODIC_ACCEPTED_WITHOUT_PAIRING = {"StrongDirichlet", "DoNothing", "NoFlux"}
+
+
+def _periodic():
+    return {0: lambda x, flag: None}
+
+
+def test_the_diffusion_exterior_fluxes_refuse_periodic_conditions():
+    import pytest
+    for name in sorted(NumericalFlux.PERIODIC_SEAM_REFUSED):
+        with pytest.raises(ValueError, match="periodic"):
+            _FLUXES[name](None, {}, {}, {}, _periodic())
+
+
+def test_the_other_unpaired_fluxes_still_take_periodic_conditions():
+    # they get past the refusal and fail later on the missing transport (None), or not at all (DoNothing)
+    for name in sorted(PERIODIC_ACCEPTED_WITHOUT_PAIRING):
+        try:
+            _FLUXES[name](None, {}, {}, {}, _periodic())
+        except ValueError as e:
+            raise AssertionError("%s refused: %s" % (name, e))
+        except (AttributeError, TypeError):
+            pass
