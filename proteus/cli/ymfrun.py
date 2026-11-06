@@ -378,7 +378,16 @@ def split_blockers(doc, entry):
     lacking = missing(entry, doc["model"]["strong_form"].get("domain"))
     if lacking:
         return ["%s is missing %s: %s" % (name, m.what, m.hint) for m in lacking]
+    mesh = entry.get("mesh") or {}
+    if "cells" in mesh or any(int(v) != 1 for v in _listed(mesh.get("levels", 1))):
+        # the deck machinery meshes the region with triangle, at element size h, once
+        return ["%s: a split discretization is meshed by element size, one level (mesh: {h: ...}); "
+                "this one gives %s" % (name, ", ".join("%s %s" % kv for kv in sorted(mesh.items())))]
     return []
+
+
+def _listed(value):
+    return value if isinstance(value, list) else [value]
 
 
 def solve_split(doc, name, realization, outdir, files, env):

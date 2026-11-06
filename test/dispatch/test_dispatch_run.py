@@ -1,14 +1,16 @@
 """C5 step 2: a split discretization runs from its dispatch through ymf_run, and the run is the deck's, bitwise.
 
-The same case two ways, each in a directory of its own:
+Each case two ways, each in a directory of its own:
 
-* the deck, ``parun --TwoPhaseFlow damBreakLevelSet.py -C "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True"``;
-* the spec, ``pro run dambreak_short.ymf``: proteus.Dispatch maps level_set_five onto RANS2P, VOF, NCLS, RDLS and
-  MCorr, and proteus.DispatchRun builds the TwoPhaseFlowProblem from that and from ymf's split plain data.
+* the deck through parun: ``parun --TwoPhaseFlow damBreakLevelSet.py -C "final_time=0.03 dt_output=0.01 he=0.08
+  genMesh=True"``, ``parun --SWEs dam3Bumps.py -C "final_time=0.5 dt_output=0.1 structured=False he=2.0"``;
+* the spec through ``pro run``: proteus.Dispatch maps level_set_five onto RANS2P, VOF, NCLS, RDLS and MCorr, and
+  convex_limited onto SW2DCV, and proteus.DispatchRun builds the TwoPhaseFlowProblem or SWFlowProblem from that and
+  from ymf's split plain data.
 
-Every numeric array the two archives hold (the five models' unknowns at t = 0, 0.001, 0.01, 0.02, 0.03, the mesh,
-the material types) must be bitwise equal, on one rank and on two (the partition pinned by
-``-mat_partitioning_type current``). The mesh records may differ only in the name of their HDF5 file.
+Every numeric array the two archives hold (every model's unknowns at every output time, the mesh, the material
+types) must be bitwise equal, on one rank and on two (the partition pinned by ``-mat_partitioning_type current``).
+The mesh records may differ only in the name of their HDF5 file.
 """
 import os
 import shutil
@@ -18,9 +20,6 @@ import sys
 import pytest
 
 pytest.importorskip("ymf.symbolic.split")
-if "hypot" not in __import__("ymf.names", fromlist=["FUNCTION_NAMES"]).FUNCTION_NAMES:
-    # dambreak_short.ymf writes the deck's phi_init with hypot (cekees/ymf notation-hypot)
-    pytest.skip("this ymf has no hypot in its notation (cekees/ymf branch notation-hypot)", allow_module_level=True)
 h5py = pytest.importorskip("h5py")
 numpy = pytest.importorskip("numpy")
 
@@ -70,27 +69,46 @@ def _parun():
                                                                "parun")]
 
 
+#: (deck directory, deck, parun's flag, its options, spec, what ymf_run says it dispatched to, a field that moves)
+CASES = {
+    "damBreakLevelSet": ("TwoPhaseFlow", "damBreakLevelSet.py", "--TwoPhaseFlow",
+                         "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short.ymf",
+                         "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
+                         "mcorr MCorr", "velocity_t4"),
+    "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0",
+                  "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
+}
+
+
+def _has_hypot():
+    from ymf.names import FUNCTION_NAMES
+    return "hypot" in FUNCTION_NAMES
+
+
 @pytest.mark.parametrize("ranks", [1, 2])
-def test_level_set_five_from_the_spec_is_damBreakLevelSet_bitwise(tmp_path, ranks):
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     if ranks > 1 and MPIEXEC is None:
         pytest.skip("mpiexec not available")
+    folder, script, flag, options, spec_file, banner, moving = CASES[case]
+    if case == "damBreakLevelSet" and not _has_hypot():
+        # dambreak_short.ymf writes the deck's phi_init with hypot
+        pytest.skip("this ymf has no hypot in its notation (cekees/ymf branch notation-hypot)")
     deck, spec = tmp_path / "deck", tmp_path / "spec"
     deck.mkdir()
     spec.mkdir()
-    # the deck meshes beside itself (domain.polyfile is its directory): a copy, so the stored mesh stays as it is
-    shutil.copy(os.path.join(DECKS, "damBreakLevelSet.py"), str(deck))
-    ran = _run(_parun() + ["--TwoPhaseFlow", "damBreakLevelSet.py", "-l1",
-                           "-C", "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True"], deck, ranks)
+    # the deck meshes in (or beside) its own directory: a copy, so the stored mesh files stay as they are
+    shutil.copy(os.path.join(os.path.dirname(HERE), folder, script), str(deck))
+    ran = _run(_parun() + [flag, script, "-l1", "-C", options], deck, ranks)
     assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
-    ran = _run([sys.executable, "-m", "proteus.cli", "run", os.path.join(HERE, "dambreak_short.ymf"),
-                "--outdir", str(spec)], spec, ranks)
+    ran = _run([sys.executable, "-m", "proteus.cli", "run", os.path.join(HERE, spec_file), "--outdir", str(spec)],
+               spec, ranks)
     assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
-    assert "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, mcorr MCorr" \
-        in ran.stdout
+    assert banner in ran.stdout
     (archive,) = [f for f in os.listdir(str(spec)) if f.endswith(".h5")]
-    expected = _arrays(deck / "damBreakLevelSet.h5", "damBreakLevelSet")
+    expected = _arrays(deck / (script[:-3] + ".h5"), script[:-3])
     found = _arrays(spec / archive, archive[:-3])
     assert sorted(found) == sorted(expected)
-    assert "u_t4" in found and float(numpy.abs(found["velocity_t4"]).max()) > 0.1     # the water moved
+    assert float(numpy.abs(found[moving]).max()) > 0.1          # the water moved
     different = [key for key in expected if not numpy.array_equal(found[key], expected[key])]
     assert not different, "%d of %d datasets differ: %s" % (len(different), len(expected), different[:10])

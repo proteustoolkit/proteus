@@ -480,6 +480,7 @@ STEP_CONTROL = {
 #: the deck machinery each family is realized through; a family without an entry dispatches but does not run yet
 REALIZERS = {
     "two_phase_level_set": "proteus.DispatchRun.two_phase",
+    "shallow_water": "proteus.DispatchRun.shallow_water",
 }
 
 #: TwoPhaseFlow's Parameters class for each module: the deck machinery builds each model's p and n from it
@@ -537,3 +538,25 @@ TWO_PHASE_BOUNDARY_SETTERS = [
 REGULARIZED_FUNCTIONS = {
     "smoothed_heaviside": "proteus.ctransportCoefficients.smoothedHeaviside",
 }
+
+#: SWFlow's p and n modules for each module (proteus/SWFlow/models, read through Context's mySWFlowProblem, as
+#: parun --SWEs loads them) and its sw_model switch
+SHALLOW_WATER_MODELS = {
+    "proteus.mprans.SW2DCV": {"sw_model": 0, "p": "sw_p", "n": "sw_n"},
+}
+
+#: the model's coefficients SWFlow takes as physical_parameters, by name in the family file (shallow_water.ymf):
+#: the bed Z is SWFlowProblem's bathymetry; mannings is n in the Manning friction coefficient τb
+SHALLOW_WATER_COEFFICIENTS = {"gravity": "g", "mannings": "n", "porosity": "θ", "drag_alpha": "α",
+                              "drag_beta": "β", "bathymetry": "Z"}
+
+#: SWFlow's swe_parameters a dispatched coefficient flag sets (the same names), and the time order
+SHALLOW_WATER_FLAGS = ["cE", "LUMPED_MASS_MATRIX", "INTEGRATE_BY_PARTS_WALLS", "BOUNDS_RELAXATION",
+                       "BOUNDS_EXCLUDE_SELF", "WALL_RIEMANN", "LOW_ORDER_ONLY", "NODAL_H_BOUNDS", "NO_STAR_STATES"]
+
+#: closed conditions on the whole boundary -> SWFlow's boundary treatment. Walls everywhere is its reflectingBCs
+#: (no Dirichlet data); anything else is refused until SWFlow's open boundaries are wired up
+SHALLOW_WATER_BOUNDARY = [
+    {"name": "wall", "reflectingBCs": True,
+     "signature": {("q", "dirichlet", "normal", None, 0.0), ("q", "neumann", "tangential", None, 0.0)}},
+]

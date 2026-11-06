@@ -365,3 +365,13 @@ def test_ymf_run_refuses_a_split_discretization_no_module_covers(tmp_path, capsy
         "and the dispatch refuses it: no Proteus module covers flow" in err
     assert "rans3pf_projection: formulation conservative_inertia, the cell's is nonconservative_inertia" in err
     assert not os.listdir(str(out))
+
+
+def test_ymf_run_refuses_a_split_discretization_meshed_by_cells(tmp_path, capsys):
+    """The deck machinery meshes a split discretization's region by element size: the lake at rest's cells study
+    is refused before anything runs."""
+    from proteus.cli import ymfrun
+    assert ymfrun.main([os.path.join(HERE, "lake_at_rest.ymf"), "--outdir", str(tmp_path)]) == 2
+    assert "convex_limited: a split discretization is meshed by element size, one level (mesh: {h: ...}); " \
+        "this one gives cells [50, 100, 200]" in capsys.readouterr().err
+    assert not os.listdir(str(tmp_path))

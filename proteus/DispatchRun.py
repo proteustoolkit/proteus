@@ -6,14 +6,16 @@ flags. This module builds the run from that result and from ymf's plain data of 
 conditions), through the machinery a deck uses, not a parallel path (YMF_MODEL_FAMILIES_C42 section 5.2):
 
 * two-phase level-set flow: a ``TwoPhaseFlowProblem`` (:func:`two_phase`), its models added in the dispatched
-  order with TwoPhaseFlow's Parameters classes, its domain a SpatialTools tank with ``BC_RANS`` setters.
+  order with TwoPhaseFlow's Parameters classes, its domain a SpatialTools tank with ``BC_RANS`` setters;
+* shallow water: an ``SWFlowProblem`` (:func:`shallow_water`), its p and n modules SWFlow's own (``sw_p``,
+  ``sw_n``), loaded as ``parun --SWEs`` loads them.
 
 After the machinery has built the p and n modules, :func:`check_built` compares every attribute the dispatch gives
 with what was built; a difference is refused (:class:`RealizeError`) before anything is solved, so the run is the
 dispatched discretization or nothing. What the dispatch does not cover is refused by
 :class:`proteus.Dispatch.DispatchError` before this module is reached.
 
-This module is the front end's (it is handed plain data and names; it imports no sympy).
+This module is the front end's: it reads the model's coefficients through ymf.symbolic (sympy), as ymf_run does.
 """
 import contextlib
 import os
@@ -23,7 +25,7 @@ import numpy
 from proteus import DispatchTable as table
 from proteus.Dispatch import DispatchError, resolve
 
-__all__ = ["RealizeError", "Realized", "realize", "two_phase", "check_built", "run",
+__all__ = ["RealizeError", "Realized", "realize", "two_phase", "shallow_water", "check_built", "run",
            "petsc_options_restored"]
 
 
@@ -414,6 +416,152 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     pList = [p for p, _ in so.pnList]
     nList = [n for _, n in so.pnList]
     return Realized(so, pList, nList, problem, record)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Shallow water: SWFlowProblem
+# ---------------------------------------------------------------------------------------------------------------
+
+class _OfPoint(object):
+    """A coefficient of the coordinates as SWFlow calls it, ``f(X)`` with ``X[0]``, ``X[1]`` the coordinates (of
+    one point, or arrays of them), as its decks write ``bathymetry_function(X)``."""
+
+    def __init__(self, code, dim):
+        from proteus.ADRProblem import _compile
+        self.code = _compile(code)
+        self.dim = dim
+
+    def __call__(self, X):
+        from proteus.ADRProblem import _GLOBALS
+        ns = {"x": X[0], "y": X[1], "t": 0.0}
+        if self.dim > 2:
+            ns["z"] = X[2]
+        return eval(self.code, _GLOBALS, ns) + 0.0 * X[0]
+
+
+def _coefficient_code(doc, name, dim):
+    """Code (over x, y, z) of a model coefficient that is a number or a function of the coordinates."""
+    from ymf.symbolic.adr import to_code
+    from ymf.symbolic.problem import _coefficients
+    spec = doc["model"]["strong_form"].get("coefficients") or {}
+    values = _coefficients(spec, dim, strict=False)
+    if name not in values:
+        raise RealizeError("the shallow-water realizer reads coefficient %s, which the model does not resolve"
+                           % name)
+    return to_code(values[name])
+
+
+def _shallow_water_value(doc, name, dim):
+    """A number for a constant coefficient, else a callable f([x, y])."""
+    code = _coefficient_code(doc, name, dim)
+    try:
+        return float(code)
+    except ValueError:
+        return _OfPoint(code, dim)
+
+
+def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
+    """An ``SWFlowProblem`` built from the dispatch, its p and n modules loaded as ``parun --SWEs`` loads them
+    (proteus/SWFlow/models, reading the problem from Context), and checked."""
+    import types
+    import proteus
+    from proteus import Comm, Context, Domain, default_s, defaults
+    from proteus.ADRProblem import mesh_constraint
+    from proteus.SWFlow import SWFlowProblem as SWF
+    (model,) = found.models
+    if model.module not in table.SHALLOW_WATER_MODELS:
+        raise RealizeError("%s: SWFlow has no p and n modules for %s" % (model.subproblem, model.module))
+    models = table.SHALLOW_WATER_MODELS[model.module]
+    entry = _entry(doc, found.discretization)
+    if "h" not in realization or int(realization.get("levels", 1)) != 1:
+        raise RealizeError("%s: the shallow-water realizer meshes the region by element size, one level; give "
+                           "mesh: {h: ...}" % found.discretization)
+    he = float(realization["h"])
+    dim = split["dim"]
+    if split["domain"].get("region") is not None or dim != 2:
+        raise RealizeError("the shallow-water realizer builds a 2-D box (RectangularDomain)")
+    comm = Comm.get()
+    final_time, outputs = _time(split, entry)
+
+    # the boundary: one treatment for the whole boundary
+    (sub,) = split["subproblems"]
+    conditions = sub.get("boundary_conditions") or []
+    if any(c.get("where") is not None for c in conditions):
+        raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω)")
+    signature = _signature(conditions)
+    boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
+    if boundary is None:
+        raise RealizeError("the boundary conditions %s are none SWFlow imposes; the table knows %s"
+                           % (sorted(map(str, signature)), ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY)))
+
+    # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
+    lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
+    rectangle = Domain.RectangularDomain(L=[u - l for u, l in zip(upper, lower)], x=lower)
+    prefix = os.path.join(outdir, name)
+    if comm.isMaster():
+        rectangle.writePoly(prefix)
+    comm.barrier()
+    domain = Domain.PlanarStraightLineGraphDomain(fileprefix=prefix)
+    domain.MeshOptions.triangleOptions = mesh_constraint(he, dim)
+
+    # initial data and the coefficients
+    unknowns = sub["unknowns"]
+    depth = [u for u, comps in unknowns.items() if len(comps) == 1]
+    discharge = [u for u, comps in unknowns.items() if len(comps) > 1]
+    if len(depth) != 1 or len(discharge) != 1:
+        raise RealizeError("%s: SWFlow solves a depth and a discharge; the sub-problem's unknowns are %s"
+                           % (model.subproblem, sorted(unknowns)))
+    components = unknowns[depth[0]] + unknowns[discharge[0]]
+    variables = ["water_height", "x_mom", "y_mom"]
+    initial = {v: _field(split["initial"][c], dim) for v, c in zip(variables, components)}
+    names = table.SHALLOW_WATER_COEFFICIENTS
+    physical = dict(SWF.default_physical_parameters)
+    for key in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta"):
+        physical[key] = _shallow_water_value(doc, names[key], dim)
+    bathymetry = _OfPoint(_coefficient_code(doc, names["bathymetry"], dim), dim)
+
+    problem = SWF.SWFlowProblem(
+        sw_model=models["sw_model"], cfl=found.system["runCFL"],
+        outputStepping=SWF.OutputStepping(final_time, dt_output=final_time / outputs),
+        structured=False, he=he, domain=domain, initialConditions=initial,
+        boundaryConditions={v: (lambda x, flag: None) for v in variables},
+        reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry)
+    # copies: SWFlowProblem hands out its module's default dicts, which a deck then edits in place
+    problem.physical_parameters = physical
+    problem.swe_parameters = dict(SWF.default_swe_parameters)
+    for flag in table.SHALLOW_WATER_FLAGS:
+        if flag in model.coefficients:
+            problem.swe_parameters[flag] = model.coefficients[flag]
+    problem.swe_parameters["SSPOrder"] = model.numerics["timeOrder"]
+    problem.swe_parameters["cfl"] = found.system["runCFL"]
+
+    # the p and n modules, as parun --SWEs loads them: they read the problem from Context
+    case = types.ModuleType("ymf_" + name)
+    case.mySWFlowProblem = problem
+    Context.setFromModule(case)
+    path = os.path.join(os.path.dirname(proteus.__file__), "SWFlow", "models")
+    p = defaults.load_physics(models["p"], path=path)
+    n = defaults.load_numerics(models["n"], path=path)
+    p.name = models["p"]
+    check_built(found, [(model, p, n)], dim)
+    so = defaults.System_base()
+    so.name = name
+    so.pnList = [(p, n)]
+    so.sList = [default_s]
+    stepping = problem.outputStepping
+    so.tnList = [0.0, stepping["dt_init"]] + [float(k) * stepping["final_time"] / float(stepping["nDTout"])
+                                              for k in range(1, stepping["nDTout"] + 1)]
+    if not issubclass(so.systemStepControllerType, resolve(found.system["systemStepControllerType"])):
+        raise RealizeError("the system step controller is %s, the dispatch says %s"
+                           % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
+    record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"]},
+              "initial": dict(zip(variables, components)),
+              "system": {"final_time": final_time, "outputs": outputs, "mesh": "triangle, %s" % (
+                  domain.MeshOptions.triangleOptions,),
+                  "linear_solver": "SWFlow's n module: LU on one rank, KSP_petsc4py on several",
+                  **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()
+                     if k in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta")}}}
+    return Realized(so, [p], [n], problem, record)
 
 
 # ---------------------------------------------------------------------------------------------------------------

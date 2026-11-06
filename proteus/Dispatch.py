@@ -409,7 +409,9 @@ def _build(index, sub, role, cell, entry, model, options):
             _set(d, d.coefficients, flag, kind(scheme[key]), "spec")
     if "scheme" in cell:
         # the scheme's block is free-form in ymf: an option the cell does not read must not be dropped silently
-        unread = sorted(set(scheme) - set(physics.get("from_scheme") or {}) - {"scheme", "time_integration"})
+        # (outputs is the runner's, as in ymf_run's ADR path: how many evenly spaced archive frames)
+        unread = sorted(set(scheme) - set(physics.get("from_scheme") or {})
+                        - {"scheme", "time_integration", "outputs"})
         if unread:
             raise DispatchError("%s: cell %s does not read the scheme option(s) %s; it reads %s"
                                 % (sub["name"], cell["cell"], ", ".join(unread),
