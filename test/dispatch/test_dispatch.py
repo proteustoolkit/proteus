@@ -332,9 +332,6 @@ def test_ymf_run_says_what_a_split_discretization_dispatches_to(tmp_path, capsys
     says what it dispatched to, and records the dispatch and the realization in the archive."""
     from proteus.cli import ymfrun
     from ymf import closure
-    from ymf.names import FUNCTION_NAMES
-    if "hypot" not in FUNCTION_NAMES:
-        pytest.skip("dambreak_short.ymf writes phi_init with hypot, which this ymf lacks (branch notation-hypot)")
     assert ymfrun.main([os.path.join(HERE, "dambreak_short.ymf"), "--outdir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, mcorr MCorr" in out

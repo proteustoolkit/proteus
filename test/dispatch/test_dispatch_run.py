@@ -11,6 +11,9 @@ Each case two ways, each in a directory of its own:
 Every numeric array the two archives hold (every model's unknowns at every output time, the mesh, the material
 types) must be bitwise equal, on one rank and on two (the partition pinned by ``-mat_partitioning_type current``).
 The mesh records may differ only in the name of their HDF5 file.
+
+dambreak_short.ymf writes the deck's phi_init with hypot, which ymf's notation has since cekees/ymf#12; with an
+older ymf the dam-break case fails to parse, and should: it cannot match the deck without it.
 """
 import os
 import shutil
@@ -80,20 +83,12 @@ CASES = {
 }
 
 
-def _has_hypot():
-    from ymf.names import FUNCTION_NAMES
-    return "hypot" in FUNCTION_NAMES
-
-
 @pytest.mark.parametrize("ranks", [1, 2])
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     if ranks > 1 and MPIEXEC is None:
         pytest.skip("mpiexec not available")
     folder, script, flag, options, spec_file, banner, moving = CASES[case]
-    if case == "damBreakLevelSet" and not _has_hypot():
-        # dambreak_short.ymf writes the deck's phi_init with hypot
-        pytest.skip("this ymf has no hypot in its notation (cekees/ymf branch notation-hypot)")
     deck, spec = tmp_path / "deck", tmp_path / "spec"
     deck.mkdir()
     spec.mkdir()
