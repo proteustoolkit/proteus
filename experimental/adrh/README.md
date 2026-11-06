@@ -752,3 +752,36 @@ element-local CSR offsets, so the capture takes the Jacobian's CSR structure fro
 | normalized boundary gradient | 2.4e-15 |
 | next Newton iterate (one step with the engine's R and J) | 1.9e-16 |
 | residual at the next iterate (pinned rows nonzero there) | 6.9e-14 of its max |
+
+## Two-phase level set, slice 4: MCorr (`mcorr.h`, `mcorr_test.py`)
+
+MCorr (`mprans/MCorr.h` with `useExact=0`, `useExact_s=0`, the damBreakLevelSet configuration) is not SUPG. It is a
+steady nonlinear reaction-diffusion problem for the level-set correction u, so it runs on the generic element kernel
+(`engine.h`, `elementKernelSpace`), the one Richards uses, not on the VOF/NCLS/RDLS template:
+
+- `MCorrCoefficients`: r = porosity (H_epsH(phi + u) - H_vof), dr = porosity delta_epsD(phi + u), a = eps_diff I,
+  phi = u, all scaled by H_s = H_0(phi_s) (1 in the fluid). eps_X = epsFact_X (useMetrics h_phi + (1 - useMetrics)
+  h_e). No mass, advection or Hamiltonian; the masks say so, so the kernel skips those blocks. The Jacobian is exact.
+- Point data: phi (NCLS's level set), H_vof (VOF's solution), the porosity, h_phi, h_e and phi_s come in as point fields.
+  The generic kernel gained one hook for this, `bindPoint(q)` beside `bindElement(eN)` (`engine.h`): a functor that has
+  it is evaluated as `C.bindElement(eN).bindPoint(q)`. A functor without it compiles to what it did before (the Richards
+  tests print the same digits with the module built before and after the hook).
+- `mcorrPointOutputs` writes what MCorr hands to the other models at the points: q_u, q_r (r without H_s) and
+  q_n = grad u / sqrt(1e-8 + |grad u|^2).
+- Active DOFs: with `useExact_s = 0` every element is active, so the marks are all 1 and MCorr.py's masking of the
+  residual and of the Jacobian rows is the identity. The cut-cell path (`useExact_s = 1`: ghost penalty on cut faces,
+  inactive rows) is not reproduced.
+
+`vof_capture.py OUT model=mcorr` records the first MCorr Newton iteration at or after T, plus q_u, q_r and q_n at the next
+iterate (MCorr starts from u = 0, where they are trivial). `mcorr_damBreak_he0.05.npz` (733 triangles, t = 0.063, 125
+elements within eps of the interface) gives:
+
+| check | max difference, relative |
+|---|---|
+| residual | 6.9e-15 |
+| Jacobian | 3.3e-16 |
+| q_r | 5.4e-15 (q_u, q_n are 0 at u = 0, and the engine gives 0) |
+| every DOF and element active | yes |
+| next Newton iterate (one step with the engine's R and J; MCorr has no line search) | 2.5e-14 |
+| residual at the next iterate | 3.2e-15 of the first residual (4.6e-19 absolute; Newton cut the residual 1e4, so its own max is 2.6e-8) |
+| q_u, q_r, q_n at the next iterate | 1.1e-14 |

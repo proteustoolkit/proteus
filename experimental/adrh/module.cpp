@@ -9,6 +9,7 @@
 #include "vof.h"
 #include "ncls.h"
 #include "rdls.h"
+#include "mcorr.h"
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -577,6 +578,33 @@ PYBIND11_MODULE(adrh_proto, m)
         adrh::rdlsTraceFace<S>(xn.data() + f * nD * 3, u.data() + f * nD, nQf, xi.data() + fl[f] * nQf * nS,
                                uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
       return py::make_tuple(uT, gN);
+    });
+  });
+  // MCorr (mcorr.h): the generic element kernel (engine.h) with MCorrCoefficients, steady. Per element xn (nE, nD, 3), u (nE, nD);
+  // per point fields (nE, nQ, 6) = (phi, H_vof, porosity, h_phi, h_e, phi_s). Returns R (nE, nD), J (nE, nD, nD) and the point
+  // outputs q_u, q_r (nE, nQ), q_n (nE, nQ, nS).
+  m.def("mcorr", [](int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, double useMetrics, double epsFactHeaviside,
+                    double epsFactDirac, double epsFactDiffusion) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::MCorrCoefficients<nS>;
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != C::nFields)
+        throw std::invalid_argument("mcorr: fields must be (nE, nQ, 6)");
+      C coef;
+      coef.useMetrics = useMetrics; coef.epsFactHeaviside = epsFactHeaviside; coef.epsFactDirac = epsFactDirac;
+      coef.epsFactDiffusion = epsFactDiffusion; coef.fields = fields.data(); coef.nQ = nQ;
+      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), qu({nE, nQ}), qr({nE, nQ}), qn({nE, nQ, nS});
+      {
+        py::gil_scoped_release release;
+        adrh::elementKernelSpace<C, S>(coef, nE, nQ, xn.data(), u.data(), nullptr, qp.data(), qw.data(), 0.0, 0.0,
+                                       R.mutable_data(), J.mutable_data());
+        for (int eN = 0; eN < nE; ++eN)
+          adrh::mcorrPointOutputs<S>(coef.bindElement(eN), xn.data() + eN * nD * 3, u.data() + eN * nD, nQ, qp.data(),
+                                     qu.mutable_data() + eN * nQ, qr.mutable_data() + eN * nQ, qn.mutable_data() + eN * nQ * nS);
+      }
+      return py::make_tuple(R, J, qu, qr, qn);
     });
   });
 }
