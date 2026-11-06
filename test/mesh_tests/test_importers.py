@@ -14,6 +14,8 @@ run in proteustoolkit/ymf-import-sms against its converter.
   ``importer_meshes/gmsh_square.msh`` and ``gmsh_cube.msh``, written by gmsh 4.12.2 from the
   ``.geo`` files beside them (``Domain.writeGeo``, he_max 0.25 and 0.5). The stored ``.msh`` is
   the mesh the downstream tests read; meshing itself is checked on statistics.
+
+The solves on these meshes, serial against two ranks, are in ``test_importer_solves.py``.
 """
 import os
 import shutil
@@ -173,6 +175,26 @@ def test_a_nurbs_box_is_meshed():
 # gmsh
 # --------------------------------------------------------------------------
 
+def _gmsh_domain(nd, name):
+    """The domains the fixtures' .geo files were written from (Domain.writeGeo)."""
+    from proteus import Domain
+    if nd == 2:
+        domain = Domain.PlanarStraightLineGraphDomain(
+            vertices=[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], vertexFlags=[1, 2, 3, 4],
+            segments=[[0, 1], [1, 2], [2, 3], [3, 0]], segmentFlags=[1, 2, 3, 4], name=name)
+        domain.facets = [[[0, 1, 2, 3]]]
+        domain.facetFlags = [1]
+    else:
+        from proteus import SpatialTools as st
+        domain = Domain.PiecewiseLinearComplexDomain(name=name)
+        st.Cuboid(domain, dim=[1.0, 1.0, 1.0], coords=[0.5, 0.5, 0.5])
+        st.assembleDomain(domain)
+    return domain
+
+
+# the tag of each side of the unit square / cube: (axis, 0 or 1) -> tag
+GMSH_SIDES = {2: {(1, 0): 1, (0, 1): 2, (1, 1): 3, (0, 0): 4},
+              3: {(2, 0): 1, (1, 1): 2, (0, 1): 3, (1, 0): 4, (0, 0): 5, (2, 1): 6}}
 GMSH_CASES = [(2, "gmsh_square", 0.25), (3, "gmsh_cube", 0.5)]
 
 
@@ -187,6 +209,23 @@ def _read_msh2(path):
         kind = int(line.split()[1])
         counts[kind] = counts.get(kind, 0) + 1
     return nodes, counts
+
+
+def _sides(mesh, nd, faces):
+    """For each face, the (axis, 0 or 1) sides of the unit box its centroid is on."""
+    mids = mesh.nodeArray[mesh.elementBoundaryNodesArray[faces]].mean(axis=1)
+    return [tuple((k, int(round(c[k]))) for k in range(nd) if min(abs(c[k]), abs(c[k] - 1.0)) < 1.0e-9)
+            for c in mids]
+
+
+def _gmsh_mesh(tmp_path, nd, name):
+    shutil.copy(os.path.join(MESHES, name + ".msh"), str(tmp_path))
+    domain = _gmsh_domain(nd, name)
+    domain.geofile = name
+    options = MeshTools.getMeshOptions(domain)
+    options.use_gmsh = True
+    options.genMesh = False
+    return MeshTools._generateMesh(domain, options).meshList[0]
 
 
 @pytest.mark.parametrize("nd, name, he", GMSH_CASES)
@@ -231,3 +270,45 @@ def test_msh2simplex_flags_a_node_that_only_ends_segments(tmp_path, monkeypatch)
     MeshTools.msh2simplex("into", nd=2)
     flags = np.loadtxt("into.node", skiprows=1)[:, -1].astype(int).tolist()
     assert flags == [7, 7, 7, 8]
+
+
+@pytest.mark.parametrize("nd, name, he", GMSH_CASES)
+def test_a_gmsh_domain_reads_its_stored_mesh(tmp_path, monkeypatch, nd, name, he):
+    """A use_gmsh domain whose .msh exists: msh2simplex and the triangle/tetgen reader, no gmsh run."""
+    monkeypatch.chdir(tmp_path)
+    mesh = _gmsh_mesh(tmp_path, nd, name)
+    gmsh_nodes, counts = _read_msh2(name + ".msh")
+    np.testing.assert_array_equal(mesh.nodeArray[:, :nd], gmsh_nodes[:, :nd])
+    assert mesh.nElements_global == counts[2 if nd == 2 else 4]
+    exterior = mesh.exteriorElementBoundariesArray
+    assert len(exterior) == (32 if nd == 2 else 540)
+    sides = _sides(mesh, nd, exterior)
+    assert all(len(s) == 1 for s in sides)
+    assert [GMSH_SIDES[nd][s[0]] for s in sides] == mesh.elementBoundaryMaterialTypes[exterior].tolist()
+    assert set(mesh.elementBoundaryMaterialTypes[mesh.interiorElementBoundariesArray]) == {0}
+    assert set(mesh.elementMaterialTypes) == {1}
+
+
+@pytest.mark.parametrize("nd, name, he", GMSH_CASES)
+def test_gmsh_meshes_a_domain_within_its_size(tmp_path, monkeypatch, nd, name, he):
+    """Meshing itself, on statistics: gmsh runs on the .geo; counts near the stored mesh's,
+    every edge no longer than 1.5 he_max, every exterior face on one side and tagged with it."""
+    if shutil.which("gmsh") is None:
+        pytest.skip("no gmsh")
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(os.path.join(MESHES, name + ".geo"), name + ".geo")
+    domain = _gmsh_domain(nd, name)
+    domain.geofile = name
+    options = MeshTools.getMeshOptions(domain)
+    options.use_gmsh = True
+    options.genMesh = True
+    mesh = MeshTools._generateMesh(domain, options).meshList[0]
+    stored = {2: (98, 162), 3: (341, 1125)}[nd]
+    assert 0.7 * stored[0] < mesh.nNodes_global < 1.3 * stored[0]
+    assert 0.7 * stored[1] < mesh.nElements_global < 1.3 * stored[1]
+    edges = mesh.nodeArray[mesh.edgeNodesArray]
+    assert np.linalg.norm(edges[:, 0] - edges[:, 1], axis=1).max() <= 1.5 * he
+    exterior = mesh.exteriorElementBoundariesArray
+    sides = _sides(mesh, nd, exterior)
+    assert all(len(s) == 1 for s in sides)
+    assert [GMSH_SIDES[nd][s[0]] for s in sides] == mesh.elementBoundaryMaterialTypes[exterior].tolist()
