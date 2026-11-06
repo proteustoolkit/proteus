@@ -10,6 +10,7 @@ rank's own h and hMin (the old behaviour), as a control.
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm, MeshTools as MT
+import rank_staging  # every rank stages the same files: atomically
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LS_with_edgeBased_EV", "NCLS")
 sys.path.insert(0, os.getcwd())
@@ -19,7 +20,7 @@ for name in ("ncls.py", "ncls_p.py", "ncls_n.py"):
         text = text.replace("parallel = False", "parallel = True")
     if name == "ncls_n.py":
         text += "\nnl_atol_res = 1.0e-13; l_atol_res = 1.0e-15; linTolFac = 0.0; tolFac = 0.0\n"
-    open(name, "w").write(text)
+    rank_staging.write(name, text)
 
 _partition = MT.Mesh.partitionMesh
 def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshParallelPartitioningTypes.node,

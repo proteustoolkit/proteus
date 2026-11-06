@@ -13,6 +13,7 @@ nodal porosity at the ghosts (a control).
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm, MeshTools as MT
+import rank_staging  # every rank stages the same files: atomically
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TADR")
 sys.path.insert(0, os.getcwd())
@@ -27,7 +28,7 @@ for name in ("thelper_tadr.py", "thelper_tadr_p.py", "thelper_tadr_n.py"):
         text += ("\nif ct.STABILIZATION_TYPE == 5:\n    levelNonlinearSolver = Newton\n    fullNewtonFlag = True\n"
                  "    updateJacobian = True\n    timeIntegration = BackwardEuler_cfl\n    nl_atol_res = 1.0e-10\n"
                  "    l_atol_res = 1.0e-12\n    maxNonlinearIts = 100\n")
-    open(name, "w").write(text)
+    rank_staging.write(name, text)
 
 _partition = MT.Mesh.partitionMesh
 def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshParallelPartitioningTypes.node,
