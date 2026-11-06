@@ -206,3 +206,43 @@ class TestTADR(object):
             # observed across builds (with a comfortable margin), rather than
             # enshrining one build's exact bit pattern as the only correct one.
             np.testing.assert_allclose(np.fromfile(expected_path,sep=","),actual['u_t2'][:],rtol=1e-6,atol=1e-7)
+
+    def test_stab5_low_order_outflow_is_m_matrix(self, opts, monkeypatch):
+        """STABILIZATION_TYPE=5 (ImplicitEV) low order on the Zalesak disk (problem 1, with inflow and outflow
+        walls): no positive off-diagonal in the Jacobian, so the low-order solution obeys the discrete maximum
+        principle. On an upwinded outflow face the solute flux must be c_i times the fluid flux; the trace flux
+        n.f(c_h) coupled c_i to the other face nodes with a positive off-diagonal (Zalesak refinement 4 with FCT
+        then reached c^L = -2.9e-9 at the outflow wall node (0, 0.625))."""
+        # thelper_tadr builds its mesh from the context when imported, so the problem is set before the reload
+        from proteus import Context
+        monkeypatch.setattr(Context, 'contextOptionsString',
+                            'problem=1 nd=2 T=0.01 nDTout=1 refinement=1 STABILIZATION_TYPE=5 FCT=False cfl=0.5')
+        try:
+            reload(thelper_tadr)
+            reload(default_n)
+            p = reload(thelper_tadr_p)
+            n = reload(thelper_tadr_n)
+            self.so.tnList = n.tnList
+            self.so.name = p.name + "_stab5_mmatrix"
+            ns = proteus.NumericalSolution.NS_base(self.so, [p], [n], self.sList, opts)
+            ns.calculateSolution('tadr')
+            model = ns.modelList[0].levelModelList[-1]
+            jacobian = model.initializeJacobian()
+            model.getResidual(model.u[0].dof, np.zeros_like(model.u[0].dof))
+            model.getJacobian(jacobian)
+        finally:
+            # setup_method takes the next test's tnList from thelper_tadr_n as already imported, so put the
+            # default (problem 0) modules back
+            monkeypatch.undo()
+            reload(thelper_tadr)
+            reload(default_n)
+            reload(thelper_tadr_p)
+            reload(thelper_tadr_n)
+        rowptr, colind, nzval = jacobian.getCSRrepresentation()
+        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
+        off = colind != rows
+        diagonal = np.zeros(len(rowptr) - 1)
+        diagonal[rows[~off]] = nzval[~off]
+        # the low-order operator's off-diagonals are -d_ij + c_ij.v <= 0 by construction; 1e-12 of the row's
+        # diagonal only allows for round-off
+        assert (nzval[off] <= 1.0e-12 * np.abs(diagonal[rows[off]])).all()
