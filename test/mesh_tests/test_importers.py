@@ -366,3 +366,12 @@ def test_a_tetgen_grid_written_by_one_run_is_read_by_the_next(tmp_path, monkeypa
     read = _by_position(_box_mesh(3, 5, True, genMesh=False), 3)
     np.testing.assert_array_equal(read, written)
     assert read.min(axis=0).tolist() == X0
+
+
+@pytest.mark.parametrize("nd", [2, 3])
+def test_a_regular_grid_from_files_keeps_every_digit(tmp_path, monkeypatch, nd):
+    """Spacing 1/3: the triangle and tetgen writers (meshio.cpp) wrote six significant digits,
+    so the -F nodes were 3.3e-7 from the in-memory box's."""
+    monkeypatch.chdir(tmp_path)
+    np.testing.assert_array_equal(_by_position(_box_mesh(nd, 4, True), nd),
+                                  _by_position(_box_mesh(nd, 4, False), nd))
