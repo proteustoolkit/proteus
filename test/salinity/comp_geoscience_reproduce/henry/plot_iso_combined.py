@@ -89,7 +89,7 @@ def main():
     ax.set_xlim(x.min(), x.max())
     ax.set_ylim(y.min(), y.max())
     ax.set_xlabel("x"); ax.set_ylabel("y")
-    ax.set_title(f"Henry isochlors: analytical (solid), {args.fct_label} step {fct_step} (dashed)")
+    ax.set_title(f"Henry isochlors at $t=T$: analytical (solid), {args.fct_label} (dashed)")
     ax.grid(alpha=0.3)
 
     fig.savefig(args.out, dpi=150, bbox_inches="tight")

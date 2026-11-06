@@ -113,7 +113,9 @@ elementQuadrature = SimplexLobattoQuadrature(nd,1)
 #
 elementBoundaryQuadrature = SimplexLobattoQuadrature(nd-1,1)
 
-nnx=21
+import os
+# BIOSWALE_NNX: nodes along x of the size field (default 21, the paper mesh)
+nnx=int(os.environ.get("BIOSWALE_NNX","21"))
 nny=21
 nLevels = 1
 triangleFlag = 0

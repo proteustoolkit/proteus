@@ -17,8 +17,10 @@ boundaryTags = domain.boundaryTags
 
 # Keep the mesh anisotropy moderate while giving the vertical direction
 # enough resolution to capture unstable fingers below the infiltration strip.
-domain.MeshOptions.nnx = 601 #601
-domain.MeshOptions.nny = 151 #151
+import os
+# ELDER_NNX / ELDER_NNY: mesh for the two-mesh comparison (default: the paper mesh)
+domain.MeshOptions.nnx = int(os.environ.get("ELDER_NNX", "601"))
+domain.MeshOptions.nny = int(os.environ.get("ELDER_NNY", "151"))
 domain.MeshOptions.triangleFlag = 1 #0
 #triangleOptions = "q30Dena0.002778"
 #triangleOptions = "q30Dena0.001246"

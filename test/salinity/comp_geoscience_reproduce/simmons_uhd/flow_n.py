@@ -54,7 +54,10 @@ nonlinearSmoother = NLJacobi
 fullNewtonFlag = True
 
 tolFac = 0.0
-nl_atol_res = 1.0e-7
+# 1e-7 left ~3e-5 of the fluid mass unbalanced over the run (vdft_metrics.py
+# flow balance, 2026-11-05): the accepted Newton residual accumulates over
+# ~250k nodes and ~2000 steps at ~1.9 iterations per step
+nl_atol_res = 1.0e-8
 maxNonlinearIts = 30
 maxLineSearches = 10
 

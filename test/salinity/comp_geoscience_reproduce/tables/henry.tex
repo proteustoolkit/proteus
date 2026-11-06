@@ -1,0 +1,12 @@
+\begin{table}[h]
+\centering
+\caption{Henry problem: conservation, bounds and error against the semi-analytical solution}
+\begin{tabular}{lrrrrrrrrr}
+\hline
+run & steps & solute MB error & fluid mass drift & interior fluid residual & u min & u max & in [0, 1] & L2 error & Linf error \\
+\hline
+FCT & 3094 & 4.9e-18 & 0.0e+00 & 4.7e-18 & 0.0e+00 & 0.998243 & yes & 2.761e-02 & 3.929e-01 \\
+low order & 2921 & 2.7e-18 & 0.0e+00 & -- & 0.0e+00 & 0.998118 & yes & 2.785e-02 & 4.661e-01 \\
+\hline
+\end{tabular}
+\end{table}

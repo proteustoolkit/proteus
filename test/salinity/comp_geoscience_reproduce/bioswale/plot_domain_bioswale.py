@@ -79,7 +79,7 @@ ax.add_patch(
     )
 )
 
-# Internal drain / seepage face
+# Internal drain (no-flux wall; Raingarden_p.py useSeepageFace = False)
 drain_patch = Circle(
     drain_center,
     drain_radius,
@@ -183,7 +183,7 @@ for xpos in [1.2, 1.5, 1.8]:
 ax.text(
     1.50,
     5.56,
-    "Small ponded water on top DBC",
+    "Ponding, $\\psi = 0.5$ m",
     color="#003fb3",
     fontsize=12,
     ha="center",
@@ -212,7 +212,7 @@ ax.text(
 ax.text(
     0.44,
     3.88,
-    "Region 3\nHydrostatic flow IC\n$\\psi=-z$, $c=0$",
+    "Region 3\nuniform IC\n$\\psi=-3$ m, $c=0$",
     fontsize=8.8,
     ha="left",
     va="top",
@@ -250,7 +250,7 @@ ax.text(
 ax.text(
     0.42,
     0.60,
-    "Region 1\nHydrostatic flow IC\n$\\psi=-z$, $c=0$",
+    "Region 1\nuniform IC\n$\\psi=-3$ m, $c=0$",
     fontsize=8.8,
     ha="left",
     va="top",
@@ -259,7 +259,7 @@ ax.text(
 ax.text(
     3.56,
     1.72,
-    "Internal drain / seepage face\nnatural free drainage",
+    "Internal drain\nno-flux wall",
     fontsize=8.8,
     color="#23323a",
     ha="left",
@@ -321,11 +321,6 @@ ax.set_ylabel("$z$ (m)", fontsize=11)
 ax.set_xticks(np.arange(0.0, 3.1, 0.5))
 ax.set_yticks(np.arange(0.0, 5.1, 1.0))
 
-ax.set_title(
-    "Bioswale Domain — Ponded Saline Inflow with Internal Drain",
-    fontsize=13,
-    pad=10,
-)
 
 for spine in ax.spines.values():
     spine.set_visible(False)

@@ -4,8 +4,9 @@
 # Zalesak's disk (thelper_tadr.py, problem=1): rigid rotation v = 2*pi*(0.5-y, x-0.5)
 # on the unit square, so T = 1 is one revolution.  Mesh refinement 4 gives
 # nnx = nny = 2**4*10+1 = 161 nodes (160 x 160 cells, 2 triangles each).
-# STABILIZATION_TYPE 2 (EntropyViscosity, explicit SSP2 at cfl 0.5) by default, run twice:
-#   <run dir>/low  FCT=False  low-order solution uLow (TADR.FCTStep)
+# STABILIZATION_TYPE 5 (ImplicitEV, backward Euler + Newton at cfl 0.5) by default,
+# run twice:
+#   <run dir>/low  FCT=False  low-order solution uLow (the Newton solution)
 #   <run dir>/fct  FCT=True   Zalesak-limited high-order solution
 # then plot_disc.py writes <run dir>/disc_r.png.  Serial by default (direct LU);
 # ZALESAK_NP=<n> runs each variant on mpiexec -n <n> with PETSc SuperLU_dist.
@@ -21,10 +22,12 @@ conda activate tadr-check
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
 
-# ZALESAK_STAB=5 runs ImplicitEV instead: backward Euler + Newton (thelper_tadr_n.py),
-# where the Newton solution is the low-order uLow and FCT=True limits on top of it
-# in calculateAuxiliaryQuantitiesAfterStep.  ZALESAK_REF sets the refinement (4).
-OPTS="problem=1 nd=2 T=1.0 nDTout=1 refinement=${ZALESAK_REF:-4} STABILIZATION_TYPE=${ZALESAK_STAB:-2} cfl=0.5 SSPOrder=2"
+# FCT=True limits the Newton solution in calculateAuxiliaryQuantitiesAfterStep.
+# ZALESAK_STAB=2 runs the explicit EntropyViscosity scheme (SSP2) instead; with
+# this deck's consistent mass matrix its FCT=False run is the UNLIMITED high-order
+# solution, not low order (ExplicitConsistentMassMatrixForVOF skips FCTStep).
+# ZALESAK_REF sets the refinement (4).
+OPTS="problem=1 nd=2 T=1.0 nDTout=1 refinement=${ZALESAK_REF:-4} STABILIZATION_TYPE=${ZALESAK_STAB:-5} cfl=0.5 SSPOrder=2"
 # the two variants are independent serial runs, so they run concurrently
 for v in low fct; do
   (

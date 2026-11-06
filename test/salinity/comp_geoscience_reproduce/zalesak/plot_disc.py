@@ -47,14 +47,15 @@ for name, label in (("low", "Low order"), ("fct", "FCT")):
     m = lumped_mass(nodes, el)
     print("%-9s u_min %+.3e  u_max %.6f  L1 error %.4e"
           % (label, u.min(), u.max(), np.sum(m * np.abs(u - ue))))
-    fields[name] = u
-tri = mtri.Triangulation(nodes[:, 0], nodes[:, 1], el)
+    # each run keeps its own mesh: under MPI the archive numbers nodes by that run's
+    # partition, so one run's u does not line up with the other's nodes
+    fields[name] = (mtri.Triangulation(nodes[:, 0], nodes[:, 1], el), el, u)
 panels = [("(a) FCT", fields["fct"]), ("(b) Low order", fields["low"])]
 
 norm = matplotlib.colors.Normalize(0.0, 1.0)
 plt.rcParams["font.size"] = 18
 fig = plt.figure(figsize=(16, 7))
-for i, (label, u) in enumerate(panels):
+for i, (label, (tri, el, u)) in enumerate(panels):
     # each panel a little wider than half the figure, so the zoomed surface is
     # not clipped; the 3D axes background is transparent where they overlap
     ax = fig.add_axes([-0.03 + 0.45 * i, -0.08, 0.5, 1.16], projection="3d")

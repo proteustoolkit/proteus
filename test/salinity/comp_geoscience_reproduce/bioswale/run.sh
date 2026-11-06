@@ -17,7 +17,7 @@
 set -u
 DECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$(mkdir -p "${1:-$DECK/run}" && cd "${1:-$DECK/run}" && pwd)"
-cp "$DECK"/{domain_rg,Raingarden_p,Raingarden_n,tranport_p,tranport_n,ls_CCS_so,plot_u_three_times,plot_domain_bioswale}.py "$DECK/../vdft_metrics.py" "$RUN"/
+cp "$DECK"/{domain_rg,Raingarden_p,Raingarden_n,tranport_p,tranport_n,ls_CCS_so,plot_u_three_times,plot_u_velocity,plot_domain_bioswale}.py "$DECK/../vdft_metrics.py" "$RUN"/
 cd "$RUN"
 
 source ~/miniforge3/etc/profile.d/conda.sh
@@ -41,6 +41,7 @@ export OMP_NUM_THREADS=1
   python -c "import proteus,os;print('proteus:', os.path.dirname(proteus.__file__))"
   echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)"
   echo "np: ${BIOSWALE_NP:-2}"
+  echo "BIOSWALE_DENSITY: ${BIOSWALE_DENSITY:-0}"
 } > provenance.txt
 # uncommitted source edits at run time; the installed build may still differ
 git -C "$(git -C "$DECK" rev-parse --show-toplevel)" diff HEAD -- proteus > source.diff
@@ -50,4 +51,5 @@ mpiexec -np "${BIOSWALE_NP:-2}" parun ls_CCS_so.py -l3 \
 echo "exit $?" >> run.out
 
 python plot_u_three_times.py && mv u_three_times.png u_three_times_bioswale.png
+python plot_u_velocity.py         # u_colour_velocity_bioswale.png: u, isochlors, Darcy streamlines
 python plot_domain_bioswale.py    # bioswale_contamination_domain.png

@@ -187,7 +187,7 @@ ax.text(82, 24.0, "Saturated zone\n(Groundwater)", fontsize=10,
 ax.text(136, water_table_z + 1.3, "Initial water table\n$z=45$ m",
         color="#0057d9", fontsize=9, ha="center", va="bottom")
 
-ax.text(165.5, 28, "Outflow boundary\n(free drainage)\n$\\mathbf{q}\\cdot\\mathbf{n}=0$\n$c$: natural outflow",
+ax.text(165.5, 28, "No-flow boundary\n$\\mathbf{q}\\cdot\\mathbf{n}=0$",
         fontsize=8.5, ha="center", va="center", color="#003fb3")
 
 ax.text(80, -4.4, "Impermeable base / no-flow bottom boundary",
@@ -210,13 +210,8 @@ ax.set_xlabel("$x$ (m)", fontsize=11)
 ax.set_ylabel("$z$ (m)", fontsize=11)
 
 ax.set_xticks(np.arange(0, 161, 20))
-ax.set_yticks([0, 15, 30, 45, 60])
+ax.set_yticks([0, 15, 30, 45, 57])
 
-ax.set_title(
-    "Levee Domain — River-Side Water, No Country-Side Infiltration",
-    fontsize=13,
-    pad=12,
-)
 
 # Remove default spines because axis arrows are drawn manually
 for spine in ax.spines.values():

@@ -99,7 +99,12 @@ for i in range(nMediaTypes+1):
 
 galerkin = False
 #no-flux drain, as in test/richards/WRR_input_files/bio2d
-useSeepageFace = False
+import os
+# BIOSWALE_SEEPAGE=1: the drain wall is a seepage face (default: impermeable)
+useSeepageFace = os.environ.get("BIOSWALE_SEEPAGE", "0") == "1"
+# BIOSWALE_DENSITY=1: the flow model takes rho(c) from transport, model 1 of
+# pnList, as in levee_density/density (default: uncoupled, the paper run)
+densityModel = 1 if os.environ.get("BIOSWALE_DENSITY", "0") == "1" else None
 
 def getSeepageFace(flag):
     if useSeepageFace:
@@ -122,7 +127,8 @@ coefficients = Richards.Coefficients(nd,
                                      thetaSRtypes,
                                      gravity=dimensionless_gravity,
                                      density=dimensionless_density,
-                                     beta=0.0001,
+                                     beta=0.0,
+                                     density_model=densityModel,
                                      diagonal_conductivity=True,
                                      # the paper figure's deck used 0 and FCT off;
                                      # TADR STAB 5 takes its fluid mass and edge

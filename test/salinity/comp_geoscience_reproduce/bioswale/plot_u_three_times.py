@@ -114,19 +114,12 @@ def main() -> None:
             ax.set_ylim(*z_limits)
             ax.set_aspect("equal")
             ax.set_xlabel("x [m]")
-            t_str = f"t approx {xmf_times[step]:.4f} d, " if step in xmf_times else ""
-            ax.set_title(
-                f"time, {t_str}"
-                #f"u shown on [{U_MIN:.1f}, {U_MAX:.1f}]"
-            )
+            if step in xmf_times:
+                ax.set_title(f"t = {xmf_times[step]:.2f} d")
 
     axes[0].set_ylabel("z [m]")
     colorbar = fig.colorbar(mappable, ax=axes, fraction=0.04, pad=0.02)
     colorbar.set_label("u (normalized concentration)")
-    fig.suptitle(
-        "Bioswale_contamination",
-        fontsize=17,
-    )
     fig.savefig(OUT_PATH, dpi=300, bbox_inches="tight")
 
     print(f"wrote {OUT_PATH}")

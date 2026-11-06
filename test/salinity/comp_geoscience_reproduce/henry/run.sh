@@ -13,6 +13,7 @@
 # The 2026-05 figures were made with TADR STABILIZATION_TYPE 2 (explicit); these
 # decks and this script replace them (2026-11-04).  HENRY_NP sets the rank count
 # (default 4, as in the manuscript); PROTEUS_ENV and PROTEUS_SRC pick the build.
+# HENRY_VARIANTS picks the runs ("fct lo"; the plots of a variant not run fail harmlessly).
 # Detach, which otherwise dies with the session:
 #   setsid nohup ./run.sh > run.log 2>&1 < /dev/null & disown
 set -u
@@ -31,7 +32,7 @@ if [ -n "${PROTEUS_SRC:-}" ]; then export PYTHONPATH="$PROTEUS_SRC"; else unset 
 # realized edge exchanges.  Without it STABILIZATION_TYPE 5 copies E_ij as the edge flux.
 export RICHARDS_EDGE_VELOCITY=1
 
-for v in fct lo; do
+for v in ${HENRY_VARIANTS:-fct lo}; do
   SRC=$DECK; [ $v = lo ] && SRC=$DECK/low_order
   mkdir -p "$RUN/$v"
   cp "$SRC"/{domain_henry,flow_n,flow_p,tranport_n,tranport_p,ls_CCS_so}.py "$DECK/../vdft_metrics.py" "$RUN/$v"/
@@ -54,9 +55,8 @@ done
 
 # Semi-analytical steady solution (Zidane et al. 2012, WRR 48 W06533, App. A):
 # Henry case a = 0.263, b = 0.1, xi = 2, Fourier truncation MA/NA/MB/NB = 7/4/4/19
-# (the script's defaults), evaluated at the run's nodes.  These are the settings
-# stored in ./henry_reference.npz, the reference the figures in this folder used.
-# Both runs share one mesh, so one reference serves both.
+# (the script's defaults), evaluated at the run's nodes.  Both runs share one
+# mesh, so one reference serves both.
 cd "$DECK"
 python henry_semianalytical.py --h5 "$RUN/fct/ls_CCS_so.h5" --nodes-dataset nodesSpatial_Domain0 \
   --case henry --out "$RUN/henry_reference.npz"

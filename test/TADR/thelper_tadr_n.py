@@ -20,6 +20,15 @@ elif ct.STABILIZATION_TYPE==1: #TaylorGalerkin
     fullNewtonFlag = False
     updateJacobian = False
     timeIntegration = BackwardEuler_cfl
+elif ct.STABILIZATION_TYPE==5: #ImplicitEV -- backward Euler, NOT CFL limited
+    # STAB=5 is implicit: it must use Newton + BackwardEuler, not the explicit
+    # SSP/RKEV path the other edge-based types take.  Without this branch it
+    # falls into the `else` below and is silently run by an explicit solver,
+    # which is why it has never had test coverage.
+    levelNonlinearSolver = Newton
+    fullNewtonFlag = True
+    updateJacobian = True
+    timeIntegration = BackwardEuler_cfl
 else:
     fullNewtonFlag = False
     updateJacobian = False
