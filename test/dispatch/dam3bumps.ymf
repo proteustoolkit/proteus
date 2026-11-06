@@ -1,0 +1,39 @@
+# test/SWFlow/dam3Bumps.py as a spec: a dam break over three conical bumps,
+# 75 m × 30 m, solved by the convex-limited scheme of proteus_numerics.ymf
+# (SW2DCV), on the deck's unstructured mesh path (structured=False) at h = 2,
+# for half a second (5 outputs of 0.1 s). test_dispatch_run.py runs it from
+# the spec through ymf_run and from the deck through parun and compares the
+# solutions bitwise.
+#
+# The bed is written as the deck computes it: 47.5 as 95/2, because sympy
+# rewrites sqrt((x − 47.5)² + …) by factoring the decimal out of the square,
+# which is the same number but not the same arithmetic.
+extends: proteus_numerics.ymf
+
+model:
+  name: "Dam break over three bumps, 75 m × 30 m (dam3Bumps)"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 75] × [0, 30],  t ∈ (0, 0.5]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_sets:
+      - {region: all, set: wall}
+    initial_conditions:
+      - {field: h, type: function, formula: "max(1.875 heaviside(16 − x) − Z, 0)", units: m}
+      - {field: q, type: constant, value: 0.0}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.02}
+      θ: {value: 1.0}
+      Z: {formula: "max(0, 1 − sqrt((x − 30)² + (y − 6)²)/8, 1 − sqrt((x − 30)² + (y − 24)²)/8, 3 − 3 sqrt((x − 95/2)² + (y − 15)²)/10)"}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: convex_limited
+      mesh: {h: 2.0}
+      step_control: {type: min_cfl, cfl: 0.25}
+      discretization: {outputs: 5}
