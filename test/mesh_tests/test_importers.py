@@ -384,6 +384,22 @@ def test_a_gmsh_3d_domain_without_gmsh2tetgen_says_so(tmp_path, monkeypatch):
     assert os.path.exists("cube3d.mesh")                # gmsh ran
 
 
+@pytest.mark.parametrize("nd, name, he", GMSH_CASES)
+def test_a_gmsh_geo_block_is_meshed_through_the_use_gmsh_path(tmp_path, monkeypatch, nd, name, he):
+    """ymf kind: file, format: gmsh_geo -> from_ymf -> _generateMesh: the stored .msh beside the
+    .geo is read (genMesh False), the same mesh as the hand-built use_gmsh domain's."""
+    from proteus.DomainYMF import from_ymf
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(os.path.join(MESHES, name + ".msh"), name + ".msh")
+    domain = from_ymf({"kind": "file", "format": "gmsh_geo", "path": name + ".geo", "dimension": nd})
+    options = MeshTools.getMeshOptions(domain)
+    options.genMesh = False
+    mesh = MeshTools._generateMesh(domain, options).meshList[0]
+    reference = _gmsh_mesh(tmp_path, nd, name)
+    np.testing.assert_array_equal(mesh.nodeArray, reference.nodeArray)
+    np.testing.assert_array_equal(mesh.elementNodesArray, reference.elementNodesArray)
+
+
 # --------------------------------------------------------------------------
 # -F regular grids
 # --------------------------------------------------------------------------

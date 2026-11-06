@@ -112,26 +112,41 @@ def test_a_bathymetry_domain_refuses_rather_than_dropping_the_bathymetry():
             segments=[[0, 1], [1, 2], [2, 0]]))
 
 
-def test_a_gmsh_geometry_round_trips_without_its_meshing_policy():
-    """he is meshing policy, so it stays behind and the .geo link survives."""
-    block = to_ymf(Domain.GMSH_3D_Domain(geofile="flume", he=0.1))
+@pytest.mark.parametrize("dimension, cls", [(3, Domain.PiecewiseLinearComplexDomain),
+                                            (2, Domain.PlanarStraightLineGraphDomain)])
+def test_a_gmsh_geometry_is_a_use_gmsh_domain_that_round_trips(dimension, cls):
+    """A gmsh_geo block builds the domain whose .geo file is the geometry and which gmsh meshes (C7.1
+    step J); he is meshing policy, so it stays behind."""
+    from proteus import MeshTools
+    block = {"kind": "file", "format": "gmsh_geo", "path": "flume.geo", "dimension": dimension,
+             "name": "flume", "units": "m"}
+    domain = from_ymf(block)
+    assert type(domain) is cls
+    assert domain.geofile == "flume" and domain.vertices == []
+    assert MeshTools.getMeshOptions(domain).use_gmsh is True
+    assert MeshTools.meshFiles(domain, MeshTools.getMeshOptions(domain))["generator"] == "gmsh"
+    assert to_ymf(domain) == block
+
+
+def test_a_gmsh_3d_domain_is_deprecated_and_writes_the_same_block():
+    with pytest.warns(DeprecationWarning, match="GMSH_3D_Domain is deprecated"):
+        legacy = Domain.GMSH_3D_Domain(geofile="flume", he=0.1)
+    block = to_ymf(legacy)
     assert block["kind"] == "file" and block["format"] == "gmsh_geo"
     assert block["path"] == "flume.geo"
     assert "he" not in block
-
-    rebuilt = from_ymf(block)
-    assert isinstance(rebuilt, Domain.GMSH_3D_Domain)
-    assert rebuilt.geofile == "flume.geo"
-    assert rebuilt.polyfile == "flume"
-    assert to_ymf(rebuilt) == block
+    assert from_ymf(block).geofile == "flume"
 
 
 def test_a_rescaled_gmsh_geometry_refuses_rather_than_dropping_the_mapping():
     """length_scale and permute_dims map the file into the domain."""
+    with pytest.warns(DeprecationWarning):
+        rescaled = Domain.GMSH_3D_Domain(geofile="flume", length_scale=0.001)
+        permuted = Domain.GMSH_3D_Domain(geofile="flume", permute_dims=[0, 2, 1])
     with pytest.raises(DomainTranslationError, match="permutes its axes"):
-        to_ymf(Domain.GMSH_3D_Domain(geofile="flume", length_scale=0.001))
+        to_ymf(rescaled)
     with pytest.raises(DomainTranslationError, match="permutes its axes"):
-        to_ymf(Domain.GMSH_3D_Domain(geofile="flume", permute_dims=[0, 2, 1]))
+        to_ymf(permuted)
 
 
 def test_an_unknown_file_format_says_which_it_knows():
