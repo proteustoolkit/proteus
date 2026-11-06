@@ -264,6 +264,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     """
     from proteus.ctransportCoefficients import conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2
     from proteus.ctransportCoefficients import conservativeHeadRichardsMualemVanGenuchten_sd_het
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2 = staticmethod(conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2)
+    conservativeHeadRichardsMualemVanGenuchten_sd_het = staticmethod(conservativeHeadRichardsMualemVanGenuchten_sd_het)
     def __init__(self,
                  nd,
                  Ksw_types,
