@@ -182,7 +182,8 @@ writeTriangleMeshNodesAndElements(const char * filebase,
   int hasNodeMarkers(0);
   if (nodeMaterialTypes)
     hasNodeMarkers = 1;
-  //write vertices
+  //write vertices, with every digit a double has (the stream's default, 6, moved nodes by up to 5e-7)
+  vertexFile << std::setprecision(17);
   vertexFile << nNodes <<" 2 0 " << hasNodeMarkers <<" #number of vertices, dim nAttributes has Markers"<<std::endl;
   vertexFile <<"#vertex id x y [propid], base= "<<indexBase<<std::endl;
   for (int iv = 0; iv < nNodes; iv++)
@@ -541,6 +542,7 @@ writeTetgenMeshNodesAndElements(const char * filebase,
   int hasNodeMarkers(0);
   if (nodeMaterialTypes)
     hasNodeMarkers = 1;
+  vertexFile << std::setprecision(17);   //every digit a double has (see the triangle writer)
   vertexFile << nNodes <<" 3 0 " << hasNodeMarkers <<" #number of vertices, dim nAttributes has Markers"<<std::endl;
   vertexFile <<"#vertex id x y z [propid], base= "<<indexBase<<std::endl;
   for (int iv = 0; iv < nNodes; iv++)

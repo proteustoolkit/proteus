@@ -694,6 +694,13 @@ class GMSH_3D_Domain(D_base):
                  units="m",
                  length_scale=1.0,
                  permute_dims=[0,1,2]):
+        import warnings
+        warnings.warn(
+            "GMSH_3D_Domain is deprecated since 2.0 and will be removed with the in-tree importers (C7.1 "
+            "steps J and G, decided by cekees 2026-11-06): it needs the gmsh2tetgen program, which no "
+            "environment provides. Use a PiecewiseLinearComplexDomain with geofile set and "
+            "MeshTools.getMeshOptions(domain).use_gmsh = True (what a ymf kind: file, format: gmsh_geo "
+            "block builds), or a ymf mesh.", DeprecationWarning, stacklevel=2)
         D_base.__init__(self, 3, name, units)
         self.geofile=geofile+".geo"
         self.polyfile=geofile

@@ -62,6 +62,11 @@ def _regions(domain):
     return out
 
 
+def _uses_gmsh(domain):
+    from proteus import MeshTools
+    return bool(MeshTools.getMeshOptions(domain).use_gmsh)
+
+
 def _piecewise_linear(domain, dimension):
     block = dict(_shared(domain), kind="piecewise_linear", dimension=dimension)
     block["vertices"] = _plain(domain.vertices)
@@ -152,6 +157,13 @@ def to_ymf(domain):
         return dict(_shared(domain), kind="file", dimension=domain.nd,
                     format=_FILE_FORMATS[kind], path=str(domain.meshfile))
 
+    # a PSLG/PLC that gmsh meshes from its .geo file and holds no geometry itself is that file
+    if (isinstance(domain, (Domain.PiecewiseLinearComplexDomain, Domain.PlanarStraightLineGraphDomain))
+            and getattr(domain, "geofile", None) and not domain.vertices
+            and _uses_gmsh(domain)):
+        return dict(_shared(domain), kind="file", dimension=domain.nd,
+                    format="gmsh_geo", path=str(domain.geofile) + ".geo")
+
     # ExtrudedTriangulation is a PLC once built, so it writes as one; how it
     # was constructed is not part of the region.
     if isinstance(domain, Domain.PiecewiseLinearComplexDomain):
@@ -205,7 +217,20 @@ def from_ymf(block):
             # the constructor appends the suffix it was given
             path = block["path"]
             base = path[:-4] if path.endswith(".geo") else path
-            return Domain.GMSH_3D_Domain(geofile=base, name=name, units=units)
+            # a PSLG (2D) or PLC (3D) that holds no geometry of its own: its .geo file is the geometry and
+            # gmsh meshes it (C7.1 step J; GMSH_3D_Domain, which needed gmsh2tetgen, is deprecated)
+            from proteus import MeshTools
+            nd = int(block.get("dimension", 3))
+            if nd not in (2, 3):
+                raise DomainTranslationError(
+                    "a gmsh_geo block of dimension %r: gmsh geometries are 2D or 3D" % (nd,))
+            domain = (Domain.PlanarStraightLineGraphDomain if nd == 2
+                      else Domain.PiecewiseLinearComplexDomain)(name=name, units=units)
+            domain.geofile = base
+            MeshTools.getMeshOptions(domain).use_gmsh = True
+            if block.get("boundary_tags"):
+                domain.boundaryTags = dict(block["boundary_tags"])
+            return domain
         if fmt not in _FILE_CLASSES:
             raise DomainTranslationError(
                 "no proteus Domain reads format %r; known: %s"
