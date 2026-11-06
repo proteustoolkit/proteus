@@ -350,6 +350,38 @@ def test_gmsh_meshes_a_domain_within_its_size(tmp_path, monkeypatch, nd, name, h
     assert [GMSH_SIDES[nd][s[0]] for s in sides] == mesh.elementBoundaryMaterialTypes[exterior].tolist()
 
 
+def test_a_gmsh_3d_domain_reads_its_stored_tetgen_files(tmp_path, monkeypatch):
+    """GMSH_3D_Domain with genMesh False and its polyfile's .ele/.node/.face present: no meshing."""
+    from proteus import Domain
+    monkeypatch.chdir(tmp_path)
+    source = MeshTools.TetrahedralMesh()
+    source.generateTetrahedralMeshFromRectangularGrid(3, 3, 3, 1.0, 1.0, 1.0)
+    source.writeTetgenFiles("flume", 1)
+    domain = Domain.GMSH_3D_Domain(geofile="flume", name="flume")
+    MeshTools.getMeshOptions(domain).genMesh = False
+    mesh = MeshTools._generateMesh(domain, MeshTools.getMeshOptions(domain)).meshList[0]
+    np.testing.assert_array_equal(mesh.nodeArray, source.nodeArray)
+    assert mesh.nElements_global == source.nElements_global
+
+
+def test_a_gmsh_3d_domain_without_gmsh2tetgen_says_so(tmp_path, monkeypatch):
+    """GMSH_3D_Domain converts gmsh's medit file with gmsh2tetgen, which no proteus environment
+    installs. Each step ignored its exit status, so the error was AssertionError: no mesh.ele
+    (after mv failed on four files); and the old sequence removed mesh.ele before tetgen read it."""
+    if shutil.which("gmsh") is None or shutil.which("gmsh2tetgen") is not None:
+        pytest.skip("needs gmsh, and no gmsh2tetgen")
+    from proteus import Domain
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(os.path.join(MESHES, "gmsh_cube.geo"), "gmsh_cube.geo")
+    domain = Domain.GMSH_3D_Domain(geofile="gmsh_cube", name="cube3d")
+    options = MeshTools.getMeshOptions(domain)
+    options.genMesh = True
+    options.he = 0.5
+    with pytest.raises(RuntimeError, match="exit status 127: gmsh2tetgen"):
+        MeshTools._generateMesh(domain, options)
+    assert os.path.exists("cube3d.mesh")                # gmsh ran
+
+
 # --------------------------------------------------------------------------
 # -F regular grids
 # --------------------------------------------------------------------------

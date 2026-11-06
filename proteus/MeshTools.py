@@ -9228,6 +9228,25 @@ def writeMeshFiles(domain, meshOptions):
         except:
             logEvent("Warning: couldn't move {0:s}.1.edge".format(fileprefix))
             pass
+    elif isinstance(domain, Domain.GMSH_3D_Domain):
+        # gmsh to a medit .mesh, gmsh2tetgen to tetgen files rescaled and permuted, tetgen for
+        # the faces and edges; each step's exit status is checked (_runMesher), so a missing
+        # gmsh2tetgen is that error, not a missing mesh.ele three steps later
+        logEvent("Running gmsh to generate 3D mesh for "+name, level=1)
+        logEvent(_runMesher("gmsh {0:s} -v 10 -3 -o {1:s} -format mesh -clmax {2:f}".format(
+            domain.geofile, domain.name+".mesh", 0.5*domainMeshOptions.he)))
+        logEvent("Done running gmsh; converting to tetgen")
+        logEvent(_runMesher("gmsh2tetgen {0} {1:f} {2:d} {3:d} {4:d}".format(
+            domain.name+".mesh", domain.length_scale,
+            domain.permute_dims[0]+1, domain.permute_dims[1]+1, domain.permute_dims[2]+1)))  # base 1
+        run("rm -f mesh.1.ele mesh.1.node mesh.1.face mesh.1.neigh mesh.1.edge", shell=True)
+        logEvent(_runMesher("tetgen -Vfeen mesh.ele"))
+        for ext in ("ele", "node", "face", "neigh", "edge"):
+            if os.path.exists("mesh.1." + ext):
+                os.replace("mesh.1." + ext, "{0:s}.{1:s}".format(domain.polyfile, ext))
+        for ext in ("ele", "node"):
+            if not os.path.exists("{0:s}.{1:s}".format(domain.polyfile, ext)):
+                raise RuntimeError("tetgen wrote no mesh.1.%s from gmsh2tetgen's mesh" % (ext,))
     else:
         raise TypeError("writeMeshFiles: no mesh generator for a " + type(domain).__name__)
 
@@ -9512,60 +9531,11 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
     elif isinstance(domain, Domain.GMSH_3D_Domain):
-        from subprocess import call
-        import sys
-        if comm.rank() == 0 and (meshOptions.genMesh or not (os.path.exists(domain.polyfile+".ele") and
-                                                   os.path.exists(domain.polyfile+".node") and
-                                                   os.path.exists(domain.polyfile+".face"))):
-            logEvent("Running gmsh to generate 3D mesh for "+name, level=1)
-            gmsh_cmd = "time gmsh {0:s} -v 10 -3 -o {1:s}  -format mesh  -clmax {2:f}".format(domain.geofile, domain.name+".mesh", 0.5*domainMeshOptions.he)
-
-            logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
-
-            run(gmsh_cmd, shell=True)
-
-            logEvent("Done running gmsh; converting to tetgen")
-
-            gmsh2tetgen_cmd = "gmsh2tetgen {0} {1:f} {2:d} {3:d} {4:d}".format(
-                domain.name+".mesh",
-                domain.length_scale,
-                domain.permute_dims[0]+1,  # switch to base 1 index...
-                domain.permute_dims[1]+1,
-                domain.permute_dims[2]+1)
-
-            run(gmsh2tetgen_cmd, shell=True)
-            fileprefix = "mesh"
-            run("rm -f {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
-            run("rm -f {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)
-            run("rm -f {0:s}.1.face {0:s}.face".format(fileprefix), shell=True)
-            run("rm -f {0:s}.1.neigh {0:s}.neigh".format(fileprefix), shell=True)
-            run("rm -f {0:s}.1.edge {0:s}.edge".format(fileprefix), shell=True)
-            logEvent(run("tetgen -Vfeen %s.ele" % ("mesh",), shell=True,capture_output=True,text=True).stdout)
-            run("mv %s.1.ele %s.ele" % ("mesh", "mesh"), shell=True)
-            run("mv %s.1.node %s.node" % ("mesh", "mesh"), shell=True)
-            run("mv %s.1.face %s.face" % ("mesh", "mesh"), shell=True)
-            run("mv %s.1.neigh %s.neigh" % ("mesh", "mesh"), shell=True)
-            run("mv %s.1.edge %s.edge" % ("mesh", "mesh"), shell=True)
-            elefile = "mesh.ele"
-            nodefile = "mesh.node"
-            facefile = "mesh.face"
-            edgefile = "mesh.edge"
-            assert os.path.exists(elefile), "no mesh.ele"
-            tmp = "%s.ele" % domain.polyfile
-            os.rename(elefile, tmp)
-            assert os.path.exists(tmp), "no .ele"
-            assert os.path.exists(nodefile), "no mesh.node"
-            tmp = "%s.node" % domain.polyfile
-            os.rename(nodefile, tmp)
-            assert os.path.exists(tmp), "no .node"
-            if os.path.exists(facefile):
-                tmp = "%s.face" % domain.polyfile
-                os.rename(facefile, tmp)
-                assert os.path.exists(tmp), "no .face"
-            if os.path.exists(edgefile):
-                tmp = "%s.edge" % domain.polyfile
-                os.rename(edgefile, tmp)
-                assert os.path.exists(tmp), "no .edge"
+        _writeMeshFilesOnMaster(comm, domain, meshOptions,
+                                comm.rank() == 0 and (meshOptions.genMesh or not (
+                                    os.path.exists(domain.polyfile+".ele") and
+                                    os.path.exists(domain.polyfile+".node") and
+                                    os.path.exists(domain.polyfile+".face"))))
         comm.barrier()
         logEvent("Initializing mesh and MultilevelMesh")
         nbase = 1
