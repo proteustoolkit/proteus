@@ -144,7 +144,7 @@ elif pspaceOrder == 2:
         pbasis = C0_AffineQuadraticOnSimplexWithNodalBasis
 
 if AUTOMATED_TEST==True:
-    T=0.01 
+    T=ct.T
 # Domain and mesh
 if nd==2:
     L = (1.0 , 2.0)

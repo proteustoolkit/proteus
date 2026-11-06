@@ -8,12 +8,14 @@
 #               the RKEVs and TADR's CompatibleBackwardEuler inherit it, which does not say that they carry nothing
 #               more. Measured by test/test_hotstart_levelset.py, with the mprans.RANS2P shock capturing and
 #               subgrid error lag machines and NumericalSolution's own owners: the coupled fields, the solver's
-#               unknowns and the next system step)
+#               unknowns and the next system step; and with CLSVOF, and on rising_bubble_rans3p with the
+#               mprans.VOF3P and NCLS3P shock capturing lag machines)
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
 #               test/hotstart_measure with HS_RD_LAG=1: mprans.RDLS.ShockCapturing, 1e-16 on every field;
-#               test/test_hotstart_rans3pf.py: mprans.RANS3PF.SubgridError and Min_dt_cfl_controller, bit-identical given the state of the rest;
+#               test/test_hotstart_rans3pf.py: mprans.RANS3PF.SubgridError and Min_dt_cfl_controller, bit-identical given the state of the rest
+#               (RANS3PF.SubgridError also on rising_bubble_rans3p, where it switches to lagging: test_hotstart_levelset.py);
 #               the vortex2D backward Euler hot start, 1e-16: Min_dt_controller, Newton_controller, MCorr.Newton_controller, Sequential_MinModelStep)
 #   follows     carries no history of its own: it re-derives its next step from a restored object
 #               (the FLCBDF controllers read the restored integrator, syncAfterRestore)

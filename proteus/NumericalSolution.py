@@ -562,6 +562,7 @@ class NS_base(object):  # (HasTraits):
 
 
         logEvent("Setting initial conditions",level=0)
+        self._archivedDofs = {}
         for index,p,n,m,simOutput in zip(list(range(len(self.modelList))),self.pList,self.nList,self.modelList,self.simOutputList):
             if self.opts.hotStart:
                 logEvent("Setting initial conditions from hot start file for "+p.name)
@@ -598,6 +599,10 @@ class NS_base(object):  # (HasTraits):
                         lm.timeIntegration.tLast = time
                         lm.timeIntegration.t = time
                         lm.timeIntegration.dt = dt
+                #the dofs the archived step ended with: the coefficient evaluations and the spin-up below
+                #may change them, and a continue hot start puts them back (restoreArchivedDofs)
+                self._archivedDofs[index] = [[lm.u[cj].dof.copy() for cj in range(lm.coefficients.nc)]
+                                             for lm in m.levelModelList]
                 self.tCount = tCount
             elif p.initialConditions is not None:
                 logEvent("Setting initial conditions for "+p.name)
@@ -768,6 +773,9 @@ class NS_base(object):  # (HasTraits):
             self._solverStateRefused = []
             restored = [self.restoreSolverState(m,index,self.tCount) for index,m in enumerate(self.modelList)]
             self._warnSolverStateRefused()
+            for index,m in enumerate(self.modelList):
+                if restored[index]:
+                    self.restoreArchivedDofs(m,index)
             if all(restored):
                 #the models' first-step branches (a low-order first step, no extrapolation from the
                 #previous solutions) belong to a run with no history; this one has its history back
@@ -1523,6 +1531,20 @@ class NS_base(object):  # (HasTraits):
         if self.comm.isMaster():
             import warnings
             warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+    def restoreArchivedDofs(self, model, index):
+        """Continue hot start: put back the dofs read from the archive, the ones the archived step ended with.
+
+        Between the read and the first step the hot start evaluates every model's residual once (to compute
+        the coefficients) and runs the spin-up, and either may change a model's dofs, which the uninterrupted
+        run never did at that instant: RDLS's residual freezes its interface dofs to the level set's current
+        dofs (the mass-corrected ones, where the uninterrupted run still holds RDLS's own last solution, from
+        which its next preStep builds the normal reconstruction), and the spin-up solves its models again at
+        the restart time (rising_bubble_rans3p's pressureInitial, solved at t=0 only in the uninterrupted run).
+        The solver's unknowns (uList) are the unknowns owner's, put back in restoreSolverState."""
+        for lm, dofs in zip(model.levelModelList, self._archivedDofs.get(index, [])):
+            for cj, dof in enumerate(dofs):
+                lm.u[cj].dof[:] = dof
 
     def restoreSolverState(self, model, index, tCount):
         """Hot start: put back what archiveSolverState wrote at ``tCount``,

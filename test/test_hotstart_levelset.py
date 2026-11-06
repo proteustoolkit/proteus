@@ -15,7 +15,14 @@ model's dofs at the end, hot start vs the uninterrupted run, with that piece lef
 Before all of it: 5.1e-1 (velocity 7.3e-2, VOF 1.4e-2, forces ~1%). After: 0.0, forces 0.0.
 
 The same deck with CLSVOF (interface=1): 2.3e-3 (restart at 0.04) and 1.2e-2 (at 0.005) on main c09280cb, 0.0 with
-the owners above (CLSVOF's disc_ICs flag among them).
+the owners above (CLSVOF's disc_ICs flag among them). rising_bubble_rans3p (VOF3P, NCLS3P, RDLS, MCorr3P, RANS3PF and
+the projection's pressure models), restarted at 0.02 and run to 0.05: 8.1e-1 on c09280cb, 2.2e-3 (MCorr3P) with the
+owners above; what was still rebuilt differently, with its share (each left out alone):
+  VOF3P's and NCLS3P's shock capturing lag machines (DelayedLagState)                1.3e-4, 1.9e-3
+  the dofs the archived step ended with (NS_base.restoreArchivedDofs): the hot start's
+  first coefficient evaluation froze RDLS's interface dofs to NCLS's corrected ones   1.9e-4
+  ... and the spin-up solved pressureInitial again at the restart                     1.4e-2 (its own dofs)
+After: 0.0, forces and moments 0.0. RANS3PF's subgrid error lags on this deck and needs no state of its own (0.0).
 """
 import os
 import shutil
@@ -68,6 +75,30 @@ def test_hot_start_continues_the_uninterrupted_run(tmp_path, case, interface):
     numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt")), after[after > t + 1e-12])
     numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / "forceHistory_p.txt")),
                                      numpy.loadtxt(str(tmp_path / "full" / "forceHistory_p.txt")))
+
+
+# rising_bubble_rans3p (archives at its output times 0.001, 0.01, 0.02, ...): restarted at 0.02, run to 0.05
+RANS3P = dict(DIR=os.path.join("surface_tension", "rising_bubble_rans3p"), SO="risingBubble_so.py", OPTS="T=0.05")
+
+
+@pytest.mark.parametrize("mode", ["continue", "restart"])
+def test_rans3p_hot_start_continues_the_uninterrupted_run(tmp_path, mode):
+    """The 3P level-set models and the projection scheme: a continue hot start is the uninterrupted run, steps,
+    dofs (pressureInitial's included) and force and moment rows; a restart, which rebuilds the history, is not
+    (the check that the first can fail)."""
+    full = _run(tmp_path / "full", **RANS3P)
+    stop = dict(RANS3P, OPTS="T=0.02")
+    _run(tmp_path / "hot", **stop)
+    hot = _run(tmp_path / "hot", HOTSTART=0.02, HOTSTARTMODE=mode, **RANS3P)
+    if mode == "restart":
+        assert _worst(full, hot) > 1e-3
+        return
+    assert _worst(full, hot) == 0.0
+    after = numpy.loadtxt(str(tmp_path / "full" / "accepted.txt"))
+    numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt")), after[after > 0.02 + 1e-12])
+    for rows in ("forceHistory_p.txt", "forceHistory_v.txt", "momentHistory.txt"):
+        numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / rows)),
+                                         numpy.loadtxt(str(tmp_path / "full" / rows)))
 
 
 def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
