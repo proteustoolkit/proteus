@@ -14,6 +14,9 @@ run in proteustoolkit/ymf-import-sms against its converter.
   ``importer_meshes/gmsh_square.msh`` and ``gmsh_cube.msh``, written by gmsh 4.12.2 from the
   ``.geo`` files beside them (``Domain.writeGeo``, he_max 0.25 and 0.5). The stored ``.msh`` is
   the mesh the downstream tests read; meshing itself is checked on statistics.
+- The ``-F`` regular grids (a box with ``generatePartitionedMeshFromFiles``): rank 0 writes
+  the grid as triangle/tetgen files and every rank reads its part. Pinned against the box
+  meshed in memory.
 
 The solves on these meshes, serial against two ranks, are in ``test_importer_solves.py``.
 """
@@ -312,3 +315,54 @@ def test_gmsh_meshes_a_domain_within_its_size(tmp_path, monkeypatch, nd, name, h
     sides = _sides(mesh, nd, exterior)
     assert all(len(s) == 1 for s in sides)
     assert [GMSH_SIDES[nd][s[0]] for s in sides] == mesh.elementBoundaryMaterialTypes[exterior].tolist()
+
+
+# --------------------------------------------------------------------------
+# -F regular grids
+# --------------------------------------------------------------------------
+
+X0 = [0.5, -0.25, 0.125]
+
+
+def _box_mesh(nd, nn, fromFiles, genMesh=True):
+    from proteus import Domain
+    domain = Domain.RectangularDomain(L=(1.0,) * nd, x=X0[:nd], name="box")
+    options = domain.MeshOptions
+    options.nnx = options.nny = options.nn = nn
+    options.nnz = nn if nd == 3 else None
+    options.triangleFlag = 1
+    options.genMesh = genMesh
+    return MeshTools._generateMesh(domain, options, generatePartitionedMeshFromFiles=fromFiles).meshList[0]
+
+
+def _by_position(mesh, nd):
+    x = mesh.subdomainMesh.nodeArray[:, :nd]
+    return x[np.lexsort(x.T[::-1])]
+
+
+@pytest.mark.parametrize("nd", [2, 3])
+def test_a_regular_grid_from_files_is_the_box_meshed_in_memory(tmp_path, monkeypatch, nd):
+    """-F on a box off the origin. The nodes were shifted after the partition, so the element
+    and element-boundary barycenters stayed at the box at the origin (off by 0.5)."""
+    monkeypatch.chdir(tmp_path)
+    inMemory, fromFiles = _box_mesh(nd, 5, False), _box_mesh(nd, 5, True)
+    np.testing.assert_array_equal(_by_position(fromFiles, nd), _by_position(inMemory, nd))
+    for mesh in (inMemory, fromFiles):
+        sub = mesh.subdomainMesh
+        np.testing.assert_allclose(sub.elementBarycentersArray,
+                                   sub.nodeArray[sub.elementNodesArray].mean(axis=1), atol=1.0e-15)
+        np.testing.assert_allclose(sub.elementBoundaryBarycentersArray,
+                                   sub.nodeArray[sub.elementBoundaryNodesArray].mean(axis=1), atol=1.0e-15)
+    assert fromFiles.subdomainMesh.nElements_global == inMemory.subdomainMesh.nElements_global
+    exterior = fromFiles.subdomainMesh.exteriorElementBoundariesArray
+    assert (fromFiles.subdomainMesh.elementBoundaryMaterialTypes[exterior] > 0).all()
+
+
+def test_a_tetgen_grid_written_by_one_run_is_read_by_the_next(tmp_path, monkeypatch):
+    """-F with genMesh False reads the files a genMesh run wrote. They held the box at the
+    origin and only the genMesh run shifted it, so the second run's mesh was at the origin."""
+    monkeypatch.chdir(tmp_path)
+    written = _by_position(_box_mesh(3, 5, True), 3)
+    read = _by_position(_box_mesh(3, 5, True, genMesh=False), 3)
+    np.testing.assert_array_equal(read, written)
+    assert read.min(axis=0).tolist() == X0

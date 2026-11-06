@@ -9350,6 +9350,10 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                         memBeforeMesh = Profiling.memLast
                         logEvent("Generating triangular mesh from regular grid")
                         globalMesh.generateTriangularMeshFromRectangularGrid(nnx, nny,domain.L[0],domain.L[1],triangleFlag=triangleFlag)
+                        # the files hold the box where it is, so everything the partitioner and
+                        # the geometry routines compute from them (barycenters too) is there
+                        globalMesh.nodeArray[:, 0] += domain.x[0]
+                        globalMesh.nodeArray[:, 1] += domain.x[1]
                         logEvent("Writing triangle files to {0:s}.ele, etc.".format(fileprefix))
                         globalMesh.writeTriangleFiles(fileprefix, nbase)
                         globalMesh.cmesh.deleteCMesh()
@@ -9370,8 +9374,6 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                     mlMesh.generatePartitionedMeshFromTriangleFiles(fileprefix, nbase,mesh,meshOptions.nLevels,
                                                                     nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                                     parallelPartitioningType=meshOptions.parallelPartitioningType)
-                    mlMesh.meshList[0].subdomainMesh.nodeArray[:, 0] += domain.x[0]
-                    mlMesh.meshList[0].subdomainMesh.nodeArray[:, 1] += domain.x[1]
                     logEvent(Profiling.memory("After partitioning", className="NumericalSolution", memSaved=memBeforePart))
                 else:
                     mlMesh = MultilevelTriangularMesh(nnx, nny,1,
@@ -9430,6 +9432,9 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                             memBeforeMesh = Profiling.memLast
                             logEvent("Generating tetrahedral mesh from regular grid")
                             globalMesh.generateTetrahedralMeshFromRectangularGrid(nnx, nny,nnz,domain.L[0],domain.L[1],domain.L[2])
+                            # the files hold the box where it is (see the 2D branch)
+                            for axis in range(3):
+                                globalMesh.nodeArray[:, axis] += domain.x[axis]
                             logEvent("Writing tetgen files to {0:s}.ele, etc.".format(fileprefix))
                             globalMesh.writeTetgenFiles(fileprefix, nbase)
                             globalMesh.cmesh.deleteCMesh()
@@ -9459,9 +9464,6 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                                                         nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                                         parallelPartitioningType=meshOptions.parallelPartitioningType)
 
-                        mlMesh.meshList[0].subdomainMesh.nodeArray[:, 0] += domain.x[0]
-                        mlMesh.meshList[0].subdomainMesh.nodeArray[:, 1] += domain.x[1]
-                        mlMesh.meshList[0].subdomainMesh.nodeArray[:, 2] += domain.x[2]
                         logEvent(Profiling.memory("After partitioning", className="NumericalSolution", memSaved=memBeforePart))
                     else:
                         mlMesh = MultilevelTetrahedralMesh(nnx, nny, nnz,

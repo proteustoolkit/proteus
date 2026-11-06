@@ -75,3 +75,16 @@ def test_a_gmsh_mesh_solves_the_same_on_two_ranks(tmp_path, kind, nodes, error):
     assert all(o > 0 for o in parallel["owned"]), line
     assert_same_solution(serial, parallel)
     assert nodal_error(serial) == pytest.approx(error, rel=1.0e-6)
+
+
+@pytest.mark.parametrize("kind", ["regular2d", "regular3d"])
+def test_a_regular_grid_from_files_solves_as_the_box_meshed_in_memory(tmp_path, kind):
+    """-F (generatePartitionedMeshFromFiles) and the in-memory box, off the origin, 1 and 2 ranks."""
+    box = dict(X0="0.5,-0.25,0.125", NN="5")
+    inMemory, _ = solve(tmp_path, kind, 1, F="0", **box)
+    for ranks in (1, 2):
+        fromFiles, line = solve(tmp_path, kind, ranks, F="1", **box)
+        assert all(o > 0 for o in fromFiles["owned"]), line
+        assert_same_solution(inMemory, fromFiles)
+    assert nodal_error(inMemory) == pytest.approx({"regular2d": 2.546277e-02, "regular3d": 2.478247e-02}[kind],
+                                                  rel=1.0e-6)
