@@ -30,7 +30,12 @@ __all__ = ["needed", "bring_up_to_date"]
 
 def _mesh_of(doc, problem, name, realization, outdir, stem):
     """``(prefix, domain, meshOptions, plan)`` for one output, or None on a box."""
-    if problem["domain"].get("region") is None:
+    region = problem["domain"].get("region")
+    if region is None:
+        return None
+    if region.get("kind") in ("file", "discrete"):
+        # a mesh file is read, not made; a geometry file (gmsh_geo) is meshed by the solve itself, with the
+        # element size setup sets, not through the triangle/tetgen PSLG path below
         return None
     from proteus import ADRProblem, MeshTools
     from .ymfrun import run_arguments

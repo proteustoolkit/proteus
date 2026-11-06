@@ -76,8 +76,6 @@ def test_a_triangulated_surface_is_already_discrete():
 
 
 @pytest.mark.parametrize("cls,fmt", [
-    (Domain.Mesh2DMDomain, "2dm"),
-    (Domain.Mesh3DMDomain, "3dm"),
     (Domain.MeshHexDomain, "hex"),
     (Domain.MeshTetgenDomain, "tetgen"),
 ])
@@ -137,14 +135,16 @@ def test_a_rescaled_gmsh_geometry_refuses_rather_than_dropping_the_mapping():
 
 
 def test_an_unknown_file_format_says_which_it_knows():
-    with pytest.raises(DomainTranslationError, match="known: 2dm"):
+    with pytest.raises(DomainTranslationError, match="known: hex, tetgen, ymf"):
         from_ymf({"kind": "file", "format": "step", "path": "part.step"})
 
 
 def test_a_discrete_domain_proteus_has_no_class_for_is_refused():
-    with pytest.raises(DomainTranslationError, match="triangulated"):
-        from_ymf({"kind": "discrete",
-                  "topology": {"type": "Tetrahedron", "values": []},
+    """Triangles and tetrahedra are a MeshYmfDomain (test/mesh_tests/test_discrete_domain.py); a
+    triangulated surface is a TriangulatedSurfaceDomain; other cells are refused."""
+    with pytest.raises(DomainTranslationError, match="triangles or tetrahedra"):
+        from_ymf({"kind": "discrete", "dimension": 3,
+                  "topology": {"type": "Hexahedron", "values": []},
                   "geometry": {"type": "XYZ", "values": []}})
 
 

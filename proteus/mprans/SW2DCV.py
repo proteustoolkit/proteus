@@ -1494,7 +1494,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.hLow = np.zeros(self.u[0].dof.shape, 'd')
         self.delta_Sqd_h = np.zeros(self.u[0].dof.shape, 'd')
         self.delta_Sqd_kin = np.zeros(self.u[0].dof.shape, 'd')
-        self._dofVecs = {}
         self.huLow = np.zeros(self.u[0].dof.shape, 'd')
         self.hvLow = np.zeros(self.u[0].dof.shape, 'd')
         #
@@ -1614,25 +1613,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         self.dataStructuresInitialized = True
     #
-
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
-        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, LAT.ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
 
     def updateSecondDifferences(self):
         """Sums over the graph row of i of h_i - h_j and kin_i - kin_j (j != i), for the local bounds,

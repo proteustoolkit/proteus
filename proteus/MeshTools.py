@@ -5,6 +5,7 @@ Tools for creating and manipulating 1,2, and 3D meshes.
    :parts: 1
 """
 from .EGeometry import *
+import types
 import numpy as np
 import array
 import inspect
@@ -484,6 +485,17 @@ class Hexahedron(Polyhedron):
 #: positive values for conditions.
 RANK_INTERFACE_FLAG = -1
 
+
+def _requireNodePartitioningFromFiles(parallelPartitioningType):
+    """parun -F (partitionMeshFromFiles) partitions by nodes only: there is no
+    element partitioner that reads the mesh files itself. Say so, instead of
+    a bare assert (or, past it, a call to a function that does not exist)."""
+    if parallelPartitioningType != MeshParallelPartitioningTypes.node:
+        raise ValueError("partitioning a mesh from its files (parun -F, generatePartitionedMeshFromFiles) supports "
+                         "only parallelPartitioningType = MeshParallelPartitioningTypes.node; got %r. Use node "
+                         "partitioning, or read the mesh into memory (without -F) to partition by elements."
+                         % (parallelPartitioningType,))
+
 class MeshParallelPartitioningTypes(object):
     """
     fake an enum for parallel partitioning options
@@ -857,6 +869,7 @@ class Mesh(object):
                                                                                  nodeWeights)
         else:
             assert nodeOwners is None and nodeWeights is None, "prescribed owners and node weights need node partitioning"
+            _wholeMeshFingerprint(self)     # before partitionElements rearranges the global arrays
             (self.elementOffsets_subdomain_owned,
              self.elementNumbering_subdomain2global,
              self.nodeOffsets_subdomain_owned,
@@ -1006,6 +1019,7 @@ class Mesh(object):
         self.nLayersOfOverlap = nLayersOfOverlap; self.parallelPartitioningType = parallelPartitioningType
         logEvent(memory("partitionMesh 2","MeshTools"),level=4)
         
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         if parallelPartitioningType == MeshParallelPartitioningTypes.node:
             logEvent("Starting nodal partitioning")#mwf for now always gives 1 layer of overlap
             logEvent("filebase {0:s}".format(filebase))
@@ -1043,23 +1057,6 @@ class Mesh(object):
                                                                                                                 self.subdomainMesh.cmesh)                    
             else:
                 assert 0,"can't partition non-simplex mesh"
-
-        else:
-            logEvent("Starting element partitioning")
-            (self.elementOffsets_subdomain_owned,
-             self.elementNumbering_subdomain2global,
-             self.nodeOffsets_subdomain_owned,
-             self.nodeNumbering_subdomain2global,
-             self.elementBoundaryOffsets_subdomain_owned,
-             self.elementBoundaryNumbering_subdomain2global,
-             self.edgeOffsets_subdomain_owned,
-             self.edgeNumbering_subdomain2global) = cpartitioning.partitionElementsFromTetgenFiles(comm.comm.tompi4py(),
-                                                                                                   filebase,
-                                                                                                   base,
-                                                                                                   nLayersOfOverlap,
-                                                                                                   self.cmesh,
-                                                                                                   self.subdomainMesh.cmesh,
-                                                                                                   memHardLimit)
         #
         logEvent(memory("partitionMesh 3","MeshTools"),level=4)
         self.buildFromCNoArrays(self.cmesh)
@@ -1069,6 +1066,7 @@ class Mesh(object):
         #nodeNumbering_subdomain2global refers to.
         self.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(self.cmesh)
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
+        self.subdomainMesh.rankInterfacesMarked = True     #the -F partitioners flag the cut faces -1 (markRankInterfacesByOwner)
         self._reduceSubdomainMeshSize(comm)
         self.subdomainMesh.nElements_owned = self.elementOffsets_subdomain_owned[comm.rank()+1] - self.elementOffsets_subdomain_owned[comm.rank()]
         self.subdomainMesh.nNodes_owned = self.nodeOffsets_subdomain_owned[comm.rank()+1] - self.nodeOffsets_subdomain_owned[comm.rank()]
@@ -1197,6 +1195,14 @@ class Mesh(object):
                                dataset='cellMapL2G'+str(rank)+name+str(tCount),
                                text_stem='cellMapL2G'+name,
                                write_data=init or meshChanged)
+            # The partition's renumbering, as each archived row's index in the input mesh (written only
+            # when it is not the identity): what puts an archive back in the input order, whatever the
+            # rank count (inInputOrder, meshFingerprint).
+            if self.globalMesh is not None:
+                self._writeInputNumbering(ar, name, tCount, init or meshChanged)
+                self._writeFingerprint(ar, init, meshChanged)
+                if init and getattr(ar, "driver", None) == "per-rank" and ar.hdfFile is not None:
+                    _writeSubdomainView(self, ar, name)
             #
             #material types
             #
@@ -1234,6 +1240,62 @@ class Mesh(object):
                                    self.elementBoundaryMaterialTypes, tCount,
                                    center="Cell", dimensions=[self.nElementBoundaries_global])
             #done with material types
+
+    def _writeInputNumbering(self, ar, name, tCount, write_data):
+        """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering)."""
+        g = self.globalMesh
+        nodes_input, elements_input = _localInputNumbering(g)
+        rank = ar.comm.rank()
+        for attribute, local_input, offsets, n_global, center in (
+                ("NodeMapInput", nodes_input, g.nodeOffsets_subdomain_owned, g.nNodes_global, "Node"),
+                ("CellMapInput", None if elements_input is None else elements_input[:self.nElements_owned],
+                 g.elementOffsets_subdomain_owned, g.nElements_global, "Cell")):
+            if local_input is None:
+                continue
+            data = local_input
+            if ar.global_sync:
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[n_global],
+                               sync_offsets=offsets, sync_data=data[:offsets[rank+1] - offsets[rank]],
+                               dataset=attribute+name+str(tCount), write_data=write_data)
+            else:
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[len(data)],
+                               dataset=attribute+str(rank)+name+str(tCount), text_stem=attribute+name,
+                               write_data=write_data)
+
+    def _writeFingerprint(self, ar, init, meshChanged):
+        """Record the mesh's fingerprint in this grid's ymf provenance (C7.1, cekees 2026-11-05).
+
+        Only on a grid that is the whole mesh (global_sync, or one rank) and whose geometry is still the
+        input mesh's: once the nodes have moved (meshChanged after the first write), the archived geometry
+        is no longer the mesh the fingerprint names, and it is not recorded again.
+        """
+        if init:
+            self._archivedGeometryIsInput = True
+        elif meshChanged:
+            self._archivedGeometryIsInput = False
+        if not self.__dict__.get("_archivedGeometryIsInput", True):
+            return
+        if not (ar.global_sync or ar.comm.size() == 1):
+            return
+        digest = _wholeMeshFingerprint(self.globalMesh)
+        if digest is None:
+            return
+        from ymf.archive import provenance
+        from . import __version__
+        self.arGrid["provenance"] = provenance("proteus", version=__version__, fingerprint=digest)
+
+    def inputFingerprint(self):
+        """meshFingerprint of this global mesh in its input order: the same on any number of ranks.
+
+        A node partition leaves the global arrays in the input order (only the maps say the new numbers);
+        an element partition rearranges them in place, so partitionMesh takes the fingerprint first.
+        """
+        cached = self.__dict__.get("_inputFingerprint")
+        if cached is None:
+            cached = meshFingerprint(self.nodeArray, self.elementNodesArray)
+            self.__dict__["_inputFingerprint"] = cached
+        return cached
+
     def buildFromC(self,cmesh):
         from . import cmeshTools
         #
@@ -3573,72 +3635,6 @@ class TetrahedralMesh(Mesh):
             self.nodeDict[node] = node
         return node
 
-    def readMeshADH(self,filename,adhBase=1):
-        meshIn = open(filename+'.3dm','r')
-        firstLine = meshIn.readline()
-        firstWords = firstLine.split()
-        logEvent("Reading object=%s from file=%s" % (firstWords[0],filename))
-        line = meshIn.readline()
-        columns = line.split()
-        tets = []
-        tetEdges=set()
-        tetTriangles=set()
-        logEvent("Reading "+str(filename)+" and building node lists for tetrahedra,triangles, and edges")
-        #assume test are ordered by tet number
-        while (columns[0] == 'E4T'):
-            nodeNumbers = [int(c) - adhBase for c in columns[2:6]]
-            nodeNumbers.sort()
-            tets.append(array.array('i',nodeNumbers))
-            tetTriangles.update([(nodeNumbers[1],nodeNumbers[2],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[2],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[1],nodeNumbers[3]),
-                                 (nodeNumbers[0],nodeNumbers[1],nodeNumbers[2])])
-            tetEdges.update([(nodeNumbers[0],nodeNumbers[1]),
-                             (nodeNumbers[0],nodeNumbers[2]),
-                             (nodeNumbers[0],nodeNumbers[3]),
-                             (nodeNumbers[1],nodeNumbers[2]),
-                             (nodeNumbers[1],nodeNumbers[3]),
-                             (nodeNumbers[2],nodeNumbers[3])])
-            line = meshIn.readline()
-            columns = line.split()
-        print("Building node list and dict")
-        #assume nodes are ordered by node number
-        while (len(columns) == 5):
-            newNode = Node(int(columns[1]) - adhBase,
-                           float(columns[2]),
-                           float(columns[3]),
-                           float(columns[4]))
-            self.nodeList.append(newNode)
-            self.nodeDict[newNode]=newNode
-            line = meshIn.readline()
-            columns = line.split()
-        print("Number of tetrahedra:"+str(len(tets)))
-        print("Number of triangles :"+str(len(tetTriangles)))
-        print("Number of edges     :"+str(len(tetEdges)))
-        print("Number of nodes     :"+str(len(self.nodeList)))
-        print("Number of objects   :"+str(len(tetEdges)+len(tetTriangles)+len(tets)+len(self.nodeList)))
-        print("Building edge list")
-        self.edgeList =[Edge(edgeNumber=eN,nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]]]) \
-                        for eN,nN in enumerate(tetEdges)]
-        print("Building edge dict")
-        self.edgeDict = dict([(e.nodes,e) for e in self.edgeList])
-        print("Building triangle list")
-        self.triangleList =[Triangle(triangleNumber=tN,nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]],self.nodeList[nN[2]]],edgeDict=self.edgeDict) \
-                            for tN,nN in enumerate(tetTriangles)]
-        print("Building triangle dict")
-        self.triangleDict = dict([(t.nodes,t) for t in self.triangleList])
-        print("Building tetredron list")
-        self.tetrahedronList = [Tetrahedron(tetrahedronNumber=TN,
-                                            nodes=[self.nodeList[nN[0]],self.nodeList[nN[1]],self.nodeList[nN[2]],self.nodeList[nN[3]]],
-                                            edgeDict=self.edgeDict,
-                                            triangleDict=self.triangleDict) \
-                                for TN,nN in enumerate(tets)]
-        self.elementList = self.tetrahedronList
-        self.elementBoundaryList = self.triangleList
-        print("Building tetrahedron dict")
-        self.tetrahedronDict = dict([(T.nodes,T) for T in self.tetrahedronList])
-        print("Building boundary maps")
-        self.buildBoundaryMaps()
     def writeMeshXdmf(self,ar,name='',t=0.0,init=False,meshChanged=False,tCount=0, EB=False):
         #print "Warning mwf hack for EB printing for tet writeMeshXdmf for now"
         #EB = True
@@ -4095,13 +4091,26 @@ class TetrahedralMesh(Mesh):
             cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
         self.buildFromC(self.cmesh)
         logEvent(memory("calling buildFromC"),level=4)
-    def generateFrom3DMFile(self,filebase,base=1):
+    def generateFromArrays(self,nodes,elements,nodeMaterialTypes=None,elementMaterialTypes=None):
+        """Build the mesh from arrays of node coordinates and zero-based element nodes"""
         from . import cmeshTools
         self.cmesh = cmeshTools.CMesh()
-        cmeshTools.generateFrom3DMFile(self.cmesh,filebase,base)
+        cmeshTools.generateFromArrays(self.cmesh,nodes,elements,nodeMaterialTypes,elementMaterialTypes)
         cmeshTools.allocateGeometricInfo_tetrahedron(self.cmesh)
         cmeshTools.computeGeometricInfo_tetrahedron(self.cmesh)
         self.buildFromC(self.cmesh)
+    def generateFromYmfFile(self,prefix):
+        """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
+        self.generateFromYmf(prefix)
+    def generateFromYmf(self,source):
+        """Build the mesh from a ymf mesh: a file prefix, or a grid (a ``discrete`` domain block)"""
+        info = ymfMeshInfo(source)
+        if info.elementTopologyName != 'Tetrahedron':
+            raise ValueError("%s holds a %s mesh, not tetrahedra"
+                             % (_ymfMeshSpace(source)[2], info.elementTopologyName))
+        self.generateFromArrays(info.nodeArray,info.elementNodesArray,
+                                info.nodeMaterialTypes,info.elementMaterialTypes)
+        _applyYmfFacetTags(self, source)
     def writeTetgenFiles(self,filebase,base):
         from . import cmeshTools
         cmeshTools.writeTetgenFiles(self.cmesh,filebase,base)
@@ -4979,7 +4988,7 @@ class MultilevelTetrahedralMesh(MultilevelMesh):
         if filebase==None:
             filebase="mesh"
         assert(refinementLevels==1)
-        assert(parallelPartitioningType==MeshParallelPartitioningTypes.node)
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         assert(nLayersOfOverlap<=1)
         mesh0.cmesh = cmeshTools.CMesh()
         #blow away or just trust garbage collection
@@ -5258,18 +5267,16 @@ class TriangularMesh(Mesh):
 
     def generateFromYmfFile(self,prefix):
         """Build the mesh from the ymf mesh ``prefix.ymf``, ``prefix.h5``"""
-        info = readMeshYmf(prefix)
-        assert info.elementTopologyName == 'Triangle', info.elementTopologyName
+        self.generateFromYmf(prefix)
+    def generateFromYmf(self,source):
+        """Build the mesh from a ymf mesh: a file prefix, or a grid (a ``discrete`` domain block)"""
+        info = ymfMeshInfo(source)
+        if info.elementTopologyName != 'Triangle':
+            raise ValueError("%s holds a %s mesh, not triangles"
+                             % (_ymfMeshSpace(source)[2], info.elementTopologyName))
         self.generateFromArrays(info.nodeArray,info.elementNodesArray,
                                 info.nodeMaterialTypes,info.elementMaterialTypes)
-
-    def generateFrom2DMFile(self,filebase,base=1):
-        from .import cmeshTools
-        self.cmesh = cmeshTools.CMesh()
-        cmeshTools.generateFrom2DMFile(self.cmesh,filebase,base)
-        cmeshTools.allocateGeometricInfo_triangle(self.cmesh)
-        cmeshTools.computeGeometricInfo_triangle(self.cmesh)
-        self.buildFromC(self.cmesh)
+        _applyYmfFacetTags(self, source)
 
     def constructTriangularMeshOnRectangle(self,Lx,Ly,nx,ny,writeMesh=0,
                                            meshFileBase='mesh2d'):
@@ -5534,61 +5541,6 @@ Number of nodes : %d\n""" % (self.nElements_global,
             info = "*** Global ***\n" + minfo + "\n*** Local ***\n" + sinfo
             return info
         return minfo
-
-    def readMeshADH(self,filename,adhBase=1,suffix='3dm'):
-        meshIn = open(filename+'.'+suffix,'r')
-        firstLine = meshIn.readline()
-        firstWords = firstLine.split()
-        print("Reading object=%s from file=%s" % (firstWords[0],filename))
-        line = meshIn.readline()
-        columns = line.split()
-        triangles = []
-        triangleEdges=set()
-        logEvent("Reading "+str(filename)+ \
-                " and building node lists for triangles, and edges")
-        #assume triangles are ordered by triangle number
-        while (columns[0] == 'E3T'):
-            nodeNumbers = [int(c) - adhBase for c in columns[2:5]]
-            nodeNumbers.sort()
-            triangles.append(array.array('i',nodeNumbers))
-            triangleEdges.update([(nodeNumbers[0],nodeNumbers[1]),
-                                  (nodeNumbers[0],nodeNumbers[2]),
-                                  (nodeNumbers[1],nodeNumbers[2])])
-            line = meshIn.readline()
-            columns = line.split()
-        print("Building node list and dict")
-        #assume nodes are ordered by node number
-        while (len(columns) == 5):
-            newNode = Node(int(columns[1]) - adhBase,
-                           float(columns[2]),
-                           float(columns[3]),
-                           float(columns[4]))
-            self.nodeList.append(newNode)
-            self.nodeDict[newNode]=newNode
-            line = meshIn.readline()
-            columns = line.split()
-        print("Number of triangles :"+str(len(triangles)))
-        print("Number of edges     :"+str(len(triangleEdges)))
-        print("Number of nodes     :"+str(len(self.nodeList)))
-        print("Number of objects   :"+\
-              str(len(triangleEdges)+len(triangles)+len(self.nodeList)))
-        print("Building edge list")
-        self.edgeList =[Edge(edgeNumber=eN,nodes=[self.nodeList[nN[0]],
-                                                  self.nodeList[nN[1]]])
-                        for eN,nN in enumerate(triangleEdges)]
-        print("Building edge dict")
-        self.edgeDict = dict([(e.nodes,e) for e in self.edgeList])
-        print("Building triangle list")
-        self.triangleList =[Triangle(triangleNumber=tN,
-                                     nodes=[self.nodeList[nN[0]],
-                                            self.nodeList[nN[1]],
-                                            self.nodeList[nN[2]]],
-                                     edgeDict=self.edgeDict)
-                            for tN,nN in enumerate(triangles)]
-        print("Building triangle dict")
-        self.triangleDict = dict([(t.nodes,t) for t in self.triangleList])
-        self.elementList = self.triangleList
-        self.elementBoundaryList = self.edgeList
 
     def writeMeshXdmf(self,ar,name='',t=0.0,init=False,meshChanged=False,tCount=0,EB=False):
         Mesh.writeMeshXdmf(self,ar,name,t,init,meshChanged,"Triangle",tCount,EB=EB)
@@ -6199,7 +6151,7 @@ class MultilevelTriangularMesh(MultilevelMesh):
         if filebase==None:
             filebase="mesh"
         assert(refinementLevels==1)
-        assert(parallelPartitioningType==MeshParallelPartitioningTypes.node)
+        _requireNodePartitioningFromFiles(parallelPartitioningType)
         assert(nLayersOfOverlap<=1)
         mesh0.cmesh = cmeshTools.CMesh()
         #blow away or just trust garbage collection
@@ -7113,6 +7065,135 @@ def _dataitem_dataset(node, label):
     return text.split(':/')[-1]
 
 
+#: the archive attributes that give, for each archived node and cell, its index in the input mesh
+INPUT_NUMBERING_ATTRIBUTES = ("NodeMapInput", "CellMapInput")
+
+
+def _new2old(old2new):
+    """The inverse permutation, or None when ``old2new`` is unknown or the identity."""
+    if old2new is None:
+        return None
+    old2new = np.asarray(old2new)
+    if np.array_equal(old2new, np.arange(len(old2new))):
+        return None
+    new2old = np.empty_like(old2new)
+    new2old[old2new] = np.arange(len(old2new), dtype=old2new.dtype)
+    return new2old
+
+
+def inputNumbering(globalMesh):
+    """(nodes, elements): for each node and element of a partitioned global mesh, its index in the input mesh.
+
+    The partitioner numbers the global nodes and elements so each rank's owned ones are contiguous, and the
+    archive writes in that numbering (decision 7 of the ymf mesh plan keeps it as a separate map). A
+    per-rank archive's input numbering is this composed with its NodeMapL2G/CellMapL2G.
+    Either array is None when the renumbering is the identity or unknown: a mesh generated per rank, or
+    an element partition, which renumbers the nodes without saying how. Computed once per mesh.
+    """
+    if globalMesh is None:
+        return None, None
+    cached = globalMesh.__dict__.get("_inputNumbering")
+    if cached is None:
+        cached = (_new2old(getattr(globalMesh, "nodeNumbering_global_old2new", None)),
+                  _new2old(getattr(globalMesh, "elementNumbering_global_old2new", None)))
+        globalMesh.__dict__["_inputNumbering"] = cached
+    return cached
+
+
+def _localInputNumbering(globalMesh):
+    """(nodes, elements): the input index of each of this rank's subdomain nodes and elements (all of them,
+    overlap included), each None where the partition kept the input numbering.
+
+    From inputNumbering composed with the subdomain-to-global maps; a mesh built from a per-rank view
+    (subdomainViewMesh) has no global arrays and carries its own.
+    """
+    g = globalMesh
+    if "_viewInputNumbering" in g.__dict__:
+        return g._viewInputNumbering
+    nodes_input, elements_input = inputNumbering(g)
+    return (None if nodes_input is None else nodes_input[np.asarray(g.nodeNumbering_subdomain2global)],
+            None if elements_input is None else elements_input[np.asarray(g.elementNumbering_subdomain2global)])
+
+
+def meshFingerprint(nodeArray, elementNodesArray):
+    """``ymf.mesh.fingerprint``: SHA-256 of a mesh's geometry and topology, in the order given.
+
+    Nodes as float64 with three columns, elements as int64 (the bytes are ymf's, method ``ymf-mesh-1``,
+    so any writer computes the same digest). Hashed in the input mesh's order (:func:`inputNumbering`),
+    the digest does not depend on how many ranks wrote the mesh.
+    """
+    try:
+        from ymf.mesh import fingerprint
+    except ImportError:
+        raise ImportError("a mesh fingerprint needs ymf.mesh.fingerprint (cekees/ymf#11); update ymf")
+    return fingerprint(nodeArray, elementNodesArray)
+
+
+def _wholeMeshFingerprint(globalMesh):
+    """The global mesh's inputFingerprint, or None when it does not hold the whole mesh (a mesh generated
+    per rank) or this ymf cannot compute one."""
+    g = globalMesh
+    if g.__dict__.get("_inputFingerprint") is not None:
+        return g._inputFingerprint              # taken before an element partition, or read from a view
+    nodes, elements = getattr(g, "nodeArray", None), getattr(g, "elementNodesArray", None)
+    if nodes is None or elements is None or len(nodes) != g.nNodes_global or len(elements) != g.nElements_global:
+        return None
+    try:
+        return g.inputFingerprint()
+    except ImportError:
+        return None
+
+
+def archivedMeshFingerprint(archive_base, MeshTag="Spatial_Domain"):
+    """The fingerprint an archive records for its mesh (the last step of ``MeshTag``), or None.
+
+    Reads the metadata only, no arrays: what a restart compares with the mesh it is about to run on
+    (:func:`checkArchivedMesh`).
+    """
+    dataDir, filename = os.path.split(archive_base)
+    domain = readArchiveDomain(filename, dataDir or '.')
+    grid = findArchiveGrid(domain, MeshTag)
+    recorded = (grid.get("provenance") or {}).get("fingerprint")
+    return None if recorded is None else recorded["sha256"]
+
+
+def checkArchivedMesh(archive_base, mesh, MeshTag="Spatial_Domain"):
+    """Raise if the archive records the fingerprint of another mesh than ``mesh`` (a global mesh).
+
+    Returns the recorded digest, or None when the archive records none (older archives, per-rank
+    archives, a mesh that moved, a mesh generated per rank), which checks nothing.
+    """
+    recorded = archivedMeshFingerprint(archive_base, MeshTag)
+    if recorded is None:
+        return None
+    mine = mesh.inputFingerprint()
+    if mine != recorded:
+        raise ValueError("%s holds data on mesh %s..., not on this mesh (%s...)"
+                         % (archive_base, recorded[:12], mine[:12]))
+    return recorded
+
+
+def inInputOrder(nodeArray, elementNodesArray, nodeNumbering_input=None, elementNumbering_input=None,
+                 nodeMaterialTypes=None, elementMaterialTypes=None):
+    """Arrays in partition order (an archive's, a partitioned global mesh's) put back in the input order.
+
+    ``*Numbering_input[i]`` is the input index of row ``i``; None means the rows are in input order already.
+    Returns (nodes, elements, nodeMaterialTypes, elementMaterialTypes), the material types None if not given.
+    """
+    nodes, elements = np.asarray(nodeArray), np.asarray(elementNodesArray)
+    nodeTypes, elementTypes = nodeMaterialTypes, elementMaterialTypes
+    if nodeNumbering_input is not None:
+        order = np.argsort(nodeNumbering_input)         # input index -> row
+        nodes = nodes[order]
+        nodeTypes = None if nodeTypes is None else np.asarray(nodeTypes)[order]
+        elements = np.asarray(nodeNumbering_input)[elements]
+    if elementNumbering_input is not None:
+        order = np.argsort(elementNumbering_input)
+        elements = elements[order]
+        elementTypes = None if elementTypes is None else np.asarray(elementTypes)[order]
+    return nodes, elements, nodeTypes, elementTypes
+
+
 def findArchiveGrid(domain, MeshTag='Spatial_Domain', id_in_collection=-1, verbose=0):
     """One grid of an archive's domain: a step of the collection named by ``MeshTag``.
 
@@ -7242,14 +7323,16 @@ def readMixedElementTopologyFromXdmf(elementTopologyName,Topology,hdf5,topologyi
 
     return nElements_global, elementNodesArray, elementNodes_offset
 
-def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0):
+def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0,inputOrder=False):
     """Read a mesh back from a proteus archive, from its hdf5 file alone
 
     ``archive_base`` is the archive's path without the ``.h5`` extension.
     Its metadata (version 1, the XDMF fragments proteus <= 1.9.x stored, or
     version 2) describes every step; the last step of the collection named
     by ``MeshTag`` is read, so no ``.xmf`` is needed. Serial only: a
-    per-subdomain archive yields its first subdomain.
+    per-subdomain archive yields its first subdomain. ``inputOrder`` puts a
+    partitioned run's mesh back in the input mesh's order (see
+    :func:`inputNumbering`), so it reads the same from any rank count.
 
     :return: a BasicMeshInfo object with the minimal information read
 
@@ -7263,7 +7346,7 @@ def readMeshFromArchive(archive_base,MeshTag="Spatial_Domain",verbose=0):
     assert domain is not None and archive_collections(domain), \
         ("%s holds no proteus archive metadata; a mesh in an XDMF file written "
          "by another tool is read with readMeshXdmf" % (h5_path,))
-    return _readMeshFromDomain(domain, h5_path, MeshTag=MeshTag, verbose=verbose)
+    return _readMeshFromDomain(domain, h5_path, MeshTag=MeshTag, verbose=verbose, inputOrder=inputOrder)
 
 def readMeshXdmf(xmf_archive_base,heavy_file_base,MeshTag="Spatial_Domain",hasHDF5=True,verbose=0):
     """Read a mesh from an XDMF file, assuming heavy data is in hdf5
@@ -7284,8 +7367,14 @@ def readMeshXdmf(xmf_archive_base,heavy_file_base,MeshTag="Spatial_Domain",hasHD
     domain, _ = read_xdmf(xmf_archive_base+'.xmf')
     return _readMeshFromDomain(domain, heavy_file_base+'.h5', MeshTag=MeshTag, verbose=verbose)
 
-def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0):
-    """The mesh described by one grid of ``domain``, its arrays read from ``h5_path``."""
+def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0, inputOrder=False):
+    """The mesh described by one grid of ``domain``, its arrays read from ``h5_path``.
+
+    With ``inputOrder`` the arrays come back in the input mesh's order, when the writer recorded the
+    partition's renumbering, and are checked against the fingerprint the grid records (``fingerprint``,
+    None if none); otherwise in the archive's, the maps in ``nodeNumbering_input`` and
+    ``elementNumbering_input`` (None when the archive is in input order already).
+    """
 
     ###information about allowed Xdmf topologies
     #Xdmf cell type id to Name
@@ -7357,6 +7446,32 @@ def _readMeshFromDomain(domain, h5_path, MeshTag="Spatial_Domain", verbose=0):
     else:
         MeshInfo.elementMaterialTypes = np.zeros((MeshInfo.nElements_global,),'i')
     #
+    # the partition's renumbering, if the writer recorded one (INPUT_NUMBERING_ATTRIBUTES)
+    MeshInfo.nodeNumbering_input = MeshInfo.elementNumbering_input = None
+    for attribute in Grid.get("attributes", []):
+        if attribute.get("name") in INPUT_NUMBERING_ATTRIBUTES:
+            values = hdf5["/"+_dataitem_dataset(attribute, attribute["name"])][:]
+            if attribute["name"] == "NodeMapInput":
+                MeshInfo.nodeNumbering_input = values
+            else:
+                MeshInfo.elementNumbering_input = values
+    recorded = (Grid.get("provenance") or {}).get("fingerprint")
+    MeshInfo.fingerprint = None if recorded is None else recorded["sha256"]
+    if inputOrder:
+        (MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeMaterialTypes,
+         MeshInfo.elementMaterialTypes) = inInputOrder(
+             MeshInfo.nodeArray, MeshInfo.elementNodesArray, MeshInfo.nodeNumbering_input,
+             MeshInfo.elementNumbering_input, MeshInfo.nodeMaterialTypes, MeshInfo.elementMaterialTypes)
+        MeshInfo.nodeNumbering_input = MeshInfo.elementNumbering_input = None
+        if MeshInfo.fingerprint is not None:
+            # the grid says which mesh it holds: check the arrays are that mesh before anyone reads data on them
+            from ymf.mesh import check_fingerprint
+            try:
+                check_fingerprint(Grid, os.path.dirname(h5_path),
+                                  digest=meshFingerprint(MeshInfo.nodeArray, MeshInfo.elementNodesArray))
+            except Exception as error:
+                hdf5.close()
+                raise ValueError("%s: %s" % (h5_path, error))
     ###only serial for now
     MeshInfo.nNodes_owned = MeshInfo.nNodes_global
     MeshInfo.nElements_owned = MeshInfo.nElements_global
@@ -7413,52 +7528,451 @@ def readMeshYmf(prefix, MeshTag=YMF_MESH_SPACE, verbose=0):
     domain, _ = ymf_archive.read_ymf(prefix + '.ymf')
     return _readMeshFromDomain(domain, prefix + '.h5', MeshTag=MeshTag, verbose=verbose)
 
-def convert2DMToYmf(filebase, prefix=None, base=1):
-    """Convert the XMS 2DM triangle mesh ``filebase.3dm`` to a ymf mesh, ``prefix.ymf`` and ``prefix.h5``
+#: the keys of a ymf grid that make a mesh; a ``discrete`` domain block holds them beside its own
+YMF_GRID_KEYS = ("name", "topology", "geometry", "attributes", "facets", "provenance")
 
-    ``base`` is the index base of the node numbers, and of the element
-    materials, as in the file readers; ``prefix`` is ``filebase`` by default.
-    Node materials are zero unless ``filebase.bc`` gives them, as ``NDS``
-    lines. Its ``FCS`` lines tag element boundaries, which a ymf mesh has no
-    place for yet, so they are refused rather than dropped.
+def _ymfMeshSpace(source, MeshTag=YMF_MESH_SPACE):
+    """``(space, base, label)`` for a ymf mesh: a file prefix (``prefix.ymf``) or a grid in memory.
 
-    :return: the prefix written
+    ``source`` is the prefix of a ymf mesh file, or a ymf grid -- a ``discrete`` domain block, whose
+    ``topology``, ``geometry`` and optional ``attributes``, ``facets`` and ``provenance`` are the mesh.
+    ``space`` is the raw grid (validation would drop a facet list an older ymf cannot read), ``base``
+    the directory its HDF5 references resolve from (the file's; the working directory for a grid),
+    ``label`` names it in messages.
     """
-    prefix = filebase if prefix is None else prefix
-    elements, elementMaterials, nodes = [], [], []
-    with open(filebase + '.3dm') as f:
-        for line in f:
-            words = line.split()
-            if not words:
-                continue
-            if words[0] == 'E3T':
-                if nodes:
-                    raise ValueError("%s.3dm: an E3T element follows the nodes" % (filebase,))
-                elements.append([int(w) - base for w in words[2:5]])
-                elementMaterials.append(int(words[5]) - base)
-            elif words[0] == 'ND':
-                nodes.append([float(w) for w in words[2:5]])
-            elif words[0] in ('E2L', 'E4Q', 'E6T', 'E8Q', 'E9Q'):
-                raise NotImplementedError(
-                    "%s.3dm: %s elements are not triangles" % (filebase, words[0]))
-    nodeMaterials = np.zeros((len(nodes),), 'i')
-    if os.path.exists(filebase + '.bc'):
-        with open(filebase + '.bc') as f:
-            for line in f:
-                words = line.split()
-                if words and words[0] == 'NDS':
-                    nodeMaterials[int(words[1]) - base] = int(words[2])
-                elif words and words[0] == 'FCS':
-                    raise NotImplementedError(
-                        "%s.bc tags element boundaries (FCS), which a ymf mesh cannot hold yet"
-                        % (filebase,))
-    writeMeshYmf(prefix,
-                 np.array(nodes, dtype='d').reshape(-1, 3),
-                 np.array(elements, dtype='i').reshape(-1, 3),
-                 nodeMaterialTypes=nodeMaterials,
-                 elementMaterialTypes=np.array(elementMaterials, dtype='i'),
-                 topologyName='Triangle')
-    return prefix
+    from ymf import archive as ymf_archive
+    if isinstance(source, dict):
+        return dict((k, source[k]) for k in YMF_GRID_KEYS if k in source), os.getcwd(), "the discrete mesh"
+    domain, _ = ymf_archive.read_ymf(source + '.ymf')
+    return (domain["times"][0]["spaces"][MeshTag],
+            os.path.dirname(os.path.abspath(source + '.ymf')), source + '.ymf')
+
+def _validYmfMeshSpace(space, MeshTag=YMF_MESH_SPACE):
+    from ymf import archive as ymf_archive
+    return ymf_archive.validate_domain(
+        {"times": [{"time": 0.0, "spaces": {MeshTag: space}}]})["times"][0]["spaces"][MeshTag]
+
+def ymfMeshInfo(source, MeshTag=YMF_MESH_SPACE):
+    """The arrays of a ymf mesh (see :func:`_ymfMeshSpace`) as a BasicMeshInfo, as :func:`readMeshYmf`.
+
+    A file is read by :func:`readMeshYmf`; a grid's data items, inline values or HDF5 references,
+    by ymf. Node coordinates are padded to three columns, as the mesh readers give them; material
+    types are zero where the grid has no ``nodeMaterialTypes`` or ``elementMaterialTypes``.
+    """
+    if not isinstance(source, dict):
+        return readMeshYmf(source, MeshTag)
+    from ymf import archive as ymf_archive
+    space, base, label = _ymfMeshSpace(source, MeshTag)
+    space = _validYmfMeshSpace(space, MeshTag)
+    topology = space["topology"]
+    elements = np.asarray(ymf_archive.load_array(topology["data_item"], base))
+    elements = elements.reshape(topology["number_of_elements"], -1).astype('i')
+    nodes = np.asarray(ymf_archive.load_array(space["geometry"]["data_item"], base), dtype='d')
+    width = {"XY": 2, "XYZ": 3}.get(space["geometry"]["type"])
+    if width is None:
+        raise ValueError("%s: geometry %s; a mesh reads XY or XYZ"
+                         % (label, space["geometry"]["type"]))
+    nodes = nodes.reshape(-1, width)
+    if width == 2:
+        nodes = np.hstack([nodes, np.zeros((nodes.shape[0], 1))])
+    info = types.SimpleNamespace(nodeArray=np.ascontiguousarray(nodes), elementNodesArray=elements,
+                                 nNodes_global=nodes.shape[0], nElements_global=elements.shape[0],
+                                 elementTopologyName=topology["type"],
+                                 nodeMaterialTypes=np.zeros((nodes.shape[0],), 'i'),
+                                 elementMaterialTypes=np.zeros((elements.shape[0],), 'i'))
+    for a in space.get("attributes", []):
+        if a["name"] in ("nodeMaterialTypes", "elementMaterialTypes"):
+            setattr(info, a["name"],
+                    np.asarray(ymf_archive.load_array(a["data_item"], base)).reshape(-1).astype('i'))
+    return info
+
+def ymfMeshTopology(source, MeshTag=YMF_MESH_SPACE):
+    """The topology type (``Triangle``, ``Tetrahedron``, ...) of a ymf mesh (file prefix or grid)"""
+    return _ymfMeshSpace(source, MeshTag)[0]["topology"]["type"]
+
+def ymfMeshBounds(source, dim, MeshTag=YMF_MESH_SPACE):
+    """``(lower, upper)``, the bounding box of a ymf mesh's nodes in its first ``dim`` coordinates"""
+    nodes = np.asarray(ymfMeshInfo(source, MeshTag).nodeArray)[:, :dim]
+    if nodes.size == 0:
+        raise ValueError("no nodes in %s" % (_ymfMeshSpace(source, MeshTag)[2],))
+    return nodes.min(axis=0).tolist(), nodes.max(axis=0).tolist()
+
+def ymfUntaggedExteriorFacets(source, MeshTag=YMF_MESH_SPACE):
+    """How many exterior facets of a ymf mesh (file prefix or grid) its facet list leaves untagged (or tags 0).
+
+    Those boundaries get flag 0 (:func:`_applyYmfFacetTags`), which a boundary condition selected by
+    position cannot tell from the interior. A mesh with no facet list has none: every exterior boundary
+    keeps the construction's flag 1.
+    """
+    from ymf import archive as ymf_archive
+    space, base, label = _ymfMeshSpace(source, MeshTag)
+    if "facets" not in space:
+        return 0
+    info = ymfMeshInfo(source, MeshTag)
+    elements = np.asarray(info.elementNodesArray)
+    k = {"Triangle": 2, "Tri_6": 2, "Tetrahedron": 3, "Tet_10": 3}[space["topology"]["type"]]
+    vertices = elements[:, :k + 1]
+    faces = {}
+    for drop in range(k + 1):
+        for row in np.delete(vertices, drop, axis=1).tolist():
+            key = tuple(sorted(row))
+            faces[key] = faces.get(key, 0) + 1
+    exterior = set(key for key, count in faces.items() if count == 1)
+    facets = space["facets"]
+    nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
+    nodes = nodes.reshape(facets["topology"]["number_of_elements"], -1)[:, :k]
+    tags = np.asarray(ymf_archive.load_array(facets["tags"]["data_item"], base)).reshape(-1)
+    tagged = set(tuple(sorted(row)) for row, tag in zip(nodes.tolist(), tags.tolist()) if tag != 0)
+    return len(exterior - tagged)
+
+def _applyYmfFacetTags(mesh, source, MeshTag=YMF_MESH_SPACE):
+    """Set ``mesh.elementBoundaryMaterialTypes`` from the facet list of a ymf mesh, if it has one.
+
+    ``source`` is a file prefix (``prefix.ymf``) or a grid (:func:`_ymfMeshSpace`).
+
+    Each facet (its node numbers, as in the file) names an element boundary of
+    the mesh; that boundary takes the facet's tag. An exterior boundary the
+    list does not name is untagged, 0 (ymf's convention), not the 1 the mesh
+    construction gives every exterior boundary: a converter numbers its
+    boundary strings from 1, so a default 1 would put every unlisted wall into
+    the first string's condition. A facet that is not a
+    boundary of the mesh is an error, as is a facet list read with a ymf too
+    old to check it: its validation would drop the list without a word.
+    """
+    from ymf import archive as ymf_archive
+    space, base, label = _ymfMeshSpace(source, MeshTag)
+    if "facets" not in space:
+        return
+    try:
+        from ymf.mesh import check_facets
+    except ImportError:
+        raise ImportError("%s has a facet list, which this ymf cannot read; "
+                          "install a ymf with ymf.mesh" % (label,))
+    space = _validYmfMeshSpace(space, MeshTag)
+    check_facets(space, base)
+    facets = space["facets"]
+    nodes = np.asarray(ymf_archive.load_array(facets["topology"]["data_item"], base))
+    nodes = nodes.reshape(facets["topology"]["number_of_elements"], -1)
+    tags = np.asarray(ymf_archive.load_array(facets["tags"]["data_item"], base)).reshape(-1)
+    boundary = dict((tuple(sorted(row)), ebN)
+                    for ebN, row in enumerate(mesh.elementBoundaryNodesArray.tolist()))
+    k = mesh.elementBoundaryNodesArray.shape[1]
+    mesh.elementBoundaryMaterialTypes[mesh.exteriorElementBoundariesArray] = 0
+    for row, tag in zip(nodes[:, :k].tolist(), tags.tolist()):
+        try:
+            ebN = boundary[tuple(sorted(row))]
+        except KeyError:
+            raise ValueError("%s: facet %s is not an element boundary of the mesh" % (label, row))
+        mesh.elementBoundaryMaterialTypes[ebN] = tag
+    logEvent("Tagged %d element boundaries from the facets of %s" % (len(tags), label))
+
+def _meshFromYmf(source, MeshTag=YMF_MESH_SPACE):
+    """A new global TriangularMesh or TetrahedralMesh read from a ymf mesh (file prefix or grid)."""
+    topology = ymfMeshTopology(source, MeshTag)
+    classes = {"Triangle": TriangularMesh, "Tetrahedron": TetrahedralMesh}
+    if topology not in classes:
+        raise ValueError("a ymf mesh of %s cells has no per-rank view; triangles or tetrahedra" % (topology,))
+    mesh = classes[topology]()
+    mesh.generateFromYmf(source)
+    return mesh
+
+
+def _owners(offsets, globalNumbers):
+    """The rank owning each global number, from the partitioner's owned offsets."""
+    return (np.searchsorted(np.asarray(offsets), np.asarray(globalNumbers), side="right") - 1).astype(np.int32)
+
+
+def subdomainYmfGrid(globalMesh, rank=None, item=None):
+    """One rank's piece of a partitioned mesh as a ymf grid, facets in the ``subdomain`` view (C7.1 step H).
+
+    The grid holds the subdomain as the solver sees it, overlap included, in its local numbering (owned
+    nodes and elements first): ``topology`` and ``geometry``; the attributes ``NodeMapInput`` and
+    ``CellMapInput`` (each local node's and element's index in the input mesh: the partitioner's
+    numbering composed with its inverse, see inputNumbering), ``NodeOwner`` and ``CellOwner`` (the rank
+    owning each), and the material types; and ``facets``, every exterior face of the subdomain with its
+    tag: 0 untagged, >0 a condition, -1 a face cut by the partition (ymf decision 2: -1 only here).
+    Arrays are inline, unless ``item(key, array)`` makes the data items (a per-rank archive's view,
+    _writeSubdomainView, references its own datasets). ``rank`` defaults to this process's; the global mesh
+    must have been partitioned (partitionMesh, or subdomainYmfGrids in one process).
+    """
+    from ymf import archive as ymf_archive
+    if rank is None:
+        rank = Comm.get().rank()
+    g, sub = globalMesh, globalMesh.subdomainMesh
+    nodes_input, elements_input = _localInputNumbering(g)
+    nodes_global = np.asarray(g.nodeNumbering_subdomain2global)
+    cells_global = np.asarray(g.elementNumbering_subdomain2global)
+    if item is None:
+        def item(key, array):
+            return ymf_archive.data_item_for(np.ascontiguousarray(array), inline=True)
+    def attribute(name, values, center):
+        return ymf_archive.attribute(name, item(name, values), center=center)
+    nodeMapInput = nodes_global if nodes_input is None else nodes_input
+    cellMapInput = cells_global if elements_input is None else elements_input
+    topologyName = {3: "Triangle", 4: "Tetrahedron"}[sub.nNodes_element]
+    exterior = np.asarray(sub.exteriorElementBoundariesArray)
+    faces = np.asarray(sub.elementBoundaryNodesArray)[exterior]
+    grid = ymf_archive.uniform_grid(
+        ymf_archive.topology(topologyName, sub.nElements_global,
+                             item("elements", np.asarray(sub.elementNodesArray, dtype=np.int32))),
+        ymf_archive.geometry(item("nodes", np.asarray(sub.nodeArray, dtype='d'))),
+        [attribute("NodeMapInput", nodeMapInput.astype(np.int64), "Node"),
+         attribute("CellMapInput", cellMapInput.astype(np.int64), "Cell"),
+         attribute("NodeOwner", _owners(g.nodeOffsets_subdomain_owned, nodes_global), "Node"),
+         attribute("CellOwner", _owners(g.elementOffsets_subdomain_owned, cells_global), "Cell"),
+         attribute("nodeMaterialTypes", np.asarray(sub.nodeMaterialTypes, dtype=np.int32), "Node"),
+         attribute("elementMaterialTypes", np.asarray(sub.elementMaterialTypes, dtype=np.int32), "Cell")])
+    grid["name"] = "subdomain %d" % rank
+    grid["facets"] = ymf_archive.facets(
+        ymf_archive.topology("Polyline" if faces.shape[1] == 2 else "Triangle", len(faces),
+                             item("facets", faces.astype(np.int32)), nodes_per_element=faces.shape[1]),
+        item("facetTags", np.asarray(sub.elementBoundaryMaterialTypes)[exterior].astype(np.int32)), view="subdomain")
+    return grid
+
+
+def subdomainYmfGrids(source, size, nodeOwners, nLayersOfOverlap=1, MeshTag=YMF_MESH_SPACE):
+    """Every rank's subdomainYmfGrid for ``size`` ranks, computed in this one process, without MPI.
+
+    ``source`` is a ymf mesh (file prefix or grid) and ``nodeOwners`` the owning rank of each of its
+    nodes, as partitionMesh would be given them. Each rank's piece comes from C32's
+    ``cpartitioning.partitionNodesLocal`` (the part of partitionNodes after the owners are known) on a
+    fresh copy of the global mesh, with the cut faces marked -1 as partitionMesh marks them; under
+    ``mpiexec -n size`` each rank's partitionMesh gives the same grid.
+    """
+    from . import cmeshTools, cpartitioning
+    nodeOwners = np.ascontiguousarray(nodeOwners, dtype=np.intc)
+    grids = []
+    for rank in range(size):
+        g = _meshFromYmf(source, MeshTag)
+        realBoundary = set(map(tuple, np.sort(g.elementBoundaryNodesArray[g.exteriorElementBoundariesArray],
+                                              axis=1).tolist()))
+        nodesBefore = np.array(g.nodeArray, copy=True)
+        g.subdomainMesh = g.__class__()
+        g.subdomainMesh.globalMesh = g
+        g.subdomainMesh.cmesh = cmeshTools.CMesh()
+        g.nLayersOfOverlap = nLayersOfOverlap
+        g.parallelPartitioningType = MeshParallelPartitioningTypes.node
+        (g.elementOffsets_subdomain_owned,
+         g.elementNumbering_subdomain2global,
+         g.nodeOffsets_subdomain_owned,
+         g.nodeNumbering_subdomain2global,
+         g.elementBoundaryOffsets_subdomain_owned,
+         g.elementBoundaryNumbering_subdomain2global,
+         g.edgeOffsets_subdomain_owned,
+         g.edgeNumbering_subdomain2global) = cpartitioning.partitionNodesLocal(
+             rank, size, nLayersOfOverlap, g.cmesh, g.subdomainMesh.cmesh, nodeOwners)
+        g.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(g.cmesh)
+        g.elementNumbering_global_old2new = cpartitioning.getElementNumbering_global_old2new(g.cmesh)
+        sub = g.subdomainMesh
+        sub.buildFromC(sub.cmesh)
+        sub.nElements_owned = g.elementOffsets_subdomain_owned[rank+1] - g.elementOffsets_subdomain_owned[rank]
+        sub.nNodes_owned = g.nodeOffsets_subdomain_owned[rank+1] - g.nodeOffsets_subdomain_owned[rank]
+        if size > 1:
+            g._markRankInterfaces(realBoundary, nodesBefore)
+        grids.append(subdomainYmfGrid(g, rank))
+    return grids
+
+
+def subdomainMeshFromYmf(grid):
+    """The subdomain mesh a ``subdomain`` view (subdomainYmfGrid) holds, as a mesh in its local numbering.
+
+    Its element boundary flags are the facet tags, -1 on the cut faces, and ``rankInterfacesMarked`` is
+    set, as partitionMesh leaves a subdomain mesh (on more than one rank). The view's maps come back as ``nodeNumbering_input``,
+    ``elementNumbering_input``, ``nodeOwners`` and ``elementOwners``, and the owned counts as
+    ``nNodes_owned`` and ``nElements_owned`` (owned first, the owner being the first node's and element's).
+    This is the view, not a solver-ready subdomain: the global offsets a parallel vector needs are not in it.
+    """
+    from ymf import archive as ymf_archive
+    if grid.get("facets", {}).get("view") != "subdomain":
+        raise ValueError("%s is not a subdomain view (facets view %r)"
+                         % (grid.get("name", "the grid"), grid.get("facets", {}).get("view")))
+    mesh = _meshFromYmf(grid)
+    arrays = dict((a["name"], np.asarray(ymf_archive.load_array(a["data_item"])).reshape(-1))
+                  for a in grid["attributes"])
+    mesh.nodeNumbering_input, mesh.elementNumbering_input = arrays["NodeMapInput"], arrays["CellMapInput"]
+    mesh.nodeOwners, mesh.elementOwners = arrays["NodeOwner"], arrays["CellOwner"]
+    rank = mesh.nodeOwners[0] if len(mesh.nodeOwners) else 0
+    mesh.nNodes_owned = int(np.count_nonzero(mesh.nodeOwners == rank))
+    mesh.nElements_owned = int(np.count_nonzero(mesh.elementOwners == rank))
+    # a subdomain view's facets carry the partition's marking (-1 wherever it cut, perhaps nowhere on this
+    # rank), so the flags are marked, as partitionMesh leaves every rank's subdomain
+    mesh.rankInterfacesMarked = True
+    return mesh
+
+
+#: the group of a per-rank archive file holding the subdomain view of each mesh written to it, by name
+SUBDOMAIN_VIEW_GROUP = "subdomain_view"
+#: what a view written by this proteus says it is, so a reader can refuse another layout
+SUBDOMAIN_VIEW_FORMAT = "proteus-subdomain-view-1"
+#: the partition's maps, in the order partitionNodes and partitionElements return them
+_PARTITION_MAPS = ("elementOffsets_subdomain_owned", "elementNumbering_subdomain2global",
+                   "nodeOffsets_subdomain_owned", "nodeNumbering_subdomain2global",
+                   "elementBoundaryOffsets_subdomain_owned", "elementBoundaryNumbering_subdomain2global",
+                   "edgeOffsets_subdomain_owned", "edgeNumbering_subdomain2global")
+#: the subdomain arrays a view stores beyond its ymf grid: what generateFromNumberedArrays needs
+_VIEW_SUBDOMAIN_ARRAYS = (("elementBoundaries", "elementBoundariesArray"), ("edges", "edgeNodesArray"),
+                          ("elementBoundaryMaterialTypes", "elementBoundaryMaterialTypes"))
+#: the global mesh's scalars a view keeps, so a mesh built from views reports the global mesh's own
+_VIEW_GLOBAL_SCALARS = ("nNodes_global", "nElements_global", "nElementBoundaries_global", "nEdges_global",
+                        "nInteriorElementBoundaries_global", "nExteriorElementBoundaries_global",
+                        "max_nElements_node", "max_nNodeNeighbors_node", "nNodes_element",
+                        "nNodes_elementBoundary", "nElementBoundaries_element", "h", "hMin", "sigmaMax",
+                        "volume", "nLayersOfOverlap", "parallelPartitioningType")
+
+
+class SubdomainViewUnavailable(Exception):
+    """A per-rank archive holds no subdomain view this run can use; the reason is the message."""
+
+
+def _writeSubdomainView(subdomainMesh, ar, name):
+    """Write this rank's subdomain view of a partitioned mesh into its per-rank archive file (C7.1 Phase D).
+
+    The group ``subdomain_view/<name>`` of ``<archive>_p<rank>.h5`` holds the step-H view (subdomainYmfGrid,
+    its arrays as datasets beside it and its ymf grid in the ``ymf`` attribute) plus what rebuilding the
+    solver's subdomain needs: each element's boundary numbers, the edges, every element boundary's flag,
+    the partition's eight maps, and the global mesh's counts and scalars. subdomainViewMesh reads it back
+    on a hot start with the same number of ranks, with no global mesh and no partitioner. Written on the
+    mesh's first archive write; a hot start rewrites it.
+    """
+    from ymf import archive as ymf_archive
+    sub, g, f = subdomainMesh, subdomainMesh.globalMesh, ar.hdfFile
+    if sub.nNodes_element not in (3, 4) or not hasattr(g, "nodeNumbering_subdomain2global"):
+        return
+    rank = ar.comm.rank()
+    group = f.require_group(SUBDOMAIN_VIEW_GROUP)
+    if name in group:
+        del group[name]
+    view = group.create_group(name)
+    base = "%s:/%s/%s/" % (os.path.basename(ar.hdfFilename), SUBDOMAIN_VIEW_GROUP, name)
+
+    def item(key, array):
+        array = np.ascontiguousarray(array)
+        view.create_dataset(key, data=array)
+        return ymf_archive.data_item_for(array, base + key)
+    view.attrs["ymf"] = ymf_archive.dump_grid(subdomainYmfGrid(g, rank, item=item))
+    for key, attr in _VIEW_SUBDOMAIN_ARRAYS:
+        view.create_dataset(key, data=np.ascontiguousarray(getattr(sub, attr)))
+    for key in _PARTITION_MAPS:
+        view.create_dataset(key, data=np.ascontiguousarray(getattr(g, key)))
+    nodes_input, elements_input = _localInputNumbering(g)
+    view.attrs["renumbered"] = np.array([nodes_input is not None, elements_input is not None], dtype=np.int8)
+    for key in _VIEW_GLOBAL_SCALARS:
+        value = getattr(g, key, None)
+        if value is not None:
+            view.attrs[key] = value
+    view.attrs["format"] = SUBDOMAIN_VIEW_FORMAT
+    view.attrs["size"], view.attrs["rank"] = ar.comm.size(), rank
+    view.attrs["rankInterfacesMarked"] = int(bool(sub.__dict__.get("rankInterfacesMarked")))
+    digest = _wholeMeshFingerprint(g)
+    if digest is not None:
+        view.attrs["fingerprint"] = digest
+
+
+def _subdomainViewGroup(archive, name):
+    """This rank's view group in a per-rank archive (an open archive, or its path without ``_p<rank>.h5``),
+    and the file to close (None for an open archive)."""
+    rank = Comm.get().rank()
+    hdf = getattr(archive, "hdfFile", None)
+    if hdf is None and not isinstance(archive, str):
+        raise SubdomainViewUnavailable("the archive has no HDF5 file")
+    if getattr(archive, "driver", "per-rank") != "per-rank":
+        raise SubdomainViewUnavailable("the archive is not per-rank (driver %r)" % (archive.driver,))
+    opened = None
+    if hdf is None:
+        path = "%s_p%d.h5" % (archive, rank)
+        if not os.path.exists(path):
+            raise SubdomainViewUnavailable("no per-rank file %s" % (path,))
+        hdf = opened = h5py.File(path, "r")
+    view = hdf.get("%s/%s" % (SUBDOMAIN_VIEW_GROUP, name))
+    if view is None:
+        if opened is not None:
+            opened.close()
+        raise SubdomainViewUnavailable("%s holds no subdomain view of %r" % (hdf.filename, name))
+    return view, opened
+
+
+def subdomainViewMesh(archive, name="Spatial_Domain"):
+    """The partitioned mesh a per-rank archive's subdomain views hold, built on each rank from its own view.
+
+    ``archive`` is an open per-rank archive (an Archiver.AR_base, as a hot start has) or its path without
+    ``_p<rank>.h5``. Collective: every rank builds from its view, or every rank raises
+    SubdomainViewUnavailable (the reason of the first rank that cannot: no per-rank file, no view,
+    another number of ranks, another view format). The returned mesh stands for the global one as
+    cartesianSubdomain's does -- the global counts, scalars and the partition's maps, no arrays -- with
+    ``subdomainMesh`` the subdomain partitionMesh built when the archive was written: the same arrays,
+    element boundary and edge numbering included (cmeshTools.generateFromNumberedArrays), the same flags,
+    -1 on the cut faces.
+    """
+    from . import cmeshTools
+    comm = Comm.get()
+    reason, view, opened = None, None, None
+    try:
+        view, opened = _subdomainViewGroup(archive, name)
+        if view.attrs.get("format") != SUBDOMAIN_VIEW_FORMAT:
+            raise SubdomainViewUnavailable("view format %r, not %r" % (view.attrs.get("format"), SUBDOMAIN_VIEW_FORMAT))
+        if int(view.attrs["size"]) != comm.size() or int(view.attrs["rank"]) != comm.rank():
+            raise SubdomainViewUnavailable("written by rank %d of %d, read by rank %d of %d"
+                                           % (view.attrs["rank"], view.attrs["size"], comm.rank(), comm.size()))
+    except SubdomainViewUnavailable as why:
+        reason = str(why)
+    reasons = comm.comm.tompi4py().allgather(reason)
+    failed = [(r, why) for r, why in enumerate(reasons) if why is not None]
+    if failed:
+        if opened is not None:
+            opened.close()
+        raise SubdomainViewUnavailable("rank %d: %s" % failed[0])
+    try:
+        arrays = dict((key, view[key][()]) for key in view)
+        attrs = dict(view.attrs)
+    finally:
+        if opened is not None:
+            opened.close()
+    nNodes_element = arrays["elements"].shape[1]
+    mesh = {3: TriangularMesh, 4: TetrahedralMesh}[nNodes_element]()
+    mesh.comm = comm
+    mesh.cmesh = cmeshTools.CMesh()
+    sub = mesh.subdomainMesh = mesh.__class__()
+    sub.globalMesh = mesh
+    sub.cmesh = cmeshTools.CMesh()
+    cmeshTools.generateFromNumberedArrays(sub.cmesh, arrays["nodes"], arrays["elements"],
+                                          arrays["elementBoundaries"], arrays["edges"],
+                                          arrays["nodeMaterialTypes"], arrays["elementMaterialTypes"],
+                                          arrays["elementBoundaryMaterialTypes"])
+    for key in _PARTITION_MAPS:
+        setattr(mesh, key, arrays[key])
+    for key in _VIEW_GLOBAL_SCALARS:
+        if key in attrs:
+            value = attrs[key]
+            setattr(mesh, key, float(value) if isinstance(value, (float, np.floating)) else int(value))
+    mesh.nodeNumbering_global_old2new = None
+    mesh.elementNumbering_global_old2new = None
+    renumbered = attrs.get("renumbered", np.zeros(2))
+    mesh._viewInputNumbering = (arrays["NodeMapInput"] if renumbered[0] else None,
+                                arrays["CellMapInput"] if renumbered[1] else None)
+    if attrs.get("fingerprint") is not None:
+        mesh._inputFingerprint = str(attrs["fingerprint"])
+    mesh.fromSubdomainViews = True
+    mesh._finishPartitioning(comm)
+    sub.rankInterfacesMarked = bool(attrs.get("rankInterfacesMarked", 0))
+    return mesh
+
+
+def multilevelMeshFromSubdomainViews(archive, name="Spatial_Domain"):
+    """A one-level MultilevelMesh whose mesh is subdomainViewMesh(archive, name)."""
+    mesh = subdomainViewMesh(archive, name)
+    cls = {TriangularMesh: MultilevelTriangularMesh, TetrahedralMesh: MultilevelTetrahedralMesh}[mesh.__class__]
+    mlMesh = cls.__new__(cls)               # its __init__ generates; this hierarchy is read
+    MultilevelMesh.__init__(mlMesh)
+    mlMesh.meshList = [mesh]
+    mlMesh.nLevels = 1
+    mlMesh.generated = False
+    mlMesh.cmultilevelMesh = None
+    mlMesh.elementParentsArrayList = None
+    mlMesh.elementChildrenArrayList = None
+    mlMesh.elementChildrenOffsetsList = None
+    mlMesh.fromSubdomainViews = True
+    return mlMesh
+
 
 def writeHexMesh(mesh_info,hexfile_base,index_base=0):
     """
@@ -8452,8 +8966,20 @@ def msh2simplex(fileprefix, nd):
 
     logEvent('msh2simplex: finished converting .msh to simplex files')
 
-def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
+def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False,restartArchive=None):
+    """The multilevel mesh of a run: generated, read, and partitioned among the ranks.
+
+    ``restartArchive``, on a hot start, is the run's open per-rank archive (or its path): when it holds
+    subdomain views written by this number of ranks (archive-modes layouts B and C), every rank builds
+    its subdomain from its own view, and the global mesh and the partitioner are skipped
+    (multilevelMeshFromSubdomainViews). Otherwise, and for a hierarchy of more than one level, the mesh
+    is generated and partitioned as on a cold start, and the log says why.
+    """
     meshOptions = chooseMeshOptions(physics, numerics)
+    if restartArchive is not None:
+        mlMesh = _meshFromRestartArchive(restartArchive, meshOptions)
+        if mlMesh is not None:
+            return mlMesh
     try:
         return _generateMesh(physics.domain, meshOptions, generatePartitionedMeshFromFiles, numerics)
     except Exception as first:
@@ -8470,6 +8996,23 @@ def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False):
             return _generateMesh(physics.domain, numerics, generatePartitionedMeshFromFiles, numerics)
         except Exception:
             raise first
+
+def _meshFromRestartArchive(archive, meshOptions, name="Spatial_Domain"):
+    """generateMesh's hot-start branch: the mesh from the archive's subdomain views, or None (logged)."""
+    nLevels = getattr(meshOptions, "nLevels", 1) or 1
+    if nLevels != 1:
+        logEvent("Hot start: %d mesh levels; the per-rank subdomain views hold one, so the mesh is "
+                 "generated and partitioned" % (nLevels,), level=1)
+        return None
+    try:
+        mlMesh = multilevelMeshFromSubdomainViews(archive, name)
+    except SubdomainViewUnavailable as why:
+        logEvent("Hot start: mesh generated and partitioned, not read from subdomain views (%s)" % (why,),
+                 level=1)
+        return None
+    logEvent("Hot start: the mesh is the archive's per-rank subdomain views; no global mesh, no partitioner",
+             level=1)
+    return mlMesh
 
 def chooseMeshOptions(physics, numerics):
     """The options :func:`generateMesh` meshes with.
@@ -8536,6 +9079,19 @@ def checkPartitionMatchesMesh(p, n):
                options.parallelPartitioningType, options.nLayersOfOverlapForParallel))
 
 
+def _meshFileDomain(meshfile, nd):
+    """The domain of an old-style p module's ``meshfile``: a ymf mesh, ``meshfile.ymf``.
+
+    proteus reads explicit meshes only as ymf; an SMS/ADH file (``.3dm``,
+    ``.2dm``) is converted first, with ymf-import-sms.
+    """
+    if not os.path.exists(meshfile + '.ymf'):
+        raise ValueError(
+            "p.meshfile = %r names no ymf mesh (%s.ymf); proteus reads explicit meshes as ymf. "
+            "Convert an SMS/ADH mesh with ymf-import-sms (ymf-import-sms %s -o %s)"
+            % (meshfile, meshfile, meshfile, meshfile))
+    return Domain.MeshYmfDomain(meshfile, nd=nd)
+
 def setDomainFromPhysics(p, n):
     """Give an old-style p module (no ``domain``) a domain built from its
     ``nd``, ``L``, ``x0``, ``polyfile`` or ``meshfile``, with mesh options
@@ -8552,7 +9108,7 @@ def setDomainFromPhysics(p, n):
         if p.polyfile is not None:
             p.domain = Domain.PlanarStraightLineGraphDomain(fileprefix=p.polyfile,name=p.polyfile)
         elif p.meshfile != None:
-            p.domain = Domain.Mesh2DMDomain(p.meshfile)
+            p.domain = _meshFileDomain(p.meshfile, 2)
         else:
             p.domain = Domain.RectangularDomain(L=p.L[:2],
                                                 x=p.x0[:2],
@@ -8561,7 +9117,7 @@ def setDomainFromPhysics(p, n):
         if p.polyfile is not None:
             p.domain = Domain.PiecewiseLinearComplexDomain(fileprefix=p.polyfile,name=p.polyfile)
         elif p.meshfile is not None:
-            p.domain = Domain.Mesh3DMDomain(p.meshfile)
+            p.domain = _meshFileDomain(p.meshfile, 3)
         else:
             p.domain = Domain.RectangularDomain(L=p.L[:3],
                                                 x=p.x0[:3],
@@ -8986,29 +9542,21 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                                   nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                   parallelPartitioningType=meshOptions.parallelPartitioningType)
-    elif isinstance(domain, Domain.Mesh3DMDomain):
-        mesh = TetrahedralMesh()
-        logEvent("Reading coarse mesh from 3DM file")
-        mesh.generateFrom3DMFile(domain.meshfile)
-        mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
-                                                     nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                     parallelPartitioningType=meshOptions.parallelPartitioningType)
-        logEvent("Generating %i-level mesh from coarse 3DM mesh" % (meshOptions.nLevels,))
-        mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
+    elif isinstance(domain, Domain.MeshYmfDomain):
+        if domain.nd == 2:
+            mesh = TriangularMesh()
+            mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
-    elif isinstance(domain, Domain.Mesh2DMDomain):
-        mesh = TriangularMesh()
-        logEvent("Reading coarse mesh from 2DM file, converted to a ymf mesh")
-        ymf_prefix = os.path.basename(domain.meshfile) + "_2dm"
-        if comm.rank() == 0:
-            convert2DMToYmf(domain.meshfile, ymf_prefix)
-        comm.barrier()
-        mesh.generateFromYmfFile(ymf_prefix)
-        mlMesh = MultilevelTriangularMesh(0, 0,0,skipInit=True,
-                                                    nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
-                                                    parallelPartitioningType=meshOptions.parallelPartitioningType)
-        logEvent("Generating %i-level mesh from coarse 2DM mesh" % (meshOptions.nLevels,))
+        else:
+            mesh = TetrahedralMesh()
+            mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
+                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                               parallelPartitioningType=meshOptions.parallelPartitioningType)
+        logEvent("Reading coarse mesh from the ymf mesh %s"
+                 % ("held by the domain" if domain.grid is not None else domain.meshfile + ".ymf",))
+        mesh.generateFromYmf(domain.ymfSource)
+        logEvent("Generating %i-level mesh from coarse ymf mesh" % (meshOptions.nLevels,))
         mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
                                               nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                               parallelPartitioningType=meshOptions.parallelPartitioningType)

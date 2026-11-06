@@ -9,7 +9,7 @@
 #          models step on the shared HeuristicNL_dt_controller
 #   flow   Richards FCT=True, saturated VG with mvg_alpha = 1e-5 (flow_p.py)
 #   trans  TADR FCT=True (tranport_p.py), advected with Richards' edge velocity
-#          (RICHARDS_EDGE_VELOCITY=1)
+#          (EDGE_VELOCITY=True in the transport deck)
 #   mu     constant (Voss & Souza 1987), folded into K = 0.4107 m/d
 # Plots: 2 x 2 panels at 2, 4, 10, 20 yr (Voss & Souza 1987 Fig. 9a times).
 # Detach, which otherwise dies with the session:
@@ -31,8 +31,7 @@ conda activate "${PROTEUS_ENV:-tadr-check}"
 set -u
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
-export RICHARDS_EDGE_VELOCITY=1
-export RICHARDS_EDGE_DBG=1 TADR_FCT_DBG=1 OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=1
 
 {
   echo "date: $(date)"

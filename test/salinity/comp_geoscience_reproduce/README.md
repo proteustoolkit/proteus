@@ -2,8 +2,8 @@
 
 Decks and scripts for the figures and tables of the VDFT manuscript. Richards
 (flow) STABILIZATION_TYPE 2 + FCT, TADR (transport) STABILIZATION_TYPE 5 + FCT,
-coupled through the flow model's edge fluxes (`RICHARDS_EDGE_VELOCITY=1`, set by
-every script). The low-order runs turn FCT off in both models.
+coupled through the flow model's edge fluxes (`TADR.Coefficients(EDGE_VELOCITY=True)`, set by
+every transport deck). The low-order runs turn FCT off in both models.
 
 ## Conventions
 
@@ -86,9 +86,9 @@ serial; the coupling is chosen by the environment:
 | Environment | Coupling |
 |---|---|
 | unset | compatible: reconstructed flux, carried fluid mass |
-| `TADR_VELOCITY_COUPLING=eos` | Galerkin Darcy velocity, storage theta(psi^n) rho(c^n) |
-| `TADR_VELOCITY_COUPLING=lagged` | Galerkin Darcy velocity, storage of the preceding flow solve |
-| `TADR_CONSERVATIVE_FORM=1` (with one of the above, `SIMMONS_FCT=0`) | conservative instead of cancelled solute row |
+| `SIMMONS_VELOCITY_COUPLING=eos` | Galerkin Darcy velocity, storage theta(psi^n) rho(c^n) |
+| `SIMMONS_VELOCITY_COUPLING=lagged` | Galerkin Darcy velocity, storage of the preceding flow solve |
+| `SIMMONS_CONSERVATIVE_FORM=1` (with one of the above, `SIMMONS_FCT=0`) | conservative instead of cancelled solute row |
 
 Also `SIMMONS_COURANT` (0.5), `SIMMONS_FCT` (1, transport limiter) and
 `SIMMONS_RICHARDS_FCT` (1, flow limiter).
@@ -158,7 +158,7 @@ The comparison of the two transports is in `VDFT_COUPLING_COMPARISON_2026-11-04.
 
 ## Reruns and run measures (2026-11-04)
 
-- **The run scripts set `RICHARDS_EDGE_VELOCITY=1`.** That is the coupling the manuscript describes: Richards
+- **The transport decks set `EDGE_VELOCITY=True`.** That is the coupling the manuscript describes: Richards
   reconstructs q_e element by element from its realized edge exchanges, and TADR assembles its edge fluxes from that
   velocity. `henry`, `bioswale` and `levee_density` did not set it before.
 - **Common script options:**

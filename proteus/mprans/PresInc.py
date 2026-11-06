@@ -713,15 +713,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.comm = comm
         if comm.size() > 1:
             assert numericalFluxType is not None and numericalFluxType.useWeakDirichletConditions, "You must use a numerical flux to apply weak boundary conditions for parallel runs"
-            if self.coefficients.fixNullSpace:
-                # fixNullSpace pins dof 0 on rank 0 by rewriting its row. Under a
-                # partition without overlap that dof can be shared, and the other
-                # rank adds its partial row back, so the pin is wrong. The
-                # increment is determined up to a constant, which is what the
-                # constant null space of the KSP solve removes.
-                self.coefficients.fixNullSpace = False
-                self.coefficients.nullSpace = 'ConstantComponentsNullSpace'
-                self.coefficients.nullSpaceComponents = [0]
 
         log(memory("stride+offset", "OneLevelTransport"), level=4)
         if numericalFluxType is not None:
@@ -740,6 +731,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     options.periodicDirichletConditions)
         else:
             self.numericalFlux = None
+        self._settleNullSpace()
         # set penalty terms
         # cek todo move into numerical flux initialization
         if 'penalty' in self.ebq_global:
@@ -797,6 +789,23 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def calculateElementResidual(self):
         if self.globalResidualDummy is not None:
             self.getResidual(self.u[0].dof, self.globalResidualDummy)
+
+    def _settleNullSpace(self):
+        """fixNullSpace (pin dof 0 on rank 0) applies only when no Dirichlet condition fixes the increment's constant,
+        the check PressureNormalization uses for the zero mean; with one, the pin would overwrite a real equation and
+        a constant null space would remove a component the solution has. In parallel the pin is replaced by a
+        constant null space: under a partition without overlap dof 0 can be shared, and the other rank adds its
+        partial row back. Collective."""
+        if not self.coefficients.fixNullSpace:
+            return
+        from proteus.mprans.PressureNormalization import _hasDirichlet
+        if _hasDirichlet(self):
+            log("PresInc: fixNullSpace ignored, a Dirichlet condition fixes the constant", level=1)
+            self.coefficients.fixNullSpace = False
+        elif self.comm.size() > 1:
+            self.coefficients.fixNullSpace = False
+            self.coefficients.nullSpace = 'ConstantComponentsNullSpace'
+            self.coefficients.nullSpaceComponents = [0]
 
     def getResidual(self, u, r):
         import pdb

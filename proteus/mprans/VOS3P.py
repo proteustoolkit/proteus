@@ -293,6 +293,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import VOFCoefficientsEvaluate
     from proteus.ctransportCoefficients import VolumeAveragedVOFCoefficientsEvaluate
     from proteus.cfemIntegrals import copyExteriorElementBoundaryValuesFromElementBoundaryValues
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    VOFCoefficientsEvaluate = staticmethod(VOFCoefficientsEvaluate)
+    VolumeAveragedVOFCoefficientsEvaluate = staticmethod(VolumeAveragedVOFCoefficientsEvaluate)
+    copyExteriorElementBoundaryValuesFromElementBoundaryValues = staticmethod(copyExteriorElementBoundaryValuesFromElementBoundaryValues)
 
     def __init__(
             self,
@@ -1075,7 +1079,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.fluxMatrix = None
         self.uDotLow = None
         self.uLow = None
-        self._dofVecs = {}
         self.dt_times_dC_minus_dL = None
         self.min_u_bc = None
         self.max_u_bc = None
@@ -1181,25 +1184,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if self.mesh.nodeVelocityArray is None:
             self.mesh.nodeVelocityArray = np.zeros(
                 self.mesh.nodeArray.shape, 'd')
-
-    def scatterDOFArray(self, a):
-        """Replace the ghost entries of a dof array by the owners' values (in place)."""
-        if self.comm.size() == 1:
-            return
-        # one ghosted vector over a buffer of its own: callers pass temporaries, and a vector cached per array
-        # kept every one of them alive (1080 per rank after 0.08 s of an NCLS run)
-        cached = self._dofVecs.get(a.shape)
-        if cached is None:
-            dofMap = self.u[0].femSpace.dofMap
-            rank = self.comm.rank()
-            nOwned = dofMap.dof_offsets_subdomain_owned[rank + 1] - dofMap.dof_offsets_subdomain_owned[rank]
-            buf = a.copy()
-            cached = self._dofVecs[a.shape] = (buf, ParVec_petsc4py(
-                buf, 1, nOwned, dofMap.nDOF_all_processes, dofMap.nDOF_subdomain - nOwned, dofMap.subdomain2global))
-        buf, par = cached
-        buf[:] = a
-        par.scatter_forward_insert()
-        a[:] = buf
 
     def FCTStep(self):
         rowptr, colind, MassMatrix = self.MC_global.getCSRrepresentation()

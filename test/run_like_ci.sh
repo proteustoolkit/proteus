@@ -23,7 +23,8 @@
 #     process); OMPI_MCA_pml=ob1 for Open MPI; one BLAS/OpenMP thread per process.
 #  4. A scratch working directory (tests write files under fixed names) and --import-mode=importlib, as CI.
 #
-# With --inplace (proteus from this checkout, not installed) test_import_hygiene also checks 7 files that are in the
+# With --inplace (proteus from this checkout, not installed) the scripts setup.py installs (parun, ...) come from this
+# checkout too, through wrappers first on PATH, not from the environment's bin. test_import_hygiene also checks 7 files that are in the
 # checkout but not in an installed package (proteus/tests/richards, a TwoPhaseFlow documentation example), so the run
 # has CI's tests plus those 7.
 #
@@ -44,6 +45,29 @@ PY="$(command -v python)"
 BIN="$(dirname "$PY")"
 export PATH="$BIN:$PATH"
 [ "$INPLACE" = 1 ] && export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+if [ "$INPLACE" = 1 ]; then
+  # The scripts setup.py installs (parun, povgen.py, ...) are copies in the environment's bin from whatever build was
+  # installed there last, and tests launch them by name: a 10-25 parun with no --hotStartMode failed every hot start
+  # on 11-05. Put this checkout's copies first on PATH, installed as pip does: a python shebang becomes this
+  # environment's python. (Copies, not shell wrappers: the *_mpi.py helpers runpy.run_path(which('parun')).)
+  SCRIPTS="$(mktemp -d "${TMPDIR:-/tmp}/proteus-scripts.XXXXXX")"
+  "$PY" - "$REPO" "$SCRIPTS" <<'PYEOF' || exit 1
+import ast, os, re, sys
+repo, out = sys.argv[1], sys.argv[2]
+listed = re.search(r"scripts\s*=\s*(\[[^\]]*\])", open(os.path.join(repo, "setup.py")).read())
+for rel in ast.literal_eval(listed.group(1)):
+    with open(os.path.join(repo, rel), "rb") as f:
+        text = f.read()
+    first, nl, rest = text.partition(b"\n")
+    if first.startswith(b"#!") and b"python" in first:
+        text = b"#!" + sys.executable.encode() + nl + rest
+    path = os.path.join(out, os.path.basename(rel))
+    with open(path, "wb") as f:
+        f.write(text)
+    os.chmod(path, 0o755)
+PYEOF
+  export PATH="$SCRIPTS:$PATH"
+fi
 
 export MPLBACKEND=AGG OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONFAULTHANDLER=1
 export PROTEUS_TEST_TIMEOUT_SCALE="${PROTEUS_TEST_TIMEOUT_SCALE:-auto}"
@@ -85,6 +109,7 @@ EOF
 MAIN_YMF="$(git ls-remote https://github.com/proteustoolkit/ymf.git refs/heads/main 2>/dev/null | cut -c1-40)"
 [ -n "$MAIN_YMF" ] && echo "ymf@main: $MAIN_YMF"
 echo "mpiexec:  $(command -v mpiexec)   FI_PROVIDER=${FI_PROVIDER:-unset}"
+echo "parun:    $(command -v parun)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/proteus-tests.XXXXXX")"
 echo "work dir: $WORK"

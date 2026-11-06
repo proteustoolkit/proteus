@@ -877,7 +877,7 @@ class VerifyRandomWaves(unittest.TestCase):
         for ii in range(len(tlist)):
             etaWrite[ii] = a.eta(x0,tlist[ii])
         path =getpath()
-        fname = os.path.join(path, "randomSeries.txt")
+        fname = "randomSeries.txt"      # the working directory, where remove_files looks
         filenames = ['randomSeries.txt']
         if Tlag < 0.:
             with self.assertRaises(SystemExit) as cm1:
@@ -1700,7 +1700,7 @@ class VerifyRandomWavesFast(unittest.TestCase):
         from proteus.WaveTools import RandomWaves,TimeSeries,RandomWavesFast
         import random
         path =getpath()
-        fname = os.path.join(path, "randomFastSeries.txt")
+        fname = "randomFastSeries.txt"      # the working directory, where remove_files looks
         # Assinging a random value at a field and getting the expected output
         Tp = 1.
         Hs = 0.15
@@ -1858,7 +1858,7 @@ class VerifyRandomNLWaves(unittest.TestCase):
     def testFunctions(self):
         from proteus.WaveTools import RandomWaves,TimeSeries,RandomNLWaves,eta_mode
         path =getpath()
-        fname = os.path.join(path, "randomSeries.txt")
+        fname = "randomSeries.txt"      # the working directory, where remove_files looks
         # Assinging a random value at a field and getting the expected output
         Tp = 1.
         Hs = 0.1

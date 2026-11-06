@@ -104,13 +104,148 @@ class NumericalFlux_NIPG(proteus.NumericalFlux.Advection_DiagonalUpwind_Diffusio
 NumericalFlux = NumericalFlux_SIPG
 
 class Coefficients(TC_base):
-    """
+    r"""
     Coefficients of linear ADR equations
+
+    Solves :math:`\nabla\cdot(\mathbf{v}u - a\nabla u) = f` with a diffusion tensor
+    :math:`a(\mathbf{x})`, a source :math:`f(\mathbf{x})` and an optional velocity
+    :math:`\mathbf{v}`. Two unfitted interfaces, described by signed distance functions on a
+    background mesh that does not follow them, can be switched on separately or together:
+
+    * ``embeddedBoundary``: a fluid--solid interface :math:`\Gamma_s` (CutFEM). The region
+      ``embeddedBoundary_sdf < 0`` is solid and removed; cells entirely inside it are inactive.
+      On :math:`\Gamma_s` a Dirichlet value is imposed weakly by Nitsche's method, or a Robin
+      condition is applied. A ghost penalty on the interior edges of the active mesh that belong
+      to a :math:`\Gamma_s`-cut cell keeps small cut cells stable.
+    * ``immersedBoundary``: a fluid--fluid interface :math:`\Gamma_f` (immersed FEM). The
+      diffusion coefficient is ``mua`` where ``immersedBoundary_sdf < 0`` and ``mub`` where it
+      is positive. Cut cells use the two-branch IFEM basis, for :math:`P_1` and :math:`P_2`;
+      prescribed solution and flux jumps are supported.
+
+    With both switched on, a cell cut by both interfaces is a triply-cut cell; it is integrated
+    with composite equivalent polynomials. The method and its verification are described in
+    D. Nathawani and C. E. Kees, *Hybrid CutFEM-IFEM model for embedded and immersed interfaces
+    with triply-cut cells for the 2D Poisson problem*. The drivers ``test/ci/ladr_3p_2d_p.py``
+    (option ``paper=True`` selects the settings used there) and ``test/ci/ladr_fitted_2d_p.py``
+    reproduce its tables.
+
+    Callables that depend on position are called with keyword arguments ``x`` (a 3-vector) and
+    ``t``; the two signed distance functions return ``(value, unit normal)``.
 
     .. inheritance-diagram:: Coefficients
        :parts: 2
+
+    Parameters
+    ----------
+    aOfX : dict
+        ``{ci: callable(x)}``: diffusion tensor (``nd`` x ``nd``) of each component. With
+        ``immersedBoundary`` on, it must equal ``mua`` where ``immersedBoundary_sdf < 0`` and
+        ``mub`` where it is positive, as in ``test/ci/ladr_3p_2d_p.py``.
+    fOfX : dict
+        ``{ci: callable(x)}``: source of each component.
+    velocity : callable, optional
+        Advection velocity :math:`\mathbf{v}(\mathbf{x})`; ``None`` for no advection.
+    nc : int
+        Number of components.
+    nd : int
+        Space dimension.
+    mua : float
+        Diffusion coefficient :math:`\mu_a` where ``immersedBoundary_sdf < 0``. Used by the IFEM
+        basis and the terms on :math:`\Gamma_f`.
+    mub : float
+        Diffusion coefficient :math:`\mu_b` where ``immersedBoundary_sdf > 0``.
+    jf : float
+        Flux jump built into the IFEM basis. Keep 0: a prescribed flux jump is given by
+        ``immersedBoundary_fluxJump`` and enters as a load plus a lift.
+    embeddedBoundary : bool
+        Switch on the CutFEM treatment of :math:`\Gamma_s`. Requires ``embeddedBoundary_sdf`` and
+        ``embeddedBoundary_u``.
+    embeddedBoundary_penalty : float
+        Nitsche parameter :math:`\gamma_N`; the penalty term is scaled by :math:`\mu/h`. The paper
+        uses :math:`10p^2`.
+    embeddedBoundary_ghost_penalty : float
+        Ghost-penalty parameter :math:`\gamma_g`. The paper uses 0.15. In parallel, the ghost
+        penalty and the SCIFEM edge terms need two layers of mesh overlap.
+    embeddedBoundary_sdf : callable
+        Signed distance to :math:`\Gamma_s`: positive in the fluid, negative in the solid.
+    embeddedBoundary_u : callable
+        Dirichlet value on :math:`\Gamma_s`.
+    embeddedBoundary_u_inner : callable, optional
+        Dirichlet value for the ``mua`` phase, given as a smooth function over a whole cell.
+        On a triply-cut cell, one pointwise value would switch branch across :math:`\Gamma_f`;
+        a smooth function per phase keeps the Nitsche terms exact. Default:
+        ``embeddedBoundary_u``.
+    embeddedBoundary_u_outer : callable, optional
+        The same for the ``mub`` phase.
+    embeddedBoundary_robin : bool
+        Impose :math:`\mu\,\partial u/\partial n = -h\,(u - u_\infty)` on :math:`\Gamma_s`
+        instead of the Dirichlet condition, with :math:`\mathbf{n}` pointing from the fluid into
+        the solid.
+    embeddedBoundary_robin_h : float
+        Robin coefficient :math:`h`, the default for both phases.
+    embeddedBoundary_robin_h_inner : float, optional
+        Robin coefficient on the ``mua`` side. Default: ``embeddedBoundary_robin_h``.
+    embeddedBoundary_robin_h_outer : float, optional
+        Robin coefficient on the ``mub`` side. Default: ``embeddedBoundary_robin_h``.
+    embeddedBoundary_robin_uInfinity_inner : callable
+        Robin far-field value :math:`u_\infty` on the ``mua`` side.
+    embeddedBoundary_robin_uInfinity_outer : callable
+        Robin far-field value :math:`u_\infty` on the ``mub`` side.
+    immersedBoundary : bool
+        Switch on the IFEM treatment of :math:`\Gamma_f`. Requires ``immersedBoundary_sdf`` and
+        ``immersedBoundary_u``.
+    immersedBoundary_penalty : float
+        Not used by the IFEM scheme.
+    immersedSCIFEM_switch : float
+        1.0 adds the symmetric consistency terms of SCIFEM (Ji, Chen and Li, 2014) on the edges
+        cut by :math:`\Gamma_f`; 0.0 leaves them out. The paper uses 1.0.
+    immersedSCIFEM_penalty : float
+        Interior-penalty parameter :math:`\gamma_I` on the edges cut by :math:`\Gamma_f`,
+        applied to each phase. The paper uses 0 for :math:`p=1` and 100 for :math:`p=2`.
+    PG : bool
+        Petrov-Galerkin: test with the standard basis functions instead of the IFEM ones on
+        cells cut by :math:`\Gamma_f`. An alternative to the SCIFEM edge terms; the trial space
+        is unchanged.
+    immersedBoundary_sdf : callable
+        Signed distance to :math:`\Gamma_f`: negative on the ``mua`` side, positive on the
+        ``mub`` side. Its gradient is the interface normal :math:`\mathbf{n}`.
+    immersedBoundary_u : callable
+        Required when ``immersedBoundary`` is on, but not used by the IFEM scheme.
+    immersedBoundary_fluxJump : callable, optional
+        Scalar part :math:`J_f` of the prescribed flux jump
+        :math:`[\mu\,\partial u/\partial n] = J_f + \mathbf{g}\cdot\mathbf{n}`, where
+        :math:`[w] = w_b - w_a`. Default: no flux jump.
+    immersedBoundary_fluxJumpVector : callable, optional
+        Vector part :math:`\mathbf{g}` of the prescribed flux jump. Default: none.
+    immersedBoundary_solutionJump : callable, optional
+        Prescribed solution jump :math:`[u] = u_b - u_a`, sampled at the degrees of freedom and
+        carried by a lift. Default: no jump.
+    immersedBoundary_fluxJumpLift : bool
+        Represent the flux jump by a lift added once to the trial function, in addition to the
+        load term. Where the solution jump varies on a cell, the lift carries only the part of
+        the flux jump that the solution-jump lift does not. False keeps only the load term.
+    triplyCut_edgeFluidSide : bool
+        On a triply-cut cell, integrate the consistency correction over the fluid part of each
+        edge cut by :math:`\Gamma_f`. The paper uses ``True``. The environment variable
+        ``ADR_TC_EDGE_FLUID`` also sets it, with a deprecation warning.
+    triplyCut_edgeBoundaryOnly : bool
+        Keep that correction only on edges on the outer boundary; SCIFEM handles the interior
+        edges. The paper uses ``True``. The environment variable ``ADR_TC_EDGE_BOUNDARY_ONLY``
+        also sets it, with a deprecation warning.
+    analyticalSolution : dict, optional
+        ``{0: AnalyticalSolution}``. When given, the :math:`L^2` and :math:`L^\infty` errors over
+        the fluid are logged after each step, taking the exact solution of each phase from
+        ``uOfX_inner`` and ``uOfX_outer`` if the object has them. If it also provides the exact
+        gradient (``duOfX_inner`` and ``duOfX_outer``, or ``duOfX``), the broken :math:`H^1`
+        seminorm and the :math:`H^1` error are logged too.
+    l2proj, timeVaryingCoefficients, forceStrongDirichlet, useMetrics, sc_uref, sc_beta
+        Options of the standard ADR model, unrelated to the interfaces.
+    test : float
+        Not used.
     """
     from proteus.ctransportCoefficients import L2projectEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    L2projectEvaluate = staticmethod(L2projectEvaluate)
     def __init__(self,aOfX,fOfX,velocity=None,nc=1,nd=2,l2proj=None,
                  timeVaryingCoefficients=False,
                  forceStrongDirichlet=False,
@@ -144,7 +279,6 @@ class Coefficients(TC_base):
                  immersedBoundary_fluxJumpVector=None,
                  immersedBoundary_solutionJump=None,
                  immersedBoundary_fluxJumpLift=True,
-                 triplyCut_pinMaskedDofs=True,
                  triplyCut_edgeFluidSide=False,
                  triplyCut_edgeBoundaryOnly=False,
                  analyticalSolution=None,
@@ -173,12 +307,8 @@ class Coefficients(TC_base):
         # needs no consistency/symmetry/penalty construction, only a single reaction-like term
         # (see updateEmbeddedBoundaryRobinTerms in ADR.h).
         #
-        # u_infinity gets its OWN fields (embeddedBoundary_robin_uInfinity*), deliberately not
-        # reusing embeddedBoundary_u/_u_inner/_u_outer: those are also read directly, by name,
-        # in initializeSDF below to pin a masked triply-cut node's raw DOF to the TRUE exact
-        # solution there -- a mechanism with nothing to do with Gamma_s's boundary condition
-        # type. Reusing them for u_infinity would silently repoint that unrelated pinning at
-        # the wrong value whenever Robin is on.
+        # u_infinity gets its own fields (embeddedBoundary_robin_uInfinity*), separate from the
+        # Dirichlet data embeddedBoundary_u/_u_inner/_u_outer.
         #
         # h itself is taken as a phase constant (the physically standard treatment of a
         # convective coefficient), not a spatially varying field: embeddedBoundary_robin_h_inner
@@ -193,8 +323,7 @@ class Coefficients(TC_base):
             if embeddedBoundary_robin_h_inner is not None else embeddedBoundary_robin_h)
         self.embeddedBoundary_robin_h_outer = (embeddedBoundary_robin_h_outer
             if embeddedBoundary_robin_h_outer is not None else embeddedBoundary_robin_h)
-        # No single "generic" uInfinity: unlike embeddedBoundary_u (whose masked-DOF role
-        # forces a value everywhere), a Robin target is only ever consumed per-phase -- via
+        # No single "generic" uInfinity: a Robin target is only ever consumed per-phase -- via
         # D_s_a/D_s_b on a triply-cut element, via icase_f's sign otherwise -- exactly like
         # h_inner/h_outer above, so there is nothing for a combined field to do.
         self.embeddedBoundary_robin_uInfinity_inner = embeddedBoundary_robin_uInfinity_inner
@@ -217,24 +346,19 @@ class Coefficients(TC_base):
         # All default to zero, i.e. a continuous interface with continuous flux.
         self.immersedBoundary_fluxJump=immersedBoundary_fluxJump
         # Triply-cut cells (both embeddedBoundary and immersedBoundary on; Gamma_s meets Gamma_f inside
-        # the cell). Three choices, formerly the environment variables ADR_DISABLE_TC, ADR_TC_EDGE_FLUID
-        # and ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (False, True, True)
-        # together with immersedSCIFEM_switch=1.
-        #   triplyCut_pinMaskedDofs: pin the raw DOF of a solid-side node of a cut P1 cell to the exact
-        #     solution of its phase (embeddedBoundary_u_inner/_outer) through forceStrongDirichlet.
+        # the cell). Two choices, formerly the environment variables ADR_TC_EDGE_FLUID and
+        # ADR_TC_EDGE_BOUNDARY_ONLY; the hybrid CutFEM-IFEM manuscript uses (True, True) together
+        # with immersedSCIFEM_switch=1.
         #   triplyCut_edgeFluidSide: take the one-sided Gamma_f edge correction from the fluid side
         #     (flips its sign in residual and Jacobian).
         #   triplyCut_edgeBoundaryOnly: keep that correction only on exterior edges; SCIFEM's two-sided
         #     consistency term handles the interior ones.
         # The old environment variables still work and override these arguments, with a warning.
-        self.triplyCut_pinMaskedDofs = bool(triplyCut_pinMaskedDofs)
         self.triplyCut_edgeFluidSide = bool(triplyCut_edgeFluidSide)
         self.triplyCut_edgeBoundaryOnly = bool(triplyCut_edgeBoundaryOnly)
-        for _env, _attr, _val in (("ADR_DISABLE_TC", "triplyCut_pinMaskedDofs", False),
-                                  ("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
+        for _env, _attr, _val in (("ADR_TC_EDGE_FLUID", "triplyCut_edgeFluidSide", True),
                                   ("ADR_TC_EDGE_BOUNDARY_ONLY", "triplyCut_edgeBoundaryOnly", True)):
-            # ADR_DISABLE_TC acted only when set to '1'; the other two acted when set at all
-            if (os.environ.get(_env) == '1') if _env == "ADR_DISABLE_TC" else (_env in os.environ):
+            if _env in os.environ:
                 warnings.warn("ADR: environment variable {0} is deprecated; pass {1}={2} to "
                               "ADR.Coefficients instead".format(_env, _attr, _val), DeprecationWarning)
                 setattr(self, _attr, _val)
@@ -343,75 +467,6 @@ class Coefficients(TC_base):
                     n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
                     J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
                 self.immersedBoundary_fluxJump_element[eN] = J
-        # Triply-cut (P1 only): a masked node's raw DOF is physically undefined (u_ex isn't
-        # defined inside the solid), but gf_f's two-sided basis reads it directly regardless.
-        # Fix: substitute the analytic embeddedBoundary_u_inner/_outer value at that node's
-        # coordinates. triplyCut_maskedLocalNode/overrideValue record one masked node per
-        # element for the historical residual-only patch in ADR.h; the real fix, for one or
-        # two masked nodes, is triplyCut_globalDofOverrides, pinned via forceStrongDirichlet.
-        nElements = femSpace.mesh.elementNodesArray.shape[0]
-        self.triplyCut_maskedLocalNode = -np.ones((nElements,),'i')
-        self.triplyCut_overrideValue = np.zeros((nElements,),'d')
-        self.triplyCut_globalDofOverrides = {}
-        if (self.embeddedBoundary and self.immersedBoundary and femSpace.max_nDOF_element == 3
-                and self.embeddedBoundary_u_inner is not None
-                and self.embeddedBoundary_u_outer is not None
-                and self.triplyCut_pinMaskedDofs):
-            l2g = femSpace.dofMap.l2g
-            _watch = int(os.environ['ADR_DEBUG_NODE']) if os.environ.get('ADR_DEBUG_NODE') else None
-            for eN in range(nElements):
-                local_g = l2g[eN,:3]
-                local_phi_s = self.embeddedBoundary_sdf_nodes[local_g]
-                masked = np.where(local_phi_s < 0.0)[0]
-                if _watch is not None and _watch in local_g:
-                    print(f"[DEBUG_NODE] eN={eN} local_g={local_g} phi_s={local_phi_s} "
-                          f"nMasked={len(masked)} masked_locals={masked}")
-                _allowed = (1,) if os.environ.get('ADR_TC_G1_ONLY') == '1' else (1, 2)
-                if len(masked) not in _allowed:
-                    continue  # fully solid, fully fluid, or (never for P1) all 3 masked
-                self.triplyCut_maskedLocalNode[eN] = int(masked[0])
-                for m in masked:
-                    m = int(m)
-                    gN = int(local_g[m])
-                    xN = nodeArray[gN]
-                    if self.immersedBoundary_sdf_nodes[gN] < 0.0:
-                        override = self.embeddedBoundary_u_inner(t=0.0,x=xN)
-                    else:
-                        override = self.embeddedBoundary_u_outer(t=0.0,x=xN)
-                    if m == self.triplyCut_maskedLocalNode[eN]:
-                        self.triplyCut_overrideValue[eN] = override
-                    self.triplyCut_globalDofOverrides[gN] = override
-        if os.environ.get('ADR_DEBUG_TC'):
-            _n = int((self.triplyCut_maskedLocalNode >= 0).sum())
-            print(f"[triplyCut] elements flagged: {_n} / {nElements}  "
-                  f"embeddedBoundary={self.embeddedBoundary} immersedBoundary={self.immersedBoundary} "
-                  f"max_nDOF_element={femSpace.max_nDOF_element}")
-            l2g_dbg = femSpace.dofMap.l2g
-            _genuine = []
-            for eN in range(nElements):
-                lg = l2g_dbg[eN,:3]
-                ps = self.embeddedBoundary_sdf_nodes[lg]
-                pf = self.immersedBoundary_sdf_nodes[lg]
-                if (ps < 0).any() and (ps > 0).any() and (pf < 0).any() and (pf > 0).any():
-                    _genuine.append((eN, int((ps < 0).sum()), self.triplyCut_maskedLocalNode[eN]))
-            print(f"[triplyCut] genuinely triply-cut elements (mixed phi_s AND mixed phi_f): {len(_genuine)}")
-            _pinned_global_dofs = set()
-            for eN in range(nElements):
-                m = self.triplyCut_maskedLocalNode[eN]
-                if m >= 0:
-                    _pinned_global_dofs.add(int(l2g_dbg[eN, m]))
-            for eN, nmasked, flagged in _genuine:
-                gN_dbg = l2g_dbg[eN, flagged] if flagged >= 0 else -1
-                coords_dbg = nodeArray[gN_dbg] if flagged >= 0 else None
-                print(f"  eN={eN} nMaskedNodes={nmasked} maskedLocalNode(flagged)={flagged} "
-                      f"globalNode={gN_dbg} coords={coords_dbg}")
-                if nmasked == 2:
-                    lg = l2g_dbg[eN, :3]
-                    ps = self.embeddedBoundary_sdf_nodes[lg]
-                    for _li in np.where(ps < 0)[0]:
-                        _gN = int(lg[_li])
-                        print(f"    -> G3/G4 masked local node {_li} = global dof {_gN}, "
-                              f"coords={nodeArray[_gN]}, pinned via a neighbor={_gN in _pinned_global_dofs}")
     def initializeElementQuadrature(self,t,cq):
         nd = self.nd
         for ci in range(self.nc):
@@ -486,6 +541,27 @@ class Coefficients(TC_base):
                     else:
                         cq[('u_exact_inner',0)][eN,k] = ans0.uOfX(xk)
                         cq[('u_exact_outer',0)][eN,k] = cq[('u_exact_inner',0)][eN,k]
+        # Exact gradient of each phase, for the H1 error, when the analytical solution provides it
+        # (duOfX_inner/duOfX_outer, or a single duOfX); otherwise the H1 error is not reported.
+        nq_shape = cq[('u',0)].shape
+        cq[('grad_u_exact_inner',0)] = np.zeros(nq_shape + (self.nd,),'d')
+        cq[('grad_u_exact_outer',0)] = np.zeros(nq_shape + (self.nd,),'d')
+        self.hasExactGradient = False
+        if self.analyticalSolution is not None and self.analyticalSolution.get(0) is not None:
+            ans0 = self.analyticalSolution[0]
+            if hasattr(ans0,'duOfX_inner') and hasattr(ans0,'duOfX_outer'):
+                du_in, du_out = ans0.duOfX_inner, ans0.duOfX_outer
+            elif hasattr(ans0,'duOfX'):
+                du_in = du_out = ans0.duOfX
+            else:
+                du_in = du_out = None
+            if du_in is not None:
+                self.hasExactGradient = True
+                for eN in range(cq['x'].shape[0]):
+                    for k in range(cq['x'].shape[1]):
+                        xk = cq['x'][eN,k]
+                        cq[('grad_u_exact_inner',0)][eN,k,:] = np.asarray(du_in(xk))[:self.nd]
+                        cq[('grad_u_exact_outer',0)][eN,k,:] = np.asarray(du_out(xk))[:self.nd]
 
     def initializeElementBoundaryQuadrature(self,t,cebq,cebq_global):
         nd = self.nd
@@ -903,20 +979,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #cek/ido todo replace python loops in modules with optimized code if possible/necessary
         self.forceStrongConditions=coefficients.forceStrongDirichlet
         self.dirichletConditionsForceDOF = DOFBoundaryConditions(self.u[0].femSpace,dofBoundaryConditionsSetterDict[0],weakDirichletConditions=False)
-        # Triply-cut: pin masked global DOFs via strong-Dirichlet, not just the residual-side
-        # ADR.h patch (which alone left the Jacobian inconsistent and broke Newton). Covers
-        # every masked node (one or two per element), deduplicated by global DOF.
-        if getattr(coefficients, 'triplyCut_globalDofOverrides', None) and self.forceStrongConditions:
-            _nForced = 0
-            for dofN, v in coefficients.triplyCut_globalDofOverrides.items():
-                if dofN in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict:
-                    continue  # already forced by an exterior boundary condition (Section 7's coincidence)
-                self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict[dofN] = (lambda x, t, _v=v: _v)
-                self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN] = self.mesh.nodeArray[dofN]
-                _nForced += 1
-            if os.environ.get('ADR_DEBUG_TC'):
-                print(f"[triplyCut] strongly pinned {_nForced} masked DOF(s) via forceStrongDirichlet "
-                      f"(of {len(coefficients.triplyCut_globalDofOverrides)} identified)")
         compKernelFlag = 0
         self.adr = cADR_base(self.nSpace_global,
                                self.nQuadraturePoints_element,
@@ -956,35 +1018,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             d[self._mesh_l2g()] = self.mesh.nodeDiametersArray[self.mesh.elementNodesArray]
             self._nodeDiameters_vertices = d
         return self._nodeDiameters_vertices
-    # 4-point Gauss-Legendre abscissae on [0,1], used to hand the kernel the exterior Dirichlet data of
-    # each phase along an exterior edge (ADR_EXT_NITSCHE). Edge parameter t runs from the lower to the
-    # higher global node number of the edge.
-    _EXT_T = np.array([0.5 - 0.5*0.8611363115940526, 0.5 - 0.5*0.3399810435848563,
-                       0.5 + 0.5*0.3399810435848563, 0.5 + 0.5*0.8611363115940526])
-
-    def _exteriorEdgeBranchData(self):
-        if getattr(self, '_extEdgeData', None) is not None:
-            return self._extEdgeData
-        nExt = self.mesh.nExteriorElementBoundaries_global
-        ua = np.zeros((nExt, 4), 'd')
-        ub = np.zeros((nExt, 4), 'd')
-        ans = self.coefficients.analyticalSolution
-        ans0 = ans.get(0) if ans is not None else None
-        if ans0 is not None and os.environ.get('ADR_EXT_NITSCHE'):
-            for ebNE in range(nExt):
-                ebN = self.mesh.exteriorElementBoundariesArray[ebNE]
-                n0, n1 = sorted(self.mesh.elementBoundaryNodesArray[ebN][:2])
-                P0, P1 = self.mesh.nodeArray[n0], self.mesh.nodeArray[n1]
-                for k, t in enumerate(self._EXT_T):
-                    x = P0 + t*(P1 - P0)
-                    if hasattr(ans0, 'uOfX_inner') and hasattr(ans0, 'uOfX_outer'):
-                        ua[ebNE, k] = ans0.uOfX_inner(x)
-                        ub[ebNE, k] = ans0.uOfX_outer(x)
-                    else:
-                        ua[ebNE, k] = ub[ebNE, k] = ans0.uOfX(x)
-        self._extEdgeData = (ua, ub)
-        return self._extEdgeData
-
     def getResidual(self,u,r):
         import pdb
         import copy
@@ -1036,8 +1069,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["u_dof"] = self.u[0].dof
-        argsDict["triplyCut_maskedLocalNode"] = self.coefficients.triplyCut_maskedLocalNode
-        argsDict["triplyCut_overrideValue"] = self.coefficients.triplyCut_overrideValue
         argsDict["sd_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         argsDict["sd_colind"] = self.coefficients.sdInfo[(0,0)][1]
         argsDict["q_a"] = self.q[('a',0,0)]
@@ -1059,9 +1090,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
-        ext_ua, ext_ub = self._exteriorEdgeBranchData()
-        argsDict["ext_edge_u_inner"] = ext_ua
-        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -1102,6 +1130,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["immersedBoundary_fluxJump_q"] = self.q['immersedBoundary_fluxJump']
         argsDict["immersedBoundary_fluxJumpVector_q"] = self.q['immersedBoundary_fluxJumpVector']
         argsDict["immersedBoundary_fluxJump_element"] = self.coefficients.immersedBoundary_fluxJump_element
+        argsDict["immersedBoundary_fluxJumpLift"] = int(self.coefficients.immersedBoundary_fluxJumpLift)
         argsDict["immersedBoundary_solutionJump_nodes"] = self.coefficients.immersedBoundary_solutionJump_nodes
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["mua"] = self.coefficients.mua
@@ -1109,18 +1138,23 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["jf"] = self.coefficients.jf
         argsDict["q_u_exact_inner"] = self.q[('u_exact_inner',0)]
         argsDict["q_u_exact_outer"] = self.q[('u_exact_outer',0)]
+        argsDict["q_grad_u_exact_inner"] = self.q[('grad_u_exact_inner',0)]
+        argsDict["q_grad_u_exact_outer"] = self.q[('grad_u_exact_outer',0)]
         argsDict["recomputeIFEMGeometry"] = int(self.recompute_ifem_geometry)
         self.recompute_ifem_geometry = False
         self.L2_error = np.array((0.0,),'d')
         argsDict["L2_error"] = self.L2_error
         self.Linfty_error = np.array((0.0,),'d')
         argsDict["Linfty_error"] = self.Linfty_error
+        self.H1_error = np.array((0.0,),'d')  # squared H1 seminorm of the error
+        argsDict["H1_error"] = self.H1_error
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 self.u[0].dof[dofN] = g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
         self.adr.calculateResidual(argsDict)
         self.L2_error[0] = globalSum(self.L2_error[0])
         self.Linfty_error[0] = globalMax(self.Linfty_error[0])
+        self.H1_error[0] = globalSum(self.H1_error[0])
         if self.forceStrongConditions:
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 r[self.offset[0] + self.stride[0] * dofN] = self.u[0].dof[dofN] - g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
@@ -1128,50 +1162,12 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # everywhere -- every bulk/Nitsche/immersed term in every such element is
         # multiplied by one of those, so an inactive DOF's own value is never read by
         # anything the solve actually uses. Leave it alone instead of zeroing it: a
-        # DOF that also carries an exterior Dirichlet condition (or, once masked,
-        # a forced continuation value) should keep that value, not get stomped back
+        # DOF that also carries an exterior Dirichlet condition should keep that value, not get stomped back
         # to 0 after this call already used it correctly to build the residual above.
         r*=self.isActiveDOF
         log("2 error = {0}".format(self.L2_error**0.5),level=3)
         log("infty error = {0}".format(self.Linfty_error),level=3)
-        if os.environ.get('ADR_DEBUG_RESID'):
-            rows = []
-            for i in range(len(self.u[0].dof)):
-                ri = r[self.offset[0] + self.stride[0]*i]
-                x = self.mesh.nodeArray[i]
-                phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
-                phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
-                rows.append((abs(ri), i, tuple(x), ri, phi_s, phi_f, self.isActiveDOF[i]))
-            rows.sort(reverse=True)
-            print(f"[RESID] top 15 |r[dof]| (nonlinear_function_evaluations="
-                  f"{self.nonlinear_function_evaluations}):")
-            for a, i, x, ri, phi_s, phi_f, act in rows[:15]:
-                print(f"  node={i} x={x} r={ri:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
-        if os.environ.get('ADR_DEBUG_DOFERR') and self.coefficients.analyticalSolution is not None:
-            ans0 = self.coefficients.analyticalSolution.get(0)
-            if ans0 is not None:
-                errs = []
-                for i in range(len(self.u[0].dof)):
-                    x = self.mesh.nodeArray[i]
-                    exact = ans0.uOfX(x)
-                    err = self.u[0].dof[i] - exact
-                    phi_s = self.coefficients.embeddedBoundary_sdf_nodes[i] if self.coefficients.embeddedBoundary else None
-                    phi_f = self.coefficients.immersedBoundary_sdf_nodes[i] if self.coefficients.immersedBoundary else None
-                    errs.append((abs(err), i, tuple(x), err, phi_s, phi_f, self.isActiveDOF[i]))
-                errs_active = [e for e in errs if e[6] == 1.0]
-                errs_active.sort(reverse=True)
-                print(f"[DOFERR] top 12 |u_dof - u_exact| among ACTIVE dofs only "
-                      f"(nonlinear_function_evaluations={self.nonlinear_function_evaluations}):")
-                for a, i, x, err, phi_s, phi_f, act in errs_active[:12]:
-                    print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
-                _watchset = set(int(v) for v in os.environ.get('ADR_DEBUG_NODESET','').split(',') if v)
-                if _watchset:
-                    print("[DOFERR] watched nodes:")
-                    for a, i, x, err, phi_s, phi_f, act in errs:
-                        if i in _watchset:
-                            print(f"  node={i} x={x} err={err:+.6e} phi_s={phi_s} phi_f={phi_f} active={act}")
         log("Global residual",level=9,data=r)
-        #self.coefficients.massConservationError = fabs(globalSum(sum(r.flat[:self.mesh.nElements_owned])))
         #log("   Mass Conservation Error",level=3,data=self.coefficients.massConservationError)
         self.nonlinear_function_evaluations += 1
     def getJacobian(self,jacobian):
@@ -1233,9 +1229,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_v"] = self.ebqe[('df',0,0)]
         argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u',0)]
-        ext_ua, ext_ub = self._exteriorEdgeBranchData()
-        argsDict["ext_edge_u_inner"] = ext_ua
-        argsDict["ext_edge_u_outer"] = ext_ub
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('diffusiveFlux_bc',0,0)]
@@ -1347,78 +1340,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         if _unsupported:
             log("ADR: pinned %d unsupported DOF(s) with no Jacobian contribution "
                 "(active element, but inside the embedded solid)" % len(_unsupported), level=4)
-        import os
-        # ADR_DUMP_JACOBIAN=<prefix>: save the final Jacobian (after strong Dirichlet rows and pinned
-        # rows) once, with the strongly imposed Dirichlet DOFs and the active flags, for an offline
-        # study of conditioning and linear solvers on the free (active, non-Dirichlet) unknowns.
-        if os.environ.get("ADR_DUMP_JACOBIAN") and not getattr(self, '_adr_jac_dumped', False):
-            _dir = [self.offset[0] + self.stride[0]*d for d in self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys()] \
-                if self.forceStrongConditions else []
-            np.savez(os.environ["ADR_DUMP_JACOBIAN"] + ".npz", rowptr=np.array(self.rowptr), colind=np.array(self.colind),
-                     nzval=np.array(self.nzval), dirichlet=np.array(_dir, dtype='i'), active=np.array(self.isActiveDOF))
-            self._adr_jac_dumped = True
-        if os.environ.get("ADR_DEBUG_COND"):
-            import scipy.sparse as _sp
-            import scipy.sparse.linalg as _spla
-            _n = len(self.rowptr) - 1
-            _A = _sp.csr_matrix((self.nzval, self.colind, self.rowptr), shape=(_n, _n))
-            try:
-                if _n <= 2000:
-                    _dense = _A.toarray()
-                    _sv = np.linalg.svd(_dense, compute_uv=False)
-                    print("ADR_DEBUG_COND: n=%d smallest_sv=%.6e largest_sv=%.6e cond=%.6e rank=%d"
-                          % (_n, _sv[-1], _sv[0], _sv[0] / max(_sv[-1], 1e-300), np.sum(_sv > 1e-10 * _sv[0])))
-                else:
-                    _sv_min = _spla.svds(_A, k=1, which='SM', return_singular_vectors=False)
-                    _sv_max = _spla.svds(_A, k=1, which='LM', return_singular_vectors=False)
-                    print("ADR_DEBUG_COND: n=%d smallest_sv~=%.6e largest_sv~=%.6e"
-                          % (_n, _sv_min[0], _sv_max[0]))
-            except Exception as _e:
-                print("ADR_DEBUG_COND: failed:", _e)
-            # One-shot finite-difference Jacobian consistency check: does the assembled
-            # Jacobian actually predict how getResidual responds to a perturbation, at the
-            # SAME u this Jacobian was just built at? A mismatch here -- not a conditioning
-            # problem -- would explain a well-conditioned linear solve whose correction has
-            # zero effect on the true (residual-defined) objective.
-            if not getattr(self, '_adr_fd_done', False):
-                self._adr_fd_done = True
-                try:
-                    _u = self.u[0].dof.copy()
-                    _r0 = np.zeros(_n, 'd')
-                    self.getResidual(_u, _r0)
-                    _eps = 1.0e-6
-                    _forced = set(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.keys())
-                    _active = np.argwhere(self.isActiveDOF != 0.0).flatten()
-                    _sample = [i for i in _active if i not in _forced]
-                    print("ADR_DEBUG_FD: n=%d forced=%d testing %d free active dofs"
-                          % (_n, len(_forced), len(_sample)))
-                    _worst_overall = 0.0
-                    _worst_dof = -1
-                    _nbad = 0
-                    for _i in _sample:
-                        _up = _u.copy()
-                        _scale = max(1.0, abs(_u[_i]))
-                        _h = _eps * _scale
-                        _up[_i] += _h
-                        _r1 = np.zeros(_n, 'd')
-                        self.getResidual(_up, _r1)
-                        _fd_col = (_r1 - _r0) / _h
-                        _an_col = _A[:, _i].toarray().flatten()
-                        _tol = 1.0e-3 * max(1.0, np.max(np.abs(_an_col)))
-                        _diff = np.abs(_fd_col - _an_col)
-                        _worst = np.argmax(_diff)
-                        if _diff[_worst] > _tol:
-                            _nbad += 1
-                            print("ADR_DEBUG_FD: MISMATCH dof=%d h=%.3e max|fd-an|=%.6e at row=%d "
-                                  "fd=%.6e an=%.6e (tol=%.3e)"
-                                  % (_i, _h, _diff[_worst], _worst, _fd_col[_worst], _an_col[_worst], _tol))
-                        if _diff[_worst] > _worst_overall:
-                            _worst_overall = _diff[_worst]
-                            _worst_dof = _i
-                    print("ADR_DEBUG_FD: SUMMARY %d/%d free dofs mismatched (tol 1e-3 rel), "
-                          "worst=%.6e at dof=%d" % (_nbad, len(_sample), _worst_overall, _worst_dof))
-                except Exception as _e:
-                    print("ADR_DEBUG_FD: failed:", _e)
         return jacobian
     def invalidateIFEMGeometry(self):
         """
@@ -1483,6 +1404,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def calculateAuxiliaryQuantitiesAfterStep(self):
         log("L2 error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.L2_error**0.5))),level=3)
         log("Linfty error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.Linfty_error))),level=3)
+        if getattr(self.coefficients, 'hasExactGradient', False):
+            # broken H1 norm and seminorm of the error, gradient taken on each element and each phase:
+            # |e|_1,h = (sum_K sum_phases ||grad e||^2)^(1/2), ||e||_1,h = (||e||_L2^2 + |e|_1,h^2)^(1/2)
+            log("H1 error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d((self.L2_error + self.H1_error)**0.5))),level=3)
+            log("H1 seminorm error = [{0}]".format(" ".join("%.16e" % e for e in np.atleast_1d(self.H1_error**0.5))),level=3)
         pass
     def calculateSolutionAtQuadrature(self):
         pass

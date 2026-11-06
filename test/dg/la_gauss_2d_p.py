@@ -67,6 +67,8 @@ analyticalSolution = {0:RotatingGaussian2D(1.0/16.0)}
 
 class UnitSquareRotation(TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import unitSquareRotationEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    unitSquareRotationEvaluate = staticmethod(unitSquareRotationEvaluate)
     def __init__(self):
         mass={0:{0:'linear'}}
         advection={0:{0:'linear'}}

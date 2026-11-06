@@ -120,6 +120,7 @@ coefficients = MMSMonitorCoefficients(
     rho_s=1.0 + mms_exact.EPS,
     viscosity_omega_max=mms_exact.OMEGA_MAX,
     mms_source=mms_exact.g,
+    EDGE_VELOCITY=True,  # F = A - A^T from Richards' edge velocity
 )
 coefficients.variableNames = ["u"]
 

@@ -21,7 +21,6 @@ conda activate "${PROTEUS_ENV:-tadr-check}"
 set -u
 # parun must import the installed build, not a repo checkout on PYTHONPATH
 unset PYTHONPATH
-export RICHARDS_EDGE_VELOCITY=1
 for kv in "$@"; do export "$kv"; done
 env | grep -E '^(MMS_|RICHARDS_)' | sort > run.env
 echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)" > provenance.txt

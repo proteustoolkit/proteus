@@ -119,7 +119,7 @@ if SIDE_BC not in ("noflow", "head"):
 #: Log where along the source strip water actually enters, once per step; see
 #: RandomFieldCoefficients.log_source_inflow_profile in flow_p.py.  This is the
 #: diagnostic for the empty middle of the plume, and it runs with the Signorini
-#: seal either on or off.  Pair it with RICHARDS_BC_DBG=1 and TADR_BC_DBG=1 for
+#: seal either on or off.  Pair it with diagnostics=("boundary_flux",) in Richards and TADR for
 #: the boundary-flux decomposition on both sides of the coupling.
 SOURCE_PROFILE_DBG = os.environ.get(
     "SIMMONS_SRC_DBG", "0") not in ("0", "false", "False")

@@ -51,7 +51,7 @@ def calculateSolution(self, *args, **kwargs):
     nOwned = model.mesh.nNodes_owned
     comm = Comm.get().comm.tompi4py()
     # scatterDOFArray must not keep a vector per array it was handed (it kept 1080 per rank)
-    nVecs = comm.allreduce(len(model._dofVecs), op=MPI.MAX)
+    nVecs = comm.allreduce(len(getattr(model, "_dofVecs", {})), op=MPI.MAX)
     gathered = comm.gather(np.column_stack([model.mesh.nodeArray[:nOwned, :2], model.u[0].dof[:nOwned]]), root=0)
     if comm.rank == 0:
         a = np.vstack(gathered)

@@ -64,3 +64,17 @@ def test_vof_edge_based_fct_on_two_ranks_is_the_serial_answer(tmp_path, model, s
     assert numpy.abs(serial - ghosts).max() < 1e-8
     reads_ghosts = _field(2, tmp_path / "5", GHOSTCFL=1, OLDMAX=1, STAB=stabilization, MODEL=model)
     assert numpy.abs(serial - reads_ghosts).max() > 1e-6
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("model", ["VOF", "VOF3P"])
+def test_vof_taylor_galerkin_entropy_viscosity_on_two_ranks_is_the_serial_answer(tmp_path, model):
+    """STABILIZATION_TYPE=1 (Taylor-Galerkin with entropy viscosity, two-stage implicit, consistent mass, no FCT):
+    the entropy viscosity is normalized by the entropy's deviation over the whole domain (EntropyViscosity), so each
+    rank's kernel output is renormalized after the solve. Measured 3.5e-10 (2 ranks), 3.9e-10 (4) relative; the
+    control keeps each rank's own normalization and the 2-rank run blows up (8e5)."""
+    for d in ("1", "2", "3"):
+        (tmp_path / d).mkdir()
+    serial = _field(1, tmp_path / "1", STAB=1, MODEL=model)
+    assert numpy.abs(serial - _field(2, tmp_path / "2", STAB=1, MODEL=model)).max() < 1e-8
+    assert numpy.abs(serial - _field(2, tmp_path / "3", STAB=1, NOREDUCE=1, MODEL=model)).max() > 1e-3

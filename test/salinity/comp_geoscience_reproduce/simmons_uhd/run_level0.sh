@@ -11,13 +11,13 @@
 # t = 32 s in the low-order type-5 solution; the 1.9.x port stays in [0, 1].
 #
 # Ablation rows of Table tab:uhd_coupling (environment):
-#   TADR_VELOCITY_COUPLING=eos      velocity-based, storage theta(psi^n) rho(c^n)
+#   SIMMONS_VELOCITY_COUPLING=eos      velocity-based, storage theta(psi^n) rho(c^n)
 #                                   (rows Co = 0.5 and, with SIMMONS_COURANT=0.25,
 #                                   Co = 0.25)
-#   TADR_VELOCITY_COUPLING=lagged   velocity-based, lagged density
+#   SIMMONS_VELOCITY_COUPLING=lagged   velocity-based, lagged density
 #   SIMMONS_RICHARDS_FCT=0          flow limiter off (caption note)
 #   unset                           compatible (edge fluxes, carried fluid mass)
-#   TADR_CONSERVATIVE_FORM=1        with a velocity coupling and SIMMONS_FCT=0:
+#   SIMMONS_CONSERVATIVE_FORM=1        with a velocity coupling and SIMMONS_FCT=0:
 #                                   the conservative solute row instead of the
 #                                   cancelled one (low order, serial)
 # The solute created by the coupling is the last [TADR-CONT2] line of
@@ -32,7 +32,7 @@ cd "$RUN"
 source ~/miniforge3/etc/profile.d/conda.sh
 set +u; conda activate "${PROTEUS_ENV:-tadr-check}"; set -u
 if [ -n "${PROTEUS_SRC:-}" ]; then export PYTHONPATH="$PROTEUS_SRC"; else unset PYTHONPATH; fi
-export RICHARDS_EDGE_VELOCITY=1 OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=1
 export SIMMONS_CASE=UHD SIMMONS_LEVEL=0 SIMMONS_LEVEL_Z=0 SIMMONS_THETA=4 SIMMONS_SEED=0
 export SIMMONS_STAB=5 SIMMONS_COURANT="${SIMMONS_COURANT:-0.5}" SIMMONS_FCT="${SIMMONS_FCT:-1}"
 export SIMMONS_DRAIN=corners SIMMONS_DRAIN_FACES=1 SIMMONS_VISC=1
@@ -44,12 +44,12 @@ export SIMMONS_Q_FILE="${SIMMONS_Q_FILE:-data/q_UHD_ramp.csv}" SIMMONS_K0_PER_CE
   echo "conda env: $CONDA_DEFAULT_ENV"
   python -c "import proteus,os;print('proteus:', os.path.dirname(proteus.__file__))"
   echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)"
-  echo "TADR_VELOCITY_COUPLING: ${TADR_VELOCITY_COUPLING:-}"
-  echo "TADR_CONSERVATIVE_FORM: ${TADR_CONSERVATIVE_FORM:-0}"
+  echo "SIMMONS_VELOCITY_COUPLING: ${SIMMONS_VELOCITY_COUPLING:-}"
+  echo "SIMMONS_CONSERVATIVE_FORM: ${SIMMONS_CONSERVATIVE_FORM:-0}"
   env | grep -E '^(SIMMONS_|RICHARDS_)' | sort
 } > provenance.txt
 # uncommitted source edits at run time; the installed build may still differ
 git -C "$(git -C "$DECK" rev-parse --show-toplevel)" diff HEAD -- proteus > source.diff
-# SIMMONS_NP sets the rank count (1); TADR_CONSERVATIVE_FORM=1 is serial only
+# SIMMONS_NP sets the rank count (1); SIMMONS_CONSERVATIVE_FORM=1 is serial only
 mpiexec -n "${SIMMONS_NP:-1}" parun simmons_so.py -l3 -O petsc.options.superlu > run.out 2>&1
 echo "exit $?" >> run.out

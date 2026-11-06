@@ -657,9 +657,12 @@ class AR_base(object):
                 if step_is_global:
                     #one already-global grid: its pieces are the archive
                     g = grids[0]
-                    add_uniform_step(domain, t, g["topology"], g["geometry"],
-                                     g.get("attributes", []),
-                                     collection=collection_name)
+                    space = add_uniform_step(domain, t, g["topology"], g["geometry"],
+                                             g.get("attributes", []),
+                                             collection=collection_name)
+                    #a mesh's own keys (its tagged facets, its provenance with
+                    #the mesh fingerprint) travel with it
+                    space.update((k, g[k]) for k in ("facets", "provenance") if k in g)
                 else:
                     #one grid per rank, presented as a single instant
                     add_spatial_step(domain, t, grids,
@@ -1371,7 +1374,17 @@ def readArchiveDomain(filename, dataDir='.'):
     hdfFilename = filename + ".h5"
     if not os.path.exists(base + ".h5") and os.path.exists(base + "_p0.h5"):
         #per-rank files with a global document: master's file holds the
-        #gathered grids of every rank
+        #gathered grids of every rank. With a per-rank document it holds
+        #rank 0's subdomain only, so it cannot stand for the archive.
+        with h5py.File(base + "_p0.h5", "r") as hdfFile:
+            document = hdfFile.attrs.get(AR_base.DOCUMENT_ATTR)
+        if isinstance(document, bytes):
+            document = document.decode("utf-8")
+        if document == "per-rank" and os.path.exists(base + "_p1.h5"):
+            raise ValueError(
+                "%s_p<rank>.h5 is a per-rank archive with one document per rank: "
+                "%s_p0.h5 describes rank 0's subdomain only, and no file holds the "
+                "whole domain; read each rank's file on its own" % (base, base))
         base, hdfFilename = base + "_p0", filename + "_p0.h5"
     archive = AR_base.__new__(AR_base)
     archive.hdfFilename = hdfFilename

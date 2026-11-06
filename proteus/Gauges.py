@@ -1068,7 +1068,16 @@ class Gauges(AV_base):
         (first_output is that run's first sample), writing nothing more at or before t. Collective over gaugeComm."""
         times = None
         if self.gaugeComm.rank == 0 and self.resumed:
-            times = keep_rows_up_to(self.file, t)
+            header = self.headerLine()
+            self.file.seek(0)
+            if self.file.readline() == header:
+                times = keep_rows_up_to(self.file, t)
+            else:
+                # the file was written for other gauges (locations, lines or fields changed): its rows would sit
+                # under the wrong labels, so start it over with this run's header
+                logEvent("Gauges: %s holds other gauges than this run's; starting it over" % (self.fileName,), 1)
+                _rewrite(self.file, [header])
+                times = []
         times = self.gaugeComm.bcast(times, root=0)
         if times is None:
             return
@@ -1083,26 +1092,30 @@ class Gauges(AV_base):
 
         return self.timeIntegration.tLast
 
+    def headerLine(self):
+        """The CSV header line of this gauge's file (on gaugeComm rank 0)."""
+        parts = ["%10s" % ('time',)]
+        if self.isPointGauge or self.isLineGauge:
+            for field in self.fields:
+                for quantity in self.globalMeasuredQuantities[field]:
+                    location, gaugeProc, quantityID = quantity
+                    parts.append(",%12s [%9.5g %9.5g %9.5g]" % (field, location[0], location[1], location[2]))
+                    if len(location) > 3:
+                        # a discontinuous field: the value in the element before or after the location
+                        parts.append(" (%s)" % ("before" if location[3] < 0 else "after",))
+        elif self.isLineIntegralGauge:
+            for line in self.lines:
+                parts.append(",%12s [%9.5g %9.5g %9.5g] - [%9.5g %9.5g %9.5g]" % (
+                    line[0], line[1][0][0], line[1][0][1], line[1][0][2],
+                             line[1][1][0], line[1][1][1], line[1][1][2]))
+        return "".join(parts) + "\n"
+
     def outputHeader(self):
         """ Outputs a single header for a CSV style file to self.file"""
 
         assert self.isGaugeOwner
         if self.gaugeComm.rank == 0:
-            self.file.write("%10s" % ('time',))
-            if self.isPointGauge or self.isLineGauge:
-                for field in self.fields:
-                    for quantity in self.globalMeasuredQuantities[field]:
-                        location, gaugeProc, quantityID = quantity
-                        self.file.write(",%12s [%9.5g %9.5g %9.5g]" % (field, location[0], location[1], location[2]))
-                        if len(location) > 3:
-                            # a discontinuous field: the value in the element before or after the location
-                            self.file.write(" (%s)" % ("before" if location[3] < 0 else "after",))
-            elif self.isLineIntegralGauge:
-                for line in self.lines:
-                    self.file.write(",%12s [%9.5g %9.5g %9.5g] - [%9.5g %9.5g %9.5g]" % (
-                        line[0], line[1][0][0], line[1][0][1], line[1][0][2],
-                                 line[1][1][0], line[1][1][1], line[1][1][2]))
-            self.file.write('\n')
+            self.file.write(self.headerLine())
 
     def outputRow(self, time):
         """ Outputs a single row of currently calculated gauge data to self.file"""
@@ -1356,3 +1369,139 @@ class BoundaryIntegralGauges(AV_base):
             self.file.flush()
         self.last_output = time
         Gauges.advanceSampleGrid(self, time)
+
+
+#: ymf ``gauges:`` (FORCE_HISTORY_GAUGES_PLAN step 4). A ymf problem lists what a run measures as it goes, one entry
+#: per gauge file: ``kind`` (point, line, line_integral, boundary_integral), the ``fields`` sampled (ymf symbols:
+#: unknowns or coefficients) at ``points`` or along ``lines`` (each line its two ends), or, for a boundary integral,
+#: the ``quantities`` integrated over each boundary region in ``tags`` with the moment about ``moment_point``; and
+#: ``sample_rate``, ``file`` and ``name``. ymf checks what each kind needs when it loads the problem; these functions
+#: check it again, so a hand-written list fails with a message rather than a gauge that measures nothing.
+YMF_GAUGE_KINDS = ("point", "line", "line_integral", "boundary_integral")
+
+
+def _plain(value):
+    """strictyaml data (a YAML document as loaded by ymf.schema.load_ymf) as plain Python values."""
+    data = getattr(value, "data", value)
+    if isinstance(data, dict):
+        return {str(k): _plain(v) for k, v in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_plain(v) for v in data]
+    return data
+
+
+def _ymf_gauge_list(spec):
+    """The gauge definitions of spec: a ymf document (its model.gauges), or the list itself."""
+    spec = _plain(spec)
+    if isinstance(spec, dict):
+        spec = spec.get("model", spec).get("gauges", [])
+    return list(spec or [])
+
+
+def _point3(point, where):
+    coords = [float(c) for c in point]
+    if not 1 <= len(coords) <= 3:
+        raise ValueError("%s: the point %r has %d coordinates" % (where, point, len(coords)))
+    return tuple(coords + [0.0] * (3 - len(coords)))
+
+
+def gauges_from_ymf(spec, fields=None, tags=None):
+    """The auxiliary variables of a ymf problem's gauges, one per definition, in order: PointGauges, LineGauges,
+    LineIntegralGauges or BoundaryIntegralGauges.
+
+    :param spec: a ymf document (its ``model.gauges`` are read) or a list of gauge definitions (dicts).
+    :param fields: {ymf symbol: Proteus variable name} for the fields gauged (``{'φ': 'phi'}``); a symbol not in it
+        is taken as the variable name.
+    :param tags: {boundary region name: boundary flag > 0} (a domain's boundaryTags) for boundary integrals; a region
+        also matches a single tag <shape>_<region>, as SpatialTools names a shape's boundaries.
+    """
+    fields = dict(fields or {})
+    tags = dict(tags or {})
+    out = []
+    for i, g in enumerate(_ymf_gauge_list(spec)):
+        g = dict(g)
+        kind = g.get("kind")
+        where = "ymf gauge %s" % (g.get("name") or i)
+        if kind not in YMF_GAUGE_KINDS:
+            raise ValueError("%s: unknown kind %r; available: %s" % (where, kind, YMF_GAUGE_KINDS))
+        sampleRate = float(g.get("sample_rate", 0.0))
+        fileName = g.get("file") or "%s.csv" % (g.get("name") or "%s_gauge_%d" % (kind, i))
+        if kind == "boundary_integral":
+            for key in ("fields", "points", "lines"):
+                if key in g:
+                    raise ValueError("%s: a boundary_integral gauge takes no %s" % (where, key))
+            if not g.get("tags") or not g.get("quantities"):
+                raise ValueError("%s: a boundary_integral gauge needs tags and quantities" % where)
+            flags = OrderedDict()
+            for name in g["tags"]:
+                # SpatialTools names a shape's boundaries <shape>_<name> (tank2D1_y-)
+                found = [name] if name in tags else [t for t in tags if str(t).endswith("_" + str(name))]
+                if len(found) != 1:
+                    raise ValueError("%s: %s boundary flag for the region %r (known: %s)"
+                                     % (where, "no" if not found else "more than one", name, sorted(tags)))
+                flags[str(name)] = int(tags[found[0]])
+            moment_points = None
+            if g.get("moment_point") is not None:
+                point = _point3(g["moment_point"], where)
+                moment_points = {name: point for name in flags}
+            out.append(BoundaryIntegralGauges(flags, quantities=tuple(g["quantities"]), moment_points=moment_points,
+                                              sampleRate=sampleRate, fileName=fileName))
+            continue
+        for key in ("tags", "quantities", "moment_point"):
+            if key in g:
+                raise ValueError("%s: a %s gauge takes no %s" % (where, kind, key))
+        if not g.get("fields"):
+            raise ValueError("%s: a %s gauge needs fields" % (where, kind))
+        names = tuple(fields.get(f, f) for f in g["fields"])
+        if kind == "point":
+            if "lines" in g or not g.get("points"):
+                raise ValueError("%s: a point gauge needs points and takes no lines" % where)
+            out.append(PointGauges([(names, [_point3(p, where) for p in g["points"]])],
+                                   sampleRate=sampleRate, fileName=fileName))
+        else:
+            if "points" in g or not g.get("lines"):
+                raise ValueError("%s: a %s gauge needs lines and takes no points" % (where, kind))
+            lines = []
+            for line in g["lines"]:
+                if len(line) != 2:
+                    raise ValueError("%s: a line is its two ends, not %d points" % (where, len(line)))
+                lines.append((_point3(line[0], where), _point3(line[1], where)))
+            make = LineGauges if kind == "line" else LineIntegralGauges
+            out.append(make([(names, lines)], sampleRate=sampleRate, fileName=fileName))
+    return out
+
+
+def _flow_model_with_boundary_integrals(p):
+    return type(p.coefficients).__module__ in ("proteus.mprans.RANS2P", "proteus.mprans.RANS3PF")
+
+
+def _variable_names(p):
+    names = getattr(p.coefficients, "variableNames", None)
+    if names is None:  # coefficients that set their names when the model is built
+        names = [getattr(p, "name", "u")] if getattr(p.coefficients, "nc", 1) == 1 else []
+    return list(names)
+
+
+def attach_ymf_gauges(spec, pList, nList, fields=None, tags=None):
+    """Attach a ymf problem's gauges (gauges_from_ymf) to the models of a split-operator run: a point, line or line
+    integral gauge to the model whose variables include every field it samples, a boundary integral gauge to the flow
+    model (RANS2P, RANS3PF). The tags default to the boundaryTags of the first p module's domain. Returns the gauges.
+    Call it before NumericalSolution.NS_base is built (it appends to each n module's auxiliaryVariables)."""
+    if tags is None:
+        domain = getattr(pList[0], "domain", None)
+        tags = dict(getattr(domain, "boundaryTags", {}) or {})
+    gauges = gauges_from_ymf(spec, fields=fields, tags=tags)
+    for gauge in gauges:
+        if isinstance(gauge, BoundaryIntegralGauges):
+            homes = [i for i, p in enumerate(pList) if _flow_model_with_boundary_integrals(p)]
+            what = "a flow model with boundary integrals (RANS2P, RANS3PF)"
+        else:
+            wanted = set(gauge.fields)
+            homes = [i for i, p in enumerate(pList) if wanted <= set(_variable_names(p))]
+            what = "a model with the variables %s" % sorted(wanted)
+        if not homes:
+            raise ValueError("ymf gauge %s: no model has %s; models: %s"
+                             % (gauge.fileName, what, [_variable_names(p) for p in pList]))
+        n = nList[homes[0]]
+        n.auxiliaryVariables = list(getattr(n, "auxiliaryVariables", None) or []) + [gauge]
+    return gauges

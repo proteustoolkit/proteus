@@ -83,6 +83,13 @@ FCT = os.environ.get("SIMMONS_FCT", "0") not in ("0", "false", "False")
 #: K_s/mu.  Default off, so every result to date reproduces.
 VISC = os.environ.get("SIMMONS_VISC", "0") not in ("0", "false", "False")
 
+#: Coupling ablation (paper Table tab:uhd_coupling), see TADR.Coefficients:
+#: SIMMONS_VELOCITY_COUPLING=lagged|eos advects with the Galerkin Darcy velocity
+#: instead of the edge fluxes; SIMMONS_CONSERVATIVE_FORM=1 (with a velocity
+#: coupling, SIMMONS_FCT=0, serial) solves the conservative solute row.
+VELOCITY_COUPLING = os.environ.get("SIMMONS_VELOCITY_COUPLING") or None
+CONSERVATIVE_FORM = os.environ.get("SIMMONS_CONSERVATIVE_FORM", "0") not in ("0", "false", "False")
+
 LevelModelType = TADR.LevelModel
 
 coefficients = TADR.Coefficients(
@@ -112,6 +119,10 @@ coefficients = TADR.Coefficients(
     rho_f=case.rho_f,          # 1.0        (dimensionless, rho/rho_0)
     rho_s=case.rho_s,          # 1.235 or 1.048
     viscosity_omega_max=case.omega_max if VISC else 0.0,
+    EDGE_VELOCITY=True,  # advect with Richards' rebuilt edge velocity
+    VELOCITY_COUPLING=VELOCITY_COUPLING,
+    CONSERVATIVE_FORM=CONSERVATIVE_FORM,
+    diagnostics=('fct',),
 )
 coefficients.variableNames = ["u"]
 

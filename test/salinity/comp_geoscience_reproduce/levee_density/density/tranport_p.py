@@ -58,6 +58,7 @@ coefficients = MyCoefficients(
     physicalDiffusion=0.0,
     rho_f=1.0,
     rho_s=1.025,
+    EDGE_VELOCITY=True,  # advect with Richards' rebuilt edge velocity
 )
 coefficients.variableNames = ["u"]
 

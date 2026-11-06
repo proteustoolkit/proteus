@@ -143,6 +143,11 @@ class FreezableClass(object):
         self.__setattr__(name, value)
         self._freeze()
 
+def petsc_has_hypre():
+    """True when the PETSc in use was built with hypre (rans2p.preconditioner = 'schur_boomeramg' needs it)."""
+    return bool(PETSc.Sys.hasExternalPackage('hypre'))
+
+
 class ParametersModelBase(FreezableClass):
     """
     """
@@ -317,6 +322,11 @@ class ParametersModelRANS2P(ParametersModelBase):
         self.n.tolFac = 0.
         self.n.maxNonlinearIts = 100
         self.n.maxLineSearches = 0
+        # The preconditioner of the iterative RANS2P solve (useSuperlu off, the default linear smoother):
+        #   'asm'             GMRES + ASM with an LU per subdomain (the default);
+        #   'schur_boomeramg' GMRES + an upper Schur complement fieldsplit with BoomerAMG blocks (opt-in;
+        #                     needs a PETSc built with hypre). See _initializePETScOptions for the numbers.
+        self.preconditioner = 'asm'
         self._freeze()
 
         #Initial Conditions
@@ -438,16 +448,53 @@ class ParametersModelRANS2P(ParametersModelBase):
             self.OptDB.setValue(prefix+'pc_type', 'lu')
             self.OptDB.setValue(prefix+'pc_factor_mat_solver_type', 'superlu_dist')
         elif self.n.linearSmoother == LinearSolvers.SimpleNavierStokes3D:
+            # Measured on damBreakLevelSet (C19 round 2, cekees/proteus#198; ON_NODE_PERFORMANCE_BASELINE §9.1).
+            # Both choices: GMRES, right-preconditioned with PETSc's convergence test on the true residual (it
+            # replaced a Python callback that rebuilt the solution every iteration), knoll initial guess, and one
+            # preconditioner setup per Newton solve (pc_lag_newton).
+            if self.preconditioner not in ('asm', 'schur_boomeramg'):
+                raise ValueError("rans2p.preconditioner must be 'asm' or 'schur_boomeramg', not %r"
+                                 % (self.preconditioner,))
+            if self.preconditioner == 'schur_boomeramg' and not petsc_has_hypre():
+                raise ValueError("rans2p.preconditioner = 'schur_boomeramg' needs a PETSc built with hypre "
+                                 "(BoomerAMG); this PETSc has no hypre. Use 'asm' or rebuild PETSc with hypre.")
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
-            self.OptDB.setValue(prefix+'pc_type', 'asm')
-            self.OptDB.setValue(prefix+'pc_asm_type', 'basic')
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
-            self.OptDB.setValue(prefix+'ksp_gmres_modifiedgramschmidt', 1)
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
-            self.OptDB.setValue(prefix+'sub_ksp_type', 'preonly')
-            self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'superlu')
+            self.OptDB.setValue(prefix+'ksp_pc_side', 'right')
+            self.OptDB.setValue(prefix+'ksp_converged_use_initial_residual_norm', True)
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
-            self.OptDB.setValue(prefix+'sub_pc_type', 'lu')
+            self.OptDB.setValue(prefix+'pc_lag_newton', True)
+            if self.preconditioner == 'asm':
+                # The default. ASM with an LU per subdomain: PETSc's own LU with nested-dissection ordering
+                # (its symbolic factorization is kept across setups; serial SuperLU's was redone each time),
+                # classical Gram-Schmidt (one reduction per iteration, not one per basis vector). Against the
+                # options before 2.0, one step is 2.1x faster at 24 ranks and 2.4x at 96 (ceds-model, 1.15 M
+                # triangles); KSP iterations per Newton iteration 29 at 24 ranks, 41 at 96.
+                self.OptDB.setValue(prefix+'pc_type', 'asm')
+                self.OptDB.setValue(prefix+'pc_asm_type', 'basic')
+                self.OptDB.setValue(prefix+'sub_ksp_type', 'preonly')
+                self.OptDB.setValue(prefix+'sub_pc_type', 'lu')
+                self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'petsc')
+                self.OptDB.setValue(prefix+'sub_pc_factor_mat_ordering_type', 'nd')
+            else:
+                # Opt-in. An upper block-triangular Schur complement preconditioner on the (velocity,
+                # pressure) split SimpleNavierStokes3D defines: one BoomerAMG V-cycle on the velocity block
+                # and one on the selfp approximation A11 - A10 diag(A00)^-1 A01. KSP iterations stay at 3-4
+                # from 4 to 96 ranks; one step is 7.9x the pre-2.0 options at 24 ranks and 9.3x at 96
+                # (3.8x and 3.9x the 'asm' default). Not the default until it is checked on a 3D RANS2P case
+                # and every PETSc proteus is built with (conda-forge, the HPC modules, the PETSc fork's
+                # --download-proteus-support) is known to have hypre.
+                self.OptDB.setValue(prefix+'pc_type', 'fieldsplit')
+                self.OptDB.setValue(prefix+'pc_fieldsplit_type', 'schur')
+                self.OptDB.setValue(prefix+'pc_fieldsplit_schur_fact_type', 'upper')
+                self.OptDB.setValue(prefix+'pc_fieldsplit_schur_precondition', 'selfp')
+                for block in ('velocity', 'pressure'):
+                    self.OptDB.setValue(prefix+'fieldsplit_'+block+'_ksp_type', 'preonly')
+                    self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_type', 'hypre')
+                    self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_hypre_type', 'boomeramg')
+            if self.n.linearSolverConvergenceTest == 'r-true':
+                self.n.linearSolverConvergenceTest = 'r'
         elif self.n.linearSmoother == LinearSolvers.NavierStokes_TwoPhasePCD:
             # Options for PCD
             # Global KSP options

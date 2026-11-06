@@ -1026,6 +1026,10 @@ def check_archive(datadir, n_ranks, global_sync, driver, document):
                     array = load_array(item, datadir)       # the dataset exists
                     assert array.size == np.prod(item["dimensions"]), item["data"]
         assert extra["proteus"]["archive_driver"] == driver
+    if document == "per-rank" and n_ranks > 1:
+        # no file holds the whole domain: rank 0's must not be taken for it (gatherTimes would write rank 0 only)
+        with pytest.raises(ValueError, match="per-rank archive"):
+            readArchiveDomain("mpitest", datadir)
     if driver == "per-rank" and document == "global":
         # the ranks' grids reference every rank's file, and the document
         # is derivable from master's file alone

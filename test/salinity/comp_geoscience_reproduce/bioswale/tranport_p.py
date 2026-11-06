@@ -62,7 +62,8 @@ coefficients = MyCoefficients(
     ENTROPY_TYPE='LOG',
     cE=0.1, cK=1.0, physicalDiffusion=0.0,
     rho_f=1.0,
-    rho_s=1.025) #ct.physicalDiffusion)
+    rho_s=1.025, #ct.physicalDiffusion)
+    EDGE_VELOCITY=True)  # advect with Richards' rebuilt edge velocity
 coefficients.variableNames=['u']
 
 #####################

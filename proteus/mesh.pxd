@@ -275,18 +275,9 @@ cdef extern from "mesh.h":
     cdef int writeTetgenMesh(Mesh& mesh,
                              const char* filebase,
                              int base)
-    cdef int read3DM(Mesh& mesh,
-                     const char* filebase,
-                     int indexBase)
-    cdef int read2DM(Mesh& mesh,
-                     const char* filebase,
-                     int indexBase)
     cdef int readHex(Mesh& mesh,
                      const char* filebase,
                      int indexBase)
-    cdef int readBC(Mesh& mesh,
-                    const char* filebase,
-                    int indexBase)
     cdef int write3dmMesh(Mesh& mesh,
                           const char* filebase,
                           int base)

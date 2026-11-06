@@ -46,7 +46,7 @@ class TestIsosurface(object):
                                             'comparison_files',
                                             'floating_bar'),
                                '-s',
-                               '3'])
+                               '3'], timeout=600)
         povfiles = []
         for i in range(3):
             filename = 'phi_t_0.000000_{0:04d}.pov'.format(i)
@@ -54,7 +54,7 @@ class TestIsosurface(object):
                 povfiles.append(f.readlines())
         subprocess.check_call(['tar', 'xzf', os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                           'comparison_files',
-                                                          'phi_t_0.000000_000.tgz')])
+                                                          'phi_t_0.000000_000.tgz')], timeout=120)
         saved_povfiles = []
         for i in range(3):
             filename = 'phi_t_0.000000_{0:04d}.pov'.format(i)

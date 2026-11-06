@@ -1,0 +1,199 @@
+"""An archived mesh read back in the input mesh's order, whatever the rank count (C7.1 step I).
+
+The partitioner renumbers the global mesh so each rank owns a contiguous range, and the archive writes in
+that numbering. When the renumbering is not the identity, the mesh grid carries ``NodeMapInput`` and
+``CellMapInput`` (each archived row's index in the input mesh), so ``readMeshFromArchive(...,
+inputOrder=True)`` gives the input mesh back and the fingerprint of the mesh does not depend on how many
+ranks wrote it. With contiguous owners the partitioner keeps the input order and no map is written: the
+archive is what it was before.
+"""
+import os
+import shutil
+import subprocess
+import sys
+
+import h5py
+import numpy as np
+import pytest
+
+from proteus import Archiver, MeshTools
+
+try:
+    from ymf.mesh import fingerprint as _ymf_fingerprint  # noqa: F401
+    HAS_FINGERPRINT = True
+except ImportError:                           # a ymf before cekees/ymf#11: maps only
+    HAS_FINGERPRINT = False
+needs_fingerprint = pytest.mark.skipif(not HAS_FINGERPRINT, reason="this ymf has no mesh fingerprint (cekees/ymf#11)")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SQUARE = os.path.join(HERE, "ymf_meshes", "square4x4_tagged")
+CUBE = os.path.join(HERE, "ymf_meshes", "cube_3x3x3")
+
+
+def _launcher_env():
+    """The environment for a child run: this one's, without a parent mpiexec's process-manager variables
+    (a child mpiexec, or a plain python child, would otherwise try to join the parent's job)."""
+    env = dict((k, v) for k, v in os.environ.items() if not k.startswith(("PMI_", "PMIX_", "HYDRA_", "OMPI_COMM_WORLD")))
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
+    env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
+    env.pop("PETSC_OPTIONS", None)                 # owners are prescribed: no MatPartitioning runs
+    return env
+
+
+def _skip_under_mpiexec():
+    """These tests start their own ranks; under ``mpiexec -n N`` (N > 1) every rank would."""
+    for name in ("PMI_SIZE", "OMPI_COMM_WORLD_SIZE", "PMIX_SIZE"):
+        if int(os.environ.get(name, "1")) > 1:
+            pytest.skip("launches its own mpiexec; run this file serially")
+
+
+def _mpiexec():
+    bindir = os.path.dirname(sys.executable)
+    for name in ("mpiexec", "mpirun"):
+        if os.path.exists(os.path.join(bindir, name)):
+            return os.path.join(bindir, name)
+    return shutil.which("mpiexec") or shutil.which("mpirun")
+
+
+def _archive(prefix, n_ranks, owners, sync, outdir):
+    """Run the driver on n_ranks; returns (fingerprint, renumbered) as rank 0 printed them."""
+    os.makedirs(outdir, exist_ok=True)
+    _skip_under_mpiexec()
+    env = _launcher_env()
+    cmd = [sys.executable, os.path.join(HERE, "archive_input_order_mpi.py"), prefix, owners, sync, str(outdir)]
+    if n_ranks > 1:
+        mpiexec = _mpiexec()
+        if mpiexec is None:
+            pytest.skip("no MPI launcher available")
+        cmd = [mpiexec, "-n", str(n_ranks)] + cmd
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(outdir), timeout=300)
+    assert result.returncode == 0, result.stdout + result.stderr
+    line = next(l for l in result.stdout.splitlines() if l.startswith("fingerprint="))
+    fingerprint, renumbered = (w.split("=")[1] for w in line.split())
+    return fingerprint, renumbered == "1"
+
+
+def _input(prefix):
+    info = MeshTools.readMeshYmf(prefix)
+    return info, (MeshTools.meshFingerprint(info.nodeArray, info.elementNodesArray) if HAS_FINGERPRINT else "none")
+
+
+@pytest.mark.parametrize("owners", ["scatter", "reversed"])
+@pytest.mark.parametrize("prefix", [SQUARE, CUBE], ids=["triangles", "tetrahedra"])
+def test_a_global_archive_reads_back_in_the_input_order_from_any_rank_count(prefix, owners, tmp_path):
+    info, expected = _input(prefix)
+    for n_ranks in (1, 2, 3):
+        outdir = tmp_path / ("n%d" % n_ranks)
+        fingerprint, renumbered = _archive(prefix, n_ranks, owners, "global", outdir)
+        assert fingerprint == expected, n_ranks
+        assert renumbered == (n_ranks > 1)
+        archived = MeshTools.readMeshFromArchive(str(outdir / "mesh"))
+        canonical = MeshTools.readMeshFromArchive(str(outdir / "mesh"), inputOrder=True)
+        if n_ranks > 1:                            # the rows really were permuted
+            assert not np.array_equal(archived.nodeArray, info.nodeArray)
+            assert archived.nodeNumbering_input is not None
+        np.testing.assert_array_equal(canonical.nodeArray, info.nodeArray)
+        np.testing.assert_array_equal(canonical.elementNodesArray, info.elementNodesArray)
+        np.testing.assert_array_equal(canonical.nodeMaterialTypes, info.nodeMaterialTypes)
+        np.testing.assert_array_equal(canonical.elementMaterialTypes, info.elementMaterialTypes)
+        if HAS_FINGERPRINT:
+            assert MeshTools.meshFingerprint(canonical.nodeArray, canonical.elementNodesArray) == expected
+            # recorded in the mesh grid's provenance, the same from every rank count, and checked on that read
+            assert MeshTools.archivedMeshFingerprint(str(outdir / "mesh")) == expected
+            assert canonical.fingerprint == expected
+
+
+def test_contiguous_owners_keep_the_input_order_and_write_no_map(tmp_path):
+    """(The fingerprint is still recorded: the grid is the whole input mesh.)"""
+    info, expected = _input(SQUARE)
+    fingerprint, renumbered = _archive(SQUARE, 2, "contiguous", "global", tmp_path)
+    assert (fingerprint, renumbered) == (expected, False)
+    archived = MeshTools.readMeshFromArchive(str(tmp_path / "mesh"))
+    assert archived.nodeNumbering_input is None and archived.elementNumbering_input is None
+    np.testing.assert_array_equal(archived.nodeArray, info.nodeArray)
+    with h5py.File(tmp_path / "mesh.h5", "r") as f:
+        assert not [name for name in f if name.startswith(("NodeMapInput", "CellMapInput"))]
+
+
+@needs_fingerprint
+def test_a_restart_checks_the_archive_holds_its_mesh(tmp_path):
+    """checkArchivedMesh compares the recorded fingerprint with a live mesh: no arrays read."""
+    _archive(SQUARE, 2, "scatter", "global", tmp_path)
+    square = MeshTools._meshFromYmf(SQUARE)
+    assert MeshTools.checkArchivedMesh(str(tmp_path / "mesh"), square) == _input(SQUARE)[1]
+    with pytest.raises(ValueError, match="holds data on mesh"):
+        MeshTools.checkArchivedMesh(str(tmp_path / "mesh"), MeshTools._meshFromYmf(CUBE))
+
+
+@needs_fingerprint
+def test_an_archive_whose_arrays_are_not_the_recorded_mesh_is_refused(tmp_path):
+    _archive(CUBE, 3, "reversed", "global", tmp_path)
+    with h5py.File(tmp_path / "mesh.h5", "r+") as f:
+        name = next(n for n in f if n.startswith("nodes"))
+        nodes = f[name][()]
+        nodes[5, 0] += 1e-9
+        f[name][...] = nodes
+    MeshTools.readMeshFromArchive(str(tmp_path / "mesh"))           # in archive order nothing is checked
+    with pytest.raises(ValueError, match="not the recorded"):
+        MeshTools.readMeshFromArchive(str(tmp_path / "mesh"), inputOrder=True)
+
+
+@needs_fingerprint
+def test_no_fingerprint_where_the_grid_is_not_the_whole_input_mesh(tmp_path):
+    """Per-rank grids are pieces; once the nodes move, the archived geometry is not the input mesh."""
+    _archive(CUBE, 2, "reversed", "per-rank", tmp_path / "per-rank")
+    assert MeshTools.archivedMeshFingerprint(str(tmp_path / "per-rank" / "mesh")) is None
+    from proteus import Comm
+    Comm.init()
+    mesh = MeshTools._meshFromYmf(SQUARE)
+    mesh.partitionMesh(nLayersOfOverlap=1, nodeOwners=np.zeros(mesh.nNodes_global, dtype=np.intc))
+    sub = mesh.subdomainMesh
+    ar = Archiver.XdmfArchive(str(tmp_path), "moving", global_sync=True)
+    sub.writeMeshXdmf(ar, "Spatial_Domain", t=0.0, init=True, meshChanged=True, tCount=0)
+    ar.sync()
+    sub.nodeArray[:, 0] *= 2.0
+    sub.writeMeshXdmf(ar, "Spatial_Domain", t=1.0, meshChanged=True, tCount=1)
+    ar.sync()
+    ar.close()
+    domain = Archiver.readArchiveDomain("moving", str(tmp_path))
+    steps = Archiver.archive_collections(domain)[0]["data"]
+    assert steps[0]["provenance"]["fingerprint"]["sha256"] == _input(SQUARE)[1]
+    assert "provenance" not in steps[1]
+
+
+def test_each_rank_grid_of_a_per_rank_archive_names_its_input_rows(tmp_path):
+    """global_sync off: each rank's grid holds its subdomain, and NodeMapInput/CellMapInput say which
+    input nodes and elements those are (what a per-rank reader needs)."""
+    info, _ = _input(CUBE)
+    _archive(CUBE, 2, "reversed", "per-rank", tmp_path)
+    domain = Archiver.readArchiveDomain("mesh", str(tmp_path))
+    step = Archiver.archive_collections(domain)[0]["data"][-1]
+    grids = step["spatial_collection"]
+    assert len(grids) == 2
+    owned = []
+    with h5py.File(tmp_path / "mesh.h5", "r") as f:
+        def read(item):
+            return f["/" + item["data"].rsplit(":/", 1)[1]][()]
+        for grid in grids:
+            maps = {a["name"]: read(a["data_item"]) for a in grid["attributes"]}
+            # the input numbering where the partitioner renumbered, else the local-to-global map
+            maps.setdefault("NodeMapInput", maps["NodeMapL2G"])
+            maps.setdefault("CellMapInput", maps["CellMapL2G"])
+            nodes, elements = read(grid["geometry"]["data_item"]), read(grid["topology"]["data_item"])
+            np.testing.assert_array_equal(nodes, info.nodeArray[maps["NodeMapInput"]])
+            # local connectivity -> input node numbers is the input connectivity of the owned elements
+            np.testing.assert_array_equal(maps["NodeMapInput"][elements],
+                                          info.elementNodesArray[maps["CellMapInput"]])
+            owned.append(maps["CellMapInput"])
+    assert sorted(np.concatenate(owned).tolist()) == list(range(len(info.elementNodesArray)))
+
+
+@needs_fingerprint
+def test_the_fingerprint_is_of_geometry_and_topology_in_order():
+    info, expected = _input(SQUARE)
+    moved = info.nodeArray.copy()
+    moved[0, 0] += 1e-12
+    assert MeshTools.meshFingerprint(moved, info.elementNodesArray) != expected
+    assert MeshTools.meshFingerprint(info.nodeArray, info.elementNodesArray[::-1]) != expected
+    assert MeshTools.meshFingerprint(info.nodeArray[:, :2], info.elementNodesArray) == expected

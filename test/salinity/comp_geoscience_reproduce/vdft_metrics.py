@@ -1,7 +1,7 @@
 """Per-run conservation, bounds and cost measures for the coupled VDFT decks.
 
 Usage, at the end of a transport ``*_p.py`` (TADR STABILIZATION_TYPE 5 with the flow
-model's edge fluxes, i.e. ``RICHARDS_EDGE_VELOCITY=1``)::
+model's edge fluxes, i.e. ``TADR.Coefficients(EDGE_VELOCITY=True)``)::
 
     try:
         import vdft_metrics

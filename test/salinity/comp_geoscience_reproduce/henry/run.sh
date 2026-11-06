@@ -4,7 +4,7 @@
 # Henry problem: 2 m x 1 m, nnx x nny = 80 x 40 NODES (3200; 79 x 39 cells),
 # T = 3.0e4 s (nDTout = 201).  Flow Richards STAB 2 (+ FCT in fct/); transport TADR
 # STABILIZATION_TYPE 5 (backward Euler, cancelled form, + FCT in fct/) advected with the
-# reconstructed flow flux (RICHARDS_EDGE_VELOCITY=1).  Two runs, each compared with the
+# reconstructed flow flux (EDGE_VELOCITY=True in the transport deck).  Two runs, each compared with the
 # semi-analytical solution at the end:
 #   <run dir>/fct  FCT=True   -> henry_iso_fct.png
 #   <run dir>/lo   FCT=False  (low_order/, differs only in FCT) -> henry_iso_lo.png
@@ -30,7 +30,6 @@ if [ -n "${PROTEUS_SRC:-}" ]; then export PYTHONPATH="$PROTEUS_SRC"; else unset 
 # The coupling the manuscript describes (Sec. "Compatibility with the flow model"):
 # TADR advects with the mass flux Richards reconstructs element by element from its
 # realized edge exchanges.  Without it STABILIZATION_TYPE 5 copies E_ij as the edge flux.
-export RICHARDS_EDGE_VELOCITY=1
 
 for v in ${HENRY_VARIANTS:-fct lo}; do
   SRC=$DECK; [ $v = lo ] && SRC=$DECK/low_order
@@ -40,7 +39,6 @@ for v in ${HENRY_VARIANTS:-fct lo}; do
   {
     echo "date: $(date)"
     echo "conda env: $CONDA_DEFAULT_ENV"
-    echo "RICHARDS_EDGE_VELOCITY: $RICHARDS_EDGE_VELOCITY"
     echo "proteus HEAD: $(git -C "$(python -c 'import proteus,os;print(os.path.dirname(proteus.__file__))')" rev-parse HEAD 2>/dev/null)"
     python -c "import proteus,os;print('proteus:', os.path.dirname(proteus.__file__))"
     echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)"

@@ -651,8 +651,8 @@ gravity term of its edge flux only through the salinity density (`rho_edge / rho
 beta = 1e-4 the effect is 1.4e-3 m after 35 steps, so the decks' results are not affected.
 
 **The post-step FCT (proteus's semi-implicit FCT, `FCT=True`, `FCT_TYPE='semi-implicit'`) in 2D.** On the deck it returned the low-order solution to the last digit, and the reason is a veto in `Richards.FCTStep`: on the
-Newton-invert path (`nd > 1`, so every 2D case) the limited step is thrown away and the low-order head kept whenever the correction moves any node's head by more than 1 m (`RICHARDS_FCT_DU_MAX`, default 1), and a dry node's moisture
-content moves its head by metres. `RICHARDS_FCT_DBG=1` logs each decision; `proteus_reference_2d.py` sets `RICHARDS_FCT_DU_MAX=1e30`. With the veto lifted, the limiter differs from `fct_correct(bounds='moisture')` in two ways, both found by
+Newton-invert path (`nd > 1`, so every 2D case) the limited step is thrown away and the low-order head kept whenever the correction moves any node's head by more than 1 m (`Richards.Coefficients(FCT_DU_MAX=...)`, default 1), and a dry node's moisture
+content moves its head by metres. `diagnostics=('fct',)` logs each decision; `proteus_reference_2d.py` sets `FCT_DU_MAX=1e30`. With the veto lifted, the limiter differs from `fct_correct(bounds='moisture')` in two ways, both found by
 dumping proteus's step-1 arrays and replaying its limiter in numpy (the replica reproduces proteus's limited moisture content to 6e-17):
 * **`FCT_SATURATED_LOW_ORDER`**: where the low-order head is >= 0 the room to the bounds is set to zero, so every flux touching the node is limited to zero. `fct_correct(..., sat_low=True)` does the same (`richards_nd_test.py`).
 * **The Dirichlet rows of the high-order flux matrix.** Proteus's `TransportMatrixConsistent` also holds the weak exterior-boundary terms (`Richards_IIPG_exterior`), which are not symmetric: in the row of a Dirichlet node they add an antidiffusive flux
@@ -666,3 +666,48 @@ Galerkin comparison, and the K-upwinded low-order scheme differs by 5.8e-2 in mo
 so the Dirichlet nodes cover 3.44 to 6.56 here, and in proteus the weak flux also acts on the two faces that are part pond. Its wetting front lies between mine with the pond on nodes only and mine with the pond widened by one node at each end
 (mean |dtheta| 4.4e-3 and 7.8e-3 for those two; proteus's is the one in between), the largest differences being the nodes just outside the pond (x = 3.125 and 6.875, y = 10: -0.169 against -0.102). Matching it needs the weak boundary flux of
 `Richards_IIPG_exterior`, which this driver does not model.
+
+## Two-phase level set, slice 1: VOF (`vof.h`, `vof_test.py`)
+
+The first model of the two-phase family (C19, decided 2026-11-01). `vof.h` splits proteus's VOF
+(`mprans/VOF.h`, `STABILIZATION_TYPE=0`, as `test/TwoPhaseFlow/damBreakLevelSet.py` runs it) into the part a
+generator writes, `VOFCoefficients` (m = porosity u, f = porosity v u), and two kernels that do not know it is VOF:
+`scalarSUPGElement` (BDF1 with the mass history as a point field, metric SUPG tau, the residual-based shock-capturing
+viscosity computed and returned, the lagged one used) and `scalarUpwindFace` (upwind advective flux with Dirichlet
+inflow and prescribed-flux points). Fields from other models (RANS2P's velocity, the porosity) come in per quadrature
+point through the functor's `nFields`.
+
+`vof_capture.py` runs the damBreak case in proteus and keeps one VOF Newton iteration exactly as its kernel saw it;
+`vof_damBreak_he0.05.npz` (733 triangles, t = 0.063, dt = 0.032) is its output. `vof_test.py` gives the engine the same
+arrays and checks against proteus: residual 1.9e-15, Jacobian 2.4e-16, CFL, boundary flux and upwinded trace bitwise,
+the next step's shock-capturing viscosity 5.5e-12 of its maximum (round-off amplified by the formula where u is flat;
+the test explains the tolerance), and one Newton step reproduces proteus's solution to 3.3e-16.
+
+## Two-phase level set, slice 2: NCLS (`ncls.h`, `ncls_test.py`)
+
+NCLS (`mprans/NCLS.h`, `STABILIZATION_TYPE=0`) is the same element kernel with a Hamiltonian in place of the advective
+flux. `ScalarTerms` now carries H and dH next to f and df, and a functor declares which it has (`hasF`, `hasH`). The
+kernel compiles only those terms and uses a = df + dH as the characteristic velocity of the strong residual, the
+adjoint, tau and the CFL. `NCLSCoefficients` is m = u, H = v . grad u (fields: the velocity only, no porosity). VOF's
+fixture still passes unchanged (`vof_test.py`).
+
+The faces are NCLS's own kind, `scalarInflowPenaltyFace`: there is no flux to upwind. The face term is
+F = -(v . n)(u - u_b) on inflow and 0 on outflow. u_b is the Dirichlet value where a point has one, and RDLS's
+redistanced trace (`ebqe_rd_u_ext`) elsewhere. The face kernel also returns the boundary trace and its normalized
+gradient, which proteus hands to the other models (`ebqe_u`, `ebqe_grad_u`). `signChangeElement` marks the elements
+where the level set changes sign. Their nodes are the `interface_locator` that RDLS freezes.
+
+`vof_capture.py OUT model=ncls` records NCLS from the same run at the same step. `ncls_damBreak_he0.05.npz` (733
+triangles, t = 0.063) holds 18 of 79 boundary faces with a nonzero inflow term and 33 interface nodes. The deck has no
+Dirichlet points, so that branch is not exercised. `ncls_test.py` checks the engine against proteus:
+
+| check | max difference, relative |
+|---|---|
+| residual | 1.7e-16 |
+| Jacobian | 2.5e-16 |
+| next step's shock-capturing viscosity | 2.4e-16 |
+| CFL, boundary trace, interface locator | bitwise |
+| grad u at the points (q_n), normalized boundary gradient | 2.4e-15 |
+| solution after one Newton step | 1.9e-16 |
+
+The viscosity is not amplified here as it is for VOF: the level set is not flat away from the interface.

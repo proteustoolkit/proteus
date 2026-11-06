@@ -32,7 +32,7 @@ class TestMeshOptionsOwnership(object):
                                      [0., 1., 0.], [0., 0., 1.]],
                            facets=[[[0, 2, 3]], [[0, 1, 2]],
                                    [[0, 1, 3]], [[1, 2, 3]]]),
-                       Domain.Mesh3DMDomain("some_mesh")):
+                       Domain.MeshYmfDomain("some_mesh", nd=3)):
             leaked = [name for name in vars(domain)
                       if name in ('MeshOptions', 'use_gmsh', 'use_plex', 'he')]
             assert leaked == [], (type(domain).__name__, leaked)

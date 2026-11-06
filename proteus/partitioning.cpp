@@ -100,14 +100,21 @@ inline void lowerOwner(std::vector<int>& owner, int i, int rank)
     owner[i] = rank;
 }
 
-void checkEveryEntityOwned(const MPI_Comm& comm, const std::vector<int>& owner, int size, const char* what)
+bool everyEntityOwned(const std::vector<int>& owner, int size, const char* what)
 {
   for (size_t i = 0; i < owner.size(); i++)
     if (owner[i] >= size)
       {
         std::cerr<<"partitioning: "<<what<<" "<<i<<" was reached by no rank"<<std::endl;
-        MPI_Abort(comm,1);
+        return false;
       }
+  return true;
+}
+
+void checkEveryEntityOwned(const MPI_Comm& comm, const std::vector<int>& owner, int size, const char* what)
+{
+  if (!everyEntityOwned(owner,size,what))
+    MPI_Abort(comm,1);
 }
 
 /* Check prescribed owners and copy them. */
@@ -164,756 +171,27 @@ std::vector<int> gatherPartition(const MPI_Comm& comm, IS partitioning, const st
   return owner;
 }
 }
-//todo add overlap for element based partitions
-int partitionElementsOriginal(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap)
+
+/* The ownership rules of partitionNodes, which follow from the owner of every
+   node. Every rank computes them over the whole mesh, so they are the same on
+   every rank and need no communication. Plain C++. An entity no rank reaches
+   is given the owner size. */
+
+//An element belongs to the lowest rank that owns one of its nodes.
+std::vector<int> elementOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size)
 {
-  using namespace std;
-  int ierr,size,rank;
-
-  ierr = MPI_Comm_size(PROTEUS_COMM_WORLD,&size);
-  ierr = MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
-
-  //Contents
-  //
-  //1. Partition the elements in the "default" partition (contiguous
-  //chunks in given ordering)
-  //
-  //2. Partition the elementNeighbors based on this partition
-  //
-  //3. Pass to Parmetis to build a better partition of the elements
-  //
-  //4. Tag a subset of the nodes on the subdomain elements as owned
-  //using a mark and pass approach.**
-  //
-  //5. Extract the nodes in the
-  //overlapping elements.**
-  //
-  //6. Build the subdomain mesh from the
-  //subdomain elements
-  //
-  //**To be more general we could get all the support (i.e. faces
-  //and edges) and partitiong them, but the main reason for
-  //partitioning is to keep track of a global numbering for degrees
-  //of freedom that live on each type of geometric entity. We only
-  //have node and element based DOFs so I just rebuild the other
-  //information once we have elements and nodes partitioned.
-  //
-  // \todo check that I restore all data that PETSc expects to have
-  // back, add PETSc error checking macros
-  //
-  //1. Build default partitioning
-  //
-  //get offsets so we can calculate the processor to global mapping
-  //for elements in the old (default) partitioning
-  valarray<int> elementOffsets_old(size+1);
-  elementOffsets_old[0] = 0;
-  for(int sdN=0;sdN<size;sdN++)
-    elementOffsets_old[sdN+1] = elementOffsets_old[sdN] +
-      int(mesh.nElements_global)/size +
-      (int(mesh.nElements_global)%size > sdN);
-
-  //2. Extract subdomain element adjacency information could read
-  //only the required portion from a file
-  int nElements_subdomain = (elementOffsets_old[rank+1] - elementOffsets_old[rank]);
-  PetscInt *elementNeighborsOffsets_subdomain,*elementNeighbors_subdomain,*weights_subdomain;
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain+1),&elementNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&elementNeighbors_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&weights_subdomain);
-  //this wastes a little space
-  elementNeighborsOffsets_subdomain[0] = 0;
-  for (int eN=0,offset=0; eN < nElements_subdomain; eN++)
-    {
-      int eN_global = elementOffsets_old[rank] + eN;
-      int offsetStart=offset;
-      for (int ebN=0; ebN< mesh.nElementBoundaries_element;ebN++)
-        {
-          int eN_neighbor_global = mesh.elementNeighborsArray[eN_global*mesh.nElementBoundaries_element + ebN];
-          if (eN_neighbor_global >= 0 )
-            elementNeighbors_subdomain[offset++] = eN_neighbor_global;
-        }
-      elementNeighborsOffsets_subdomain[eN+1]=offset;
-      sort(&elementNeighbors_subdomain[offsetStart],&elementNeighbors_subdomain[offset]);
-      int weight = (elementNeighborsOffsets_subdomain[eN+1] - elementNeighborsOffsets_subdomain[eN]);
-      for (int k=elementNeighborsOffsets_subdomain[eN];k < elementNeighborsOffsets_subdomain[eN+1];k++)
-        weights_subdomain[k] = weight;
-      // for (int o = offsetStart; o < offset; o++)
-      //   {
-      //     std::cout<<elementNeighbors_subdomain[o]<<'\t';
-      //   }
-      // std::cout<<std::endl;
-    }
-  //3. Generate the  new partitiong using PETSc, this is done in parallel using parmetis
-  Mat petscAdjacency;
-  //     MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-  //                     nElements_subdomain, mesh.nElements_global,
-  //                     &elementNeighborsOffsets_subdomain[0], &elementNeighbors_subdomain[0],
-  //                     &weights_subdomain[0],
-  //                     &petscAdjacency);
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nElements_subdomain,
-                         mesh.nElements_global,
-                         elementNeighborsOffsets_subdomain,
-                         elementNeighbors_subdomain,
-                         PETSC_NULL,//weights_subdomain,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  MatPartitioning petscPartition;
-  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
-  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
-  MatPartitioningSetFromOptions(petscPartition);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-
-  //get a petsc index set that has the new submdomain number for each element
-  IS elementPartitioningIS_new;
-  MatPartitioningApply(petscPartition,&elementPartitioningIS_new);
-  MatPartitioningDestroy(&petscPartition);
-  //MatDestroy(petscAdjacency);
-  //ISView(elementPartitioningIS_new,PETSC_VIEWER_STDOUT_WORLD);
-
-  //experiment with metis
-  //mwf set some defaults and not call if size == 1 since metis crashes
-  //cek commenting out for now
-  //int etype=1,edgecut=0,base=0;
-  //epart assign everything to processor zero by default
-  //valarray<int> epart(0,mesh.nElements_global),npart(mesh.nNodes_global);
-  //if (size > 1)
-  //  METIS_PartMeshNodal(&mesh.nElements_global,&mesh.nNodes_global,mesh.elementNodesArray,&etype,&base,&size,&edgecut,&epart[0],&npart[0]);
-  //ISCreateGeneralWithArray(PETSC_COMM_SELF,mesh.nElements_global,&epart[0],&elementPartitioningIS_new);
-  //write mesh to view with showme
-  //     std::ofstream nodeout("mesh.node"),eleout("mesh.ele"),partout("mesh.part");
-  //     eleout<<mesh.nElements_global<<" 3 0"<<std::endl;
-  //     partout<<mesh.nElements_global<<"\t"<<size<<std::endl;
-  //     for (int eN=0;eN<mesh.nElements_global;eN++)
-  //       {
-  //    partout<<(eN+1)<<"\t"<<(1+epart[eN])<<std::endl;
-  //    eleout<<(eN+1)<<"\t"<<(1+mesh.elementNodesArray[eN*3+0])
-  //          <<"\t"<<(1+mesh.elementNodesArray[eN*3+1])
-  //          <<"\t"<<(1+mesh.elementNodesArray[eN*3+2])
-  //          <<std::endl;
-  //       }
-  //     nodeout<<mesh.nNodes_global<<" 2 0 0"<<std::endl;
-  //     for (int nN=0;nN<mesh.nNodes_global;nN++)
-  //       {
-  //    nodeout<<(nN+1)<<"\t"<<mesh.nodeArray[nN*3+0]<<"\t"<<mesh.nodeArray[nN*3+1]<<std::endl;
-  //       }
-  //     eleout.close();
-  //     partout.close();
-  //count the new number of elements on each subdomain
-  valarray<int> nElements_subdomain_new(size);
-  ISPartitioningCount(elementPartitioningIS_new,size,&nElements_subdomain_new[0]);
-
-  //get the new offsets for the subdomain to global numbering
-  valarray<int> elementOffsets_new(size+1);
-  elementOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    elementOffsets_new[sdN+1] = elementOffsets_new[sdN] + nElements_subdomain_new[sdN];
-
-  //get the new element numbers for the elements on this  subdomain
-  IS elementNumberingIS_subdomain_old2new;
-  ISPartitioningToNumbering(elementPartitioningIS_new,&elementNumberingIS_subdomain_old2new);
-
-  //now get the new element numbers for the whole mesh so that we
-  //can just read this processors elements, reorder, and renumber**
-  //
-  //**We could do this in parallel by scattering all the element
-  //information
-  IS elementNumberingIS_global_old2new;
-  ISAllGather(elementNumberingIS_subdomain_old2new,&elementNumberingIS_global_old2new);
-  //ISView(elementNumberingIS_global_old2new,PETSC_VIEWER_STDOUT_SELF);
-  const PetscInt *elementNumbering_global_old2new;
-  ISGetIndices(elementNumberingIS_global_old2new,&elementNumbering_global_old2new);
-  valarray<int> elementNumbering_global_new2old(mesh.nElements_global);
-  for(int eN=0;eN<mesh.nElements_global;eN++)
-    elementNumbering_global_new2old[elementNumbering_global_old2new[eN]] = eN;
-
-  //Sort element based arrays, maybe I don't need to do this, maybe
-  //I just need to start writing into the subdomain mesh here and
-  //preserve subdomain2old and subdomain2global mappings
-  valarray<int> elementNodesArray_new(mesh.nElements_global*mesh.nNodes_element),
-    elementNeighborsArray_new(mesh.nElements_global*mesh.nElementBoundaries_element),
-    elementMaterialTypes_new(mesh.nElements_global),
-    elementBoundaryElementsArray_new(mesh.nElementBoundaries_global*2),
-    elementBoundaryNodesArray_new(mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary),
-    edgeNodesArray_new(mesh.nEdges_global*2);
-  valarray<int> elementBoundaryMaterialTypes_new(mesh.nElementBoundaries_global);
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    {
-      for (int nN=0;nN<mesh.nNodes_element;nN++)
-        elementNodesArray_new[eN*mesh.nNodes_element + nN] =
-          mesh.elementNodesArray[elementNumbering_global_new2old[eN]*mesh.nNodes_element+nN];
-      for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-        elementNeighborsArray_new[eN*mesh.nElementBoundaries_element+ebN] =
-          mesh.elementNeighborsArray[elementNumbering_global_new2old[eN]*mesh.nElementBoundaries_element+ebN];
-      elementMaterialTypes_new[eN] = mesh.elementMaterialTypes[elementNumbering_global_new2old[eN]];
-    }
-  //renumber references to element numbers
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    {
-      for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-        {
-          int eN_ebN = elementNeighborsArray_new[eN*mesh.nElementBoundaries_element+ebN];
-          if (eN_ebN >= 0)
-            elementNeighborsArray_new[eN*mesh.nElementBoundaries_element+ebN] =
-              elementNumbering_global_old2new[eN_ebN];
-        }
-    }
-  for(int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
-    {
-      int eN_L_old = mesh.elementBoundaryElementsArray[ebN*2+0],
-        eN_R_old = mesh.elementBoundaryElementsArray[ebN*2+1];
-      elementBoundaryElementsArray_new[ebN*2+0] = elementNumbering_global_old2new[eN_L_old];
-      if(eN_R_old >= 0)
-        elementBoundaryElementsArray_new[ebN*2+1] = elementNumbering_global_old2new[eN_R_old];
-      //mwf assume same numbering scheme for element boundaries for now?
-      elementBoundaryMaterialTypes_new[ebN] = mesh.elementBoundaryMaterialTypes[ebN];
-    }
-  //4. now we need to build a new node ordering with better data locality for C0 finite elements
-  //otherwise we could just grab the nodes on the subdomain and not worry about ownership
-  //in the long run it wouldn't be bad to do a global repartition of faces and edges for mixed hybrid
-  //and non-conforming finite elements
-  MPI_Status status;
-  PetscBT nodeMask;
-  PetscBTCreate(mesh.nNodes_global,&nodeMask);
-  if (rank > 0)
-    {
-      MPI_Recv(nodeMask,PetscBTLength(mesh.nNodes_global),MPI_CHAR,rank-1,0,PROTEUS_COMM_WORLD,&status);
-    }
-  //mark the unmarked nodes on this subdomain and store the node numbers
-  set<int> nodes_subdomain_owned;
-  for(int eN=elementOffsets_new[rank];eN<elementOffsets_new[rank+1];eN++)
-    for(int nN=0;nN<mesh.nNodes_element;nN++)
-      {
-        int nN_global = elementNodesArray_new[eN*mesh.nNodes_element+nN];
-        if (!PetscBTLookupSet(nodeMask,nN_global))
-          nodes_subdomain_owned.insert(nN_global);
-      }
-  //ship off the mask
-  if (rank < size-1)
-    MPI_Send(nodeMask,PetscBTLength(mesh.nNodes_global),MPI_CHAR,rank+1,0,PROTEUS_COMM_WORLD);
-  ierr = PetscBTDestroy(&nodeMask);
-  if (ierr)
-    cerr<<"Error in PetscBTDestroy"<<endl;
-  //get the number of nodes on each processor
-  valarray<int> nNodes_subdomain_new(size),
-    nodeOffsets_new(size+1);
-  for (int sdN=0;sdN<size;sdN++)
-    if (sdN == rank)
-      nNodes_subdomain_new[sdN] = nodes_subdomain_owned.size();
-    else
-      nNodes_subdomain_new[sdN] = 0;
-  valarray<int> nNodes_subdomain_new_send=nNodes_subdomain_new;
-  MPI_Allreduce(&nNodes_subdomain_new_send[0],&nNodes_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  nodeOffsets_new[0] = 0;
-  for (int sdN=0;sdN<size;sdN++)
-    nodeOffsets_new[sdN+1] = nodeOffsets_new[sdN]+nNodes_subdomain_new[sdN];
-  //Now as with elements build a global node numbering, sort node
-  //based information, and renumber references to node numbers
-  valarray<int> nodeNumbering_new2old(nodes_subdomain_owned.size());
-  set<int>::iterator nN_ownedp=nodes_subdomain_owned.begin();
-  for (int nN=0;nN<int(nodes_subdomain_owned.size());nN++)
-    {
-      nodeNumbering_new2old[nN] = *nN_ownedp++;
-    }
-  IS nodeNumberingIS_new2old;
-  ISCreateGeneral(PROTEUS_COMM_WORLD,nodes_subdomain_owned.size(),&nodeNumbering_new2old[0],PETSC_COPY_VALUES,&nodeNumberingIS_new2old);
-  IS nodeNumberingIS_global_new2old;
-  ISAllGather(nodeNumberingIS_new2old,&nodeNumberingIS_global_new2old);
-  const PetscInt *nodeNumbering_global_new2old;
-  valarray<int> nodeNumbering_old2new_global(mesh.nNodes_global);
-  ISGetIndices(nodeNumberingIS_global_new2old,&nodeNumbering_global_new2old);
-  for (int nN=0;nN<mesh.nNodes_global;nN++)
-    {
-      nodeNumbering_old2new_global[nodeNumbering_global_new2old[nN]] = nN;
-    }
-  for (int eN=0;eN < mesh.nElements_global; eN++)
-    {
-      int nN_old;
-      for (int nN=0;nN < mesh.nNodes_element; nN++)
-        {
-          nN_old = elementNodesArray_new[eN*mesh.nNodes_element+nN];
-          elementNodesArray_new[eN*mesh.nNodes_element+nN] = nodeNumbering_old2new_global[nN_old];
-        }
-    }
-  for (int i=0;i<mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary;i++)
-    {
-      int nN_old = mesh.elementBoundaryNodesArray[i];
-      elementBoundaryNodesArray_new[i] = nodeNumbering_old2new_global[nN_old];
-    }
-  for (int i=0;i<mesh.nEdges_global*2;i++)
-    {
-      int nN_old = mesh.edgeNodesArray[i];
-      edgeNodesArray_new[i] = nodeNumbering_old2new_global[nN_old];
-    }
-  valarray<int> nodeStarArray_new(mesh.nodeStarOffsets[mesh.nNodes_global]);
-  for (int i=0;i<mesh.nodeStarOffsets[mesh.nNodes_global];i++)
-    {
-      int nN_old = mesh.nodeStarArray[i];
-      nodeStarArray_new[i] = nodeNumbering_old2new_global[nN_old];
-    }
-  valarray<double> nodeArray_new(mesh.nNodes_global*3);
-  valarray<int>  nodeMaterialTypes_new(mesh.nNodes_global);
-  for (int nN=0;nN<mesh.nNodes_global;nN++)
-    {
-      int nN_new = nodeNumbering_old2new_global[nN];
-      nodeArray_new[nN_new*3+0] = mesh.nodeArray[nN*3+0];
-      nodeArray_new[nN_new*3+1] = mesh.nodeArray[nN*3+1];
-      nodeArray_new[nN_new*3+2] = mesh.nodeArray[nN*3+2];
-      nodeMaterialTypes_new[nN_new] = mesh.nodeMaterialTypes[nN];
-    }
-  //write partitioned mesh to view with "showme"
-  //     std::ofstream nodeout("mesh.node"),eleout("mesh.ele"),partout("mesh.part");
-  //     eleout<<mesh.nElements_global<<" 3 0"<<std::endl;
-  //     partout<<mesh.nElements_global<<"\t"<<size<<std::endl;
-  //     for (int eN=0;eN<mesh.nElements_global;eN++)
-  //       {
-  //    partout<<(eN+1)<<"\t"<<(1+epart[elementNumbering_global_new2old[eN]])<<std::endl;
-  //    //partout<<(eN+1)<<"\t"<<(1+epart[eN])<<std::endl;
-  //    eleout<<(eN+1)<<"\t"<<(1+elementNodesArray_new[eN*3+0])
-  //          <<"\t"<<(1+elementNodesArray_new[eN*3+1])
-  //          <<"\t"<<(1+elementNodesArray_new[eN*3+2])
-  //          <<std::endl;
-  //       }
-  //     nodeout<<mesh.nNodes_global<<" 2 0 0"<<std::endl;
-  //     for (int nN=0;nN<mesh.nNodes_global;nN++)
-  //       {
-  //    nodeout<<(nN+1)<<"\t"<<nodeArray_new[nN*3+0]<<"\t"<<nodeArray_new[nN*3+1]<<std::endl;
-  //       }
-  //     eleout.close();
-  //     partout.close();
-  //5. At this point we have new, renumbered and sorted the global element and node based information, and
-  //we have it all on each processor so we can add overlap
-  set<int> elements_overlap,nodes_overlap;
-  for(int eN=elementOffsets_new[rank];eN<elementOffsets_new[rank+1];eN++)
-    for (int nN=0;nN<mesh.nNodes_element;nN++)
-      {
-        int nN_global = elementNodesArray_new[eN*mesh.nNodes_element+nN];
-        if (nN_global < nodeOffsets_new[rank] || nN_global >= nodeOffsets_new[rank+1])
-          nodes_overlap.insert(nN_global);
-      }
-
-
-  if (nElements_overlap > 0)
-    {
-      //get all elements in the node stars and their nodes
-      // for (int nN_new=nodeOffsets_new[rank]; nN_new < nodeOffsets_new[rank+1]; nN_new++)
-      //   {
-      //     int nN = nodeNumbering_global_new2old[nN_new];
-      //     for (int offset =mesh.nodeElementOffsets[nN];offset<mesh.nodeElementOffsets[nN+1];offset++)
-      //       {
-      //         int eN = mesh.nodeElementsArray[offset];
-      //         int eN_new = elementNumbering_global_old2new[eN];
-      //         if (eN_new < elementOffsets_new[rank] or eN_new >= elementOffsets_new[rank+1])
-      //           {
-      //             elements_overlap.insert(eN_new);
-      //             for (int nN_element=0;nN_element<mesh.nNodes_element;nN_element++)
-      //               {
-      //                 int nN_global = elementNodesArray_new[eN_new*mesh.nNodes_element+nN_element];
-      //                 if (nN_global < nodeOffsets_new[rank] or nN_global >= nodeOffsets_new[rank+1])
-      //                   nodes_overlap.insert(nN_global);
-      //               }
-      //           }
-      //       }
-      //   }
-      //get all elements in the node stars of owned nodes and those elements' nodes
-      for (set<int>::iterator nN=nodes_subdomain_owned.begin();nN != nodes_subdomain_owned.end();nN++)
-        {
-          for (int offset =mesh.nodeElementOffsets[*nN];offset<mesh.nodeElementOffsets[(*nN)+1];offset++)
-            {
-              int eN = mesh.nodeElementsArray[offset];
-              int eN_new = elementNumbering_global_old2new[eN];
-              if (eN_new < elementOffsets_new[rank] or eN_new >= elementOffsets_new[rank+1])
-                {
-                  elements_overlap.insert(eN_new);
-                  for (int nN_element=0;nN_element<mesh.nNodes_element;nN_element++)
-                    {
-                      int nN_global = elementNodesArray_new[eN_new*mesh.nNodes_element+nN_element];
-                      if (nN_global < nodeOffsets_new[rank] or nN_global >= nodeOffsets_new[rank+1])
-                        nodes_overlap.insert(nN_global);
-                    }
-                }
-            }
-        }
-      //get all the element neighbors
-      for(int eN=elementOffsets_new[rank];eN<elementOffsets_new[rank+1];eN++)
-        for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-          {
-            int eN_ebN = elementNeighborsArray_new[eN*mesh.nElementBoundaries_element+ebN];
-            if (eN_ebN >= 0 &&
-                (eN_ebN < elementOffsets_new[rank] || eN_ebN >= elementOffsets_new[rank+1]))
-              {
-                elements_overlap.insert(eN_ebN);
-                for (int nN=0;nN<mesh.nNodes_element;nN++)
-                  {
-                    int nN_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN];
-                    if (nN_global < nodeOffsets_new[rank] || nN_global >= nodeOffsets_new[rank+1])
-                      nodes_overlap.insert(nN_global);
-                  }
-              }
-          }
-    }
-  for (int layer=1;layer<nElements_overlap;layer++)
-    {
-      for (set<int>::iterator eN_p=elements_overlap.begin();eN_p != elements_overlap.end();eN_p++)
-        {
-          int eN_global = *eN_p;
-          for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-            {
-              int eN_ebN = elementNeighborsArray_new[eN_global*mesh.nElementBoundaries_element+ebN];
-              if (eN_ebN >= 0 &&
-                  (eN_ebN < elementOffsets_new[rank] || eN_ebN >= elementOffsets_new[rank+1]))
-                {
-                  elements_overlap.insert(eN_ebN);
-                  for (int nN=0;nN<mesh.nNodes_element;nN++)
-                    {
-                      int nN_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN];
-                      if (nN_global < nodeOffsets_new[rank] || nN_global >= nodeOffsets_new[rank+1])
-                        nodes_overlap.insert(nN_global);
-                    }
-                }
-            }
-        }
-    }
-  //6. Now build subdomain mesh
-  //
-  //set what we know
-  if (mesh.subdomainp == NULL)
-    mesh.subdomainp = new Mesh();
-  mesh.subdomainp->usePlex = mesh.usePlex;
-  mesh.subdomainp->nElements_global = nElements_subdomain_new[rank] + elements_overlap.size();
-  mesh.subdomainp->nNodes_global = nNodes_subdomain_new[rank] + nodes_overlap.size();
-  mesh.subdomainp->nNodes_element = mesh.nNodes_element;
-  mesh.subdomainp->nNodes_elementBoundary = mesh.nNodes_elementBoundary;
-  mesh.subdomainp->nElementBoundaries_element = mesh.nElementBoundaries_element;
-  //load the elements and nodes
-  valarray<int> nodeNumbering_subdomain2global(mesh.subdomainp->nNodes_global);
-  map<int,int> nodeNumbering_global2subdomain;
-  mesh.subdomainp->nodeArray = new double[mesh.subdomainp->nNodes_global*3];
-  mesh.subdomainp->nodeMaterialTypes = new int[mesh.subdomainp->nNodes_global];
-  for(int nN=0;nN<nNodes_subdomain_new[rank];nN++)
-    {
-      int nN_global = nN + nodeOffsets_new[rank];
-      nodeNumbering_subdomain2global[nN] = nN_global;
-      nodeNumbering_global2subdomain[nN_global] = nN;
-      mesh.subdomainp->nodeArray[nN*3+0] = nodeArray_new[nN_global*3+0];
-      mesh.subdomainp->nodeArray[nN*3+1] = nodeArray_new[nN_global*3+1];
-      mesh.subdomainp->nodeArray[nN*3+2] = nodeArray_new[nN_global*3+2];
-      mesh.subdomainp->nodeMaterialTypes[nN]= nodeMaterialTypes_new[nN_global];
-    }
-  //note: sets in C++ are sorted so the overlap is laid out in
-  //contiguous chunks corresponding to the partitions
-  set<int>::iterator nN_p=nodes_overlap.begin();
-  for(int nN=nNodes_subdomain_new[rank];nN < nNodes_subdomain_new[rank] + int(nodes_overlap.size()); nN++)
-    {
-      int nN_global = *nN_p++;
-      nodeNumbering_subdomain2global[nN] = nN_global;
-      nodeNumbering_global2subdomain[nN_global] = nN;
-      mesh.subdomainp->nodeArray[nN*3+0] = nodeArray_new[nN_global*3+0];
-      mesh.subdomainp->nodeArray[nN*3+1] = nodeArray_new[nN_global*3+1];
-      mesh.subdomainp->nodeArray[nN*3+2] = nodeArray_new[nN_global*3+2];
-      mesh.subdomainp->nodeMaterialTypes[nN]= nodeMaterialTypes_new[nN_global];
-    }
-  mesh.subdomainp->elementNodesArray = new int[mesh.subdomainp->nElements_global*mesh.subdomainp->nNodes_element];
-  mesh.subdomainp->elementMaterialTypes = new int[mesh.subdomainp->nElements_global];
-  valarray<int> elementNumbering_subdomain2global(mesh.subdomainp->nElements_global);
-  for (int eN=0;eN<nElements_subdomain_new[rank];eN++)
-    {
-      int eN_global = eN+elementOffsets_new[rank];
-      elementNumbering_subdomain2global[eN] = eN_global;
-      mesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypes_new[eN_global];
-      for (int nN=0;nN<mesh.subdomainp->nNodes_element;nN++)
-        mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element+nN] =
-          nodeNumbering_global2subdomain[elementNodesArray_new[eN_global*mesh.nNodes_element + nN]];
-    }
-  set<int>::iterator eN_p=elements_overlap.begin();
-  for(int eN=nElements_subdomain_new[rank];eN < nElements_subdomain_new[rank]+int(elements_overlap.size());eN++)
-    {
-      int eN_global = *eN_p++;
-      mesh.subdomainp->elementMaterialTypes[eN] = elementMaterialTypes_new[eN_global];
-      elementNumbering_subdomain2global[eN] = eN_global;
-      for (int nN=0;nN<mesh.subdomainp->nNodes_element;nN++)
-        mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element+nN] =
-          nodeNumbering_global2subdomain[elementNodesArray_new[eN_global*mesh.nNodes_element + nN]];
-    }
-
-  if (mesh.subdomainp->nNodes_element == 2)
-    {
-      constructElementBoundaryElementsArray_edge(*mesh.subdomainp);
-      allocateGeometricInfo_edge(*mesh.subdomainp);
-      computeGeometricInfo_edge(*mesh.subdomainp);
-    }
-  else if (mesh.subdomainp->nNodes_element == 3)
-    {
-      constructElementBoundaryElementsArray_triangle(*mesh.subdomainp);
-      allocateGeometricInfo_triangle(*mesh.subdomainp);
-      computeGeometricInfo_triangle(*mesh.subdomainp);
-    }
-  else if (mesh.subdomainp->nNodes_element == 4)
-    {
-      constructElementBoundaryElementsArray_tetrahedron(*mesh.subdomainp);
-      allocateGeometricInfo_tetrahedron(*mesh.subdomainp);
-      computeGeometricInfo_tetrahedron(*mesh.subdomainp);
-    }
-  if (mesh.elementBoundaryMaterialTypes != NULL)
-    {
-      assert(mesh.elementBoundariesArray != NULL);
-      //mwftodo need to copy over elementBoundaryMaterialTypes now
-      for (int eN=0;eN<mesh.subdomainp->nElements_global;eN++)
-        {
-          int eN_global_new = elementNumbering_subdomain2global[eN];
-          int eN_global_old = elementNumbering_global_new2old[eN_global_new];
-          for (int ebN_element = 0; ebN_element < mesh.nElementBoundaries_element; ebN_element++)
-            {
-              int ebN_global_old = mesh.elementBoundariesArray[eN_global_old*mesh.nElementBoundaries_element+ebN_element];
-              int ebN_subdomain = mesh.subdomainp->elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN_element];
-              mesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = mesh.elementBoundaryMaterialTypes[ebN_global_old];
-            }
-        }
-    }
-  //now we've got the old mesh in the old ordering and the subdomain mesh in the new ordering
-  //the first chunk of nodes and elements are the owned elements so we need to know how many of those there are
-  //and the offset of the first one so we can compute subdomain2global
-  mesh.nodeOffsets_subdomain_owned = new int[size+1];
-  mesh.elementOffsets_subdomain_owned = new int[size+1];
-  for (int sdN=0;sdN<size+1;sdN++)
-    {
-      mesh.nodeOffsets_subdomain_owned[sdN] = nodeOffsets_new[sdN];
-      mesh.elementOffsets_subdomain_owned[sdN] = elementOffsets_new[sdN];
-    }
-  //we also need the subdomain 2 new global mappings
-  mesh.nodeNumbering_subdomain2global = new int[mesh.subdomainp->nNodes_global];
-  for (int nN=0;nN<mesh.subdomainp->nNodes_global;nN++)
-    mesh.nodeNumbering_subdomain2global[nN] = nodeNumbering_subdomain2global[nN];
-  mesh.elementNumbering_subdomain2global = new int[mesh.subdomainp->nElements_global];
-  for (int eN=0;eN<mesh.subdomainp->nElements_global;eN++)
-    mesh.elementNumbering_subdomain2global[eN] = elementNumbering_subdomain2global[eN];
-
-  ISRestoreIndices(elementNumberingIS_global_old2new,&elementNumbering_global_old2new);
-
-  ISDestroy(&elementPartitioningIS_new);
-  ISDestroy(&elementNumberingIS_subdomain_old2new);
-  ISDestroy(&elementNumberingIS_global_old2new);
-
-  ISRestoreIndices(nodeNumberingIS_global_new2old,&nodeNumbering_global_new2old);
-
-  ISDestroy(&nodeNumberingIS_new2old);
-  ISDestroy(&nodeNumberingIS_global_new2old);
-
-  return 0;
-}
-
-int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_overlap,
-                   const int* nodeOwners, const int* nodeWeights)
-{
-  using namespace std;
-  int ierr,size,rank;
-
-  ierr = MPI_Comm_size(PROTEUS_COMM_WORLD,&size);
-  ierr = MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
-  StageTimer timer(PROTEUS_COMM_WORLD,"partitionNodes");
-  /***********************************************************************
-    partition domain based on nodes rather than elements, basically repeats
-    partitionElements with this one modification
-
-    right now generates equivalent of 1 layer of overlap regardless of input
-
-    1. Partition nodes in the default partition of contiguous chunks with
-       input ordering
-
-    2. Determine nodal connectivity on local processor
-
-    3. Generate new nodal partition using PETSc interface
-
-    4. Collect elements containing locally owned nodes and assign ownership
-
-    5. Generate global element numbering for new subdomain ownership
-
-    6. Create overlap (ghost) information for nodes and elements
-
-    7. March through additional layers of overlap if requested,
-
-    8. Build subdomain meshes in new numbering
-  ***********************************************************************/
-  //
-  //1. Build default nodal partition
-  //
-  //compute offsets to build processor (local) to global ordering for nodes
-  //in default partitioning
-  // printf("rank %d partitionNodes nNodes_global %d\n", rank, mesh.nNodes_global);
-  valarray<int> nodeOffsets_old(size+1);
-  nodeOffsets_old[0] = 0;
-  for (int sdN=0; sdN < size; sdN++)
-    {
-      nodeOffsets_old[sdN+1] = nodeOffsets_old[sdN] +
-        int(mesh.nNodes_global)/size + (int(mesh.nNodes_global)%size > sdN);
-        // printf("rank %d sdN %d nNodes_global %d nodeOffsets_old[%d] = %d\n", rank, sdN, mesh.nNodes_global, sdN+1, nodeOffsets_old[sdN+1]);
-    }
-  //
-  //2.-3. The owner of every node: prescribed, or from the graph partitioner
-  //
-  std::vector<int> nodeOwner;
-  if (nodeOwners != NULL)
-    {
-      /* The caller dictates the partition: nodeOwners[n] is the rank that owns
-         node n, in the numbering the mesh has now. This is how a finer level of
-         a multilevel hierarchy inherits its coarser level's partition, so that
-         the transfer between them is local instead of an all-to-all, and how a
-         regular grid is cut into bricks (MeshTools.cartesianNodeOwners). Nothing
-         on this path uses PETSc. */
-      nodeOwner = prescribedOwners(PROTEUS_COMM_WORLD,nodeOwners,mesh.nNodes_global,size,"partitionNodes","node");
-    }
-  else
-    {
-  //Determine nodal connectivity on local processor, (local node star array)
-  int nNodes_subdomain = (nodeOffsets_old[rank+1] - nodeOffsets_old[rank]);
-  PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain;
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain+1),&nodeNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain*mesh.max_nNodeNeighbors_node),&nodeNeighbors_subdomain);
-  nodeNeighborsOffsets_subdomain[0] = 0;
-  for (int nN = 0,offset=0; nN < nNodes_subdomain; nN++)
-    {
-      int nN_global = nodeOffsets_old[rank] + nN;
-      for (int offset_global = mesh.nodeStarOffsets[nN_global];
-           offset_global < mesh.nodeStarOffsets[nN_global+1]; offset_global++)
-        nodeNeighbors_subdomain[offset++] = mesh.nodeStarArray[offset_global];
-      nodeNeighborsOffsets_subdomain[nN+1]=offset;
-      sort(&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN]],&nodeNeighbors_subdomain[nodeNeighborsOffsets_subdomain[nN+1]]);
-    }
-  //Generate new nodal partition using PETSc interface
-  IS nodePartitioningIS_new;
-  Mat petscAdjacency;
-  //   MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-  //              nNodes_subdomain, mesh.nNodes_global,
-  //              &nodeNeighborsOffsets_subdomain[0], &nodeNeighbors_subdomain[0],
-  //              &weights_subdomain[0],//PETSC_NULL,//ignore weighting for now
-  //              &petscAdjacency);
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nNodes_subdomain,
-                         mesh.nNodes_global,
-                         nodeNeighborsOffsets_subdomain,
-                         nodeNeighbors_subdomain,
-                         PETSC_NULL,//weights_subdomain,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  MatPartitioning petscPartition;
-  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
-  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
-  MatPartitioningSetFromOptions(petscPartition);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-  if (nodeWeights != NULL)
-    {
-      /* The caller says what each node costs -- for the coarsest level of a hierarchy, the
-         work of everything below it that will inherit its owner -- so the cut balances
-         that instead of the node count. The array is this rank's slice of the default
-         chunks, and PETSc takes ownership of it. */
-      PetscInt *vertex_weights;
-      ierr = PetscMalloc(sizeof(PetscInt)*nNodes_subdomain,&vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-      for (int nN = 0; nN < nNodes_subdomain; nN++)
-        vertex_weights[nN] = nodeWeights[nodeOffsets_old[rank]+nN];
-      ierr = MatPartitioningSetVertexWeights(petscPartition,vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-    }
-
-  //get petsc index set that has the new subdomain number for each node
-  MatPartitioningApply(petscPartition,&nodePartitioningIS_new);
-  MatPartitioningDestroy(&petscPartition); //gets petscAdjacency too I believe
-  nodeOwner = gatherPartition(PROTEUS_COMM_WORLD,nodePartitioningIS_new,nodeOffsets_old);
-  ISDestroy(&nodePartitioningIS_new);
-    }
-
-  timer.mark("node_owners");
-  //number the nodes: each rank's owned nodes contiguous, in their old order
-  valarray<int> nNodes_subdomain_new, nodeOffsets_new;
-  std::vector<int> nodeNumbering_global_old2new, nodeNumbering_global_new2old;
-  numberByOwner(nodeOwner,size,nNodes_subdomain_new,nodeOffsets_new,
-                nodeNumbering_global_old2new,nodeNumbering_global_new2old);
-  /* Keep this permutation on the mesh. Partitioning renumbers the global nodes
-     so each rank's owned ones are contiguous, and it is that numbering which
-     nodeNumbering_subdomain2global refers to. Anything built against the
-     original numbering -- a multilevel hierarchy's node parents, say -- has to
-     be read through this map before it can be used alongside the partitioned
-     vectors, and nothing else records the way back. */
-  if (mesh.nodeNumbering_global_old2new != NULL)
-    delete [] mesh.nodeNumbering_global_old2new;
-  mesh.nodeNumbering_global_old2new = new int[mesh.nNodes_global];
-  for (int nN=0;nN<mesh.nNodes_global;nN++)
-    {
-      mesh.nodeNumbering_global_old2new[nN] = nodeNumbering_global_old2new[nN];
-    }
-
-
-  //   //mwf debug
-  //   if (rank == 0)
-  //     {
-  //       for (int sdN = 0; sdN < size+1; sdN++)
-  //    std::cout<<"partitionNodes rank= "<<rank<<" nodeOffset["<<sdN<<"]= "<<nodeOffsets_new[sdN]<<std::endl;
-  //       for (int nN = 0; nN < mesh.nNodes_global; nN++)
-  //    {
-  //      std::cout<<"partitionNodes rank= "<<rank<<" nN= "<<nN<<" old2new= "<<nodeNumbering_global_old2new[nN]<<" new2old= "<<nodeNumbering_global_new2old[nN]<<std::endl;
-  //    }
-  //       for (int sdN = 0; sdN < size; sdN++)
-  //    {
-  //      std::cout<<"============"<<std::endl;
-  //      std::cout<<"partitionNodes rank= "<<sdN<<" nNodes_owned= "<<nodeOffsets_new[sdN+1]-nodeOffsets_new[sdN]<<" = "<<std::endl;
-  //      for (int nN = nodeOffsets_new[sdN]; nN < nodeOffsets_new[sdN+1]; nN++)
-  //        {
-  //          std::cout<<"new number= "<<nN<<" <--> old number "<<nodeNumbering_global_new2old[nN]<<" x,y,z= "
-  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+0]<<" , "
-  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+1]<<" , "
-  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+2]<<std::endl;
-  //        }
-  //    }
-
-  //     }
-  timer.mark("node_numbering");
-  //
-  //4. To build subdomain meshes, go through and collect elements containing
-  //   the locally owned nodes. Assign processor ownership of elements
-  //
-  //   An element belongs to the lowest rank that owns one of its nodes. This
-  //   used to be decided by a mask of elements passed from rank to rank, each
-  //   marking the unmarked elements in its owned nodes' stars; the same
-  //   traversal over every node, keeping the lowest rank, gives the same owners
-  //   with no communication.
   std::vector<int> elementOwner(mesh.nElements_global,size);
   for (int nN_global_old = 0; nN_global_old < mesh.nNodes_global; nN_global_old++)
     for (int eN_star_offset = mesh.nodeElementOffsets[nN_global_old];
          eN_star_offset < mesh.nodeElementOffsets[nN_global_old+1]; eN_star_offset++)
       lowerOwner(elementOwner,mesh.nodeElementsArray[eN_star_offset],nodeOwner[nN_global_old]);
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,elementOwner,size,"element");
-  //store owned element numbers (in old numbering)
-  set<int> elements_subdomain_owned;
-  for (int eN = 0; eN < mesh.nElements_global; eN++)
-    if (elementOwner[eN] == rank)
-      elements_subdomain_owned.insert(elements_subdomain_owned.end(),eN);
+  return elementOwner;
+}
 
-  //
-  //5. Generate global element numbering corresponding to new subdomain ownership
-  //
-  valarray<int> nElements_subdomain_new, elementOffsets_new;
-  std::vector<int> elementNumbering_global_old2new, elementNumbering_global_new2old;
-  numberByOwner(elementOwner,size,nElements_subdomain_new,elementOffsets_new,
-                elementNumbering_global_old2new,elementNumbering_global_new2old);
-  if (mesh.elementNumbering_global_old2new != NULL)
-    delete [] mesh.elementNumbering_global_old2new;
-  mesh.elementNumbering_global_old2new = new int[mesh.nElements_global];
-  for (int eN = 0; eN < mesh.nElements_global; eN++)
-    mesh.elementNumbering_global_old2new[eN] = elementNumbering_global_old2new[eN];
-
-
-
-  timer.mark("elements");
-  //4b,5b. repeat process to build global face numbering
-  //first get element --> element boundaries array for new element but old element boundary numbering
-  valarray<int> elementBoundariesArray_new(mesh.nElements_global*mesh.nElementBoundaries_element);
-  for (int eN=0; eN < mesh.nElements_global; eN++)
-    for (int ebN=0; ebN < mesh.nElementBoundaries_element; ebN++)
-      {
-        elementBoundariesArray_new[eN*mesh.nElementBoundaries_element+ebN] =
-          mesh.elementBoundariesArray[elementNumbering_global_new2old[eN]*mesh.nElementBoundaries_element+ebN];
-          // printf("rank %d eN %d ebN %d elementBoundariesArray_new[%d] = %d\n", rank, eN, ebN, eN*mesh.nElementBoundaries_element+ebN, elementBoundariesArray_new[eN*mesh.nElementBoundaries_element+ebN]);
-      }
-  //A face belongs to the lowest rank that reaches it from one of its owned
-  //nodes: going through the elements in an owned node's star picks up the faces
-  //of those elements selected below, which can lie on the "outside" of the
-  //owned nodes' stars. As for elements, this is the rank-ordered mask chain's
-  //rule computed over every node at once.
+//An element boundary belongs to the lowest rank that owns one of its nodes,
+//reached through the elements in the node's star.
+std::vector<int> elementBoundaryOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size)
+{
   std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
   if (mesh.nNodes_element == 8)
     {
@@ -1004,7 +282,285 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
             }
         }
     }
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,elementBoundaryOwner,size,"element boundary");
+  return elementBoundaryOwner;
+}
+
+//An edge belongs to the owner of its end with the lower new number.
+std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
+                                          const std::vector<int>& nodeNumbering_global_old2new)
+{
+  std::vector<int> edgeOwner(mesh.nEdges_global);
+  for (int ig = 0; ig < mesh.nEdges_global; ig++)
+    {
+      const int nN0_global_old = mesh.edgeNodesArray[2*ig];
+      const int nN1_global_old = mesh.edgeNodesArray[2*ig+1];
+      edgeOwner[ig] = nodeOwner[nodeNumbering_global_old2new[nN0_global_old] < nodeNumbering_global_old2new[nN1_global_old] ?
+                                nN0_global_old : nN1_global_old];
+    }
+  return edgeOwner;
+}
+
+/* The default partition of n entities among size ranks: contiguous chunks of
+   near-equal size, in input order (the first n%size ranks get one more). */
+std::valarray<int> defaultChunkOffsets(int n, int size)
+{
+  std::valarray<int> offsets(size+1);
+  offsets[0] = 0;
+  for (int sdN=0; sdN < size; sdN++)
+    offsets[sdN+1] = offsets[sdN] + n/size + (n%size > sdN);
+  return offsets;
+}
+
+/* Rows begin..end-1 of the node graph the graph partitioner is given: each
+   node's star (its edge neighbours), sorted, in CSR form. */
+void nodeGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors)
+{
+  offsets.assign(1,0);
+  neighbors.clear();
+  for (int nN_global = begin; nN_global < end; nN_global++)
+    {
+      for (int offset_global = mesh.nodeStarOffsets[nN_global];
+           offset_global < mesh.nodeStarOffsets[nN_global+1]; offset_global++)
+        neighbors.push_back(mesh.nodeStarArray[offset_global]);
+      offsets.push_back(int(neighbors.size()));
+      std::sort(neighbors.begin()+offsets[offsets.size()-2],neighbors.end());
+    }
+}
+
+/* MPI: the owner of every node from the graph partitioner. Each rank hands
+   MatPartitioning its chunk of the default partition (nodeOffsets_old) as
+   rows of the node graph, with the nodes' weights if given, and the answer is
+   gathered so every rank holds every owner. Collective. */
+std::vector<int> graphNodeOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                 const std::valarray<int>& nodeOffsets_old, const int* nodeWeights)
+{
+  using namespace std;
+  int ierr,rank;
+  MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
+  //Determine nodal connectivity on local processor, (local node star array)
+  int nNodes_subdomain = (nodeOffsets_old[rank+1] - nodeOffsets_old[rank]);
+  std::vector<int> rowOffsets, rowNeighbors;
+  nodeGraphRows(mesh,nodeOffsets_old[rank],nodeOffsets_old[rank+1],rowOffsets,rowNeighbors);
+  //MatCreateMPIAdj takes ownership of PetscMalloc'd arrays
+  PetscInt *nodeNeighborsOffsets_subdomain,*nodeNeighbors_subdomain;
+  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain+1),&nodeNeighborsOffsets_subdomain);
+  PetscMalloc(sizeof(PetscInt)*(nNodes_subdomain*mesh.max_nNodeNeighbors_node),&nodeNeighbors_subdomain);
+  for (int nN = 0; nN < nNodes_subdomain+1; nN++)
+    nodeNeighborsOffsets_subdomain[nN] = rowOffsets[nN];
+  for (size_t k = 0; k < rowNeighbors.size(); k++)
+    nodeNeighbors_subdomain[k] = rowNeighbors[k];
+  //Generate new nodal partition using PETSc interface
+  IS nodePartitioningIS_new;
+  Mat petscAdjacency;
+  //   MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+  //              nNodes_subdomain, mesh.nNodes_global,
+  //              &nodeNeighborsOffsets_subdomain[0], &nodeNeighbors_subdomain[0],
+  //              &weights_subdomain[0],//PETSC_NULL,//ignore weighting for now
+  //              &petscAdjacency);
+  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+                         nNodes_subdomain,
+                         mesh.nNodes_global,
+                         nodeNeighborsOffsets_subdomain,
+                         nodeNeighbors_subdomain,
+                         PETSC_NULL,//weights_subdomain,
+                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  MatPartitioning petscPartition;
+  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
+  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
+  MatPartitioningSetFromOptions(petscPartition);
+  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
+  if (nodeWeights != NULL)
+    {
+      /* The caller says what each node costs -- for the coarsest level of a hierarchy, the
+         work of everything below it that will inherit its owner -- so the cut balances
+         that instead of the node count. The array is this rank's slice of the default
+         chunks, and PETSc takes ownership of it. */
+      PetscInt *vertex_weights;
+      ierr = PetscMalloc(sizeof(PetscInt)*nNodes_subdomain,&vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+      for (int nN = 0; nN < nNodes_subdomain; nN++)
+        vertex_weights[nN] = nodeWeights[nodeOffsets_old[rank]+nN];
+      ierr = MatPartitioningSetVertexWeights(petscPartition,vertex_weights);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+    }
+
+  //get petsc index set that has the new subdomain number for each node
+  MatPartitioningApply(petscPartition,&nodePartitioningIS_new);
+  MatPartitioningDestroy(&petscPartition); //gets petscAdjacency too I believe
+  std::vector<int> nodeOwner = gatherPartition(PROTEUS_COMM_WORLD,nodePartitioningIS_new,nodeOffsets_old);
+  ISDestroy(&nodePartitioningIS_new);
+  return nodeOwner;
+}
+
+int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_overlap,
+                   const int* nodeOwners, const int* nodeWeights)
+{
+  using namespace std;
+  int ierr,size,rank;
+
+  ierr = MPI_Comm_size(PROTEUS_COMM_WORLD,&size);
+  ierr = MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
+  StageTimer timer(PROTEUS_COMM_WORLD,"partitionNodes");
+  /***********************************************************************
+    partition domain based on nodes rather than elements, basically repeats
+    partitionElements with this one modification
+
+    right now generates equivalent of 1 layer of overlap regardless of input
+
+    1. Partition nodes in the default partition of contiguous chunks with
+       input ordering
+
+    2. Determine nodal connectivity on local processor
+
+    3. Generate new nodal partition using PETSc interface
+
+    4. Collect elements containing locally owned nodes and assign ownership
+
+    5. Generate global element numbering for new subdomain ownership
+
+    6. Create overlap (ghost) information for nodes and elements
+
+    7. March through additional layers of overlap if requested,
+
+    8. Build subdomain meshes in new numbering
+  ***********************************************************************/
+  //
+  //1. Build default nodal partition
+  //
+  //compute offsets to build processor (local) to global ordering for nodes
+  //in default partitioning
+  // printf("rank %d partitionNodes nNodes_global %d\n", rank, mesh.nNodes_global);
+  valarray<int> nodeOffsets_old = defaultChunkOffsets(mesh.nNodes_global,size);
+  //
+  //2.-3. The owner of every node: prescribed, or from the graph partitioner
+  //
+  std::vector<int> nodeOwner;
+  if (nodeOwners != NULL)
+    {
+      /* The caller dictates the partition: nodeOwners[n] is the rank that owns
+         node n, in the numbering the mesh has now. This is how a finer level of
+         a multilevel hierarchy inherits its coarser level's partition, so that
+         the transfer between them is local instead of an all-to-all, and how a
+         regular grid is cut into bricks (MeshTools.cartesianNodeOwners). Nothing
+         on this path uses PETSc. */
+      nodeOwner = prescribedOwners(PROTEUS_COMM_WORLD,nodeOwners,mesh.nNodes_global,size,"partitionNodes","node");
+    }
+  else
+    nodeOwner = graphNodeOwners(PROTEUS_COMM_WORLD,mesh,nodeOffsets_old,nodeWeights);
+
+  timer.mark("node_owners");
+  //4.-8. Everything else follows from the owners without communication
+  if (partitionNodesLocal(mesh, rank, size, nNodes_overlap, nodeOwner, &timer) != 0)
+    MPI_Abort(PROTEUS_COMM_WORLD,1);
+  timer.report();
+  return 0;
+}
+
+/* Steps 4-8 of partitionNodes: given the owner of every node, which every rank
+   holds, this rank's part of the partition. Plain C++ -- no MPI, no PETSc, no
+   files -- so one process can compute any rank's subdomain (rank of size).
+   Writes the subdomain mesh to mesh.subdomainp and the offsets, the
+   subdomain-to-global maps and the old-to-new permutations to mesh, as
+   partitionNodes does. Returns nonzero, having said why on stderr, if some
+   element or element boundary is reached by no rank. */
+int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
+                        const std::vector<int>& nodeOwner, StageTimer* timer)
+{
+  using namespace std;
+  //number the nodes: each rank's owned nodes contiguous, in their old order
+  valarray<int> nNodes_subdomain_new, nodeOffsets_new;
+  std::vector<int> nodeNumbering_global_old2new, nodeNumbering_global_new2old;
+  numberByOwner(nodeOwner,size,nNodes_subdomain_new,nodeOffsets_new,
+                nodeNumbering_global_old2new,nodeNumbering_global_new2old);
+  /* Keep this permutation on the mesh. Partitioning renumbers the global nodes
+     so each rank's owned ones are contiguous, and it is that numbering which
+     nodeNumbering_subdomain2global refers to. Anything built against the
+     original numbering -- a multilevel hierarchy's node parents, say -- has to
+     be read through this map before it can be used alongside the partitioned
+     vectors, and nothing else records the way back. */
+  if (mesh.nodeNumbering_global_old2new != NULL)
+    delete [] mesh.nodeNumbering_global_old2new;
+  mesh.nodeNumbering_global_old2new = new int[mesh.nNodes_global];
+  for (int nN=0;nN<mesh.nNodes_global;nN++)
+    {
+      mesh.nodeNumbering_global_old2new[nN] = nodeNumbering_global_old2new[nN];
+    }
+
+
+  //   //mwf debug
+  //   if (rank == 0)
+  //     {
+  //       for (int sdN = 0; sdN < size+1; sdN++)
+  //    std::cout<<"partitionNodes rank= "<<rank<<" nodeOffset["<<sdN<<"]= "<<nodeOffsets_new[sdN]<<std::endl;
+  //       for (int nN = 0; nN < mesh.nNodes_global; nN++)
+  //    {
+  //      std::cout<<"partitionNodes rank= "<<rank<<" nN= "<<nN<<" old2new= "<<nodeNumbering_global_old2new[nN]<<" new2old= "<<nodeNumbering_global_new2old[nN]<<std::endl;
+  //    }
+  //       for (int sdN = 0; sdN < size; sdN++)
+  //    {
+  //      std::cout<<"============"<<std::endl;
+  //      std::cout<<"partitionNodes rank= "<<sdN<<" nNodes_owned= "<<nodeOffsets_new[sdN+1]-nodeOffsets_new[sdN]<<" = "<<std::endl;
+  //      for (int nN = nodeOffsets_new[sdN]; nN < nodeOffsets_new[sdN+1]; nN++)
+  //        {
+  //          std::cout<<"new number= "<<nN<<" <--> old number "<<nodeNumbering_global_new2old[nN]<<" x,y,z= "
+  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+0]<<" , "
+  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+1]<<" , "
+  //                   <<mesh.nodeArray[nodeNumbering_global_new2old[nN]*3+2]<<std::endl;
+  //        }
+  //    }
+
+  //     }
+  if (timer) timer->mark("node_numbering");
+  //
+  //4. To build subdomain meshes, go through and collect elements containing
+  //   the locally owned nodes. Assign processor ownership of elements
+  //
+  //   An element belongs to the lowest rank that owns one of its nodes. This
+  //   used to be decided by a mask of elements passed from rank to rank, each
+  //   marking the unmarked elements in its owned nodes' stars; the same
+  //   traversal over every node, keeping the lowest rank, gives the same owners
+  //   with no communication.
+  std::vector<int> elementOwner = elementOwnersFromNodeOwners(mesh,nodeOwner,size);
+  if (!everyEntityOwned(elementOwner,size,"element"))
+    return 1;
+  //store owned element numbers (in old numbering)
+  set<int> elements_subdomain_owned;
+  for (int eN = 0; eN < mesh.nElements_global; eN++)
+    if (elementOwner[eN] == rank)
+      elements_subdomain_owned.insert(elements_subdomain_owned.end(),eN);
+
+  //
+  //5. Generate global element numbering corresponding to new subdomain ownership
+  //
+  valarray<int> nElements_subdomain_new, elementOffsets_new;
+  std::vector<int> elementNumbering_global_old2new, elementNumbering_global_new2old;
+  numberByOwner(elementOwner,size,nElements_subdomain_new,elementOffsets_new,
+                elementNumbering_global_old2new,elementNumbering_global_new2old);
+  if (mesh.elementNumbering_global_old2new != NULL)
+    delete [] mesh.elementNumbering_global_old2new;
+  mesh.elementNumbering_global_old2new = new int[mesh.nElements_global];
+  for (int eN = 0; eN < mesh.nElements_global; eN++)
+    mesh.elementNumbering_global_old2new[eN] = elementNumbering_global_old2new[eN];
+
+
+
+  if (timer) timer->mark("elements");
+  //4b,5b. repeat process to build global face numbering
+  //first get element --> element boundaries array for new element but old element boundary numbering
+  valarray<int> elementBoundariesArray_new(mesh.nElements_global*mesh.nElementBoundaries_element);
+  for (int eN=0; eN < mesh.nElements_global; eN++)
+    for (int ebN=0; ebN < mesh.nElementBoundaries_element; ebN++)
+      {
+        elementBoundariesArray_new[eN*mesh.nElementBoundaries_element+ebN] =
+          mesh.elementBoundariesArray[elementNumbering_global_new2old[eN]*mesh.nElementBoundaries_element+ebN];
+          // printf("rank %d eN %d ebN %d elementBoundariesArray_new[%d] = %d\n", rank, eN, ebN, eN*mesh.nElementBoundaries_element+ebN, elementBoundariesArray_new[eN*mesh.nElementBoundaries_element+ebN]);
+      }
+  //A face belongs to the lowest rank that reaches it from one of its owned
+  //nodes: going through the elements in an owned node's star picks up the faces
+  //of those elements selected below, which can lie on the "outside" of the
+  //owned nodes' stars. As for elements, this is the rank-ordered mask chain's
+  //rule computed over every node at once.
+  std::vector<int> elementBoundaryOwner = elementBoundaryOwnersFromNodeOwners(mesh,nodeOwner,size);
+  if (!everyEntityOwned(elementBoundaryOwner,size,"element boundary"))
+    return 1;
   //Now as with elements and nodes build a global face numbering
   //resetting the face based information is a little different since much of this is currently built below based
   //on the element and node information
@@ -1025,17 +581,10 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
         }
     }
 
-  timer.mark("element_boundaries");
+  if (timer) timer->mark("element_boundaries");
   //4c,5c. Build global edge numbering as well ownership is determined by who owns the left (0) node
   //    of the edge: the one with the lower new number
-  std::vector<int> edgeOwner(mesh.nEdges_global);
-  for (int ig = 0; ig < mesh.nEdges_global; ig++)
-    {
-      const int nN0_global_old = mesh.edgeNodesArray[2*ig];
-      const int nN1_global_old = mesh.edgeNodesArray[2*ig+1];
-      edgeOwner[ig] = nodeOwner[nodeNumbering_global_old2new[nN0_global_old] < nodeNumbering_global_old2new[nN1_global_old] ?
-                                nN0_global_old : nN1_global_old];
-    }
+  std::vector<int> edgeOwner = edgeOwnersFromNodeOwners(mesh,nodeOwner,nodeNumbering_global_old2new);
   valarray<int> nEdges_subdomain_new, edgeOffsets_new;
   std::vector<int> edgeNumbering_old2new_global, edgeNumbering_global_new2old;
   numberByOwner(edgeOwner,size,nEdges_subdomain_new,edgeOffsets_new,
@@ -1067,7 +616,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
 
 
 
-  timer.mark("edges");
+  if (timer) timer->mark("edges");
   //
   //6. Figure out which elements are in node stars but are not locally owned, create ghost information
   //   for these, do the same for elements
@@ -1281,7 +830,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
       }
   }
 
-  timer.mark("overlap");
+  if (timer) timer->mark("overlap");
   //
   //8. Build subdomain meshes in new numbering, assumes memory not allocated in subdomain mesh
   //
@@ -1567,8 +1116,7 @@ delete [] mesh.elementBoundaryOffsets_subdomain_owned;
     mesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
 
 
-  timer.mark("subdomain_mesh");
-  timer.report();
+  if (timer) timer->mark("subdomain_mesh");
   return 0;
 }
 
@@ -1765,6 +1313,552 @@ namespace {
   }
 }
 
+/* I/O, local: stream a Triangle or TetGen element file (simplexDim nodes per
+   element; format names it in the error) and keep what a rank whose default
+   chunk is nodes [begin,end) needs to partition them: the star (the other
+   nodes of every element containing it) of each of its nodes. Reads every
+   element and keeps O(chunk) data. Returns false, having said why, if the file
+   cannot be opened. */
+bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
+                          int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
+                          std::vector<std::set<int> >& nodeStar)
+{
+  using namespace std;
+  using namespace IOutils;
+  std::ifstream elementFile(elementFileName.c_str());
+  if (!elementFile.good())
+    {
+      std::cerr<<"cannot open "<<format<<" element file "
+               <<elementFileName<<std::endl;
+      return false;
+    }
+  //read elements
+  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0;
+  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
+  assert(nElements_global > 0);
+  assert(nNodesPerSimplex == simplexDim);
+  vector<int> element_nodes_old(simplexDim);
+  nodeStar.assign(end-begin,set<int>());
+  for (int ie = 0; ie < nElements_global; ie++)
+    {
+      int ne, nv;
+      elementFile >> eatcomments >> ne;
+      ne -= indexBase;
+      assert(0 <= ne && ne < nElements_global && elementFile.good());
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          elementFile >> nv;
+          nv -= indexBase;
+          assert(0 <= nv && nv < nNodes_global);
+          element_nodes_old[iv] = nv;
+        }
+      //for each node on the element
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          //check if the node is owned by the subdomain
+          int nN_star = element_nodes_old[iv];
+          if (nN_star >= begin && nN_star < end)
+            {
+              //this node is owned by the subdomain so
+              for (int jv = 0; jv < simplexDim; jv++)
+                {
+                  if (iv != jv)
+                    {
+                      int nN_star_subdomain = nN_star-begin;
+                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
+                    }
+                }
+            }
+        }
+      elementFile >> eatline;
+    }//end ie
+  elementFile.close();
+  return true;
+}
+
+/* I/O, local: stream a Triangle (nSpace 2) or TetGen (nSpace 3) node file
+   (format names it in the error) and keep the vertices of one subdomain, in
+   its numbering: owned nodes are the new global numbers [ownedBegin,ownedEnd),
+   at subdomain index n-ownedBegin; overlap nodes are the keys of
+   nodes_overlap_global2subdomain, at its values. nodes_old2new gives the new
+   global number of each file node the subdomain touches; other file nodes are
+   skipped. Fills nodeNumbering_subdomain2global, its inverse map, nodeArray
+   (x,y,z, z=0 in 2D) and, when hasVertexMarkers (the caller's reading of the
+   header: a marker, or an attribute taken as one), nodeMaterialTypes from the
+   value after the coordinates. Reads every vertex and keeps O(subdomain) data.
+   Returns false, having said why, if the file cannot be opened. */
+bool readSubdomainVertices(const std::string& vertexFileName, const char* format, int nSpace, int indexBase,
+                           int hasVertexMarkers, const std::map<int,int>& nodes_old2new, int ownedBegin, int ownedEnd,
+                           const std::map<int,int>& nodes_overlap_global2subdomain,
+                           int* nodeNumbering_subdomain2global,
+                           std::map<int,int>& nodeNumbering_global2subdomainMap,
+                           double* nodeArray, int* nodeMaterialTypes)
+{
+  using namespace IOutils;
+  const int vertexDim = 3;
+  std::ifstream vertexFile(vertexFileName.c_str());
+  if (!vertexFile.good())
+    {
+      std::cerr<<"cannot open "<<format<<" node file "
+               <<vertexFileName<<std::endl;
+      return false;
+    }
+  int nSpace_file(nSpace),nNodes_global,hasVertexAttributes_file,hasVertexMarkers_file;
+  vertexFile >> eatcomments >> nNodes_global >> nSpace_file >> hasVertexAttributes_file >> hasVertexMarkers_file >> eatline ;
+  assert(nNodes_global > 0);
+  assert(nSpace_file == nSpace);
+  for (int iv = 0; iv < nNodes_global; iv++)
+    {
+      int nv; double x[3] = {0.0, 0.0, 0.0}; int nodeId(0);
+      vertexFile >> eatcomments >> nv;
+      for (int d = 0; d < nSpace; d++)
+        vertexFile >> x[d];
+      if (hasVertexMarkers > 0)
+        vertexFile >> nodeId;
+      nv -= indexBase;
+      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
+      int nN_global_new = -1;
+      std::map<int,int>::const_iterator old2new = nodes_old2new.find(nv);
+      if (old2new != nodes_old2new.end())
+        nN_global_new = old2new->second;
+      //local
+      if (nN_global_new >= ownedBegin && nN_global_new < ownedEnd)
+        {
+          int nv_subdomain_new = nN_global_new - ownedBegin;
+          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
+          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
+          for (int d = 0; d < vertexDim; d++)
+            nodeArray[vertexDim*nv_subdomain_new + d] = x[d];
+          if (hasVertexMarkers > 0)
+            nodeMaterialTypes[nv_subdomain_new] = nodeId;
+        }
+      //overlap
+      std::map<int,int>::const_iterator overlap = nodes_overlap_global2subdomain.find(nN_global_new);
+      if (overlap != nodes_overlap_global2subdomain.end())
+        {
+          int nv_subdomain_new = overlap->second;
+          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
+          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
+          for (int d = 0; d < vertexDim; d++)
+            nodeArray[vertexDim*nv_subdomain_new + d] = x[d];
+          if (hasVertexMarkers > 0)
+            nodeMaterialTypes[nv_subdomain_new] = nodeId;
+        }
+      vertexFile >> eatline;
+    }//end iv
+  vertexFile.close();
+  return true;
+}
+
+/* I/O, local: stream a Triangle or TetGen element file (simplexDim nodes per
+   element) and keep, in file order, every element with a node in `nodes`
+   (file numbering, the keys): its file number, its file nodes (simplexDim per
+   element, appended to elementNodes) and, when the header announces
+   attributes, its first attribute (elementIds). Reads every element and keeps
+   O(kept) data. Returns false, having said why, if the file cannot be opened. */
+bool readSimplexElementsTouching(const std::string& elementFileName, const char* format, int simplexDim,
+                                 int indexBase, int nNodes_global, const std::map<int,int>& nodes,
+                                 int& nElements_global, int& hasElementMarkers,
+                                 std::vector<int>& elements, std::vector<int>& elementNodes,
+                                 std::vector<double>& elementIds)
+{
+  using namespace IOutils;
+  std::ifstream elementFile(elementFileName.c_str());
+  if (!elementFile.good())
+    {
+      std::cerr<<"cannot open "<<format<<" elements file"
+               <<elementFileName<<std::endl;
+      return false;
+    }
+  int nNodesPerSimplex(simplexDim);
+  hasElementMarkers = 0;
+  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
+  assert(nElements_global > 0);
+  assert(nNodesPerSimplex == simplexDim);
+  elements.clear(); elementNodes.clear(); elementIds.clear();
+  std::vector<int> element_nodes_old(simplexDim);
+  for (int ie = 0; ie < nElements_global; ie++)
+    {
+      int ne, nv;
+      long double elementId_double(0);
+      elementFile >> eatcomments >> ne;
+      ne -= indexBase;
+      assert(0 <= ne && ne < nElements_global && elementFile.good());
+      bool touches = false;
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          elementFile >> nv;
+          nv -= indexBase;
+          assert(0 <= nv && nv < nNodes_global);
+          element_nodes_old[iv] = nv;
+          if (nodes.find(nv) != nodes.end())
+            touches = true;
+        }
+      //read the attribute unconditionally: the stream position must not
+      //depend on whether this element is kept
+      if (hasElementMarkers > 0)
+        elementFile >> elementId_double;
+      elementFile >> eatline;
+      if (touches)
+        {
+          elements.push_back(ne);
+          elementNodes.insert(elementNodes.end(), element_nodes_old.begin(), element_nodes_old.end());
+          if (hasElementMarkers > 0)
+            elementIds.push_back(static_cast<double>(elementId_double));
+        }
+    }
+  elementFile.close();
+  return true;
+}
+
+/* I/O, local: stream a Triangle or TetGen face (.face) or edge (.edge) file,
+   nNodesPerEntity nodes per line, and keep, in file order, the entities with a
+   node among the keys of `nodes` (0-based file numbers): their file numbers,
+   file nodes and, when headerHasMarkers and the header announces them,
+   markers. With headerHasMarkers false only the count is read from the header
+   and markers are never read (what both -F partitioners do with .edge files).
+   Entities with no such node are skipped: the -F partitioners do nothing with
+   them. Returns false, having said why, if the file cannot be opened. */
+bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
+                                    int nNodesPerEntity, int indexBase, bool headerHasMarkers,
+                                    const std::map<int,int>& nodes, int& nEntities_global, int& hasMarkers,
+                                    std::vector<int>& numbers, std::vector<int>& entityNodes, std::vector<int>& ids)
+{
+  using namespace IOutils;
+  std::ifstream file(fileName.c_str());
+  if (!file.good())
+    {
+      std::cerr<<"cannot open "<<format<<" "<<what<<" file "
+               <<fileName<<std::endl;
+      return false;
+    }
+  hasMarkers = 0;
+  if (headerHasMarkers)
+    file >> eatcomments >> nEntities_global >> hasMarkers >> eatline;
+  else
+    file >> eatcomments >> nEntities_global >> eatline;
+  assert(nEntities_global > 0);
+  numbers.clear(); entityNodes.clear(); ids.clear();
+  std::vector<int> entity_nodes(nNodesPerEntity);
+  for (int i = 0; i < nEntities_global; i++)
+    {
+      int n, nv, id(0);
+      file >> eatcomments >> n;
+      bool touches = false;
+      for (int iv = 0; iv < nNodesPerEntity; iv++)
+        {
+          file >> nv;
+          nv -= indexBase;
+          entity_nodes[iv] = nv;
+          if (nodes.find(nv) != nodes.end())
+            touches = true;
+        }
+      if (hasMarkers > 0)
+        file >> id;
+      n -= indexBase;
+      assert(0 <= n && n < nEntities_global && file.good());
+      file >> eatline;
+      if (touches)
+        {
+          numbers.push_back(n);
+          entityNodes.insert(entityNodes.end(), entity_nodes.begin(), entity_nodes.end());
+          if (hasMarkers > 0)
+            ids.push_back(id);
+        }
+    }
+  file.close();
+  return true;
+}
+
+namespace
+{
+  //the rank whose range [offsets[r],offsets[r+1]) holds n
+  inline int rankOfNumber(const std::vector<int>& offsets, int n)
+  {
+    return int(std::upper_bound(offsets.begin(), offsets.end(), n) - offsets.begin()) - 1;
+  }
+
+  //one round of MPI_Alltoallv of ints: sendBuffers[r] goes to rank r; returns
+  //what each rank sent here, concatenated in rank order
+  std::vector<int> exchangeInts(const MPI_Comm& comm, const std::vector<std::vector<int> >& sendBuffers)
+  {
+    const int size = int(sendBuffers.size());
+    std::vector<int> sendCounts(size), recvCounts(size), sendDispls(size+1, 0), recvDispls(size+1, 0);
+    for (int r = 0; r < size; r++)
+      sendCounts[r] = int(sendBuffers[r].size());
+    MPI_Alltoall(sendCounts.data(), 1, MPI_INT, recvCounts.data(), 1, MPI_INT, comm);
+    for (int r = 0; r < size; r++)
+      {
+        sendDispls[r+1] = sendDispls[r] + sendCounts[r];
+        recvDispls[r+1] = recvDispls[r] + recvCounts[r];
+      }
+    std::vector<int> send(sendDispls[size]), recv(recvDispls[size]);
+    for (int r = 0; r < size; r++)
+      std::copy(sendBuffers[r].begin(), sendBuffers[r].end(), send.begin() + sendDispls[r]);
+    MPI_Alltoallv(send.data(), sendCounts.data(), sendDispls.data(), MPI_INT,
+                  recv.data(), recvCounts.data(), recvDispls.data(), MPI_INT, comm);
+    return recv;
+  }
+}
+
+/* MPI: the nodes this rank owns after repartitioning, file number -> new
+   number. Every rank holds old2new for its default chunk of file nodes
+   [nodeOffsets_old[rank], nodeOffsets_old[rank+1]); each pair goes to the rank
+   whose new range (nodeOffsets_new) holds it. One exchange, no file. */
+std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                         const std::vector<int>& nodeOffsets_new, const std::vector<int>& old2new_chunk)
+{
+  int rank, size;
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
+  std::vector<std::vector<int> > pairs(size);
+  for (int nN_old = nodeOffsets_old[rank]; nN_old < nodeOffsets_old[rank+1]; nN_old++)
+    {
+      const int nN_new = old2new_chunk[nN_old - nodeOffsets_old[rank]];
+      std::vector<int>& to = pairs[rankOfNumber(nodeOffsets_new, nN_new)];
+      to.push_back(nN_old);
+      to.push_back(nN_new);
+    }
+  std::vector<int> received = exchangeInts(comm, pairs);
+  std::map<int,int> owned;
+  for (size_t i = 0; i < received.size(); i += 2)
+    owned[received[i]] = received[i+1];
+  assert(int(owned.size()) == nodeOffsets_new[rank+1] - nodeOffsets_new[rank]);
+  return owned;
+}
+
+/* MPI: the new numbers of the file nodes `wanted`, asked of the ranks whose
+   default chunk (nodeOffsets_old) holds them. Two exchanges (requests,
+   answers), no file. Every rank calls it, wanted or not. */
+namespace
+{
+  /* MPI: ask, for every key, the rank whose range of offsets holds it, and
+     return key -> that rank's answer(key). Two exchanges; collective. */
+  template<class Answer>
+  std::map<int,int> askOwningRanks(const MPI_Comm& comm, const std::vector<int>& offsets,
+                                   const std::set<int>& keys, Answer answer)
+  {
+    int size;
+    MPI_Comm_size(comm, &size);
+    std::vector<std::vector<int> > requests(size);
+    for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
+      requests[rankOfNumber(offsets, *k)].push_back(*k);
+    //which ranks asked what, so the answers go back in the same order
+    std::vector<int> requestCounts(size), askedCounts(size);
+    for (int r = 0; r < size; r++)
+      requestCounts[r] = int(requests[r].size());
+    MPI_Alltoall(requestCounts.data(), 1, MPI_INT, askedCounts.data(), 1, MPI_INT, comm);
+    std::vector<int> asked = exchangeInts(comm, requests);
+    std::vector<std::vector<int> > answers(size);
+    for (int r = 0, i = 0; r < size; r++)
+      for (int k = 0; k < askedCounts[r]; k++, i++)
+        answers[r].push_back(answer(asked[i]));
+    std::vector<int> answered = exchangeInts(comm, answers);
+    std::map<int,int> result;
+    for (int r = 0, i = 0; r < size; r++)
+      for (int k = 0; k < requestCounts[r]; k++, i++)
+        result[requests[r][k]] = answered[i];
+    return result;
+  }
+}
+
+std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
+                                        const std::vector<int>& old2new_chunk, const std::set<int>& wanted)
+{
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+  const int begin = nodeOffsets_old[rank];
+  return askOwningRanks(comm, nodeOffsets_old, wanted,
+                        [&](int nN_old) { return old2new_chunk[nN_old - begin]; });
+}
+
+/* MPI: give the faces the partition cut the reserved flag -1, for a
+   partitioner that has no global mesh to compare with (the parun -F path; the
+   in-memory partitioners are marked by MeshTools._markRankInterfaces). A
+   subdomain face is cut when it is exterior to the subdomain and interior to
+   the mesh. The rank that owns a face owns one of its nodes, so it holds every
+   element of that node, both neighbours included: its subdomain knows whether
+   the face is exterior to the mesh. Every other rank asks it, for the faces
+   exterior to its own subdomain. Like _markRankInterfaces, only flag 0 is
+   replaced: a positive flag on a cut face is a condition the mesh put there.
+   Needs the subdomain mesh, elementBoundaryOffsets_subdomain_owned and
+   elementBoundaryNumbering_subdomain2global. Collective. Returns the number
+   of faces marked on this rank. flagsFromFile false says the face flags did
+   not come from the mesh files but from the subdomain builder (exterior 1,
+   interior 0), so a cut face reads 1 there; then every exterior face is
+   asked about, and a cut face reads -1 as on the in-memory path (where such a
+   mesh gives an interior face 0). */
+int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFile)
+{
+  int rank, size;
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
+  Mesh& sub = *mesh.subdomainp;
+  const std::vector<int> offsets(mesh.elementBoundaryOffsets_subdomain_owned,
+                                 mesh.elementBoundaryOffsets_subdomain_owned + size + 1);
+  std::map<int,int> global2subdomain;
+  std::set<int> askAbout;
+  for (int ebN = 0; ebN < sub.nElementBoundaries_global; ebN++)
+    {
+      const int ebN_global = mesh.elementBoundaryNumbering_subdomain2global[ebN];
+      global2subdomain[ebN_global] = ebN;
+      const bool exterior = sub.elementBoundaryElementsArray[ebN*2+1] == -1;
+      const bool owned = ebN_global >= offsets[rank] && ebN_global < offsets[rank+1];
+      if (exterior && !owned && (!flagsFromFile || sub.elementBoundaryMaterialTypes[ebN] == 0))
+        askAbout.insert(ebN_global);
+    }
+  std::map<int,int> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](int ebN_global) {
+      std::map<int,int>::const_iterator it = global2subdomain.find(ebN_global);
+      assert(it != global2subdomain.end());
+      return int(sub.elementBoundaryElementsArray[it->second*2+1] == -1);
+    });
+  int marked = 0;
+  for (std::map<int,int>::const_iterator it = meshExterior.begin(); it != meshExterior.end(); it++)
+    if (!it->second)
+      {
+        sub.elementBoundaryMaterialTypes[global2subdomain[it->first]] = -1;
+        marked++;
+      }
+  return marked;
+}
+
+/* Local: what the -F partitioners take from the elements of one subdomain
+   (those with a node whose new number is in [ownedBegin,ownedEnd)), given
+   in file order with their file nodes and the new number of every one of
+   those nodes (old2new). Fills, as partitionNodesFromTriangleFiles and
+   partitionNodesFromTetgenFiles always have: the owned elements (node 1 of
+   the sorted new node tuple is owned), each owned node's element star and
+   node star, every subdomain element's new nodes and attribute, the
+   faces/edges of the subdomain elements with their elements, and old->new for
+   every node of a subdomain element. Element numbers stay file numbers. */
+template<int simplexDim, class NodeVec>
+void collectSubdomainElements(int ownedBegin, int ownedEnd, const std::vector<int>& elements,
+                              const std::vector<int>& elementNodes, const std::vector<double>& elementIds,
+                              const std::map<int,int>& old2new,
+                              std::set<int>& elements_subdomain_owned,
+                              std::vector<std::set<int> >& nodeElementsStar,
+                              std::vector<std::set<int> >& nodeStarNew,
+                              std::map<int,NodeVec>& elementNodesArrayMap,
+                              std::map<int,long int>& elementMaterialTypesMap,
+                              std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
+                              std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
+                              std::map<int,int>& nodes_old2new_subdomain_map)
+{
+  NodeVec element_nodes_new(simplexDim);
+  int element_nodes_new_array[simplexDim];
+  for (size_t eN_c = 0; eN_c < elements.size(); eN_c++)
+    {
+      const int ne = elements[eN_c];
+      const int* element_nodes_old = &elementNodes[eN_c*simplexDim];
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          std::map<int,int>::const_iterator it = old2new.find(element_nodes_old[iv]);
+          assert(it != old2new.end());
+          element_nodes_new[iv] = it->second;
+          element_nodes_new_array[iv] = it->second;
+        }
+      NodeTuple<simplexDim> nodeTuple(element_nodes_new_array);
+      bool inSubdomain = false;
+      for (int iv = 0; iv < simplexDim; iv++)
+        {
+          int nN_star_new = element_nodes_new[iv];
+          if (nN_star_new >= ownedBegin && nN_star_new < ownedEnd)
+            {
+              inSubdomain = true;
+              //add all the element boundaries of this element
+              for (int ebN = 0; ebN < simplexDim; ebN++)
+                {
+                  int nodes[simplexDim-1];
+                  for (int k = 0; k < simplexDim-1; k++)
+                    nodes[k] = element_nodes_new[(ebN+1+k) % simplexDim];
+                  NodeTuple<simplexDim-1> ebNodeTuple(nodes);
+                  typename std::map<NodeTuple<simplexDim-1>,ElementNeighbors>::iterator eb = elementBoundaryElementsMap.find(ebNodeTuple);
+                  if (eb != elementBoundaryElementsMap.end())
+                    {
+                      if (eb->second.right == -1 && ne != eb->second.left)
+                        {
+                          eb->second.right = ne;
+                          eb->second.right_ebN_element = ebN;
+                        }
+                    }
+                  else
+                    elementBoundaryElementsMap[ebNodeTuple] = ElementNeighbors(ne,ebN);
+                }
+              //add all the edges of this element
+              for (int nNL = 0, edN = 0; nNL < simplexDim; nNL++)
+                for (int nNR = nNL+1; nNR < simplexDim; nNR++, edN++)
+                  {
+                    int nodes[2] = {element_nodes_new[nNL], element_nodes_new[nNR]};
+                    NodeTuple<2> edNodeTuple(nodes);
+                    edgeElementsMap[edNodeTuple].insert(std::pair<int,int>(ne,edN));
+                  }
+              //add all the nodes to the node star
+              int nN_star_new_subdomain = nN_star_new - ownedBegin;
+              nodeElementsStar[nN_star_new_subdomain].insert(ne);
+              for (int jv = 0; jv < simplexDim; jv++)
+                if (iv != jv)
+                  nodeStarNew[nN_star_new_subdomain].insert(element_nodes_new[jv]);
+            }
+        }
+      if (!inSubdomain)
+        continue;
+      elementNodesArrayMap[ne] = element_nodes_new;
+      //the later .face/.edge/.node readers need old->new for exactly these nodes
+      for (int jv = 0; jv < simplexDim; jv++)
+        nodes_old2new_subdomain_map[element_nodes_old[jv]] = element_nodes_new[jv];
+      if (nodeTuple.nodes[1] >= ownedBegin && nodeTuple.nodes[1] < ownedEnd)
+        elements_subdomain_owned.insert(ne);
+      if (!elementIds.empty())
+        elementMaterialTypesMap[ne] = static_cast<long int>(elementIds[eN_c]);
+    }
+}
+
+/* The -F partitioners' second read of the element file: the elements of this
+   rank's new subdomain, read locally, with the new numbers of their nodes
+   exchanged with the ranks that computed them (no mappings-file read). */
+template<int simplexDim, class NodeVec>
+bool readSubdomainElements(const MPI_Comm& comm, const std::string& elementFileName, const char* format,
+                           int indexBase, int nNodes_global,
+                           const std::valarray<int>& nodeOffsets_old, const std::valarray<int>& nodeOffsets_new,
+                           const PetscInt* old2new_chunk, int& nElements_global,
+                           std::set<int>& elements_subdomain_owned,
+                           std::vector<std::set<int> >& nodeElementsStar,
+                           std::vector<std::set<int> >& nodeStarNew,
+                           std::map<int,NodeVec>& elementNodesArrayMap,
+                           std::map<int,long int>& elementMaterialTypesMap,
+                           std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
+                           std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
+                           std::map<int,int>& nodes_old2new_subdomain_map)
+{
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+  const std::vector<int> offsets_old(std::begin(nodeOffsets_old), std::end(nodeOffsets_old)),
+    offsets_new(std::begin(nodeOffsets_new), std::end(nodeOffsets_new)),
+    chunk(old2new_chunk, old2new_chunk + (offsets_old[rank+1] - offsets_old[rank]));
+  std::map<int,int> old2new = ownedNodesByFileNumber(comm, offsets_old, offsets_new, chunk);
+  std::vector<int> elements, elementNodes;
+  std::vector<double> elementIds;
+  int hasElementMarkers(0);
+  bool read = readSimplexElementsTouching(elementFileName, format, simplexDim, indexBase, nNodes_global, old2new,
+                                          nElements_global, hasElementMarkers, elements, elementNodes, elementIds);
+  //every rank takes part in the exchange, read or not, so none is left waiting
+  std::set<int> wanted;
+  for (size_t i = 0; i < elementNodes.size(); i++)
+    if (old2new.find(elementNodes[i]) == old2new.end())
+      wanted.insert(elementNodes[i]);
+  std::map<int,int> halo = newNumbersOfFileNodes(comm, offsets_old, chunk, wanted);
+  if (!read)
+    return false;
+  old2new.insert(halo.begin(), halo.end());
+  collectSubdomainElements<simplexDim,NodeVec>(nodeOffsets_new[rank], nodeOffsets_new[rank+1],
+                                               elements, elementNodes, elementIds, old2new,
+                                               elements_subdomain_owned, nodeElementsStar, nodeStarNew,
+                                               elementNodesArrayMap, elementMaterialTypesMap,
+                                               elementBoundaryElementsMap, edgeElementsMap,
+                                               nodes_old2new_subdomain_map);
+  return true;
+}
+
 int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, 
                                   Mesh& newMesh, int nNodes_overlap, double memHardLimit)
 {
@@ -1806,7 +1900,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //
   bool failed = false;
   const int simplexDim = 4;
-  const int vertexDim  = 3;
   using namespace IOutils;
   std::string vertexFileName  = std::string(filebase) + ".node" ;
   std::string elementFileName = std::string(filebase) + ".ele" ;
@@ -1843,15 +1936,18 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   newMesh.nNodes_elementBoundary = simplexDim-1;
   newMesh.nElementBoundaries_element = simplexDim;
   //cek todo: review the situation with tetgen and triangle atribs and markers
-  if (hasVertexAttributes > 0 && rank==0)
+  //every rank reads the attribute as the flag (as the in-memory reader and the
+  //Triangle -F path do); only the warning is rank 0's
+  if (hasVertexAttributes > 0)
     {
-      std::cerr<<"WARNING Tetgen nodes hasAttributes= "<<hasVertexAttributes
-               <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
+      if (rank == 0)
+        std::cerr<<"WARNING Tetgen nodes hasAttributes= "<<hasVertexAttributes
+                 <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
-  //don't need to read anymore from .nodes for now
-  //leaving file open because we'll pick up here to read the node coordinates
-  //after partioning, which just requires topology information
+  //the node coordinates are read after partitioning (readSubdomainVertices),
+  //which just requires topology information
+  vertexFile.close();
   //
   //offsets provide the lower and upper bounds for the global numbering
   //first we just partition the nodes among the MPI ranks, approximately equally, ignoring connectivity
@@ -1873,61 +1969,16 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //connectivty commes from the topology (elements) file. We just grab the elements
   //that contain currently owned nodes
   logEvent("Determining nodal connectivity to construct new partitioning",5);
-  std::ifstream elementFile(elementFileName.c_str());
-  if (!elementFile.good())
+  int nElements_global;
+  vector<set<int>> nodeStar;
+  if (!readSimplexNodeStars(elementFileName,"Tetgen",simplexDim,indexBase,nNodes_global,
+                            nodeOffsets_old[rank],nodeOffsets_old[rank+1],
+                            nElements_global,nodeStar))
     {
-      std::cerr<<"cannot open Tetgen element file "
-               <<elementFileName<<std::endl;
       failed = true;
       return failed;
     }
-  //read elements
-  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0,nElements_global;
-  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
   newMesh.nElements_global = nElements_global;
-  valarray<int> element_nodes_old(4);
-  vector<set<int>> nodeStar(nNodes_subdomain_old);
-  map<int,valarray<int>> elements_old;
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      int ne, nv;
-      elementFile >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile.good());
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile >> nv;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          element_nodes_old[iv] = nv;
-        }
-      //for each node on the element
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          //check if the node is owned by the subdomain
-          int nN_star = element_nodes_old[iv];
-          bool inSubdomain=false;
-          if (nN_star >= nodeOffsets_old[rank] && nN_star < nodeOffsets_old[rank+1])
-            {
-              inSubdomain = true;
-              for (int jv = 0; jv < simplexDim; jv++)
-                {
-                  if (iv != jv)
-                    {
-                      int nN_star_subdomain = nN_star-nodeOffsets_old[rank];
-                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
-                    }
-                }
-            }
-          if (inSubdomain)
-            elements_old[ie] = element_nodes_old;
-        }
-      elementFile >> eatline;
-    }//end ie
-  elements_old.clear();
-  elementFile.close();
   //cek todo: track c++ containers and put inside scope to reduce dynamic memory usage
   PetscLogEventEnd(read_elements_event,0,0,0,0);
   int repartition_nodes_event;
@@ -2126,41 +2177,8 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
       std::cout<<"==================out of core new2old nodes is correct!===================="<<std::endl;
       nodeNumbering_global_new2old.resize(0);
     }
-  //cek todo: put this in the right place and use integers not doubles
-  Vec nodeNumbering_old2new_petsc;
-  ierr = VecCreateMPI(PROTEUS_COMM_WORLD, nNodes_subdomain_old, nNodes_global, &nodeNumbering_old2new_petsc);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  valarray<PetscInt> indices(nNodes_subdomain_old);
-  valarray<PetscInt> ix(nNodes_subdomain_old);
-  valarray<PetscScalar> y(nNodes_subdomain_old);
-  for (int i=0;i<nNodes_subdomain_old;i++)
-    {
-      indices[i] = i+nodeOffsets_old[rank];
-      ix[i]=i;
-      y[i]=static_cast<PetscScalar>(nodes_subdomain_old2new_array[i]);
-    }
-  ISLocalToGlobalMapping mapping;
-  PetscInt bs(1);
-  ierr = ISLocalToGlobalMappingCreate(PROTEUS_COMM_WORLD, bs, nNodes_subdomain_old, &indices[0], PETSC_USE_POINTER, &mapping);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = VecSetLocalToGlobalMapping(nodeNumbering_old2new_petsc, mapping);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);  
-  ierr = VecSetValuesLocal(nodeNumbering_old2new_petsc, nNodes_subdomain_old, &ix[0], &y[0], INSERT_VALUES);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = VecAssemblyBegin(nodeNumbering_old2new_petsc);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  ierr = VecAssemblyEnd(nodeNumbering_old2new_petsc);
-  CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  if (test)
-    {
-      PetscScalar* test_local;
-      VecGetArray(nodeNumbering_old2new_petsc,&test_local);
-      for (int i=0;i<nNodes_subdomain_old;i++)
-	{
-	  assert(test_local[i] == static_cast<PetscScalar>(nodes_subdomain_old2new_array[i]));
-	}
-      VecRestoreArray(nodeNumbering_old2new_petsc,&test_local);
-    }
+  //nodes_subdomain_old2new_array stays live: readSubdomainElements answers
+  //other ranks' old->new requests from it.
   //ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
   //ierr=ISDestroy(&nodeNumberingIS_subdomain_old2new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
 
@@ -2184,273 +2202,26 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //We need to find the elements in the support of nodes in the new
   //partitioning, so we'll need to re-read the elements file to get
   //the the elements for the nodes in the new partitioning. We will be collecting OLD element numbers.
-  std::ifstream elementFile2(elementFileName.c_str());
-  if (!elementFile2.good())
-    {
-      std::cerr<<"cannot open Tetgen elements file"
-               <<elementFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-  elementFile2 >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
-  //cek todo: check that these are all necessary
+  //The new numbers of their nodes come from the ranks that computed them
+  //(readSubdomainElements), not from the mappings file.
   set<int> elements_subdomain_owned;
-  valarray<int> element_nodes_new(4);
   vector<set<int>> nodeElementsStar(nNodes_subdomain_new[rank]);
   vector<set<int>> nodeStarNew(nNodes_subdomain_new[rank]);
   map<int,valarray<int>> elementNodesArrayMap;
   map<int,long int> elementMaterialTypesMap;
   map<NodeTuple<3>,ElementNeighbors> elementBoundaryElementsMap;
   map<NodeTuple<2>,set<pair<int,int>>> edgeElementsMap;
-  set<int> node_collection;
-  vector<valarray<int>> element_old_nodes_collection;
-  vector<int> elements_collection;
-  vector<double> elementId_collection;
   map<int, int> nodes_old2new_subdomain_map;
-  //note any element index containers are in the old element numbering
-  int eN_c_start = 0;//start of the collection of elements we are currently processing  
-  //Chunk this re-read by a FIXED node-collection size. Sizing the chunk as
-  //nElements_global/size makes the NUMBER of chunks equal the number of ranks,
-  //so every rank added costs another full read cycle, and each cycle has more
-  //participants. Restored from 77c99396^.
-  const int nNodes_collection_max=10000;
-  //Hold the mappings file open across the whole loop. Opening and closing it
-  //once per chunk had every rank open the same Lustre file on every chunk.
-  file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-  if (file_id < 0)
+  if (!readSubdomainElements<simplexDim,valarray<int> >(PROTEUS_COMM_WORLD, elementFileName, "Tetgen", indexBase, nNodes_global,
+                                                        nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
+                                                        nElements_global, elements_subdomain_owned,
+                                                        nodeElementsStar, nodeStarNew, elementNodesArrayMap,
+                                                        elementMaterialTypesMap, elementBoundaryElementsMap,
+                                                        edgeElementsMap, nodes_old2new_subdomain_map))
     {
-      H5Eprint2(H5E_DEFAULT, stderr);
-      SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                  "could not reopen the mappings file; see the HDF5 stack above");
+      failed = true;
+      return failed;
     }
-  assert(file_id != H5I_INVALID_HID);
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      //
-      //Accumulate a collection of elements in the old numbering of sufficient length, 
-      //then get the new node numbers for those old nodes, renumber, take ownership of elements,
-      //and then release the memory for the collection and continue
-      //basic idea is to use only a part of old2new at a time.
-      //doing with hdf5 for now, but could do with scatter
-      //
-      int ne, nv, elementId(0);
-      long double elementId_double;
-      elementFile2 >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile.good());
-      elements_collection.push_back(ne);
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile2 >> nv ;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          node_collection.insert(nv);
-          element_nodes_old[iv] = nv;
-        }
-      if (hasElementMarkers > 0)
-        {
-          elementFile2 >> elementId_double;
-          elementId_collection.push_back(elementId_double);
-        }
-      element_old_nodes_collection.push_back(element_nodes_old);
-      if (node_collection.size() >= nNodes_collection_max || ie == nElements_global-1)
-        {
-          //create a node list to read from old2new mapping
-	        valarray<int> nodes_old2new_subset(node_collection.size());
-          map<int,int> nodes_old2new_subset_map;
-	        bool test_scatter=false;
-	        if (test_scatter)
-	        {
-	          Vec node_old2new_collection_petsc;
-	          ierr = VecCreateMPI(PROTEUS_COMM_WORLD, node_collection.size(), PETSC_DETERMINE,&node_old2new_collection_petsc);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          PetscInt collection_low, collection_high;
-	          ierr = VecGetOwnershipRange(node_old2new_collection_petsc, &collection_low, &collection_high);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          valarray<PetscInt> node_collection_array(node_collection.size());
-	          valarray<PetscInt> iy_collection(node_collection.size());
-            int i_nc=0;
-	          for (auto nv=node_collection.begin();nv!=node_collection.end();nv++,i_nc++)
-		        {
-		          node_collection_array[i_nc] = static_cast<PetscInt>(*nv);
-		          iy_collection[i_nc] = i_nc + collection_low;
-		        }
-	          IS old_ix,iy;
-	          ierr = ISCreateGeneral(PROTEUS_COMM_WORLD, node_collection.size(), &node_collection_array[0],
-				    PETSC_USE_POINTER, &old_ix);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = ISCreateGeneral(PROTEUS_COMM_WORLD, node_collection.size(), &iy_collection[0],
-				                           PETSC_USE_POINTER, &iy);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          VecScatter old2new_collection_scatter;
-	          ierr = VecScatterCreate(nodeNumbering_old2new_petsc, old_ix,
-				                            node_old2new_collection_petsc, iy,
-				                            &old2new_collection_scatter);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = VecScatterBegin(old2new_collection_scatter,
-				                           nodeNumbering_old2new_petsc, node_old2new_collection_petsc,
-				                           INSERT_VALUES, SCATTER_FORWARD);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-
-	          ierr = VecScatterEnd(old2new_collection_scatter,
-				                         nodeNumbering_old2new_petsc, node_old2new_collection_petsc,
-				                         INSERT_VALUES, SCATTER_FORWARD);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          PetscScalar* nodes_old2new_subset_array;
-	          ierr = VecGetArray(node_old2new_collection_petsc, &nodes_old2new_subset_array);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          for (int i=0;i<node_collection.size();i++)
-		        {
-		          nodes_old2new_subset[i] = nodes_old2new_subset_array[i];
-		        }
-	          ierr = VecRestoreArray(node_old2new_collection_petsc, &nodes_old2new_subset_array);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = VecDestroy(&node_old2new_collection_petsc);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = VecScatterDestroy(&old2new_collection_scatter);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = ISDestroy(&old_ix);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          ierr = ISDestroy(&iy);
-	          CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-	          for (int i=0;i<node_collection.size();i++)
-		        {
-		          nodes_old2new_subset_map[node_collection_array[i]] = nodes_old2new_subset[i];
-		        }
-	          if (test)
-		        {
-		          for (int i=0;i<node_collection.size();i++)
-		            {
-		              assert(nodes_old2new_subset_map[node_collection_array[i]] == nodeNumbering_global_old2new[node_collection_array[i]]);
-		            }
-		        }
-	        }
-	      else
-	        {
-	          herr_t status;
-	          valarray<hsize_t> node_collection_array(node_collection.size());
-	          int i_nc=0;
-	          for (auto nv=node_collection.begin();nv!=node_collection.end();nv++,i_nc++)
-		        {
-		          node_collection_array[i_nc] = static_cast<hsize_t>(*nv);
-		        }
-	          nodes_old2new_dataset_id = H5Dopen1(file_id,"/nodeNumbering_old2new");
-	          nodes_old2new_filespace_id = H5Dget_space(nodes_old2new_dataset_id);
-	          status = H5Sselect_elements(nodes_old2new_filespace_id, H5S_SELECT_SET, 
-					  node_collection.size(), &node_collection_array[0]);
-	          hsize_t dims[] = {static_cast<hsize_t>(node_collection.size())};
-	          hid_t nodes_old2new_subset_memspace_id = H5Screate_simple(1, dims, NULL);
-	          nodes_old2new_plist_id = H5Pcreate(H5P_DATASET_XFER);
-#ifdef H5_HAVE_PARALLEL
-	          status = H5Pset_dxpl_mpio(nodes_old2new_plist_id, H5FD_MPIO_INDEPENDENT);
-#endif
-	          status = H5Dread(nodes_old2new_dataset_id, H5T_NATIVE_INT, 
-			                       nodes_old2new_subset_memspace_id, nodes_old2new_filespace_id, 
-			                       H5P_DEFAULT, &nodes_old2new_subset[0]);
-	          H5Pclose(nodes_old2new_plist_id);
-	          H5Sclose(nodes_old2new_subset_memspace_id);
-	          H5Sclose(nodes_old2new_filespace_id);
-	          H5Dclose(nodes_old2new_dataset_id);
-	          for (int i=0;i<node_collection.size();i++)
-		        {
-		          nodes_old2new_subset_map[node_collection_array[i]] = nodes_old2new_subset[i];
-		        }
-	          if (test)
-		        {
-		          for (int i=0;i<node_collection.size();i++)
-		            {
-		              assert(nodes_old2new_subset_map[node_collection_array[i]] == nodeNumbering_global_old2new[node_collection_array[i]]);
-		            }
-		        }
-	        }
-          for (int eN_c = eN_c_start; eN_c < ie+1;eN_c++)
-            {
-              ne = elements_collection[eN_c-eN_c_start];
-              for (int iv = 0; iv < simplexDim; iv++)
-                {
-                  element_nodes_old[iv] = element_old_nodes_collection[eN_c-eN_c_start][iv];
-                  element_nodes_new[iv] = nodes_old2new_subset_map[element_nodes_old[iv]];
-                }
-              NodeTuple<4> nodeTuple(&element_nodes_new[0]);
-              for (int iv = 0; iv < simplexDim; iv++)
-                {
-                  int nN_star_new = element_nodes_new[iv];
-                  bool inSubdomain=false;
-                  if (nN_star_new >= nodeOffsets_new[rank] && nN_star_new < nodeOffsets_new[rank+1])
-                    {
-                      inSubdomain = true;
-                      for (int iv=0; iv < simplexDim; iv++)
-                        nodes_old2new_subdomain_map[element_nodes_old[iv]] = element_nodes_new[iv];
-                      //add all the element boundaries of this element
-                      for (int ebN=0;ebN < 4 ; ebN++)
-                        {
-                          int nodes[3] = { element_nodes_new[(ebN+1) % 4],
-                            element_nodes_new[(ebN+2) % 4],
-                            element_nodes_new[(ebN+3) % 4]};
-                          NodeTuple<3> nodeTuple(nodes);
-                          if(elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())
-                            {
-                              if (elementBoundaryElementsMap[nodeTuple].right == -1 && ne != elementBoundaryElementsMap[nodeTuple].left)
-                                {
-                                  elementBoundaryElementsMap[nodeTuple].right=ne;
-                                  elementBoundaryElementsMap[nodeTuple].right_ebN_element=ebN;
-                                }
-                            }
-                          else
-                            {
-                              elementBoundaryElementsMap[nodeTuple] = ElementNeighbors(ne,ebN);
-                            }
-                        }
-                      //add all the edges of this element
-                      for (int nNL=0,edN=0;nNL < 4 ; nNL++)
-                        for(int nNR=nNL+1;nNR < 4;nNR++,edN++)
-                          {
-                            int nodes[2] = { element_nodes_new[nNL],
-                              element_nodes_new[nNR]};
-                            NodeTuple<2> nodeTuple(nodes);
-                            edgeElementsMap[nodeTuple].insert(pair<int,int>(ne,edN));
-                          }
-                      //add all the nodes to the node star
-                      int nN_star_new_subdomain = nN_star_new - nodeOffsets_new[rank];
-                      nodeElementsStar[nN_star_new_subdomain].insert(ne);
-                      for (int jv = 0; jv < simplexDim; jv++)
-                        {
-                          if (iv != jv)
-                            {
-                              int nN_point_new = element_nodes_new[jv];
-                              nodeStarNew[nN_star_new_subdomain].insert(nN_point_new);
-                            }
-                        }
-                    }
-                  if (inSubdomain)
-                    {
-                      elementNodesArrayMap[ne] = element_nodes_new;
-                    }
-                }
-              //if this element contains any node owned by this subdomain, check node 1
-              if (elementNodesArrayMap.find(ne) != elementNodesArrayMap.end())
-                {
-                  if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
-                    elements_subdomain_owned.insert(ne);
-                  if (hasElementMarkers > 0)
-                    {
-                      elementId = static_cast<long int>(elementId_collection[eN_c-eN_c_start]);
-                      elementMaterialTypesMap[ne] = elementId;
-                    }
-                }
-            }
-          eN_c_start = ie+1;
-          node_collection.clear();
-          elements_collection.clear();
-          elementId_collection.clear();
-          element_old_nodes_collection.clear();
-        }
-      elementFile2 >> eatline;
-    }
-  elementFile2.close();
-  H5Fclose(file_id);
   int nElements_owned_subdomain(elements_subdomain_owned.size()),
     nElements_owned_new=0;
   MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
@@ -2711,20 +2482,18 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //for all element boundaries on this subdomain, which we'll use to
   //grab element boundaries from the bit array
   logEvent("Generating global face numbering and ownership corresponding to new subdomain ownership",5);
-  std::ifstream elementBoundaryFile(elementBoundaryFileName.c_str());
-
-  if (!elementBoundaryFile.good())
-    {
-      std::cerr<<"cannot open Tetgen face file "
-               <<elementBoundaryFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the faces with a node of a subdomain element; the others play no part below
   bool hasElementBoundaryMarkers = false;
   int nElementBoundaries_global;
   int ihasElementBoundaryMarkers(0);
-  elementBoundaryFile >> eatcomments >> nElementBoundaries_global >> ihasElementBoundaryMarkers >> eatline ;
+  vector<int> ebNumbers, ebNodes, ebIds;
+  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "Tetgen", "face", 3, indexBase, true,
+                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
+                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nElementBoundaries_global > 0);
   if (ihasElementBoundaryMarkers > 0)
     {
@@ -2738,17 +2507,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,valarray<int>> elementBoundariesMap;
   set<int> supportedElementBoundaries;
   set<int> elementBoundaries_subdomain;
-  for (int ieb = 0; ieb < nElementBoundaries_global; ieb++)
+  for (size_t k = 0; k < ebNumbers.size(); k++)
     {
-      int neb,nn0,nn1,nn2; int ebId(0);
-      elementBoundaryFile >> eatcomments >> neb >> nn0 >> nn1 >> nn2;
-      if (ihasElementBoundaryMarkers > 0)
-        elementBoundaryFile >> ebId;
-      neb -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      nn2 -= indexBase;
-      assert(0 <= neb && neb < nElementBoundaries_global && elementBoundaryFile.good());
+      const int neb = ebNumbers[k], nn0 = ebNodes[3*k], nn1 = ebNodes[3*k+1], nn2 = ebNodes[3*k+2];
+      const int ebId = ebIds.empty() ? 0 : ebIds[k];
       //grab the element boundaries for the node if the node is owned by the subdomain
       //this will miss the element boundaries on the "outside boundary" of the star, which we'll grab later
       //
@@ -2780,7 +2542,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
       //so the check on nodes[1] will always be false
       const int nodes[3] = {nn0_new,nn1_new,nn2_new};
       NodeTuple<3> nodeTuple(nodes);
-      elementBoundaryFile >> eatline;
       if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
         {
           elementBoundaries_subdomain.insert(neb);
@@ -2821,7 +2582,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
         }
     }
   //done reading element boundaries
-  elementBoundaryFile.close();
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
     nElementBoundaries_owned_new=0;
@@ -3066,20 +2826,19 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   //4c,5c. Repeate the process for edges
   //
   logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
-  std::ifstream edgeFile(edgeFileName.c_str());
-
-  if (!edgeFile.good())
-    {
-      std::cerr<<"cannot open Tetgen edge file"
-               <<edgeFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the edges with a node of a subdomain element; the others play no part below.
+  //The .edge markers are not read (header count only), as always.
   bool hasEdgeMarkers = false;
   int nEdges_global;
   int ihasEdgeMarkers(0);
-  edgeFile >> eatcomments >> nEdges_global >> eatline;// edge file doesn currently contain markers >> ihasEdgeMarkers >> eatline ;
+  vector<int> edNumbers, edNodes, edIds;
+  if (!readSimplexSubentitiesTouching(edgeFileName, "Tetgen", "edge", 2, indexBase, false,
+                                      nodes_old2new_subdomain_map, nEdges_global,
+                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nEdges_global > 0);
   if (ihasEdgeMarkers > 0)
     {
@@ -3092,16 +2851,10 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,valarray<int> > elementEdgesMap;
   map<int,pair<int,int> > edgeNodesMap;
   set<int> supportedEdges;
-  for (int ied = 0; ied < nEdges_global; ied++)
+  for (size_t k = 0; k < edNumbers.size(); k++)
     {
-      int ned,nn0,nn1; int edId(0);
-      edgeFile >> eatcomments >> ned >> nn0 >> nn1;
-      if (ihasEdgeMarkers > 0)
-        edgeFile >> edId;
-      ned -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= ned && ned < nEdges_global && edgeFile.good());
+      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
+      const int edId = edIds.empty() ? 0 : edIds[k];
       int nn0_new = -1;
       if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
         nn0_new = nodes_old2new_subdomain_map[nn0];
@@ -3120,7 +2873,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      edgeFile >> eatline;
       if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
         {
           if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
@@ -3148,7 +2900,6 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
             }
         }
     }//end iv
-  edgeFile.close();
   int nEdges_owned_subdomain=edges_subdomain_owned.size(),
     nEdges_owned_new=0;
   MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
@@ -3485,48 +3236,18 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global];
+  //0 until a vertex flag or a face flag says otherwise: without vertex markers
+  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
+  //faces take face flags below, so the others used to keep whatever the heap held
+  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
   //
-  for (int iv = 0; iv < nNodes_global; iv++)
-    {
-      int nv; double x,y,z; int nodeId(0);
-      vertexFile >> eatcomments >> nv >> x >> y >> z;
-      if (hasVertexMarkers > 0)
-        vertexFile >> nodeId;
-      nv -= indexBase;
-      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
-      int nN_global_new = -1;
-      if (nodes_old2new_subdomain_map.find(nv) != nodes_old2new_subdomain_map.end())
-        nN_global_new = nodes_old2new_subdomain_map[nv];
-      //local
-      if (nN_global_new >= nodeOffsets_new[rank] && nN_global_new < nodeOffsets_new[rank+1])
-        {
-          int nv_subdomain_new = nN_global_new - nodeOffsets_new[rank];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = z;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      //overlap
-      if (nodes_overlap.count(nN_global_new) == 1)
-        {
-          int nv_subdomain_new = nodes_overlap_global2subdomainMap[nN_global_new];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = z;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      vertexFile >> eatline;
-    }//end iv
-  vertexFile.close();
+  if (!readSubdomainVertices(vertexFileName, "Tetgen", 3, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
+                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
+                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
+                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
+    MPI_Abort(PROTEUS_COMM_WORLD, 1);
   //done with vertex file (and all file reads at this point)
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
 
@@ -3733,6 +3454,8 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   newMesh.edgeNumbering_subdomain2global = new int[newMesh.subdomainp->nEdges_global];
   for (int i=0; i< newMesh.subdomainp->nEdges_global; i++)
     newMesh.edgeNumbering_subdomain2global[i] = edgeNumbering_subdomain2global[i];
+  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
   //cleanup
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
@@ -3740,6 +3463,7 @@ int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with partitioning!");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   return 0;
 }
+
 int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap)
 {
   using namespace std;
@@ -3779,7 +3503,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   bool failed = false;
   const int simplexDim = 3;
-  const int vertexDim  = 3;
   using namespace IOutils;
   std::string vertexFileName  = std::string(filebase) + ".node" ;
   std::string elementFileName = std::string(filebase) + ".ele" ;
@@ -3821,7 +3544,8 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
                <<" > 0 will treat first value as integer id for boundary!!"<<std::endl;
       hasVertexMarkers = 1;
     }
-  //don't need to read anymore from nodes for now
+  //the node coordinates are read after partitioning (readSubdomainVertices)
+  vertexFile.close();
 
   //offsets provide the lower and upper bounds for the global numbering
   //first we just partition the nodes approximately equally ignoring connectivity
@@ -3839,61 +3563,16 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   //connectivty commes from the topology (elements) file. We just grab the elements
   //that contain currently owned nodes
-  std::ifstream elementFile(elementFileName.c_str());
-  if (!elementFile.good())
+  int nElements_global;
+  vector<set<int> > nodeStar;
+  if (!readSimplexNodeStars(elementFileName,"triangle",simplexDim,indexBase,nNodes_global,
+                            nodeOffsets_old[rank],nodeOffsets_old[rank+1],
+                            nElements_global,nodeStar))
     {
-      std::cerr<<"cannot open triangle element file "
-               <<elementFileName<<std::endl;
       failed = true;
       return failed;
     }
-  //read elements
-  int nNodesPerSimplex(simplexDim),hasElementMarkers = 0,nElements_global;
-  elementFile >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
   newMesh.nElements_global = nElements_global;
-  vector<int> element_nodes_old(3);
-  vector<set<int> > nodeStar(nNodes_subdomain_old);
-  map<int,vector<int> > elements_old;//elementNodesMap_old
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      int ne, nv;
-      elementFile >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile.good());
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile >> nv;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          element_nodes_old[iv] = nv;
-        }
-      //for each node on the element
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          //check if the node is owned by the subdomain
-          int nN_star = element_nodes_old[iv];
-          bool inSubdomain=false;
-          if (nN_star >= nodeOffsets_old[rank] && nN_star < nodeOffsets_old[rank+1])
-            {
-              //this node is owned by the subdomain so
-              inSubdomain = true;
-              for (int jv = 0; jv < simplexDim; jv++)
-                {
-                  if (iv != jv)
-                    {
-                      int nN_star_subdomain = nN_star-nodeOffsets_old[rank];
-                      nodeStar[nN_star_subdomain].insert(element_nodes_old[jv]);
-                    }
-                }
-            }
-          if (inSubdomain)
-            elements_old[ie] = element_nodes_old;
-        }
-      elementFile >> eatline;
-    }//end ie
-  elementFile.close();
   PetscLogEventEnd(read_elements_event,0,0,0,0);
   int repartition_nodes_event;
   PetscLogEventRegister("Repart nodes",0,&repartition_nodes_event);
@@ -4118,204 +3797,33 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //We need to find the elements in the support of nodes in the new
   //partitioning, so we'll need to re-read the elements file to get
   //the the elements for the nodes in the new partitioning. We will be collecting OLD element numbers.
-  std::ifstream elementFile2(elementFileName.c_str());
-
-  if (!elementFile2.good())
-    {
-      std::cerr<<"cannot open triangle elements file"
-               <<elementFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-  elementFile2 >> eatcomments >> nElements_global >> nNodesPerSimplex >> hasElementMarkers >> eatline;
-  assert(nElements_global > 0);
-  assert(nNodesPerSimplex == simplexDim);
+  //
+  //The new numbers of their nodes come from the ranks that computed them
+  //(readSubdomainElements): no global old->new on any rank, and no read of the
+  //mappings file, which every rank used to read in chunks of 10000 nodes
+  //(the sec2-vs-mpio site; mappings.h5 is still written, SW2DCV reads it).
   set<int> elements_subdomain_owned;
-  vector<int> element_nodes_new(3);
-  int element_nodes_new_array[3];
-  vector<set<int> > nodeElementsStar(nNodes_subdomain_new[rank]);
-  vector<set<int> > nodeStarNew(nNodes_subdomain_new[rank]);
   map<int,vector<int> > elementNodesArrayMap;
   map<int,long int> elementMaterialTypesMap;
   map<NodeTuple<2>,ElementNeighbors> elementBoundaryElementsMap;
   map<NodeTuple<2>,set<pair<int,int> > > edgeElementsMap;
-
-  //note any element index containers are in the old element numbering
-  //
-  //Out-of-core node numbering, mirroring partitionNodesFromTetgenFiles.
-  //
-  //This loop used to index nodeNumbering_global_old2new, a global array that
-  //ISAllGather had put on EVERY rank. For a 2D mesh with N nodes that is N
-  //ints per rank here, and the element, elementBoundary and edge numberings
-  //add roughly 13N more -- so per-rank memory did not fall as ranks were
-  //added. Measured on damBreak (569508 nodes): peak per core was FLAT at
-  //0.26 GB from 384 to 768 ranks while the subdomain halved.
-  //
-  //Instead, accumulate a chunk of elements, read old->new for just the nodes
-  //that chunk touches, process it, and release. The chunk is capped by NODE
-  //COUNT, not by nElements_global/size, so the number of chunks does not grow
-  //with the rank count -- the mistake 77c99396 made in the tetgen path.
-  const int nNodes_collection_max=10000;
-  set<int> node_collection;
-  vector<int> elements_collection;
-  vector<valarray<int> > element_old_nodes_collection;
-  vector<double> elementId_collection;
+  vector<set<int> > nodeElementsStar(nNodes_subdomain_new[rank]);
+  vector<set<int> > nodeStarNew(nNodes_subdomain_new[rank]);
   map<int,int> nodes_old2new_subdomain_map;
-  int eN_c_start = 0;
-  file_id = openMappingsReadOnly(PROTEUS_COMM_WORLD, H5FILE_NAME);
-  if (file_id < 0)
+  const PetscInt* nodes_subdomain_old2new_array;
+  ISGetIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
+  bool readElements = readSubdomainElements<simplexDim,vector<int> >(PROTEUS_COMM_WORLD, elementFileName, "triangle", indexBase, nNodes_global,
+                                                                     nodeOffsets_old, nodeOffsets_new, nodes_subdomain_old2new_array,
+                                                                     nElements_global, elements_subdomain_owned,
+                                                                     nodeElementsStar, nodeStarNew, elementNodesArrayMap,
+                                                                     elementMaterialTypesMap, elementBoundaryElementsMap,
+                                                                     edgeElementsMap, nodes_old2new_subdomain_map);
+  ISRestoreIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
+  if (!readElements)
     {
-      H5Eprint2(H5E_DEFAULT, stderr);
-      SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                  "could not reopen the mappings file; see the HDF5 stack above");
+      failed = true;
+      return failed;
     }
-  for (int ie = 0; ie < nElements_global; ie++)
-    {
-      int ne, nv;
-      long double elementId_double;
-      elementFile2 >> eatcomments >> ne;
-      ne -= indexBase;
-      assert(0 <= ne && ne < nElements_global && elementFile2.good());
-      elements_collection.push_back(ne);
-      valarray<int> enodes_PROBE(simplexDim);
-      for (int iv = 0; iv < simplexDim; iv++)
-        {
-          elementFile2 >> nv;
-          nv -= indexBase;
-          assert(0 <= nv && nv < nNodes_global);
-          node_collection.insert(nv);
-          enodes_PROBE[iv] = nv;
-        }
-      element_old_nodes_collection.push_back(enodes_PROBE);
-      //read the marker unconditionally: the stream position must not depend on
-      //whether this element turns out to be in the subdomain
-      if (hasElementMarkers > 0)
-        {
-          elementFile2 >> elementId_double;
-          elementId_collection.push_back(static_cast<double>(elementId_double));
-        }
-      elementFile2 >> eatline;
-
-      if (node_collection.size() >= (size_t)nNodes_collection_max || ie == nElements_global-1)
-        {
-          //one point-selection read for the whole chunk
-          valarray<hsize_t> node_collection_array(node_collection.size());
-          valarray<int> nodes_old2new_subset(node_collection.size());
-          int i_nc=0;
-          for (auto nvp=node_collection.begin();nvp!=node_collection.end();nvp++,i_nc++)
-            node_collection_array[i_nc] = static_cast<hsize_t>(*nvp);
-          hid_t dset_id_c = H5Dopen1(file_id,"/nodeNumbering_old2new");
-          if (dset_id_c < 0)
-            {
-              H5Eprint2(H5E_DEFAULT, stderr);
-              SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_READ,
-                          "could not open /nodeNumbering_old2new");
-            }
-          hid_t fspace_c = H5Dget_space(dset_id_c);
-          herr_t st_c = H5Sselect_elements(fspace_c, H5S_SELECT_SET,
-                                           node_collection.size(), &node_collection_array[0]);
-          hsize_t dims_c[] = {static_cast<hsize_t>(node_collection.size())};
-          hid_t mspace_c = H5Screate_simple(1, dims_c, NULL);
-          herr_t rd_c = H5Dread(dset_id_c, H5T_NATIVE_INT, mspace_c, fspace_c,
-                                H5P_DEFAULT, &nodes_old2new_subset[0]);
-          if (st_c < 0 || rd_c < 0)
-            {
-              H5Eprint2(H5E_DEFAULT, stderr);
-              SETERRABORT(PROTEUS_COMM_WORLD, PETSC_ERR_FILE_READ,
-                          "could not read /nodeNumbering_old2new for this chunk");
-            }
-          H5Sclose(mspace_c); H5Sclose(fspace_c); H5Dclose(dset_id_c);
-          map<int,int> nodes_old2new_subset_map;
-          for (size_t i=0;i<node_collection.size();i++)
-            nodes_old2new_subset_map[node_collection_array[i]] = nodes_old2new_subset[i];
-
-          for (int eN_c = eN_c_start; eN_c <= ie; eN_c++)
-            {
-              const int ne = elements_collection[eN_c-eN_c_start];
-              long int elementId(0);
-              for (int iv = 0; iv < simplexDim; iv++)
-                {
-                  element_nodes_old[iv] = element_old_nodes_collection[eN_c-eN_c_start][iv];
-                  element_nodes_new[iv] = nodes_old2new_subset_map[element_nodes_old[iv]];
-                  element_nodes_new_array[iv] = element_nodes_new[iv];
-                }
-            NodeTuple<simplexDim> nodeTuple(element_nodes_new_array);
-            for (int iv = 0; iv < simplexDim; iv++)
-              {
-                int nN_star_new = element_nodes_new[iv];
-                bool inSubdomain=false;
-                if (nN_star_new >= nodeOffsets_new[rank] && nN_star_new < nodeOffsets_new[rank+1])
-                  {
-                    inSubdomain = true;
-                    //add all the element boundaries of this element
-                    for (int ebN=0;ebN < simplexDim ; ebN++)
-                      {
-                        int nodes[simplexDim-1] = { element_nodes_new[(ebN+1) % simplexDim],
-                                         element_nodes_new[(ebN+2) % simplexDim]};
-                        NodeTuple<simplexDim-1> nodeTuple(nodes);
-                        if(elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())
-                          {
-                            if (elementBoundaryElementsMap[nodeTuple].right == -1 && ne != elementBoundaryElementsMap[nodeTuple].left)
-                              {
-                                elementBoundaryElementsMap[nodeTuple].right=ne;
-                                elementBoundaryElementsMap[nodeTuple].right_ebN_element=ebN;
-                              }
-                          }
-                        else
-                          {
-                            elementBoundaryElementsMap[nodeTuple] = ElementNeighbors(ne,ebN);
-                          }
-                      }
-                    //add all the edges of this element
-                    for (int nNL=0,edN=0;nNL < simplexDim ; nNL++)
-                      for(int nNR=nNL+1;nNR < simplexDim;nNR++,edN++)
-                        {
-                          int nodes[2] = { element_nodes_new[nNL],
-                                           element_nodes_new[nNR]};
-                          NodeTuple<2> nodeTuple(nodes);
-                          edgeElementsMap[nodeTuple].insert(pair<int,int>(ne,edN));
-                        }
-                    //add all the nodes to the node star
-                    int nN_star_new_subdomain = nN_star_new - nodeOffsets_new[rank];
-                    nodeElementsStar[nN_star_new_subdomain].insert(ne);
-                    for (int jv = 0; jv < simplexDim; jv++)
-                      {
-                        if (iv != jv)
-                          {
-                            int nN_point_new = element_nodes_new[jv];
-                            nodeStarNew[nN_star_new_subdomain].insert(nN_point_new);
-                          }
-                      }
-                  }
-                if (inSubdomain)
-                  {
-                    elementNodesArrayMap[ne] = element_nodes_new;
-                    //the later .poly/.edge readers need old->new for exactly these
-                    //nodes, which is what replaces the global ISAllGather
-                    for (int jv = 0; jv < simplexDim; jv++)
-                      nodes_old2new_subdomain_map[element_nodes_old[jv]] = element_nodes_new[jv];
-                  }
-              }
-            if (elementNodesArrayMap.find(ne) != elementNodesArrayMap.end())//this element contains a node owned by this subdomain
-              {
-                if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
-                  elements_subdomain_owned.insert(ne);
-                if (hasElementMarkers > 0)
-                  {
-                    elementId = static_cast<long int>(elementId_collection[eN_c-eN_c_start]);
-                    elementMaterialTypesMap[ne] = elementId;
-                  }
-              }
-            }
-          eN_c_start = ie+1;
-          node_collection.clear();
-          elements_collection.clear();
-          elementId_collection.clear();
-          element_old_nodes_collection.clear();
-        }
-    }
-  H5Fclose(file_id);
-  elementFile2.close();
   int nElements_owned_subdomain(elements_subdomain_owned.size()),
     nElements_owned_new=0;
   MPI_Allreduce(&nElements_owned_subdomain,&nElements_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
@@ -4415,21 +3923,18 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //In 2D, the element boundaries are edges and not faces.
   //nodeElementBoundariesArray maps an element
 
-  std::ifstream elementBoundaryFile(elementBoundaryFileName.c_str());
-
-  if (!elementBoundaryFile.good())
-    {
-      std::cerr<<"cannot open triangle edge file "
-               <<elementBoundaryFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the faces with a node of a subdomain element; the others play no part below
   bool hasElementBoundaryMarkers = false;
   int nElementBoundaries_global;
   int ihasElementBoundaryMarkers(0);
-
-  elementBoundaryFile >> eatcomments >> nElementBoundaries_global >>ihasElementBoundaryMarkers >> eatline ;
+  vector<int> ebNumbers, ebNodes, ebIds;
+  if (!readSimplexSubentitiesTouching(elementBoundaryFileName, "triangle", "edge", 2, indexBase, true,
+                                      nodes_old2new_subdomain_map, nElementBoundaries_global,
+                                      ihasElementBoundaryMarkers, ebNumbers, ebNodes, ebIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nElementBoundaries_global > 0);
   if (ihasElementBoundaryMarkers > 0)
     {
@@ -4442,16 +3947,10 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,int> elementBoundaryMaterialTypesMap;
   map<int,vector<int> > elementBoundariesMap;
   set<int> supportedElementBoundaries;
-  for (int ieb = 0; ieb < nElementBoundaries_global; ieb++)
+  for (size_t k = 0; k < ebNumbers.size(); k++)
     {
-      int neb,nn0,nn1; int ebId(0);
-      elementBoundaryFile >> eatcomments >> neb >> nn0 >> nn1;
-      if (ihasElementBoundaryMarkers > 0)
-        elementBoundaryFile >> ebId;
-      neb -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= neb && neb < nElementBoundaries_global && elementBoundaryFile.good());
+      const int neb = ebNumbers[k], nn0 = ebNodes[2*k], nn1 = ebNodes[2*k+1];
+      const int ebId = ebIds.empty() ? 0 : ebIds[k];
       //grab the element boundaries for the node if the node is owned by the subdomain
       //this will miss the element boundaries on the "outside boundary" of the star, which will grab later
       int nn0_new = -1;
@@ -4472,7 +3971,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      elementBoundaryFile >> eatline;
       if (elementBoundaryElementsMap.find(nodeTuple) != elementBoundaryElementsMap.end())//this element boundary is on an element in the subdomain
         {
           if (nodeTuple.nodes[1] >= nodeOffsets_new[rank] && nodeTuple.nodes[1] < nodeOffsets_new[rank+1])
@@ -4512,7 +4010,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
     }
   elementBoundaryElementsMap.clear();
   //done reading element boundaries
-  elementBoundaryFile.close();
   //ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading element boundaries");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int nElementBoundaries_owned_subdomain=elementBoundaries_subdomain_owned.size(),
     nElementBoundaries_owned_new=0;
@@ -4602,20 +4099,19 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
   //4c,5c. Repeate the process for edges
   //
-  std::ifstream edgeFile(edgeFileName.c_str());
-
-  if (!edgeFile.good())
-    {
-      std::cerr<<"cannot open Triangle edge file"
-               <<edgeFileName<<std::endl;
-      failed = true;
-      return failed;
-    }
-
+  //the edges with a node of a subdomain element; the others play no part below.
+  //The .edge markers are not read (header count only), as always.
   bool hasEdgeMarkers = false;
   int nEdges_global;
   int ihasEdgeMarkers(0);
-  edgeFile >> eatcomments >> nEdges_global >> eatline;// edge file doesn currently contain markers >> ihasEdgeMarkers >> eatline ;
+  vector<int> edNumbers, edNodes, edIds;
+  if (!readSimplexSubentitiesTouching(edgeFileName, "Triangle", "edge", 2, indexBase, false,
+                                      nodes_old2new_subdomain_map, nEdges_global,
+                                      ihasEdgeMarkers, edNumbers, edNodes, edIds))
+    {
+      failed = true;
+      return failed;
+    }
   assert(nEdges_global > 0);
   if (ihasEdgeMarkers > 0)
     {
@@ -4629,16 +4125,10 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,vector<int> > elementEdgesMap;
   map<int,pair<int,int> > edgeNodesMap;
   set<int> supportedEdges;
-  for (int ied = 0; ied < nEdges_global; ied++)
+  for (size_t k = 0; k < edNumbers.size(); k++)
     {
-      int ned,nn0,nn1; int edId(0);
-      edgeFile >> eatcomments >> ned >> nn0 >> nn1;
-      if (ihasEdgeMarkers > 0)
-        edgeFile >> edId;
-      ned -= indexBase;
-      nn0 -= indexBase;
-      nn1 -= indexBase;
-      assert(0 <= ned && ned < nEdges_global && edgeFile.good());
+      const int ned = edNumbers[k], nn0 = edNodes[2*k], nn1 = edNodes[2*k+1];
+      const int edId = edIds.empty() ? 0 : edIds[k];
       int nn0_new = -1;
       if (nodes_old2new_subdomain_map.find(nn0) != nodes_old2new_subdomain_map.end())
         nn0_new = nodes_old2new_subdomain_map[nn0];
@@ -4657,7 +4147,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
       int nodes[2] = {nn0_new,nn1_new};
       NodeTuple<2> nodeTuple(nodes);
-      edgeFile >> eatline;
       if (edgeElementsMap.find(nodeTuple) != edgeElementsMap.end())//this edge is on an element in the subdomain
         {
           if (nodeTuple.nodes[0] >= nodeOffsets_new[rank] && nodeTuple.nodes[0] < nodeOffsets_new[rank+1])
@@ -4686,7 +4175,6 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
         }
     }//end iv
   edgeElementsMap.clear();
-  edgeFile.close();
   int nEdges_owned_subdomain=edges_subdomain_owned.size(),
     nEdges_owned_new=0;
   MPI_Allreduce(&nEdges_owned_subdomain,&nEdges_owned_new,1,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
@@ -4880,48 +4368,18 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global];
+  //0 until a vertex flag or a face flag says otherwise: without vertex markers
+  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
+  //faces take face flags below, so the others used to keep whatever the heap held
+  newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
   //
-  for (int iv = 0; iv < nNodes_global; iv++)
-    {
-      int nv; double x,y; int nodeId(0);
-      vertexFile >> eatcomments >> nv >> x >> y;
-      if (hasVertexMarkers > 0)
-        vertexFile >> nodeId;
-      nv -= indexBase;
-      assert(0 <= nv && nv < nNodes_global && vertexFile.good());
-      int nN_global_new = -1;
-      if (nodes_old2new_subdomain_map.find(nv) != nodes_old2new_subdomain_map.end())
-        nN_global_new = nodes_old2new_subdomain_map[nv];
-      //local
-      if (nN_global_new >= nodeOffsets_new[rank] && nN_global_new < nodeOffsets_new[rank+1])
-        {
-          int nv_subdomain_new = nN_global_new - nodeOffsets_new[rank];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = 0.0;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      //overlap
-      if (nodes_overlap.count(nN_global_new) == 1)
-        {
-          int nv_subdomain_new = nodes_overlap_global2subdomainMap[nN_global_new];
-          nodeNumbering_subdomain2global[nv_subdomain_new] = nN_global_new;
-          nodeNumbering_global2subdomainMap[nN_global_new] = nv_subdomain_new;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 0] = x;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 1] = y;
-          newMesh.subdomainp->nodeArray[vertexDim*nv_subdomain_new + 2] = 0.0;
-          if (hasVertexMarkers > 0)
-            newMesh.subdomainp->nodeMaterialTypes[nv_subdomain_new] = nodeId;
-        }
-      vertexFile >> eatline;
-    }//end iv
-  vertexFile.close();
+  if (!readSubdomainVertices(vertexFileName, "triangle", 2, indexBase, hasVertexMarkers, nodes_old2new_subdomain_map,
+                             nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
+                             &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
+                             newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
+    MPI_Abort(PROTEUS_COMM_WORLD, 1);
   ISDestroy(&nodePartitioningIS_new);
   ISDestroy(&nodeNumberingIS_subdomain_old2new);
   //done with vertex file (and all file reads at this point)
@@ -5063,183 +4521,7 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   //
 
   //now build rest of subdomain mesh connectivity information etc
-  bool callOld=true;
-  if(callOld)
-    constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_triangle(*newMesh.subdomainp);
-  else
-    {
-      //const int DEFAULT_ELEMENT_MATERIAL=0;
-      const int DEFAULT_NODE_MATERIAL=-1;
-      const int INTERIOR_NODE_MATERIAL=0;
-      const int EXTERIOR_NODE_MATERIAL=1;
-      const int INTERIOR_ELEMENT_BOUNDARY_MATERIAL=0;
-      const int EXTERIOR_ELEMENT_BOUNDARY_MATERIAL=1;
-
-      newMesh.subdomainp->nNodes_elementBoundary = 3;
-      newMesh.subdomainp->nElementBoundaries_element = 4;
-      assert(newMesh.subdomainp->elementBoundariesArray);
-      using namespace std;
-      //double start,stop;
-      map<NodeTuple<3>,
-          ElementNeighbors> elementBoundaryElements;
-      map<NodeTuple<3>,
-          int> elementBoundaryIds;
-      //start=CurrentTime();
-      //cout<<"Extracting boundary elements"<<endl;
-      for(int eN=0;eN<newMesh.subdomainp->nElements_global;eN++)
-        for(int ebN=0;ebN<newMesh.subdomainp->nElementBoundaries_element;ebN++)
-          {
-            int ebN_global = newMesh.subdomainp->elementBoundariesArray[eN*newMesh.subdomainp->nElementBoundaries_element+ebN];
-            int nodes[3];
-            nodes[0] = newMesh.subdomainp->elementNodesArray[eN*4+((ebN+1)%4)];
-            nodes[1] = newMesh.subdomainp->elementNodesArray[eN*4+((ebN+2)%4)];
-            nodes[2] = newMesh.subdomainp->elementNodesArray[eN*4+((ebN+3)%4)];
-            NodeTuple<3> ebt(nodes);
-            if(elementBoundaryElements.find(ebt) != elementBoundaryElements.end())
-              {
-                elementBoundaryElements[ebt].right=eN;
-                elementBoundaryElements[ebt].right_ebN_element=ebN;
-                assert(elementBoundaryIds[ebt] == ebN_global);
-              }
-            else
-              {
-                elementBoundaryElements.insert(elementBoundaryElements.end(),make_pair(ebt,ElementNeighbors(eN,ebN)));
-                elementBoundaryIds.insert(elementBoundaryIds.end(),make_pair(ebt,ebN_global));
-              }
-          }
-      //stop = CurrentTime();
-      //cout<<"Elapsed time for building element boundary elements map= "<<(stop-start)<<"s"<<endl;
-      newMesh.subdomainp->nElementBoundaries_global = elementBoundaryElements.size();
-      //cout<<"nElementBoundaries_global = "<<newMesh.subdomainp->nElementBoundaries_global<<endl;
-
-      //cout<<"Allocating Arrays"<<endl;
-      //start = CurrentTime();
-      set<int> interiorElementBoundaries,exteriorElementBoundaries;
-      newMesh.subdomainp->elementBoundaryNodesArray =  new int[newMesh.subdomainp->nElementBoundaries_global*newMesh.subdomainp->nNodes_elementBoundary];
-      newMesh.subdomainp->elementBoundaryElementsArray = new int[newMesh.subdomainp->nElementBoundaries_global*2];
-      newMesh.subdomainp->elementBoundaryLocalElementBoundariesArray = new int[newMesh.subdomainp->nElementBoundaries_global*2];
-      newMesh.subdomainp->elementNeighborsArray = new int[newMesh.subdomainp->nElements_global*newMesh.subdomainp->nElementBoundaries_element];
-      //stop = CurrentTime();
-      //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
-
-      //cout<<"Generating elementBoundaryElementsArray and elementBoundaryNodesArray"<<endl;
-      //start = CurrentTime();
-      for(map<NodeTuple<3>,ElementNeighbors>::iterator eb=elementBoundaryElements.begin();
-          eb != elementBoundaryElements.end();
-          eb++)
-        {
-          int ebN = elementBoundaryIds[eb->first];
-          newMesh.subdomainp->elementBoundaryNodesArray[ebN*3 + 0] = eb->first.nodes[0];
-          newMesh.subdomainp->elementBoundaryNodesArray[ebN*3 + 1] = eb->first.nodes[1];
-          newMesh.subdomainp->elementBoundaryNodesArray[ebN*3 + 2] = eb->first.nodes[2];
-
-          newMesh.subdomainp->elementBoundaryElementsArray[ebN*2 + 0] = eb->second.left;
-          newMesh.subdomainp->elementBoundaryLocalElementBoundariesArray[ebN*2 + 0] = eb->second.left_ebN_element;
-          newMesh.subdomainp->elementBoundaryElementsArray[ebN*2 + 1] = eb->second.right;
-          newMesh.subdomainp->elementBoundaryLocalElementBoundariesArray[ebN*2 + 1] = eb->second.right_ebN_element;
-          newMesh.subdomainp->elementNeighborsArray[eb->second.left*newMesh.subdomainp->nElementBoundaries_element + eb->second.left_ebN_element] = eb->second.right;
-          if(eb->second.right != -1)
-            {
-              interiorElementBoundaries.insert(ebN);
-              newMesh.subdomainp->elementNeighborsArray[eb->second.right*newMesh.subdomainp->nElementBoundaries_element + eb->second.right_ebN_element] = eb->second.left;
-            }
-          else
-            exteriorElementBoundaries.insert(ebN);
-          assert(newMesh.subdomainp->elementBoundariesArray[eb->second.left*newMesh.subdomainp->nElementBoundaries_element + eb->second.left_ebN_element] == ebN);
-          if (eb->second.right != -1)
-            {
-              assert(newMesh.subdomainp->elementBoundariesArray[eb->second.right*newMesh.subdomainp->nElementBoundaries_element + eb->second.right_ebN_element] == ebN);
-            }
-        }
-      newMesh.subdomainp->nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-      newMesh.subdomainp->interiorElementBoundariesArray = new int[newMesh.subdomainp->nInteriorElementBoundaries_global];
-      newMesh.subdomainp->nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-      newMesh.subdomainp->exteriorElementBoundariesArray = new int[newMesh.subdomainp->nExteriorElementBoundaries_global];
-      int ebNI=0,ebNE=0;
-      for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
-        newMesh.subdomainp->interiorElementBoundariesArray[ebNI] = *ebN;
-      for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
-        newMesh.subdomainp->exteriorElementBoundariesArray[ebNE] = *ebN;
-      set<NodeTuple<2> > edges;
-      for (int eN=0;eN<newMesh.subdomainp->nElements_global;eN++)
-        {
-          int nodes[2];
-          for (int nN_L=0;nN_L<newMesh.subdomainp->nNodes_element;nN_L++)
-            for (int nN_R=nN_L+1;nN_R<newMesh.subdomainp->nNodes_element;nN_R++)
-              {
-                nodes[0] = newMesh.subdomainp->elementNodesArray[eN*4+nN_L];
-                nodes[1] = newMesh.subdomainp->elementNodesArray[eN*4+nN_R];
-                edges.insert(NodeTuple<2>(nodes));
-              }
-        }
-      assert(newMesh.subdomainp->nEdges_global == int(edges.size()));
-      vector<set<int> > nodeStar(newMesh.subdomainp->nNodes_global);
-      for (int edgeN=0;edgeN<newMesh.subdomainp->nEdges_global;edgeN++)
-        {
-          nodeStar[newMesh.subdomainp->edgeNodesArray[edgeN*2+0]].insert(newMesh.subdomainp->edgeNodesArray[edgeN*2+1]);
-          nodeStar[newMesh.subdomainp->edgeNodesArray[edgeN*2+1]].insert(newMesh.subdomainp->edgeNodesArray[edgeN*2+0]);
-        }
-      newMesh.subdomainp->nodeStarOffsets = new int[newMesh.subdomainp->nNodes_global+1];
-      newMesh.subdomainp->nodeStarOffsets[0] = 0;
-      for (int nN=1;nN<newMesh.subdomainp->nNodes_global+1;nN++)
-        newMesh.subdomainp->nodeStarOffsets[nN] = newMesh.subdomainp->nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-      newMesh.subdomainp->nodeStarArray = new int[newMesh.subdomainp->nodeStarOffsets[newMesh.subdomainp->nNodes_global]];
-      for (int nN=0,offset=0;nN<newMesh.subdomainp->nNodes_global;nN++)
-        for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
-          newMesh.subdomainp->nodeStarArray[offset] = *nN_star;
-      //stop = CurrentTime();
-      newMesh.subdomainp->max_nNodeNeighbors_node=0;
-      for (int nN=0;nN<newMesh.subdomainp->nNodes_global;nN++)
-        newMesh.subdomainp->max_nNodeNeighbors_node=max(newMesh.subdomainp->max_nNodeNeighbors_node,newMesh.subdomainp->nodeStarOffsets[nN+1]-newMesh.subdomainp->nodeStarOffsets[nN]);
-      //mwf repeat for node-->elements arrays
-      vector<set<int> > nodeElementsStar(newMesh.subdomainp->nNodes_global);
-      for (int eN = 0; eN < newMesh.subdomainp->nElements_global; eN++)
-        {
-          for (int nN = 0; nN < newMesh.subdomainp->nNodes_element; nN++)
-            nodeElementsStar[newMesh.subdomainp->elementNodesArray[eN*newMesh.subdomainp->nNodes_element+nN]].insert(eN);
-        }
-      newMesh.subdomainp->nodeElementOffsets = new int[newMesh.subdomainp->nNodes_global+1];
-      newMesh.subdomainp->nodeElementOffsets[0] = 0;
-      for (int nN = 0; nN < newMesh.subdomainp->nNodes_global; nN++)
-        newMesh.subdomainp->nodeElementOffsets[nN+1] = newMesh.subdomainp->nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-      newMesh.subdomainp->nodeElementsArray  = new int[newMesh.subdomainp->nodeElementOffsets[newMesh.subdomainp->nNodes_global]];
-      for (int nN=0,offset=0; nN < newMesh.subdomainp->nNodes_global; nN++)
-        {
-          for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
-               eN_star++,offset++)
-            {
-              newMesh.subdomainp->nodeElementsArray[offset] = *eN_star;
-            }
-        }
-      //mwf end node-->elements construction
-      newMesh.subdomainp->elementBoundaryMaterialTypes = new int[newMesh.subdomainp->nElementBoundaries_global];
-      //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
-      //depending on which boundary node belongs to.
-      //If node on at least one exterior boundary then it's exterior
-      for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
-        {
-          int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
-          newMesh.subdomainp->elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
-          for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-            {
-              int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-              if (newMesh.subdomainp->nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
-                newMesh.subdomainp->nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
-            }
-        }
-      for (int ebNI = 0; ebNI < newMesh.subdomainp->nInteriorElementBoundaries_global; ebNI++)
-        {
-          int ebN = newMesh.subdomainp->interiorElementBoundariesArray[ebNI];
-          newMesh.subdomainp->elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
-          for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-            {
-              int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-              if (newMesh.subdomainp->nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
-                newMesh.subdomainp->nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
-            }
-        }
-      //cout<<"Elapsed time for populating arrays = "<<(stop-start)<<"s"<<endl;
-    }
+  constructElementBoundaryElementsArrayWithGivenElementBoundaryAndEdgeNumbers_triangle(*newMesh.subdomainp);
   //build local geometric info
   allocateGeometricInfo_triangle(*newMesh.subdomainp);
   computeGeometricInfo_triangle(*newMesh.subdomainp);
@@ -5318,9 +4600,11 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   H5Sclose(filespace);
   H5Sclose(memspace);
   H5Pclose(plist_id);
-  //(the mappings file is closed right after the numbering write and again
-  //after the chunked read loop; nothing is open here any more)
+  //(the mappings file is closed right after the numbering write; nothing is
+  //open here any more)
   /* out of core */
+  //the faces the partition cut read -1 (rank interfaces), as on the in-memory paths
+  markRankInterfacesByOwner(PROTEUS_COMM_WORLD, newMesh, hasElementBoundaryMarkers);
   PetscLogEventEnd(build_subdomains_cleanup_event,0,0,0,0);
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
@@ -5328,6 +4612,115 @@ int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const ch
   return 0;
 }
 //todo add overlap for element based partitions
+/* The ownership rules of partitionElements, which follow from the owner of
+   every element. Every rank computes them over the whole (not yet renumbered)
+   mesh, so they need no communication. Plain C++. An entity no rank reaches
+   is given the owner size. */
+
+//A node belongs to the lowest rank that owns an element containing it.
+std::vector<int> nodeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> nodeOwner(mesh.nNodes_global,size);
+  for (int eN=0;eN<mesh.nElements_global;eN++)
+    for (int nN=0;nN<mesh.nNodes_element;nN++)
+      lowerOwner(nodeOwner,mesh.elementNodesArray[eN*mesh.nNodes_element+nN],elementOwner[eN]);
+  return nodeOwner;
+}
+
+//An element boundary belongs to the lowest rank that owns an element it bounds.
+std::vector<int> elementBoundaryOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
+  for (int eN=0;eN<mesh.nElements_global;eN++)
+    for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
+      lowerOwner(elementBoundaryOwner,mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN],elementOwner[eN]);
+  return elementBoundaryOwner;
+}
+
+//An edge belongs to the lowest rank that owns an element with both its nodes.
+std::vector<int> edgeOwnersFromElementOwners(const Mesh& mesh, const std::vector<int>& elementOwner, int size)
+{
+  std::vector<int> edgeOwner(mesh.nEdges_global,size);
+  for (int ig = 0; ig < mesh.nEdges_global; ig++)
+    {
+      const int nN0_old = mesh.edgeNodesArray[2*ig], nN1_old = mesh.edgeNodesArray[2*ig+1];
+      for (int offset=mesh.nodeElementOffsets[nN0_old];offset<mesh.nodeElementOffsets[nN0_old+1];offset++)
+        {
+          const int eN = mesh.nodeElementsArray[offset];
+          for (int nN=0;nN<mesh.nNodes_element;nN++)
+            if (mesh.elementNodesArray[eN*mesh.nNodes_element+nN] == nN1_old)
+              lowerOwner(edgeOwner,ig,elementOwner[eN]);
+        }
+    }
+  return edgeOwner;
+}
+
+/* Rows begin..end-1 of the element graph the graph partitioner is given: each
+   element's neighbours across its element boundaries, sorted, in CSR form. */
+void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors)
+{
+  offsets.assign(1,0);
+  neighbors.clear();
+  for (int eN_global = begin; eN_global < end; eN_global++)
+    {
+      for (int ebN=0; ebN< mesh.nElementBoundaries_element;ebN++)
+        {
+          int eN_neighbor_global = mesh.elementNeighborsArray[eN_global*mesh.nElementBoundaries_element + ebN];
+          if (eN_neighbor_global >= 0 )
+            neighbors.push_back(eN_neighbor_global);
+        }
+      offsets.push_back(int(neighbors.size()));
+      std::sort(neighbors.begin()+offsets[offsets.size()-2],neighbors.end());
+    }
+}
+
+/* MPI: the owner of every element from the graph partitioner, each rank
+   handing MatPartitioning its default chunk of the element graph; the answer is
+   gathered so every rank holds every owner. Collective. */
+std::vector<int> graphElementOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
+                                    const std::valarray<int>& elementOffsets_old)
+{
+  using namespace std;
+  int ierr,rank;
+  MPI_Comm_rank(PROTEUS_COMM_WORLD,&rank);
+  //2. Extract subdomain element adjacency information could read
+  //only the required portion from a file
+  int nElements_subdomain = (elementOffsets_old[rank+1] - elementOffsets_old[rank]);
+  std::vector<int> rowOffsets, rowNeighbors;
+  elementGraphRows(mesh,elementOffsets_old[rank],elementOffsets_old[rank+1],rowOffsets,rowNeighbors);
+  //MatCreateMPIAdj takes ownership of PetscMalloc'd arrays
+  PetscInt *elementNeighborsOffsets_subdomain,*elementNeighbors_subdomain;
+  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain+1),&elementNeighborsOffsets_subdomain);
+  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&elementNeighbors_subdomain);
+  for (int eN = 0; eN < nElements_subdomain+1; eN++)
+    elementNeighborsOffsets_subdomain[eN] = rowOffsets[eN];
+  for (size_t k = 0; k < rowNeighbors.size(); k++)
+    elementNeighbors_subdomain[k] = rowNeighbors[k];
+  //3. Generate the  new partitiong using PETSc, this is done in parallel using parmetis
+  Mat petscAdjacency;
+  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
+                         nElements_subdomain,
+                         mesh.nElements_global,
+                         elementNeighborsOffsets_subdomain,
+                         elementNeighbors_subdomain,
+                         PETSC_NULL,
+                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
+  IS elementPartitioningIS_new;
+  MatPartitioning petscPartition;
+  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
+  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
+  MatPartitioningSetFromOptions(petscPartition);
+  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
+
+  //get a petsc index set that has the new submdomain number for each element
+  MatPartitioningApply(petscPartition,&elementPartitioningIS_new);
+  MatPartitioningDestroy(&petscPartition);
+  MatDestroy(&petscAdjacency);
+  std::vector<int> elementOwner = gatherPartition(PROTEUS_COMM_WORLD,elementPartitioningIS_new,elementOffsets_old);
+  ISDestroy(&elementPartitioningIS_new);
+  return elementOwner;
+}
+
 int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                       const int* elementOwners)
 {
@@ -5370,12 +4763,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   //
   //get offsets so we can calculate the processor to global mapping
   //for elements in the old (default) partitioning
-  valarray<int> elementOffsets_old(size+1);
-  elementOffsets_old[0] = 0;
-  for(int sdN=0;sdN<size;sdN++)
-    elementOffsets_old[sdN+1] = elementOffsets_old[sdN] +
-      int(mesh.nElements_global)/size +
-      (int(mesh.nElements_global)%size > sdN);
+  valarray<int> elementOffsets_old = defaultChunkOffsets(mesh.nElements_global,size);
 
   //2.-3. The owner of every element: prescribed, or from the graph partitioner
   std::vector<int> elementOwner;
@@ -5388,52 +4776,27 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       elementOwner = prescribedOwners(PROTEUS_COMM_WORLD,elementOwners,mesh.nElements_global,size,"partitionElements","element");
     }
   else
-    {
-  //2. Extract subdomain element adjacency information could read
-  //only the required portion from a file
-  int nElements_subdomain = (elementOffsets_old[rank+1] - elementOffsets_old[rank]);
-  PetscInt *elementNeighborsOffsets_subdomain,*elementNeighbors_subdomain;
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain+1),&elementNeighborsOffsets_subdomain);
-  PetscMalloc(sizeof(PetscInt)*(nElements_subdomain*mesh.nElementBoundaries_element),&elementNeighbors_subdomain);
-  //this wastes a little space
-  elementNeighborsOffsets_subdomain[0] = 0;
-  for (int eN=0,offset=0; eN < nElements_subdomain; eN++)
-    {
-      int eN_global = elementOffsets_old[rank] + eN;
-      int offsetStart=offset;
-      for (int ebN=0; ebN< mesh.nElementBoundaries_element;ebN++)
-        {
-          int eN_neighbor_global = mesh.elementNeighborsArray[eN_global*mesh.nElementBoundaries_element + ebN];
-          if (eN_neighbor_global >= 0 )
-            elementNeighbors_subdomain[offset++] = eN_neighbor_global;
-        }
-      elementNeighborsOffsets_subdomain[eN+1]=offset;
-      sort(&elementNeighbors_subdomain[offsetStart],&elementNeighbors_subdomain[offset]);
-    }
-  //3. Generate the  new partitiong using PETSc, this is done in parallel using parmetis
-  Mat petscAdjacency;
-  ierr = MatCreateMPIAdj(PROTEUS_COMM_WORLD,
-                         nElements_subdomain,
-                         mesh.nElements_global,
-                         elementNeighborsOffsets_subdomain,
-                         elementNeighbors_subdomain,
-                         PETSC_NULL,
-                         &petscAdjacency);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
-  IS elementPartitioningIS_new;
-  MatPartitioning petscPartition;
-  MatPartitioningCreate(PROTEUS_COMM_WORLD,&petscPartition);
-  MatPartitioningSetAdjacency(petscPartition,petscAdjacency);
-  MatPartitioningSetFromOptions(petscPartition);
-  warnIfNotRepartitioning(PROTEUS_COMM_WORLD, petscPartition);
-
-  //get a petsc index set that has the new submdomain number for each element
-  MatPartitioningApply(petscPartition,&elementPartitioningIS_new);
-  MatPartitioningDestroy(&petscPartition);
-  MatDestroy(&petscAdjacency);
-  elementOwner = gatherPartition(PROTEUS_COMM_WORLD,elementPartitioningIS_new,elementOffsets_old);
-  ISDestroy(&elementPartitioningIS_new);
-    }
+    elementOwner = graphElementOwners(PROTEUS_COMM_WORLD,mesh,elementOffsets_old);
   timer.mark("element_owners");
+  //4.-6. Everything else follows from the owners without communication
+  if (partitionElementsLocal(mesh, rank, size, nElements_overlap, elementOwner, &timer) != 0)
+    MPI_Abort(PROTEUS_COMM_WORLD,1);
+  timer.report();
+  return 0;
+}
+
+/* Steps 4-6 of partitionElements: given the owner of every element, which
+   every rank holds, this rank's part of the partition. Plain C++ -- no MPI,
+   no PETSc, no files -- so one process can compute any rank's subdomain. Like
+   partitionElements it renumbers the global mesh in place (each rank's owned
+   entities contiguous) and writes the subdomain mesh, the offsets, the
+   subdomain-to-global maps and the element permutation to mesh. Returns
+   nonzero, having said why on stderr, if a node, element boundary or edge is
+   reached by no rank. */
+int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap,
+                           const std::vector<int>& elementOwner, StageTimer* timer)
+{
+  using namespace std;
   //number the elements: each rank's owned elements contiguous, in their old order
   valarray<int> nElements_subdomain_new, elementOffsets_new;
   std::vector<int> elementNumbering_global_old2new, elementNumbering_global_new2old;
@@ -5448,7 +4811,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   for (int eN=0;eN<mesh.nElements_global;eN++)
     mesh.elementNumbering_global_old2new[eN] = elementNumbering_global_old2new[eN];
 
-  timer.mark("element_numbering");
+  if (timer) timer->mark("element_numbering");
   //Sort element based arrays, maybe I don't need to do this, maybe
   //I just need to start writing into the subdomain mesh here and
   //preserve subdomain2old and subdomain2global mappings
@@ -5495,11 +4858,9 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   //A node belongs to the lowest rank that owns an element containing it. The
   //rank-ordered mask chain that used to decide it marked the unmarked nodes of
   //each rank's owned elements; the minimum over all elements is the same rule.
-  std::vector<int> nodeOwner(mesh.nNodes_global,size);
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    for (int nN=0;nN<mesh.nNodes_element;nN++)
-      lowerOwner(nodeOwner,mesh.elementNodesArray[eN*mesh.nNodes_element+nN],elementOwner[eN]);
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,nodeOwner,size,"node");
+  std::vector<int> nodeOwner = nodeOwnersFromElementOwners(mesh,elementOwner,size);
+  if (!everyEntityOwned(nodeOwner,size,"node"))
+    return 1;
   set<int> nodes_subdomain_owned;
   for (int nN=0;nN<mesh.nNodes_global;nN++)
     if (nodeOwner[nN] == rank)
@@ -5548,14 +4909,12 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       nodeMaterialTypes_new[nN_new] = mesh.nodeMaterialTypes[nN];
     }
 
-  timer.mark("nodes");
+  if (timer) timer->mark("nodes");
   //4b. repeat process to build global face numbering: a face belongs to the
   //lowest rank that owns an element it bounds
-  std::vector<int> elementBoundaryOwner(mesh.nElementBoundaries_global,size);
-  for (int eN=0;eN<mesh.nElements_global;eN++)
-    for (int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
-      lowerOwner(elementBoundaryOwner,mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN],elementOwner[eN]);
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,elementBoundaryOwner,size,"element boundary");
+  std::vector<int> elementBoundaryOwner = elementBoundaryOwnersFromElementOwners(mesh,elementOwner,size);
+  if (!everyEntityOwned(elementBoundaryOwner,size,"element boundary"))
+    return 1;
   //Now as with elements and nodes build a global face numbering
   //resetting the face based information is a little different since much of this is currently built below based
   //on the element and node information
@@ -5644,24 +5003,14 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   //     eleout.close();
   //     partout.close();
 
-  timer.mark("element_boundaries");
+  if (timer) timer->mark("element_boundaries");
   //4c. Build global edge numbering as well
   // ownership is determined by the edges on owned elements: an edge belongs to
   // the lowest rank that owns an element with both its nodes, and those
   // elements are all in the node star of either one
-  std::vector<int> edgeOwner(mesh.nEdges_global,size);
-  for (int ig = 0; ig < mesh.nEdges_global; ig++)
-    {
-      const int nN0_old = mesh.edgeNodesArray[2*ig], nN1_old = mesh.edgeNodesArray[2*ig+1];
-      for (int offset=mesh.nodeElementOffsets[nN0_old];offset<mesh.nodeElementOffsets[nN0_old+1];offset++)
-        {
-          const int eN = mesh.nodeElementsArray[offset];
-          for (int nN=0;nN<mesh.nNodes_element;nN++)
-            if (mesh.elementNodesArray[eN*mesh.nNodes_element+nN] == nN1_old)
-              lowerOwner(edgeOwner,ig,elementOwner[eN]);
-        }
-    }
-  checkEveryEntityOwned(PROTEUS_COMM_WORLD,edgeOwner,size,"edge");
+  std::vector<int> edgeOwner = edgeOwnersFromElementOwners(mesh,elementOwner,size);
+  if (!everyEntityOwned(edgeOwner,size,"edge"))
+    return 1;
   valarray<int> nEdges_subdomain_new, edgeOffsets_new;
   std::vector<int> edgeNumbering_old2new_global, edgeNumbering_global_new2old;
   numberByOwner(edgeOwner,size,nEdges_subdomain_new,edgeOffsets_new,
@@ -5684,7 +5033,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
       nodesEdgeMap_global_new[et] = ig;
     }
 
-  timer.mark("edges");
+  if (timer) timer->mark("edges");
   //5. At this point we have new, renumbered and sorted the global element, and node based information, and
   //we have it all on each processor so we can add overlap
   set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
@@ -5873,7 +5222,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
             }
         }
     }
-  timer.mark("overlap");
+  if (timer) timer->mark("overlap");
   //
   //6. Now build subdomain mesh
   //
@@ -6147,8 +5496,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
     }
 
 
-  timer.mark("subdomain_mesh");
-  timer.report();
+  if (timer) timer->mark("subdomain_mesh");
   return 0;
 }
 

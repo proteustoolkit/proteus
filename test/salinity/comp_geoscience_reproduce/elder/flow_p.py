@@ -89,6 +89,7 @@ coefficients = Richards.Coefficients(
     uR=1.0,
     cK=1.0,
     outputQuantDOFs=False,
+    diagnostics=('edge_flux',),
 )
 
 rho_fw = 1.0

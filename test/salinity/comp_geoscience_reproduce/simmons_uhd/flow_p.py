@@ -522,6 +522,7 @@ coefficients = RandomFieldCoefficients(
     k0_seed=SEED,
     k0_random=RANDOM_K,
     source_inflow_only=SOURCE_INFLOW_ONLY and case.saturated,
+    diagnostics=('edge_flux',),
 )
 
 

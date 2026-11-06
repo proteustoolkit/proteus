@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-"""
+r"""
 common definitions for simple miscible displacement problem
 
     Flow (pressure equation)
@@ -21,12 +21,21 @@ common definitions for simple miscible displacement problem
      
 """
 from proteus import *
+from proteus import Context
 from proteus import SubsurfaceTransportCoefficients as STC
 
 import numpy as np
 
+# Context options (parun ... -C "unstructured_mesh=False refinement_level=8 ndays=500 nDTout=2")
+ct = Context.Options([
+    ("unstructured_mesh", True, "triangle mesh of the poly file; False uses a regular triangular mesh (no mesh generator)"),
+    ("refinement_level", 32, "number of mesh intervals along the 1000 m side"),
+    ("ndays", 5000.0, "final time [d]"),
+    ("nDTout", 50, "number of output steps"),
+])
+
 class MiscibleDisplacementCoefficients_Flow(STC.SinglePhaseDarcyCoefficients):
-    """
+    r"""
     Simplified transport coefficients for pressure equation in single phase flow with mild viscosity depedence
 
     Flow (pressure equation)
@@ -143,23 +152,27 @@ nd= 2
 #for converting from seconds to days
 days2sec = 60.*60.*24.
 
-ndays = 5000.0#3650.0
+ndays = ct.ndays
 T = ndays #[d]
-nDTout = 50
+nDTout = ct.nDTout
 
 #just a simple rectangular domain for now
 regular_domain = Domain.RectangularDomain(L[:nd],
                                           units="m")
-#generate a .poly file in case we want to use an unstructured grid
-regular_domain.writePoly('mesh')
-unstructured_mesh = True
-#'domain' is the name of the object that Proteus looks for to define geometry 
-domain = Domain.PlanarStraightLineGraphDomain(fileprefix='mesh',name='md_mesh')
-domain.boundaryTags = regular_domain.boundaryLegend
+unstructured_mesh = ct.unstructured_mesh
+if unstructured_mesh:
+    #generate a .poly file for triangle
+    regular_domain.writePoly('mesh')
+    #'domain' is the name of the object that Proteus looks for to define geometry
+    domain = Domain.PlanarStraightLineGraphDomain(fileprefix='mesh',name='md_mesh')
+    domain.boundaryTags = regular_domain.boundaryLegend
+else:
+    #regular triangular mesh of the rectangle, nnx x nny nodes
+    domain = regular_domain
 
 
 genMesh = True
-refinement_level = 32 #define characteristic length
+refinement_level = ct.refinement_level #define characteristic length
 he = L[0]/float(refinement_level)
 
 triangleOptions = "VApq30Dena{area:8.8f}".format(area=(he**2)/2.0)
@@ -179,6 +192,10 @@ Ident[0,0]=1.0; Ident[1,1] = 1.0
 
 conductivities = {1:lambda x,t: K_0*Ident}
 sources = {1:lambda x,t: f_0}
+if not unstructured_mesh:
+    #the regular mesh's elements have material type 0
+    conductivities[0] = conductivities[1]
+    sources[0] = sources[1]
 #transport heterogeneity is handled as constants only
 omega_types   = np.array([porosity_0, porosity_0])
 alpha_L_types = np.array([alpha_L_0,alpha_L_0])
@@ -259,7 +276,7 @@ initialConditions_trans = {0:ConstantIC(concentration_background)}
 # numerics
 parallel = False
 
-nnx = nny = int(L[0]/he)
+nnx = nny = int(L[0]/he) + 1
 nLevels = 1
 if parallel:
     nLevels = 1

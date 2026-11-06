@@ -3311,7 +3311,7 @@ void solveLocalBDM1projectionFromFlux(int nElements_global,
           sign=1.0;
           if(elementBoundaryElementsArray[2*ebN_global+1] == eN)
             sign=-1.0;
-	  for (s = 0; s < nSimplex; s++)
+	  for (s = 0; s < nSpace; s++) /* nSpace test functions per face; s = nSpace wrote one row past the element */
 	    {
 	      irow = ebN*nSpace + s;
 	      kp = (ebN+s+1) % nSimplex;
@@ -3459,44 +3459,6 @@ void getElementBDM2velocityValuesLagrangeRep(int nElements_global,
 		    *
 		    p1_velocity_dofs[eN*nVDOF_element + j];
 
-		}/*k*/ 
-	    }/*id*/
-	}/*iq*/
-    }/*eN*/
-
-}
-
-void getElementLDGvelocityValuesLagrangeRep(int nElements_global,
-					     int nQuadraturePoints_element,
-					     int nSpace,
-					     int nDOF_trial_element,
-					     int nVDOF_element,
-					     double * q_v, /*scalar shape fncts*/
-					     double * velocity_dofs,
-					     double * q_velocity)
-{
-  /***********************************************************************
-    Assumes local representation for \f$[P^k(E)]^d\f$ where k=1 or 2
-
-   **********************************************************************/
-  int eN,iq,id,k,j;
-
-  for (eN = 0; eN < nElements_global; eN++)
-    {
-      for (iq = 0; iq < nQuadraturePoints_element; iq++)
-	{
-	  for (id = 0; id < nSpace; id++)
-	    {
-	      q_velocity[eN*nQuadraturePoints_element*nSpace + iq*nSpace + id] = 0.0;
-
-	      for (k=0; k < nDOF_trial_element; k++)
-		/*for (k = 0; k < nSpace+1; k++)*/
-		{
-		  j = k*nSpace+ id; /*id*(nSpace+1) + k;*/
-		  q_velocity[eN*nQuadraturePoints_element*nSpace + iq*nSpace + id] +=
-		    q_v[eN*nQuadraturePoints_element*nDOF_trial_element + iq*nDOF_trial_element + k]
-		    *
-		    velocity_dofs[eN*nVDOF_element + j];
 		}/*k*/ 
 	    }/*id*/
 	}/*iq*/

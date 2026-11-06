@@ -7,7 +7,7 @@
 #           the wetted river face (leftTop), no flow on the rest of the left side, top
 #           and bottom, and no condition (zero flux) on the right
 #   trans   TADR STABILIZATION_TYPE 5 + FCT, advected with the reconstructed flow flux
-#           (RICHARDS_EDGE_VELOCITY=1); c_in = 0.7 on the wetted river face,
+#           (EDGE_VELOCITY=True in the transport deck); c_in = 0.7 on the wetted river face,
 #           Dm = 1.886e-2 m^2/d, alpha_L = 0.1 m, alpha_T = 0.01 m
 #   density density/: rho_s = 1.025 (eps = 0.025); non_density/: rho_s = 1,
 #           DENSITY_MODEL=None.  Also different: a0 (unused) and the flow line search
@@ -32,7 +32,6 @@ if [ -n "${PROTEUS_SRC:-}" ]; then export PYTHONPATH="$PROTEUS_SRC"; else unset 
 # The coupling the manuscript describes (Sec. "Compatibility with the flow model"):
 # TADR advects with the mass flux Richards reconstructs element by element from its
 # realized edge exchanges.  Without it STABILIZATION_TYPE 5 copies E_ij as the edge flux.
-export RICHARDS_EDGE_VELOCITY=1
 export OMP_NUM_THREADS=1
 
 for v in density non_density; do
@@ -43,7 +42,6 @@ for v in density non_density; do
   {
     echo "date: $(date)"
     echo "conda env: $CONDA_DEFAULT_ENV"
-    echo "RICHARDS_EDGE_VELOCITY: $RICHARDS_EDGE_VELOCITY"
     echo "proteus HEAD: $(git -C "$(python -c 'import proteus,os;print(os.path.dirname(proteus.__file__))')" rev-parse HEAD 2>/dev/null)"
     python -c "import proteus,os;print('proteus:', os.path.dirname(proteus.__file__))"
     echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)"

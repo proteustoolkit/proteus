@@ -55,7 +55,7 @@ Checked numerically on a 201x201x41 grid (`python -I mms_exact.py` self-test): `
 |---|---|
 | Flow | Richards `STABILIZATION_TYPE=2`, FCT on, `Theta=1`, lumped storage (`ML`), consistent-mass term in FCT (`LUMPED_MASS_MATRIX=False`), weak IIPG Dirichlet |
 | Transport | TADR `STABILIZATION_TYPE=5` (ImplicitEV, BE + Newton), FCT on, `forceStrongConditions=True` |
-| Coupling | `RICHARDS_EDGE_VELOCITY=1` (F = A - A^T from Richards' edge velocity), carried M |
+| Coupling | `EDGE_VELOCITY=True` (F = A - A^T from Richards' edge velocity), carried M |
 | Splitting | `Sequential_MinModelStep`, Richards then TADR, rho and mu lagged one step |
 | Low-order runs | same, with FCT off in BOTH models |
 

@@ -1030,22 +1030,40 @@ class TriangulatedSurfaceDomain(D_base):
         raise UserWarning("Xdmf output not implemented")
 
 
-class Mesh2DMDomain(D_base):
+class MeshYmfDomain(D_base):
     """
-    2D domains from ADH mesh files
-    """
-    def __init__(self,fileprefix):
-        D_base.__init__(self,2,name=fileprefix)
-        self.meshfile=fileprefix
+    2D or 3D domains from a ymf mesh, ``fileprefix.ymf`` and ``fileprefix.h5``
 
+    The file a converter (``ymf-import-<code>``) or :func:`MeshTools.writeMeshYmf`
+    writes: one space ``Spatial_Domain`` of triangles or tetrahedra, with node
+    and element material types and, optionally, a facet list whose tags become
+    the element boundary tags. ``nd`` is read from the file when not given.
 
-class Mesh3DMDomain(D_base):
+    Or the same mesh held in memory: ``grid`` is a ymf grid (``topology``,
+    ``geometry``, optional ``attributes``, ``facets``, ``provenance``), as a
+    ``discrete`` domain block holds it; ``fileprefix`` is then only a name.
+    Its HDF5 references, if any, resolve from the working directory.
     """
-    3D domains from ADH mesh files
-    """
-    def __init__(self,fileprefix):
-        D_base.__init__(self,3,name=fileprefix)
-        self.meshfile=fileprefix
+    def __init__(self,fileprefix=None,nd=None,grid=None):
+        if (fileprefix is None) == (grid is None) and grid is None:
+            raise ValueError("MeshYmfDomain reads a ymf mesh file (fileprefix) or a grid")
+        self.grid = grid
+        source = grid if grid is not None else fileprefix
+        if nd is None:
+            from .MeshTools import ymfMeshTopology
+            topology = ymfMeshTopology(source)
+            nd = {"Triangle": 2, "Tetrahedron": 3}.get(topology)
+            if nd is None:
+                raise ValueError("%s holds a %s mesh; MeshYmfDomain reads triangles and tetrahedra"
+                                 % ("the grid" if grid is not None else fileprefix + ".ymf", topology))
+        name = fileprefix if fileprefix is not None else (grid.get("name") or "ymf_mesh")
+        D_base.__init__(self,nd,name=name)
+        self.meshfile = None if grid is not None else fileprefix
+
+    @property
+    def ymfSource(self):
+        """What the mesh is read from: the grid, or the file prefix"""
+        return self.grid if self.grid is not None else self.meshfile
 
 
 class MeshHexDomain(D_base):
