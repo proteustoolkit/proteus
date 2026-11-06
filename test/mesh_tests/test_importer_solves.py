@@ -67,8 +67,12 @@ def nodal_error(result):
 @pytest.mark.parametrize("kind, nodes, error", [
     ("gmsh2d", 98, 3.984621e-03),
     ("gmsh3d", 341, 2.286453e-02),
+    ("dmplex3d", 341, 2.286453e-02),
 ])
 def test_a_gmsh_mesh_solves_the_same_on_two_ranks(tmp_path, kind, nodes, error):
+    """dmplex3d is gmsh_cube.msh read by PETSc: the same mesh as gmsh3d, so the same error."""
+    if kind == "dmplex3d":
+        pytest.importorskip("petsc4py")
     serial, _ = solve(tmp_path, kind, 1)
     parallel, line = solve(tmp_path, kind, 2)
     assert len(serial["u"]) == nodes

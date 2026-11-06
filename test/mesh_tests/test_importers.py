@@ -9,7 +9,8 @@ run in proteustoolkit/ymf-import-sms against its converter.
 - IFISS (``QuadrilateralMesh.generateFromQuadFileIFISS``): ``.mat`` grids made in the
   test, in the reader's own layout and in IFISS 3.7's.
 - NURBS (``MultilevelNURBSMesh``): the box.
-- DMPlex is round-tripped in ``test_generate_mesh_errors.py``.
+- DMPlex is round-tripped in ``test_generate_mesh_errors.py`` (a proteus mesh through a cell
+  list), and here: ``gmsh_cube.msh`` read by PETSc, against the same file through msh2simplex.
 - gmsh (``use_gmsh`` PSLG/PLC domains: ``msh2simplex``, then the triangle/tetgen readers):
   ``importer_meshes/gmsh_square.msh`` and ``gmsh_cube.msh``, written by gmsh 4.12.2 from the
   ``.geo`` files beside them (``Domain.writeGeo``, he_max 0.25 and 0.5). The stored ``.msh`` is
@@ -375,3 +376,90 @@ def test_a_regular_grid_from_files_keeps_every_digit(tmp_path, monkeypatch, nd):
     monkeypatch.chdir(tmp_path)
     np.testing.assert_array_equal(_by_position(_box_mesh(nd, 4, True), nd),
                                   _by_position(_box_mesh(nd, 4, False), nd))
+
+
+
+# --------------------------------------------------------------------------
+# DMPlex: a gmsh file through PETSc
+# --------------------------------------------------------------------------
+
+def _plex_mesh(path):
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    from proteus import Domain
+    plex = PETSc.DMPlex().createFromFile(path, interpolate=True, comm=PETSc.COMM_SELF)
+    return MeshTools._generateMesh(Domain.DMPlexDomain(plex), MeshTools.MeshOptions(nd=3)).meshList[0]
+
+
+def _faces_by_position(mesh):
+    """{sorted node coordinates of a face: its tag}."""
+    corners = mesh.nodeArray[mesh.elementBoundaryNodesArray]
+    return {tuple(sorted(map(tuple, c.round(12).tolist()))): int(t)
+            for c, t in zip(corners, mesh.elementBoundaryMaterialTypes)}
+
+
+def test_a_gmsh_file_read_by_petsc_is_the_mesh_msh2simplex_reads(tmp_path, monkeypatch):
+    """The DMPlex importer took its material types from the plex's cell-type label (the kind
+    of polytope), so every face had tag 3, interior or not, and every tetrahedron 6. They
+    are the plex's "Face Sets" and "Cell Sets" (gmsh's physical groups)."""
+    monkeypatch.chdir(tmp_path)
+    viaGmsh = _gmsh_mesh(tmp_path, 3, "gmsh_cube")
+    viaPlex = _plex_mesh("gmsh_cube.msh")
+    by_position = lambda x: x[np.lexsort(x.T[::-1])]  # noqa: E731
+    np.testing.assert_array_equal(by_position(viaPlex.nodeArray), by_position(viaGmsh.nodeArray))
+    for count in ("nElements_global", "nElementBoundaries_global", "nExteriorElementBoundaries_global",
+                  "nEdges_global"):
+        assert getattr(viaPlex, count) == getattr(viaGmsh, count), count
+    assert _faces_by_position(viaPlex) == _faces_by_position(viaGmsh)
+    assert set(viaPlex.elementMaterialTypes) == {1}
+
+
+def test_a_plex_node_takes_a_tag_of_a_face_it_is_on(tmp_path, monkeypatch):
+    """With no vertex sets, a boundary node takes the tag of the first tagged exterior face it
+    is on; interior nodes stay 0."""
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(os.path.join(MESHES, "gmsh_cube.msh"), "gmsh_cube.msh")
+    mesh = _plex_mesh("gmsh_cube.msh")
+    exterior = mesh.exteriorElementBoundariesArray
+    tagsOn = {}
+    for ebN in exterior:
+        for nN in mesh.elementBoundaryNodesArray[ebN]:
+            tagsOn.setdefault(int(nN), set()).add(int(mesh.elementBoundaryMaterialTypes[ebN]))
+    for nN, tag in enumerate(mesh.nodeMaterialTypes):
+        if nN in tagsOn:
+            assert tag in tagsOn[nN], nN
+        else:
+            assert tag == 0, nN
+    assert len(tagsOn) == 341 - 69
+
+
+def _cube_plex(PETSc):
+    source = MeshTools.TetrahedralMesh()
+    source.generateTetrahedralMeshFromRectangularGrid(3, 3, 3, 1.0, 1.0, 1.0)
+    return source, PETSc.DMPlex().createFromCellList(
+        3, source.elementNodesArray.astype(PETSc.IntType), source.nodeArray.copy(),
+        interpolate=True, comm=PETSc.COMM_SELF)
+
+
+def test_a_plex_marker_label_tags_the_boundary(tmp_path, monkeypatch):
+    """A plex with only "marker" (a box made with -dm_plex_separate_marker 0, or markBoundaryFaces)."""
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    from proteus import Domain
+    monkeypatch.chdir(tmp_path)
+    source, plex = _cube_plex(PETSc)
+    plex.createLabel("marker")
+    plex.markBoundaryFaces("marker", 1)
+    mesh = MeshTools._generateMesh(Domain.DMPlexDomain(plex), MeshTools.MeshOptions(nd=3)).meshList[0]
+    assert set(mesh.elementBoundaryMaterialTypes[mesh.exteriorElementBoundariesArray]) == {1}
+    assert set(mesh.elementBoundaryMaterialTypes[mesh.interiorElementBoundariesArray]) == {0}
+    assert mesh.nExteriorElementBoundaries_global == source.nExteriorElementBoundaries_global
+
+
+def test_a_two_dimensional_plex_is_refused_by_name(tmp_path, monkeypatch):
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    from proteus import Domain
+    monkeypatch.chdir(tmp_path)
+    plex = PETSc.DMPlex().createFromCellList(
+        2, np.array([[0, 1, 2], [0, 2, 3]], dtype=PETSc.IntType),
+        np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]), interpolate=True, comm=PETSc.COMM_SELF)
+    with pytest.raises(ValueError, match="reads tetrahedra in 3D"):
+        MeshTools._generateMesh(Domain.DMPlexDomain(plex), MeshTools.MeshOptions(nd=3))
