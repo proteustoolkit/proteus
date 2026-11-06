@@ -4,16 +4,30 @@
 # until it is added here.
 #
 #   state       defines state()/set_state(): archived per rank in solver_state/ and restored after the spin-up
+#               (BackwardEuler's state is m_last, and BackwardEuler_cfl's also dtLast; PsiTCtte, PsiTCtte_new, SSP,
+#               the RKEVs and TADR's CompatibleBackwardEuler inherit it, which does not say that they carry nothing
+#               more. Measured by test/test_hotstart_levelset.py, with the mprans.RANS2P shock capturing and
+#               subgrid error lag machines and NumericalSolution's own owners: the coupled fields, the solver's
+#               unknowns and the next system step; and with CLSVOF, and on rising_bubble_rans3p with the
+#               mprans.VOF3P and NCLS3P shock capturing lag machines)
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
 #               test/hotstart_measure with HS_RD_LAG=1: mprans.RDLS.ShockCapturing, 1e-16 on every field;
-#               test/test_hotstart_rans3pf.py: mprans.RANS3PF.SubgridError and Min_dt_cfl_controller, bit-identical given the state of the rest;
+#               test/test_hotstart_rans3pf.py: mprans.RANS3PF.SubgridError and Min_dt_cfl_controller, bit-identical given the state of the rest
+#               (RANS3PF.SubgridError also on rising_bubble_rans3p, where it switches to lagging: test_hotstart_levelset.py);
 #               the vortex2D backward Euler hot start, 1e-16: Min_dt_controller, Newton_controller, MCorr.Newton_controller, Sequential_MinModelStep)
 #   follows     carries no history of its own: it re-derives its next step from a restored object
 #               (the FLCBDF controllers read the restored integrator, syncAfterRestore)
 #   unmeasured  may carry history; a hot start rebuilds it from the restart state and nobody has measured
 #               what that costs. Moving a class out of here means measuring it (test/hotstart_measure).
+#
+# Not restored, by decision (cekees, 2026-11-06): the dof history's dof_last_last (FemTools.FiniteElementFunction).
+# An archive hot start shifts the dof history twice before its first step (before the stepping loop and at the
+# step), so there dof_last_last equals dof_last, where the uninterrupted run holds the previous step's dofs; dof_last
+# itself is exact. Nothing in the tree reads dof_last_last for a computation today (the PUMI adapt only transfers it,
+# as *_old_old fields nobody reads); the PUMI hot start reloads it from its checkpoint and is right. A kernel that
+# starts reading it must archive dof_last and skip the first shift on a continue hot start.
 #
 # family  module  class  category
 SC ShockCapturing Eikonal_SC unmeasured
@@ -33,15 +47,15 @@ SC ShockCapturing ScalarAdvection_SC unmeasured
 SC mprans.Dissipation ShockCapturing unmeasured
 SC mprans.Kappa ShockCapturing unmeasured
 SC mprans.NCLS ShockCapturing state
-SC mprans.NCLS3P ShockCapturing unmeasured
-SC mprans.RANS2P ShockCapturing unmeasured
+SC mprans.NCLS3P ShockCapturing state
+SC mprans.RANS2P ShockCapturing state
 SC mprans.RANS3PF ShockCapturing state
 SC mprans.RANS3PSed ShockCapturing unmeasured
 SC mprans.RDLS ShockCapturing rebuilt
 SC mprans.SW2D ShockCapturing unmeasured
 SC mprans.TADR ShockCapturing unmeasured
 SC mprans.VOF ShockCapturing state
-SC mprans.VOF3P ShockCapturing unmeasured
+SC mprans.VOF3P ShockCapturing state
 SC mprans.VOS3P ShockCapturing unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
@@ -68,7 +82,7 @@ SG mprans.Dissipation SubgridError unmeasured
 SG mprans.Kappa SubgridError unmeasured
 SG mprans.NCLS SubgridError unmeasured
 SG mprans.NCLS3P SubgridError unmeasured
-SG mprans.RANS2P SubgridError unmeasured
+SG mprans.RANS2P SubgridError state
 SG mprans.RANS3PF SubgridError rebuilt
 SG mprans.RANS3PSed SubgridError unmeasured
 SG mprans.RDLS SubgridError unmeasured
@@ -103,8 +117,8 @@ STEP StepControl PsiTCtte_controller unmeasured
 STEP mprans.MCorr Newton_controller rebuilt
 STEP mprans.MCorr3P Newton_controller unmeasured
 STEP mprans.RDLS PsiTC unmeasured
-TI TimeIntegration BackwardEuler rebuilt
-TI TimeIntegration BackwardEuler_cfl rebuilt
+TI TimeIntegration BackwardEuler state
+TI TimeIntegration BackwardEuler_cfl state
 TI TimeIntegration CentralDifference_2ndD unmeasured
 TI TimeIntegration ExplicitRK_base unmeasured
 TI TimeIntegration FLCBDF state
@@ -117,18 +131,18 @@ TI TimeIntegration IMEX_HJ_Euler unmeasured
 TI TimeIntegration LinearSSPRKPIintegration unmeasured
 TI TimeIntegration LinearSSPRKintegration unmeasured
 TI TimeIntegration OuterTheta unmeasured
-TI TimeIntegration PsiTCtte unmeasured
-TI TimeIntegration PsiTCtte_new unmeasured
-TI TimeIntegration SSP unmeasured
+TI TimeIntegration PsiTCtte state
+TI TimeIntegration PsiTCtte_new state
+TI TimeIntegration SSP state
 TI TimeIntegration SSPRKPIintegration unmeasured
 TI TimeIntegration VBDF state
 TI mprans.GN_SW2DCV RKEV state
-TI mprans.NCLS RKEV rebuilt
+TI mprans.NCLS RKEV state
 TI mprans.SW2DCV RKEV state
 # CompatibleBackwardEuler: the compatible transport's carried storage M lives on TADR.LevelModel
 # (carriedStorage); a hot start reseeds it with the flow's m^n
-TI mprans.TADR CompatibleBackwardEuler unmeasured
-TI mprans.TADR RKEV unmeasured
-TI mprans.VOF RKEV rebuilt
-TI mprans.VOF3P RKEV unmeasured
-TI mprans.VOS3P RKEV unmeasured
+TI mprans.TADR CompatibleBackwardEuler state
+TI mprans.TADR RKEV state
+TI mprans.VOF RKEV state
+TI mprans.VOF3P RKEV state
+TI mprans.VOS3P RKEV state

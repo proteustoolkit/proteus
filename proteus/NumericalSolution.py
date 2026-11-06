@@ -87,6 +87,83 @@ def _with_numerics_petsc_options(method):
     return wrapper
 
 
+def hot_start_step(archived_times, t):
+    """The index of the latest archived step at or before ``t``, the step a hot start (``-H -t t``) resumes from.
+
+    The archived times are sums of steps, so the step meant by ``t`` is often archived a few ulps away from it
+    (0.02 + 0.02 + 0.02 is 0.06000000000000001): an archived time counts as "at" ``t`` when it is within a millionth of
+    the smallest interval between archived times. With no archived time at or before ``t`` it is the first step.
+    """
+    times = numpy.asarray(archived_times, dtype=float)
+    gaps = numpy.diff(times)
+    gaps = gaps[gaps > 0.0]
+    tol = 1.0e-6 * gaps.min() if len(gaps) else 0.0
+    tCount = len(times) - 1
+    while tCount > 0 and times[tCount] > t + tol:
+        tCount -= 1
+    return tCount
+
+
+class _CoupledFields(object):
+    """The fields at the quadrature points and faces that other models read from a level model
+    (NS_base.COUPLED_FIELD_NAMES), as a solver-state owner: a hot start puts them back as the
+    archived step left them.
+
+    They are the values of the model's last residual evaluation, not of its dofs: a model whose dofs
+    are changed after its solve (VOF and NCLS by MCorr, NCLS by RDLS) leaves the next step's first
+    models reading its last Newton iterate. Rebuilt from the archived dofs they differ (damBreakLevelSet:
+    VOF's ('u', 0) by 7e-2 at the restart), and the hot start drifts from the uninterrupted run."""
+
+    def __init__(self, ns, lm):
+        self.ns, self.lm = ns, lm
+
+    @staticmethod
+    def _key(store, key):
+        return "%s|%s|%d" % (store, key[0], key[1])
+
+    def state(self):
+        return {self._key(store, key): v.copy() for (store, key), v in self.ns._coupledFields(self.lm)} or None
+
+    def set_state(self, state):
+        for (store, key), v in self.ns._coupledFields(self.lm):
+            k = self._key(store, key)
+            if k in state and numpy.shape(state[k]) == v.shape:
+                v[:] = state[k]
+
+
+class _SolverUnknowns(object):
+    """A model's nonlinear unknowns on its finest level (``uList[-1]``) as a solver-state owner. They are the
+    solver's last iterate, which its next solve starts from and the next step's dof history is shifted from;
+    they need not be the dofs the step ended with (RDLS and MCorr change NCLS's and VOF's dofs after their
+    solves), so a hot start that rebuilt them from the archived dofs started each Newton from another guess."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def state(self):
+        return {"u": numpy.array(self.model.uList[-1], copy=True)}
+
+    def set_state(self, state):
+        if numpy.shape(state["u"]) == self.model.uList[-1].shape:
+            self.model.uList[-1][:] = state["u"]
+
+
+class _SystemStep(object):
+    """The next system step, as the system step controller chose it after the archived step, as a
+    solver-state owner. A hot start's ``initialize_dt_system`` chooses afresh from the restart state,
+    without the history that capped the uninterrupted run's choice (damBreakLevelSet restarted at 0.005
+    stepped to 0.01, the uninterrupted run to 0.0075)."""
+
+    def __init__(self, controller):
+        self.controller = controller
+
+    def state(self):
+        return {"dt_system": float(self.controller.dt_system)}
+
+    def set_state(self, state):
+        self.controller.setNextStep(state["dt_system"])
+
+
 class NS_base(object):  # (HasTraits):
     r"""
     The base class for managing the numerical solution of  PDE's.
@@ -122,8 +199,11 @@ class NS_base(object):  # (HasTraits):
 
     @_with_numerics_petsc_options
     def __init__(self,so,pList,nList,sList,opts,simFlagsList=None,TwoPhaseFlow=False):
-        if getattr(opts, 'hotStartMode', 'continue') not in ('continue', 'restart'):
-            raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (opts.hotStartMode,))
+        # a driver that predates the option (an installed parun is a copy made at install time) gets the default
+        self.hotStartMode = getattr(opts, 'hotStartMode', 'continue')
+        self._solverStateRefused = []
+        if self.hotStartMode not in ('continue', 'restart'):
+            raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (self.hotStartMode,))
         from . import Comm
         comm=Comm.get()
         self.comm=comm
@@ -487,6 +567,7 @@ class NS_base(object):  # (HasTraits):
 
 
         logEvent("Setting initial conditions",level=0)
+        self._archivedDofs = {}
         for index,p,n,m,simOutput in zip(list(range(len(self.modelList))),self.pList,self.nList,self.modelList,self.simOutputList):
             if self.opts.hotStart:
                 logEvent("Setting initial conditions from hot start file for "+p.name)
@@ -500,10 +581,8 @@ class NS_base(object):  # (HasTraits):
                 assert archiveTimes, \
                     ("hot start archive %s records no timesteps"
                      % (self.ar[index].filename,))
-                # the latest step at or before the requested time
-                tCount = len(archiveTimes) - 1
-                while tCount > 0 and archiveTimes[tCount] > self.opts.hotStartTime:
-                    tCount -= 1
+                # the latest step at or before the requested time (up to the archive's rounding)
+                tCount = hot_start_step(archiveTimes, self.opts.hotStartTime)
                 time = archiveTimes[tCount]
                 self.ar[index].continue_from(tCount)
                 if tCount > 0:
@@ -525,6 +604,10 @@ class NS_base(object):  # (HasTraits):
                         lm.timeIntegration.tLast = time
                         lm.timeIntegration.t = time
                         lm.timeIntegration.dt = dt
+                #the dofs the archived step ended with: the coefficient evaluations and the spin-up below
+                #may change them, and a continue hot start puts them back (restoreArchivedDofs)
+                self._archivedDofs[index] = [[lm.u[cj].dof.copy() for cj in range(lm.coefficients.nc)]
+                                             for lm in m.levelModelList]
                 self.tCount = tCount
             elif p.initialConditions is not None:
                 logEvent("Setting initial conditions for "+p.name)
@@ -692,7 +775,12 @@ class NS_base(object):  # (HasTraits):
             #the spin-up above, and the step controllers' initializeTimeHistory
             #in initialize_dt_system, rebuilt the lag state from the restart
             #state; put back the state the archived step ended with
+            self._solverStateRefused = []
             restored = [self.restoreSolverState(m,index,self.tCount) for index,m in enumerate(self.modelList)]
+            self._warnSolverStateRefused()
+            for index,m in enumerate(self.modelList):
+                if restored[index]:
+                    self.restoreArchivedDofs(m,index)
             if all(restored):
                 #the models' first-step branches (a low-order first step, no extrapolation from the
                 #previous solutions) belong to a run with no history; this one has its history back
@@ -1268,6 +1356,11 @@ class NS_base(object):  # (HasTraits):
             obj = getattr(lm, owner, None)
             if obj is not None and hasattr(obj, "state"):
                 yield owner, obj
+        if model is self.modelList[0]:
+            # one system step for all the models: kept with the first
+            yield "systemStep", _SystemStep(self.systemStepController)
+        yield "coupledFields", _CoupledFields(self, lm)
+        yield "unknowns", _SolverUnknowns(model)
 
     def _solver_state_fingerprint(self, model, index):
         """What the rank-local lag arrays are tied to: the number of ranks and this rank's
@@ -1333,7 +1426,7 @@ class NS_base(object):  # (HasTraits):
         if ar.inline or ar.dataItemFormat != "HDF":
             return
         base = self._solver_state_group_path(model)
-        items = [("%s/fingerprint" % base, self._solver_state_fingerprint(model, index))]
+        items = []
         for owner, obj in self._solver_state_owners(model):
             st = obj.state()
             if st is None:
@@ -1344,6 +1437,10 @@ class NS_base(object):  # (HasTraits):
                     items.append(("%s/a.%s" % (path, key), value))
                 else:
                     items.append(("%s/s.%s" % (path, key), numpy.atleast_1d(numpy.asarray(value))))
+        #one order on every rank: a state's keys follow its dicts' insertion order, which can differ between
+        #ranks (RANS2P's numericalFlux.ebqe gets ('u', 0)..('u', 3) in an order set by the process's string
+        #hash seed), and the names must match rank for rank below
+        items = [("%s/fingerprint" % base, self._solver_state_fingerprint(model, index))] + sorted(items, key=lambda i: i[0])
         import json
         items.append(("%s/policy" % base, numpy.frombuffer(
             json.dumps(self._hot_start_policy(model, index), sort_keys=True, default=str).encode(), dtype='uint8')))
@@ -1434,6 +1531,38 @@ class NS_base(object):  # (HasTraits):
                 if hook is not None:
                     hook()
 
+    def _warnSolverStateRefused(self):
+        """One warning, on the first rank, when a continue hot start could not restore some model's solver state
+        and so goes on as a restart: the run then differs from the uninterrupted one, which the per-model log
+        lines alone made easy to miss (a hot start through the global mesh path re-partitions with the graph
+        partitioner, and an unpinned partitioner need not reproduce the archived partition)."""
+        if not self._solverStateRefused:
+            return
+        reasons = sorted(set(why for _, why in self._solverStateRefused))
+        message = ("hot start (continue): no solver state restored for %s (%s), so the run continues as a restart "
+                   "and will differ from the uninterrupted run; restart on the archived partition (same ranks; "
+                   "the per-rank mesh views, or -mat_partitioning_type current) to continue exactly, or use "
+                   "--hotStartMode restart to ask for a restart"
+                   % (", ".join(name for name, _ in self._solverStateRefused), "; ".join(reasons)))
+        logEvent("WARNING: " + message, level=0)
+        if self.comm.isMaster():
+            import warnings
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+    def restoreArchivedDofs(self, model, index):
+        """Continue hot start: put back the dofs read from the archive, the ones the archived step ended with.
+
+        Between the read and the first step the hot start evaluates every model's residual once (to compute
+        the coefficients) and runs the spin-up, and either may change a model's dofs, which the uninterrupted
+        run never did at that instant: RDLS's residual freezes its interface dofs to the level set's current
+        dofs (the mass-corrected ones, where the uninterrupted run still holds RDLS's own last solution, from
+        which its next preStep builds the normal reconstruction), and the spin-up solves its models again at
+        the restart time (rising_bubble_rans3p's pressureInitial, solved at t=0 only in the uninterrupted run).
+        The solver's unknowns (uList) are the unknowns owner's, put back in restoreSolverState."""
+        for lm, dofs in zip(model.levelModelList, self._archivedDofs.get(index, [])):
+            for cj, dof in enumerate(dofs):
+                lm.u[cj].dof[:] = dof
+
     def restoreSolverState(self, model, index, tCount):
         """Hot start: put back what archiveSolverState wrote at ``tCount``,
         after the spin-up has rebuilt (and so overwritten) the lag state.
@@ -1448,7 +1577,7 @@ class NS_base(object):  # (HasTraits):
         hdf = ar.hdfFile
         if ar.inline or ar.dataItemFormat != "HDF" or hdf is None:
             return False
-        if self.opts.hotStartMode == "restart":
+        if self.hotStartMode == "restart":
             logEvent("Hot start (restart): the history of model %s is rebuilt from the restart state" % model.name,
                      level=0)
             return False
@@ -1470,18 +1599,25 @@ class NS_base(object):  # (HasTraits):
                                "run's (%s); use hotStartMode='restart' (--hot-start-mode restart) to continue "
                                "the solution with a new policy and rebuild the history from it"
                                % (model.name, "; ".join(everyone[0])))
-        found, mine = None, 0
+        found, mine, ranks = None, 0, 1
         if "%s/step%s" % (base, suffix) in hdf:
             found = int(hdf["%s/step%s" % (base, suffix)][...][0])
-            mine = int(found == tCount and numpy.array_equal(
-                hdf["%s/fingerprint%s" % (base, suffix)][...], self._solver_state_fingerprint(model, index)))
+            archived = hdf["%s/fingerprint%s" % (base, suffix)][...]
+            fingerprint = self._solver_state_fingerprint(model, index)
+            mine = int(found == tCount and numpy.array_equal(archived, fingerprint))
+            ranks = int(archived[0] == fingerprint[0])
+        #collective on every rank, whatever this rank found
+        ranks = comm.allreduce(int(found is not None and ranks), op=MPI.MIN)
         if not comm.allreduce(mine, op=MPI.MIN):
             if found is not None and found != tCount:
                 why = "the archive holds the state of step %d only" % found
-            else:
+            elif not ranks:
                 why = "none was archived, or it was written by a different number of ranks or partition"
+            else:
+                why = "it was written by a different partition"
             logEvent("Hot start: no solver state to restore at step %d for model %s (%s); "
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
+            self._solverStateRefused.append((model.name, why))
             return False
         for owner, obj in self._solver_state_owners(model):
             if obj.state() is None or not hasattr(obj, "set_state"):

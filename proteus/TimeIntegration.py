@@ -335,6 +335,25 @@ class BackwardEuler(TI_base):
             self.beta_bdf[ci].flat[:] = self.m_last[ci].flat
             self.beta_bdf[ci] *= -dtInv
 
+    def state(self):
+        """The mass the next step differences against, ``m_last``: the value of the last residual of the
+        previous step, which need not be the mass of the dofs it ended with (a model whose dofs are changed
+        after its solve, VOF by the mass correction, keeps its uncorrected mass here). The spin-up of a
+        restart rebuilds it from the archived dofs (damBreakLevelSet: VOF's by 7e-2)."""
+        st = {"m_last_%d" % ci: numpy.array(self.m_last[ci], copy=True) for ci in self.m_last}
+        if self.integrateInterpolationPoints:
+            st.update({"m_ip_last_%d" % ci: numpy.array(self.m_ip_last[ci], copy=True) for ci in self.m_ip_last})
+        return st
+
+    def set_state(self, state):
+        # in place: m_last is the transport's q[('m_last', ci)] and m_history[0]
+        for ci in self.m_last:
+            if "m_last_%d" % ci in state:
+                self.m_last[ci][:] = state["m_last_%d" % ci]
+        for ci in self.m_ip_last:
+            if "m_ip_last_%d" % ci in state:
+                self.m_ip_last[ci][:] = state["m_ip_last_%d" % ci]
+
 class BackwardEuler_cfl(BackwardEuler):
     """
     Take a fraction of the max (over all components and elements)
@@ -368,6 +387,16 @@ class BackwardEuler_cfl(BackwardEuler):
         self.tLast=t0
         self.choose_dt()
         self.t = t0+self.dt
+    def state(self):
+        """BackwardEuler's, and the last step, which caps the growth of the next (dtRatioMax)."""
+        st = BackwardEuler.state(self)
+        if self.dtLast is not None:
+            st["dtLast"] = float(self.dtLast)
+        return st
+    def set_state(self, state):
+        BackwardEuler.set_state(self, state)
+        if "dtLast" in state:
+            self.dtLast = float(state["dtLast"])
     def updateTimeHistory(self,resetFromDOF=False):
         for ci in self.massComponents:
             self.m_last[ci].flat[:] = self.m_tmp[ci].flat

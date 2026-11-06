@@ -40,5 +40,9 @@ archiveFlag = ArchiveFlags.EVERY_USER_STEP
 dt_system_fixed = None
 """A system-wide wide time step used by SplitOperator objects"""
 
+systemStepSchedule = None
+"""System times to land the steps on instead of choosing them (a replay of another run's accepted steps, the
+first step included); see SplitOperator.SO_base.setStepSchedule"""
+
 skipSpinupOnHotstart = False
 """Use True if one wants to skip the spinup step when HotStart begins"""

@@ -20,6 +20,12 @@ Round 4 (same measure; before is main 9fca0b95):
   damBreakLevelSet interface=1 (RANS2P + CLSVOF), CLSVOF failure 1.1e-3   after: 0.0   CLSVOF's interface locator
   SWFlow circular_damBreak, SW2DCV failing in a middle SSP stage: crashed (stage counter past the order)   after: 0.0
                         the integrator's stage counter, stage values, the transport's *_dof_old and dLow are its state()
+A failure in the first step (C17/C14 round 1): the replay could not take the forced run's first step, whose dt
+initialize_dt_system chose; the system step controller now takes a schedule (so.systemStepSchedule) for every step.
+And CLSVOF's spin-up for a discontinuous initial condition runs in the first solve and clears coefficients.disc_ICs,
+which was not in its state(): the retry skipped the spin-up and diverged (three cuts instead of one).
+  damBreakLevelSet    VOF failure in step 1      5.0e-2 (replay's first step 1e-3, not 5e-4)   after: 0.0
+  fillingTank         CLSVOF failure in step 1   1.03 (schedule alone 3.0e-1)                   after: 3.4e-14
 (The 16% first reported was mostly the different step sequence: the same steps without a failure differ from the
 default run by 15-17% in velocity at t=0.05; fillingTank is that sensitive to dt.)
 """
@@ -62,6 +68,9 @@ CASES = {
     "fillingTank-clsvof": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=10, BIGAUGES="1,2,3,4"),
     "fillingTank-pressureIncrement": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="pressureIncrement", FAILAT=10),
     "damBreakLevelSet-vof": dict(DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT=5),
+    # a failure in the first step: its dt comes from initialize_dt_system
+    "damBreakLevelSet-vof-first-step": dict(DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT=1),
+    "fillingTank-clsvof-first-step": dict(DECK="fillingTank.py", ATOL=1e-9, FAILMODEL="clsvof", FAILAT=1),
     "rising_bubble_rans3p-mcorr3p": dict(DIR="surface_tension/rising_bubble_rans3p", SO="risingBubble_so.py",
                                          OPTS="nd=2 USE_SUPG_NS=1 ARTIFICIAL_VISCOSITY_NS=1", ATOL=1e-10,
                                          MAXITS=200, FAILMODEL="ls_consrv_p0", FAILAT=4),
@@ -110,8 +119,10 @@ def _replay_options(options):
 def test_a_retried_step_is_the_step_taken_without_failing(tmp_path, case):
     options = CASES[case]
     forced, accepted = _run(tmp_path / "forced", **options)
-    replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
+    replay, replayed = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
     assert int(open(os.path.join(str(tmp_path / "forced"), "retries.txt")).read()) >= 1, "the failure was not retried"
+    # the replay takes the forced run's steps, the first included
+    numpy.testing.assert_array_equal(numpy.loadtxt(replayed), numpy.loadtxt(accepted))
     assert _worst(forced, replay) < 1e-10
     # the failed attempt leaves no row in the beam deflection history (RANS2P_IB, a flexible beam)
     deflection = os.path.join(str(tmp_path / "forced"), "deflectionHistory.txt")
