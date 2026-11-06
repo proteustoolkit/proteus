@@ -637,6 +637,8 @@ class PT123velocityGenerator(AV_base):
     standalone application
     """
     from .cpostprocessing import getElementRT0velocityValues
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    getElementRT0velocityValues = staticmethod(getElementRT0velocityValues)
     def __init__(self,filebase,tnList,ci=0):
         self.filebase = filebase
         self.tnList = tnList

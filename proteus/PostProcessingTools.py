@@ -317,10 +317,20 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
     from .cpostprocessing import postProcessRT0potentialFromP1nc,postProcessRT0potentialFromP1nc_sd
     from .cpostprocessing import postProcessRT0velocityFromP1nc,postProcessRT0velocityFromP1nc_sd
     from .cpostprocessing import updateRT0velocityWithAveragedPotentialP1nc,updateRT0velocityWithAveragedPotentialP1nc_sd
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    postProcessRT0potentialFromP1nc = staticmethod(postProcessRT0potentialFromP1nc)
+    postProcessRT0potentialFromP1nc_sd = staticmethod(postProcessRT0potentialFromP1nc_sd)
+    postProcessRT0velocityFromP1nc = staticmethod(postProcessRT0velocityFromP1nc)
+    postProcessRT0velocityFromP1nc_sd = staticmethod(postProcessRT0velocityFromP1nc_sd)
+    updateRT0velocityWithAveragedPotentialP1nc = staticmethod(updateRT0velocityWithAveragedPotentialP1nc)
+    updateRT0velocityWithAveragedPotentialP1nc_sd = staticmethod(updateRT0velocityWithAveragedPotentialP1nc_sd)
 
     from .cpostprocessing import getElementRT0velocityValues
     from .cpostprocessing import getElementBoundaryRT0velocityValues
     from .cpostprocessing import getGlobalElementBoundaryRT0velocityValues
+    getElementRT0velocityValues = staticmethod(getElementRT0velocityValues)
+    getElementBoundaryRT0velocityValues = staticmethod(getElementBoundaryRT0velocityValues)
+    getGlobalElementBoundaryRT0velocityValues = staticmethod(getGlobalElementBoundaryRT0velocityValues)
 
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='p1-nc',
@@ -3116,6 +3126,8 @@ class VPP_POINT_EVAL_GWVD(VelocityPostProcessingAlgorithmBase):
     Currently only working for P=1 and P=2
     """
     from .cpostprocessing import getElementLDGvelocityValuesLagrangeRep
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    getElementLDGvelocityValuesLagrangeRep = staticmethod(getElementLDGvelocityValuesLagrangeRep)
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='point-eval-gwvd',
                                                      vectorTransport=vectorTransport,

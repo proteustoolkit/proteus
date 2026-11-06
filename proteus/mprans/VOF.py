@@ -269,6 +269,10 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import VOFCoefficientsEvaluate
     from proteus.ctransportCoefficients import VolumeAveragedVOFCoefficientsEvaluate
     from proteus.cfemIntegrals import copyExteriorElementBoundaryValuesFromElementBoundaryValues
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    VOFCoefficientsEvaluate = staticmethod(VOFCoefficientsEvaluate)
+    VolumeAveragedVOFCoefficientsEvaluate = staticmethod(VolumeAveragedVOFCoefficientsEvaluate)
+    copyExteriorElementBoundaryValuesFromElementBoundaryValues = staticmethod(copyExteriorElementBoundaryValuesFromElementBoundaryValues)
 
     def __init__(self,
                  LS_model=None,

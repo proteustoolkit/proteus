@@ -101,13 +101,148 @@ class NumericalFlux_NIPG(proteus.NumericalFlux.Advection_DiagonalUpwind_Diffusio
 NumericalFlux = NumericalFlux_SIPG
 
 class Coefficients(TC_base):
-    """
+    r"""
     Coefficients of linear ADR equations
+
+    Solves :math:`\nabla\cdot(\mathbf{v}u - a\nabla u) = f` with a diffusion tensor
+    :math:`a(\mathbf{x})`, a source :math:`f(\mathbf{x})` and an optional velocity
+    :math:`\mathbf{v}`. Two unfitted interfaces, described by signed distance functions on a
+    background mesh that does not follow them, can be switched on separately or together:
+
+    * ``embeddedBoundary``: a fluid--solid interface :math:`\Gamma_s` (CutFEM). The region
+      ``embeddedBoundary_sdf < 0`` is solid and removed; cells entirely inside it are inactive.
+      On :math:`\Gamma_s` a Dirichlet value is imposed weakly by Nitsche's method, or a Robin
+      condition is applied. A ghost penalty on the interior edges of the active mesh that belong
+      to a :math:`\Gamma_s`-cut cell keeps small cut cells stable.
+    * ``immersedBoundary``: a fluid--fluid interface :math:`\Gamma_f` (immersed FEM). The
+      diffusion coefficient is ``mua`` where ``immersedBoundary_sdf < 0`` and ``mub`` where it
+      is positive. Cut cells use the two-branch IFEM basis, for :math:`P_1` and :math:`P_2`;
+      prescribed solution and flux jumps are supported.
+
+    With both switched on, a cell cut by both interfaces is a triply-cut cell; it is integrated
+    with composite equivalent polynomials. The method and its verification are described in
+    D. Nathawani and C. E. Kees, *Hybrid CutFEM-IFEM model for embedded and immersed interfaces
+    with triply-cut cells for the 2D Poisson problem*. The drivers ``test/ci/ladr_3p_2d_p.py``
+    (option ``paper=True`` selects the settings used there) and ``test/ci/ladr_fitted_2d_p.py``
+    reproduce its tables.
+
+    Callables that depend on position are called with keyword arguments ``x`` (a 3-vector) and
+    ``t``; the two signed distance functions return ``(value, unit normal)``.
 
     .. inheritance-diagram:: Coefficients
        :parts: 2
+
+    Parameters
+    ----------
+    aOfX : dict
+        ``{ci: callable(x)}``: diffusion tensor (``nd`` x ``nd``) of each component. With
+        ``immersedBoundary`` on, it must equal ``mua`` where ``immersedBoundary_sdf < 0`` and
+        ``mub`` where it is positive, as in ``test/ci/ladr_3p_2d_p.py``.
+    fOfX : dict
+        ``{ci: callable(x)}``: source of each component.
+    velocity : callable, optional
+        Advection velocity :math:`\mathbf{v}(\mathbf{x})`; ``None`` for no advection.
+    nc : int
+        Number of components.
+    nd : int
+        Space dimension.
+    mua : float
+        Diffusion coefficient :math:`\mu_a` where ``immersedBoundary_sdf < 0``. Used by the IFEM
+        basis and the terms on :math:`\Gamma_f`.
+    mub : float
+        Diffusion coefficient :math:`\mu_b` where ``immersedBoundary_sdf > 0``.
+    jf : float
+        Flux jump built into the IFEM basis. Keep 0: a prescribed flux jump is given by
+        ``immersedBoundary_fluxJump`` and enters as a load plus a lift.
+    embeddedBoundary : bool
+        Switch on the CutFEM treatment of :math:`\Gamma_s`. Requires ``embeddedBoundary_sdf`` and
+        ``embeddedBoundary_u``.
+    embeddedBoundary_penalty : float
+        Nitsche parameter :math:`\gamma_N`; the penalty term is scaled by :math:`\mu/h`. The paper
+        uses :math:`10p^2`.
+    embeddedBoundary_ghost_penalty : float
+        Ghost-penalty parameter :math:`\gamma_g`. The paper uses 0.15. In parallel, the ghost
+        penalty and the SCIFEM edge terms need two layers of mesh overlap.
+    embeddedBoundary_sdf : callable
+        Signed distance to :math:`\Gamma_s`: positive in the fluid, negative in the solid.
+    embeddedBoundary_u : callable
+        Dirichlet value on :math:`\Gamma_s`.
+    embeddedBoundary_u_inner : callable, optional
+        Dirichlet value for the ``mua`` phase, given as a smooth function over a whole cell.
+        On a triply-cut cell, one pointwise value would switch branch across :math:`\Gamma_f`;
+        a smooth function per phase keeps the Nitsche terms exact. Default:
+        ``embeddedBoundary_u``.
+    embeddedBoundary_u_outer : callable, optional
+        The same for the ``mub`` phase.
+    embeddedBoundary_robin : bool
+        Impose :math:`\mu\,\partial u/\partial n = -h\,(u - u_\infty)` on :math:`\Gamma_s`
+        instead of the Dirichlet condition, with :math:`\mathbf{n}` pointing from the fluid into
+        the solid.
+    embeddedBoundary_robin_h : float
+        Robin coefficient :math:`h`, the default for both phases.
+    embeddedBoundary_robin_h_inner : float, optional
+        Robin coefficient on the ``mua`` side. Default: ``embeddedBoundary_robin_h``.
+    embeddedBoundary_robin_h_outer : float, optional
+        Robin coefficient on the ``mub`` side. Default: ``embeddedBoundary_robin_h``.
+    embeddedBoundary_robin_uInfinity_inner : callable
+        Robin far-field value :math:`u_\infty` on the ``mua`` side.
+    embeddedBoundary_robin_uInfinity_outer : callable
+        Robin far-field value :math:`u_\infty` on the ``mub`` side.
+    immersedBoundary : bool
+        Switch on the IFEM treatment of :math:`\Gamma_f`. Requires ``immersedBoundary_sdf`` and
+        ``immersedBoundary_u``.
+    immersedBoundary_penalty : float
+        Not used by the IFEM scheme.
+    immersedSCIFEM_switch : float
+        1.0 adds the symmetric consistency terms of SCIFEM (Ji, Chen and Li, 2014) on the edges
+        cut by :math:`\Gamma_f`; 0.0 leaves them out. The paper uses 1.0.
+    immersedSCIFEM_penalty : float
+        Interior-penalty parameter :math:`\gamma_I` on the edges cut by :math:`\Gamma_f`,
+        applied to each phase. The paper uses 0 for :math:`p=1` and 100 for :math:`p=2`.
+    PG : bool
+        Petrov-Galerkin: test with the standard basis functions instead of the IFEM ones on
+        cells cut by :math:`\Gamma_f`. An alternative to the SCIFEM edge terms; the trial space
+        is unchanged.
+    immersedBoundary_sdf : callable
+        Signed distance to :math:`\Gamma_f`: negative on the ``mua`` side, positive on the
+        ``mub`` side. Its gradient is the interface normal :math:`\mathbf{n}`.
+    immersedBoundary_u : callable
+        Required when ``immersedBoundary`` is on, but not used by the IFEM scheme.
+    immersedBoundary_fluxJump : callable, optional
+        Scalar part :math:`J_f` of the prescribed flux jump
+        :math:`[\mu\,\partial u/\partial n] = J_f + \mathbf{g}\cdot\mathbf{n}`, where
+        :math:`[w] = w_b - w_a`. Default: no flux jump.
+    immersedBoundary_fluxJumpVector : callable, optional
+        Vector part :math:`\mathbf{g}` of the prescribed flux jump. Default: none.
+    immersedBoundary_solutionJump : callable, optional
+        Prescribed solution jump :math:`[u] = u_b - u_a`, sampled at the degrees of freedom and
+        carried by a lift. Default: no jump.
+    immersedBoundary_fluxJumpLift : bool
+        Represent the flux jump by a lift added once to the trial function, in addition to the
+        load term. Where the solution jump varies on a cell, the lift carries only the part of
+        the flux jump that the solution-jump lift does not. False keeps only the load term.
+    triplyCut_edgeFluidSide : bool
+        On a triply-cut cell, integrate the consistency correction over the fluid part of each
+        edge cut by :math:`\Gamma_f`. The paper uses ``True``. The environment variable
+        ``ADR_TC_EDGE_FLUID`` also sets it, with a deprecation warning.
+    triplyCut_edgeBoundaryOnly : bool
+        Keep that correction only on edges on the outer boundary; SCIFEM handles the interior
+        edges. The paper uses ``True``. The environment variable ``ADR_TC_EDGE_BOUNDARY_ONLY``
+        also sets it, with a deprecation warning.
+    analyticalSolution : dict, optional
+        ``{0: AnalyticalSolution}``. When given, the :math:`L^2` and :math:`L^\infty` errors over
+        the fluid are logged after each step, taking the exact solution of each phase from
+        ``uOfX_inner`` and ``uOfX_outer`` if the object has them. If it also provides the exact
+        gradient (``duOfX_inner`` and ``duOfX_outer``, or ``duOfX``), the broken :math:`H^1`
+        seminorm and the :math:`H^1` error are logged too.
+    l2proj, timeVaryingCoefficients, forceStrongDirichlet, useMetrics, sc_uref, sc_beta
+        Options of the standard ADR model, unrelated to the interfaces.
+    test : float
+        Not used.
     """
     from proteus.ctransportCoefficients import L2projectEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    L2projectEvaluate = staticmethod(L2projectEvaluate)
     def __init__(self,aOfX,fOfX,velocity=None,nc=1,nd=2,l2proj=None,
                  timeVaryingCoefficients=False,
                  forceStrongDirichlet=False,

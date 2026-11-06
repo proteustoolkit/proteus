@@ -150,6 +150,8 @@ class PsiTC(proteus.StepControl.SC_base):
 
 class Coefficients(proteus.TransportCoefficients.TC_base):
     from proteus.ctransportCoefficients import redistanceLevelSetCoefficientsEvaluate
+    # staticmethod: Cython 3 functions bind self like Python functions (C47)
+    redistanceLevelSetCoefficientsEvaluate = staticmethod(redistanceLevelSetCoefficientsEvaluate)
 
     def __init__(self,
                  applyRedistancing=True,
