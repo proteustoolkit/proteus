@@ -82,11 +82,9 @@ def test_the_ifiss_reader_reads_its_own_layout(tmp_path):
                for a, b, c, _ in mesh.elementNodesArray) == pytest.approx(1.0)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="bdyflags are applied by file node number after finalize() has "
-                          "renumbered the nodes, so the flags land on other nodes")
 def test_the_ifiss_reader_puts_boundary_flags_on_their_nodes(tmp_path):
-    """Each boundary edge gets the larger of its two nodes' flags.
+    """Each boundary edge gets the larger of its two nodes' flags. The flags were applied by
+    file node number after finalize() had renumbered the nodes, so they landed on other nodes.
 
     So a corner node's flag spreads to both sides it touches: the bottom side,
     flagged 1 at every node, would have its two edges tagged 4 (from the left
@@ -141,14 +139,48 @@ def _ifiss_usquare_grid(nc=2):
             "x": x.reshape(-1, 1), "y": y.reshape(-1, 1)}
 
 
-@pytest.mark.xfail(strict=True, raises=KeyError,
-                   reason="IFISS 3.7 saves a grid as mv/xy/bound/mbound; the reader "
-                          "expects vertices/quads/bdyflags, which no IFISS release "
-                          "we have found writes")
 def test_the_ifiss_reader_reads_an_ifiss_grid(tmp_path):
+    """IFISS 3.7 saves a grid as mv/xy/bound/mbound; the reader read only vertices/quads/bdyflags,
+    which no IFISS release we have found writes (KeyError). Each 9-node macroelement is four
+    bilinear quadrilaterals; the mbound sides are tagged 1 (IFISS's Dirichlet boundary)."""
     scipy_io = pytest.importorskip("scipy.io")
-    scipy_io.savemat(str(tmp_path / "square_grid.mat"), _ifiss_usquare_grid(2))
-    MeshTools.QuadrilateralMesh().generateFromQuadFileIFISS(str(tmp_path / "square_grid"))
+    grid = _ifiss_usquare_grid(2)
+    scipy_io.savemat(str(tmp_path / "square_grid.mat"), grid)
+    mesh = MeshTools.QuadrilateralMesh()
+    mesh.generateFromQuadFileIFISS(str(tmp_path / "square_grid"))
+    assert (mesh.nNodes_global, mesh.nElements_global, mesh.nElementBoundaries_global,
+            mesh.nExteriorElementBoundaries_global) == (25, 16, 40, 16)
+    assert sorted(map(tuple, mesh.nodeArray[:, :2].tolist())) == sorted(map(tuple, grid["xy"].tolist()))
+    area = sum(abs(np.linalg.det(np.array([[1, *mesh.nodeArray[a, :2]], [1, *mesh.nodeArray[b, :2]],
+                                           [1, *mesh.nodeArray[c, :2]]]))) for a, b, c, _ in mesh.elementNodesArray)
+    assert area == pytest.approx(1.0)
+    exterior = mesh.exteriorElementBoundariesArray
+    assert set(mesh.elementBoundaryMaterialTypes[exterior]) == {1}
+    assert set(mesh.elementBoundaryMaterialTypes[mesh.interiorElementBoundariesArray]) == {0}
+    onBoundary = {tuple(xy) for xy in grid["xy"][grid["bound"].astype(int).reshape(-1) - 1].tolist()}
+    assert {tuple(x) for x, f in zip(mesh.nodeArray[:, :2].tolist(), mesh.nodeMaterialTypes) if f == 1} == onBoundary
+
+
+def test_an_ifiss_grid_without_a_dirichlet_side_leaves_it_untagged(tmp_path):
+    """IFISS leaves the natural (Neumann) part of the boundary out of mbound: 0, untagged."""
+    scipy_io = pytest.importorskip("scipy.io")
+    grid = _ifiss_usquare_grid(2)
+    grid["mbound"] = grid["mbound"][grid["mbound"][:, 1] != 2]          # the right side is natural
+    scipy_io.savemat(str(tmp_path / "square_grid.mat"), grid)
+    mesh = MeshTools.QuadrilateralMesh()
+    mesh.generateFromQuadFileIFISS(str(tmp_path / "square_grid"))
+    exterior = mesh.exteriorElementBoundariesArray
+    mids = mesh.nodeArray[mesh.elementBoundaryNodesArray[exterior]].mean(axis=1)
+    tags = mesh.elementBoundaryMaterialTypes[exterior]
+    assert set(tags[np.isclose(mids[:, 0], 1.0)]) == {0}
+    assert set(tags[~np.isclose(mids[:, 0], 1.0)]) == {1}
+
+
+def test_a_mat_file_in_neither_layout_is_refused_by_name(tmp_path):
+    scipy_io = pytest.importorskip("scipy.io")
+    scipy_io.savemat(str(tmp_path / "other.mat"), {"p": np.zeros((3, 2))})
+    with pytest.raises(ValueError, match="neither an IFISS grid"):
+        MeshTools.QuadrilateralMesh().generateFromQuadFileIFISS(str(tmp_path / "other"))
 
 
 def test_the_ifiss_grid_transcription_is_the_unit_square():

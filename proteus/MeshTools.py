@@ -5710,15 +5710,45 @@ class QuadrilateralMesh(Mesh):
         self.buildFromC(self.cmesh)
         
     def generateFromQuadFileIFISS(self,meshfile):
-        ''' WIP - read a matlab.mat file containing IFISS vertices
-        and elements
-        '''
+        """Read a quadrilateral grid from the MATLAB file ``meshfile.mat``.
+
+        Two layouts:
+
+        - IFISS's (``grids/*_domain.m`` in IFISS 3.x): ``xy`` coordinates, ``mv`` 9-node Q2
+          macroelements (1-based: corners, mid-sides, centre), ``bound`` the Dirichlet boundary
+          nodes and ``mbound`` the Dirichlet (macroelement, side) pairs. Each macroelement is
+          read as the four bilinear quadrilaterals IFISS's Q1 approximation uses. The Dirichlet
+          sides get tag 1, the rest of the boundary (IFISS's natural, Neumann, part) 0; the
+          ``bound`` nodes get node material 1.
+        - The reader's own: ``vertices``, ``quads`` (0-based, counterclockwise) and
+          ``bdyflags`` rows (flag, node); a boundary edge takes the larger flag of its nodes.
+        """
         import scipy.io
         griddata = scipy.io.loadmat(meshfile+'.mat')
-        self.nodeList = [Node(nN,n[0],n[1],0.0) for nN,n in enumerate(griddata['vertices'])]
-        # Is the following line necessary?
+        if 'mv' in griddata and 'xy' in griddata:
+            mv = np.asarray(griddata['mv'], dtype=int) - 1
+            vertices = np.asarray(griddata['xy'], dtype=float)
+            c0, c1, c2, c3, s0, s1, s2, s3, centre = mv.T
+            quads = np.concatenate([np.column_stack(q) for q in
+                                    ((c0, s0, centre, s3), (s0, c1, s1, centre),
+                                     (centre, s1, c2, s2), (s3, centre, s2, c3))])
+            sideEdges = {1: ((0, 4), (4, 1)), 2: ((1, 5), (5, 2)), 3: ((2, 6), (6, 3)), 4: ((3, 7), (7, 0))}
+            dirichletEdges = set()
+            for e, side in np.asarray(griddata.get('mbound', np.zeros((0, 2))), dtype=int):
+                for a, b in sideEdges[side]:
+                    dirichletEdges.add(frozenset((mv[e - 1, a], mv[e - 1, b])))
+            nodeFlags = [(1, n - 1) for n in np.asarray(griddata.get('bound', np.zeros((0, 1))), dtype=int).reshape(-1)]
+        elif 'vertices' in griddata:
+            vertices, quads = griddata['vertices'], griddata['quads']
+            dirichletEdges = None
+            nodeFlags = griddata['bdyflags']
+        else:
+            raise ValueError("%s.mat holds neither an IFISS grid (xy, mv, bound, mbound) nor "
+                             "vertices/quads/bdyflags; it has %s"
+                             % (meshfile, sorted(k for k in griddata if not k.startswith('__'))))
+        self.nodeList = [Node(nN,n[0],n[1],0.0) for nN,n in enumerate(vertices)]
         self.nodeDict = dict([(n,n) for n in self.nodeList])
-        for q in griddata['quads']:
+        for q in quads:
             n0,n3,n2,n1 = q # clockwise ordering needed
             e0 = Edge(nodes=[self.nodeList[n0],self.nodeList[n1]])
             e1 = Edge(nodes=[self.nodeList[n1],self.nodeList[n2]])
@@ -5726,13 +5756,20 @@ class QuadrilateralMesh(Mesh):
             e3 = Edge(nodes=[self.nodeList[n3],self.nodeList[n0]])
             self.newQuadrilateral([e0,e1,e2,e3])
         self.finalize()
-        for F,nN in griddata['bdyflags']:
-            self.nodeMaterialTypes[nN] = F
+        # finalize numbers the nodes by position; the file's numbers are oldToNewNode's keys
+        for F,nN in nodeFlags:
+            self.nodeMaterialTypes[self.oldToNewNode[int(nN)]] = F
+        newToFile = np.empty(len(self.oldToNewNode), dtype=int)
+        newToFile[np.asarray(self.oldToNewNode)] = np.arange(len(self.oldToNewNode))
         for ebNE in range(self.nExteriorElementBoundaries_global):
             ebN = self.exteriorElementBoundariesArray[ebNE]
             n0,n1 = self.elementBoundaryNodesArray[ebN]
-            self.elementBoundaryMaterialTypes[ebN]=max(self.nodeMaterialTypes[n0],
-                                                       self.nodeMaterialTypes[n1])
+            if dirichletEdges is None:
+                self.elementBoundaryMaterialTypes[ebN]=max(self.nodeMaterialTypes[n0],
+                                                           self.nodeMaterialTypes[n1])
+            else:
+                self.elementBoundaryMaterialTypes[ebN] = int(
+                    frozenset((newToFile[n0], newToFile[n1])) in dirichletEdges)
 
     def meshType(self):
         return 'cuboid'
