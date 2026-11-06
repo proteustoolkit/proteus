@@ -148,6 +148,22 @@ def petsc_has_hypre():
     return bool(PETSc.Sys.hasExternalPackage('hypre'))
 
 
+def rans2p_preconditioner(choice):
+    """The RANS2P preconditioner a choice resolves to: 'auto' is 'schur_boomeramg' when PETSc has hypre, 'asm' when not."""
+    if choice not in ('auto', 'asm', 'schur_boomeramg'):
+        raise ValueError("rans2p.preconditioner must be 'auto', 'asm' or 'schur_boomeramg', not %r" % (choice,))
+    if choice == 'auto':
+        if petsc_has_hypre():
+            return 'schur_boomeramg'
+        logEvent("TwoPhaseFlow: this PETSc has no hypre, so RANS2P's preconditioner is 'asm' (GMRES + ASM/LU) instead of "
+                 "the default 'schur_boomeramg'. Build PETSc with hypre (--download-hypre) for the faster default.", level=1)
+        return 'asm'
+    if choice == 'schur_boomeramg' and not petsc_has_hypre():
+        raise ValueError("rans2p.preconditioner = 'schur_boomeramg' needs a PETSc built with hypre "
+                         "(BoomerAMG); this PETSc has no hypre. Use 'auto' or 'asm', or rebuild PETSc with hypre.")
+    return choice
+
+
 class ParametersModelBase(FreezableClass):
     """
     """
@@ -323,10 +339,12 @@ class ParametersModelRANS2P(ParametersModelBase):
         self.n.maxNonlinearIts = 100
         self.n.maxLineSearches = 0
         # The preconditioner of the iterative RANS2P solve (useSuperlu off, the default linear smoother):
-        #   'asm'             GMRES + ASM with an LU per subdomain (the default);
-        #   'schur_boomeramg' GMRES + an upper Schur complement fieldsplit with BoomerAMG blocks (opt-in;
-        #                     needs a PETSc built with hypre). See _initializePETScOptions for the numbers.
-        self.preconditioner = 'asm'
+        #   'auto'            (the default) 'schur_boomeramg' when PETSc has hypre, 'asm' when it does not;
+        #   'schur_boomeramg' GMRES + an upper Schur complement fieldsplit with BoomerAMG blocks (needs hypre;
+        #                     refused at setup without it);
+        #   'asm'             GMRES + ASM with an LU per subdomain.
+        # See _initializePETScOptions for the numbers.
+        self.preconditioner = 'auto'
         self._freeze()
 
         #Initial Conditions
@@ -452,12 +470,7 @@ class ParametersModelRANS2P(ParametersModelBase):
             # Both choices: GMRES, right-preconditioned with PETSc's convergence test on the true residual (it
             # replaced a Python callback that rebuilt the solution every iteration), knoll initial guess, and one
             # preconditioner setup per Newton solve (pc_lag_newton).
-            if self.preconditioner not in ('asm', 'schur_boomeramg'):
-                raise ValueError("rans2p.preconditioner must be 'asm' or 'schur_boomeramg', not %r"
-                                 % (self.preconditioner,))
-            if self.preconditioner == 'schur_boomeramg' and not petsc_has_hypre():
-                raise ValueError("rans2p.preconditioner = 'schur_boomeramg' needs a PETSc built with hypre "
-                                 "(BoomerAMG); this PETSc has no hypre. Use 'asm' or rebuild PETSc with hypre.")
+            preconditioner = rans2p_preconditioner(self.preconditioner)
             self.OptDB.setValue(prefix+'ksp_type', 'gmres')
             self.OptDB.setValue(prefix+'ksp_max_it', 2000)
             self.OptDB.setValue(prefix+'ksp_gmres_restart', 300)
@@ -465,8 +478,8 @@ class ParametersModelRANS2P(ParametersModelBase):
             self.OptDB.setValue(prefix+'ksp_converged_use_initial_residual_norm', True)
             self.OptDB.setValue(prefix+'ksp_knoll', 1)
             self.OptDB.setValue(prefix+'pc_lag_newton', True)
-            if self.preconditioner == 'asm':
-                # The default. ASM with an LU per subdomain: PETSc's own LU with nested-dissection ordering
+            if preconditioner == 'asm':
+                # The fallback without hypre. ASM with an LU per subdomain: PETSc's own LU with nested-dissection ordering
                 # (its symbolic factorization is kept across setups; serial SuperLU's was redone each time),
                 # classical Gram-Schmidt (one reduction per iteration, not one per basis vector). Against the
                 # options before 2.0, one step is 2.1x faster at 24 ranks and 2.4x at 96 (ceds-model, 1.15 M
@@ -478,13 +491,14 @@ class ParametersModelRANS2P(ParametersModelBase):
                 self.OptDB.setValue(prefix+'sub_pc_factor_mat_solver_type', 'petsc')
                 self.OptDB.setValue(prefix+'sub_pc_factor_mat_ordering_type', 'nd')
             else:
-                # Opt-in. An upper block-triangular Schur complement preconditioner on the (velocity,
-                # pressure) split SimpleNavierStokes3D defines: one BoomerAMG V-cycle on the velocity block
-                # and one on the selfp approximation A11 - A10 diag(A00)^-1 A01. KSP iterations stay at 3-4
-                # from 4 to 96 ranks; one step is 7.9x the pre-2.0 options at 24 ranks and 9.3x at 96
-                # (3.8x and 3.9x the 'asm' default). Not the default until it is checked on a 3D RANS2P case
-                # and every PETSc proteus is built with (conda-forge, the HPC modules, the PETSc fork's
-                # --download-proteus-support) is known to have hypre.
+                # The default when PETSc has hypre. An upper block-triangular Schur complement
+                # preconditioner on the (velocity, pressure) split SimpleNavierStokes3D defines: one BoomerAMG
+                # V-cycle on the velocity block and one on the selfp approximation A11 - A10 diag(A00)^-1 A01.
+                # damBreakLevelSet (2D): KSP iterations stay at 3-4 from 4 to 96 ranks; one step is 7.9x the
+                # pre-2.0 options at 24 ranks and 9.3x at 96 (3.8x and 3.9x 'asm'). damBreakLevelSet3D: 3.0 KSP
+                # iterations per Newton iteration at 4 ranks, where 'asm' takes 7 (C19 round 3). Every PETSc
+                # proteus documents or ships has hypre (conda-forge real builds, the HPC modules, the PETSc fork's
+                # scripts, the colonized prefixes); Homebrew's petsc and Spack's petsc~hypre do not, and get 'asm'.
                 self.OptDB.setValue(prefix+'pc_type', 'fieldsplit')
                 self.OptDB.setValue(prefix+'pc_fieldsplit_type', 'schur')
                 self.OptDB.setValue(prefix+'pc_fieldsplit_schur_fact_type', 'upper')
