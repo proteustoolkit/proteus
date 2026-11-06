@@ -17,15 +17,19 @@ same FCTStep: 2 ranks 3.6e-11 from serial and total mass 3.3e-13 (Newton atol 1e
 and the limited solution, 0.49 and 0.8% of the mass (the defect reported on a branch without them: 0.077 and 3.8% on 4
 ranks).
 """
+import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# a failed launch keeps its whole output (loaded by path: --import-mode=importlib)
+_spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HERE, "launch_output.py"))
+launch_output = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "tadr_partition_mpi.py")
 
 
@@ -51,8 +55,7 @@ def _field(ranks, cwd, **overrides):
     env["PETSC_OPTIONS"] = "-tadr_ksp_rtol 1e-14 -tadr_ksp_atol 1e-40 -tadr_ksp_max_it 5000"
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
-    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     return numpy.loadtxt(os.path.join(str(cwd), "u.csv"), delimiter=",", skiprows=1)
 
 
