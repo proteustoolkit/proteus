@@ -457,6 +457,155 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
   return 0;
 }
 
+namespace
+{
+/* The ghost entities of one rank, in the new numbering, as sorted sets. */
+struct OverlapSets
+{
+  std::set<int> nodes, elements, elementBoundaries, edges;
+};
+
+/* Steps 6-7b of partitionNodesLocal: the overlap (ghost) nodes, elements,
+   element boundaries and edges of `rank`, given the global numberings and
+   offsets of every entity type (new numbering: each rank's owned entities
+   contiguous), the elements' element boundaries in the new numbering
+   (elementBoundariesArray_new), and the map (new node 0, new node 1) -> new
+   edge. The first layer is everything in the stars of the owned nodes that
+   another rank owns; each further layer (nNodes_overlap > 1) is the same for
+   the nodes the previous layer added. A last pass adds every node of every
+   owned or ghost element, which is a no-op for simplices (see 7b below).
+   Reads the mesh and the arguments only. */
+OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
+                            const std::vector<int>& nodeNumbering_global_old2new,
+                            const std::vector<int>& nodeNumbering_global_new2old,
+                            const std::vector<int>& elementNumbering_global_old2new,
+                            const std::vector<int>& elementNumbering_global_new2old,
+                            const std::valarray<int>& nodeOffsets_new,
+                            const std::valarray<int>& elementOffsets_new,
+                            const std::valarray<int>& elementBoundaryOffsets_new,
+                            const std::valarray<int>& edgeOffsets_new,
+                            const std::valarray<int>& elementBoundariesArray_new,
+                            const std::map<NodeTuple<2>, int>& nodesEdgeMap_global_new,
+                            const std::set<int>& elements_subdomain_owned)
+{
+  using namespace std;
+  OverlapSets overlap;
+  //what the stars of one node (in the old numbering) add to the sets given
+  auto addNodeStar = [&](int nN_global_old, OverlapSets& into)
+  {
+    //nodes in the node star, if another rank owns them
+    for (int offset_old = mesh.nodeStarOffsets[nN_global_old];
+         offset_old < mesh.nodeStarOffsets[nN_global_old+1]; offset_old++)
+      {
+        int nN_neig_old = mesh.nodeStarArray[offset_old];
+        int nN_neig_new = nodeNumbering_global_old2new[nN_neig_old];
+        bool offproc = nN_neig_new >=  nodeOffsets_new[rank+1] || nN_neig_new < nodeOffsets_new[rank];
+        if (offproc)
+          into.nodes.insert(nN_neig_new);
+      }
+    //now the elements, elementBoundaries, and edges in the node star
+    for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
+         offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
+      {
+        int eN_star_old = mesh.nodeElementsArray[offset_old];
+        int eN_star_new = elementNumbering_global_old2new[eN_star_old];
+        bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
+        if (offproc)
+          into.elements.insert(eN_star_new);
+        for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
+          {
+            int ebN_global=elementBoundariesArray_new[eN_star_new*mesh.nElementBoundaries_element+ebN];
+            if (ebN_global < elementBoundaryOffsets_new[rank] || ebN_global >= elementBoundaryOffsets_new[rank+1])
+              into.elementBoundaries.insert(ebN_global);
+          }
+        for (int nN0=0;nN0<mesh.nNodes_element;nN0++)
+          for (int nN1=nN0+1; nN1<mesh.nNodes_element;nN1++)
+            {
+              const int nN0_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN0];
+              const int nN1_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN1];
+              int nodes[2];
+              nodes[0] = nodeNumbering_global_old2new[nN0_global_old];
+              nodes[1] = nodeNumbering_global_old2new[nN1_global_old];
+              NodeTuple<2> et(nodes);
+              //Only some pairs of an element's nodes are edges: every pair in a
+              //simplex, but not the face and body diagonals of a quadrilateral
+              //or hexahedron. operator[] would insert a default entry for a
+              //diagonal and report it as edge 0.
+              map<NodeTuple<2>, int>::const_iterator edge_it = nodesEdgeMap_global_new.find(et);
+              if (edge_it == nodesEdgeMap_global_new.end())
+                continue;
+              const int edge_global = edge_it->second;
+              if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
+                into.edges.insert(edge_global);
+            }//edges
+      }//elements in node star
+  };
+  //
+  //6. Elements, nodes, element boundaries and edges in the stars of the owned
+  //   nodes that are not locally owned: the ghosts
+  //
+  for (int nN = nodeOffsets_new[rank]; nN < nodeOffsets_new[rank+1]; nN++)
+    addNodeStar(nodeNumbering_global_new2old[nN], overlap);
+  //
+  //7. If we want more layers of overlap, march out from the nodes the last
+  //   layer added, in the old numbering for connectivity
+  //
+  int overlap_remaining = nNodes_overlap -1; //default gives 1 layer overlap
+  set<int> last_nodes_added2overlap = overlap.nodes;
+  while (overlap_remaining > 0)
+    {
+      OverlapSets layer;
+      for (set<int>::const_iterator nN_p = last_nodes_added2overlap.begin();
+           nN_p != last_nodes_added2overlap.end(); nN_p++)
+        addNodeStar(nodeNumbering_global_new2old[*nN_p], layer);
+      last_nodes_added2overlap.clear();
+      set_difference(layer.nodes.begin(),layer.nodes.end(),
+                     overlap.nodes.begin(),overlap.nodes.end(),
+                     std::inserter(last_nodes_added2overlap,last_nodes_added2overlap.begin()));
+      overlap.nodes.insert(layer.nodes.begin(),layer.nodes.end());
+      overlap.elements.insert(layer.elements.begin(),layer.elements.end());
+      overlap.elementBoundaries.insert(layer.elementBoundaries.begin(),layer.elementBoundaries.end());
+      overlap.edges.insert(layer.edges.begin(),layer.edges.end());
+      overlap_remaining--;
+    }//overlap loop
+  //
+  //7b. Every node of every element in the subdomain has to be in the subdomain.
+  //    The overlap nodes above come from the node star, which is built from
+  //    edges, but the elements come from node-to-element membership. For a
+  //    simplex every node of an element is an edge neighbor of any other, so the
+  //    two agree. For a quadrilateral or hexahedron they do not: the face and
+  //    body diagonal nodes of an element are not edge neighbors, so an element
+  //    in the star of an owned node could reference nodes the subdomain never
+  //    received. nodeNumbering_global2subdomain is a std::map read with
+  //    operator[], so a missing node did not fail -- it silently became
+  //    subdomain node 0, giving distorted elements and, on more ranks, crashes.
+  //    This adds nothing for simplices.
+  //
+  const int nOwnedNodesBegin = nodeOffsets_new[rank];
+  const int nOwnedNodesEnd = nodeOffsets_new[rank+1];
+  for (set<int>::const_iterator eN_oldp = elements_subdomain_owned.begin();
+       eN_oldp != elements_subdomain_owned.end(); eN_oldp++)
+    for (int nN = 0; nN < mesh.nNodes_element; nN++)
+      {
+        const int nN_new = nodeNumbering_global_old2new[mesh.elementNodesArray[(*eN_oldp)*mesh.nNodes_element+nN]];
+        if (nN_new < nOwnedNodesBegin || nN_new >= nOwnedNodesEnd)
+          overlap.nodes.insert(nN_new);
+      }
+  for (set<int>::const_iterator eN_newp = overlap.elements.begin();
+       eN_newp != overlap.elements.end(); eN_newp++)
+    {
+      const int eN_old = elementNumbering_global_new2old[*eN_newp];
+      for (int nN = 0; nN < mesh.nNodes_element; nN++)
+        {
+          const int nN_new = nodeNumbering_global_old2new[mesh.elementNodesArray[eN_old*mesh.nNodes_element+nN]];
+          if (nN_new < nOwnedNodesBegin || nN_new >= nOwnedNodesEnd)
+            overlap.nodes.insert(nN_new);
+        }
+    }
+  return overlap;
+}
+}//namespace
+
 /* Steps 4-8 of partitionNodes: given the owner of every node, which every rank
    holds, this rank's part of the partition. Plain C++ -- no MPI, no PETSc, no
    files -- so one process can compute any rank's subdomain (rank of size).
@@ -621,217 +770,18 @@ int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
 
   if (timer) timer->mark("edges");
   //
-  //6. Figure out which elements are in node stars but are not locally owned, create ghost information
-  //   for these, do the same for elements
-  set<int> elements_overlap,nodes_overlap,elementBoundaries_overlap,edges_overlap;
-  for (int nN = nodeOffsets_new[rank]; nN < nodeOffsets_new[rank+1]; nN++)
-    {
-      int nN_global_old = nodeNumbering_global_new2old[nN];
-      //nodes in node star
-      for (int offset_old = mesh.nodeStarOffsets[nN_global_old];
-           offset_old < mesh.nodeStarOffsets[nN_global_old+1]; offset_old++)
-        {
-          int nN_neig_old = mesh.nodeStarArray[offset_old];
-          int nN_neig_new = nodeNumbering_global_old2new[nN_neig_old];
-
-          bool offproc = nN_neig_new >=  nodeOffsets_new[rank+1] || nN_neig_new < nodeOffsets_new[rank];
-          if (offproc)
-            nodes_overlap.insert(nN_neig_new);
-        }
-      //now get elements, elementBoundaries, and edges in node star
-      for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
-           offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
-        {
-          int eN_star_old = mesh.nodeElementsArray[offset_old];
-          int eN_star_new = elementNumbering_global_old2new[eN_star_old];
-          bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
-          if (offproc)
-            elements_overlap.insert(eN_star_new);
-          for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
-            {
-              int ebN_global=elementBoundariesArray_new[eN_star_new*mesh.nElementBoundaries_element+ebN];
-              //              //mwf debug
-                          //  std::cout<<"partitionNode default overlap rank= "<<rank<<" nN_new= "<<nN<<" eN_star_new= "<<eN_star_new<<" ebN= "<<ebN
-                          //           <<" ebN_global= "<<ebN_global<<" ghost= "<<(ebN_global < elementBoundaryOffsets_new[rank] || ebN_global >= elementBoundaryOffsets_new[rank+1])
-                          //           <<" offsets= ["<<elementBoundaryOffsets_new[rank]<<","<<elementBoundaryOffsets_new[rank+1]<<"]"<<std::endl;
-              if (ebN_global < elementBoundaryOffsets_new[rank] || ebN_global >= elementBoundaryOffsets_new[rank+1])
-                {
-                  elementBoundaries_overlap.insert(ebN_global);
-                }
-            }
-          for (int nN0=0;nN0<mesh.nNodes_element;nN0++)
-            for (int nN1=nN0+1; nN1<mesh.nNodes_element;nN1++)
-              {
-                const int nN0_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN0];
-                const int nN1_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN1];
-                const int nN0_global     = nodeNumbering_global_old2new[nN0_global_old];
-                const int nN1_global     = nodeNumbering_global_old2new[nN1_global_old];
-                int nodes[2];
-                nodes[0] = nN0_global;
-                nodes[1] = nN1_global;
-                NodeTuple<2> et(nodes);
-                //Only some pairs of an element's nodes are edges: every pair in a
-                //simplex, but not the face and body diagonals of a quadrilateral
-                //or hexahedron. operator[] would insert a default entry for a
-                //diagonal and report it as edge 0.
-                map<NodeTuple<2>, int>::const_iterator edge_it = nodesEdgeMap_global_new.find(et);
-                if (edge_it == nodesEdgeMap_global_new.end())
-                  continue;
-                const int edge_global = edge_it->second;
-                if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
-                  edges_overlap.insert(edge_global);
-              }//edges
-        }//elements in node star
-    }//nodes on this processor
-
+  //6-7b. The ghost nodes, elements, element boundaries and edges, with the extra layers of overlap if asked for
   //
-  //7. If we want more layers of overlap, do we have to build connectivity info in new numbering then march out
-  //   or can we just march through nodes in node_overlap and grab all of their elements that aren't owned?
-  //
-  int overlap_remaining = nNodes_overlap -1; //default gives 1 layer overlap
-  //last set of overlap nodes added
-  set<int> last_nodes_added2overlap = nodes_overlap;
-  while (overlap_remaining > 0)
-    {
-      set<int> new_nodes_overlap,new_elements_overlap,new_elementBoundaries_overlap,new_edges_overlap;
-      set<int>::iterator nN_p = last_nodes_added2overlap.begin();
-      while (nN_p != last_nodes_added2overlap.end())
-        {
-          int nN_global_new = *nN_p;
-          int nN_global_old = nodeNumbering_global_new2old[nN_global_new];//need old numbering for connectivity
-          for (int offset_old = mesh.nodeStarOffsets[nN_global_old];
-               offset_old < mesh.nodeStarOffsets[nN_global_old+1]; offset_old++)
-            {
-              int nN_neig_old = mesh.nodeStarArray[offset_old];
-              int nN_neig_new = nodeNumbering_global_old2new[nN_neig_old];
-              //just need to check if neighbor is offprocessor, may already be in overlap
-              //but set merge will take care of that
-              bool offproc = nN_neig_new >=  nodeOffsets_new[rank+1] || nN_neig_new < nodeOffsets_new[rank];
-              if (offproc)
-                new_nodes_overlap.insert(nN_neig_new);
-            }//node neighbor loop
-          nN_p++;
-        }//loop adding new nodes
-
-      //loop through added nodes, grab elements only check if not on processor
-      set<int>::iterator nN_newp = last_nodes_added2overlap.begin();
-      while (nN_newp != last_nodes_added2overlap.end())
-        {
-          int nN_global_new = *nN_newp;
-          int nN_global_old = nodeNumbering_global_new2old[nN_global_new];//need old numbering for connectivity
-          for (int offset_old = mesh.nodeElementOffsets[nN_global_old];
-               offset_old < mesh.nodeElementOffsets[nN_global_old+1]; offset_old++)
-            {
-              int eN_star_old = mesh.nodeElementsArray[offset_old];
-              int eN_star_new = elementNumbering_global_old2new[eN_star_old];
-              bool offproc = eN_star_new >= elementOffsets_new[rank+1] || eN_star_new < elementOffsets_new[rank];
-              if (offproc)
-                new_elements_overlap.insert(eN_star_new);
-              //element boundaries too
-              for (int ebN=0; ebN<mesh.nElementBoundaries_element;ebN++)
-                {
-                  int ebN_global=elementBoundariesArray_new[eN_star_new*mesh.nElementBoundaries_element+ebN];
-                  //              //mwf debug
-                  //              std::cout<<"partitionNode overlap_remaining= "<<overlap_remaining<<" rank= "<<rank<<" nN_global_new= "<<nN_global_new<<" eN_star_new= "<<eN_star_new<<" ebN= "<<ebN
-                  //                       <<" ebN_global= "<<ebN_global<<" ghost= "<<(ebN_global < elementBoundaryOffsets_new[rank] || ebN_global >= elementBoundaryOffsets_new[rank+1])
-                  //                       <<" offsets= ["<<elementBoundaryOffsets_new[rank]<<","<<elementBoundaryOffsets_new[rank+1]<<std::endl;
-                  if (ebN_global < elementBoundaryOffsets_new[rank] || ebN_global >= elementBoundaryOffsets_new[rank+1])
-                    new_elementBoundaries_overlap.insert(ebN_global);
-                }//element boundaries
-              //edges
-              for (int nN0=0;nN0<mesh.nNodes_element;nN0++)
-                for (int nN1=nN0+1; nN1<mesh.nNodes_element;nN1++)
-                  {
-                    const int nN0_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN0];
-                    const int nN1_global_old = mesh.elementNodesArray[eN_star_old*mesh.nNodes_element+nN1];
-                    const int nN0_global     = nodeNumbering_global_old2new[nN0_global_old];
-                    const int nN1_global     = nodeNumbering_global_old2new[nN1_global_old];
-                    int nodes[2];
-                    nodes[0] = nN0_global;
-                    nodes[1] = nN1_global;
-                    NodeTuple<2> et(nodes);
-                    //see the identical lookup in step 6
-                    map<NodeTuple<2>, int>::const_iterator edge_it = nodesEdgeMap_global_new.find(et);
-                    if (edge_it == nodesEdgeMap_global_new.end())
-                      continue;
-                    const int edge_global = edge_it->second;
-                    if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
-                      new_edges_overlap.insert(edge_global);
-                  }//edges
-            }//elements in node star
-          nN_newp++;
-        }//new nodes
-      last_nodes_added2overlap.clear();
-      set_difference(new_nodes_overlap.begin(),new_nodes_overlap.end(),
-                     nodes_overlap.begin(),nodes_overlap.end(),
-		     std::inserter(last_nodes_added2overlap,last_nodes_added2overlap.begin()));
-
-      //could do a set_merge
-      for (set<int>::iterator nN_addedp = new_nodes_overlap.begin();
-           nN_addedp != new_nodes_overlap.end();
-           nN_addedp++)
-        {
-          nodes_overlap.insert(*nN_addedp);
-        }
-      for (set<int>::iterator eN_addedp = new_elements_overlap.begin();
-           eN_addedp != new_elements_overlap.end();
-           eN_addedp++)
-        {
-          elements_overlap.insert(*eN_addedp);
-        }
-      for (set<int>::iterator ebN_addedp = new_elementBoundaries_overlap.begin();
-           ebN_addedp != new_elementBoundaries_overlap.end();
-           ebN_addedp++)
-        {
-          elementBoundaries_overlap.insert(*ebN_addedp);
-        }
-      for (set<int>::iterator edge_addedp = new_edges_overlap.begin();
-           edge_addedp != new_edges_overlap.end();
-           edge_addedp++)
-        {
-          edges_overlap.insert(*edge_addedp);
-        }
-      //example calls
-
-      overlap_remaining--;
-    }//ovelap loop
-
-  //
-  //7b. Every node of every element in the subdomain has to be in the subdomain.
-  //    The overlap nodes above come from the node star, which is built from
-  //    edges, but the elements come from node-to-element membership. For a
-  //    simplex every node of an element is an edge neighbor of any other, so the
-  //    two agree. For a quadrilateral or hexahedron they do not: the face and
-  //    body diagonal nodes of an element are not edge neighbors, so an element
-  //    in the star of an owned node could reference nodes the subdomain never
-  //    received. nodeNumbering_global2subdomain is a std::map read with
-  //    operator[], so a missing node did not fail -- it silently became
-  //    subdomain node 0, giving distorted elements and, on more ranks, crashes.
-  //    This adds nothing for simplices.
-  //
-  {
-    const int nOwnedNodesBegin = nodeOffsets_new[rank];
-    const int nOwnedNodesEnd = nodeOffsets_new[rank+1];
-    for (set<int>::iterator eN_oldp = elements_subdomain_owned.begin();
-         eN_oldp != elements_subdomain_owned.end(); eN_oldp++)
-      for (int nN = 0; nN < mesh.nNodes_element; nN++)
-        {
-          const int nN_new = nodeNumbering_global_old2new[mesh.elementNodesArray[(*eN_oldp)*mesh.nNodes_element+nN]];
-          if (nN_new < nOwnedNodesBegin || nN_new >= nOwnedNodesEnd)
-            nodes_overlap.insert(nN_new);
-        }
-    for (set<int>::iterator eN_newp = elements_overlap.begin();
-         eN_newp != elements_overlap.end(); eN_newp++)
-      {
-        const int eN_old = elementNumbering_global_new2old[*eN_newp];
-        for (int nN = 0; nN < mesh.nNodes_element; nN++)
-          {
-            const int nN_new = nodeNumbering_global_old2new[mesh.elementNodesArray[eN_old*mesh.nNodes_element+nN]];
-            if (nN_new < nOwnedNodesBegin || nN_new >= nOwnedNodesEnd)
-              nodes_overlap.insert(nN_new);
-          }
-      }
-  }
+  OverlapSets overlapSets = nodeOverlapSets(mesh, rank, nNodes_overlap,
+                                            nodeNumbering_global_old2new, nodeNumbering_global_new2old,
+                                            elementNumbering_global_old2new, elementNumbering_global_new2old,
+                                            nodeOffsets_new, elementOffsets_new, elementBoundaryOffsets_new, edgeOffsets_new,
+                                            elementBoundariesArray_new, nodesEdgeMap_global_new,
+                                            elements_subdomain_owned);
+  const set<int>& nodes_overlap = overlapSets.nodes;
+  const set<int>& elements_overlap = overlapSets.elements;
+  const set<int>& elementBoundaries_overlap = overlapSets.elementBoundaries;
+  const set<int>& edges_overlap = overlapSets.edges;
 
   if (timer) timer->mark("overlap");
   //
