@@ -2,8 +2,8 @@
 
 Decks and scripts for the figures and tables of the VDFT manuscript. Richards
 (flow) STABILIZATION_TYPE 2 + FCT, TADR (transport) STABILIZATION_TYPE 5 + FCT,
-coupled through the flow model's edge fluxes (`TADR.Coefficients(EDGE_VELOCITY=True)`, set by
-every transport deck). The low-order runs turn FCT off in both models.
+coupled through the flow model's edge fluxes, assembled from Richards' rebuilt
+edge velocity in every coupled deck. The low-order runs turn FCT off in both models.
 
 ## Conventions
 
@@ -47,8 +47,8 @@ explicit scheme instead.
 HENRY_NP=4 ./run.sh       # <run dir>/fct and <run dir>/lo (low_order/)
 ```
 
-The errors against the semi-analytical solution come from `henry_metrics.py`,
-which is on cekees/vdft-manuscript and not yet in this directory.
+The errors against the semi-analytical solution come from `henry/henry_metrics.py`
+(see Reruns and run measures below).
 
 ## 4. Elder (`elder/`)
 
@@ -158,9 +158,9 @@ The comparison of the two transports is in `VDFT_COUPLING_COMPARISON_2026-11-04.
 
 ## Reruns and run measures (2026-11-04)
 
-- **The transport decks set `EDGE_VELOCITY=True`.** That is the coupling the manuscript describes: Richards
+- **Every coupled deck advects with Richards' rebuilt edge velocity.** That is the coupling the manuscript describes: Richards
   reconstructs q_e element by element from its realized edge exchanges, and TADR assembles its edge fluxes from that
-  velocity. `henry`, `bioswale` and `levee_density` did not set it before.
+  velocity. `henry`, `bioswale` and `levee_density` did not use it before.
 - **Common script options:**
   - PETSc options go through `-P`;
   - `PROTEUS_ENV` picks the conda env;
