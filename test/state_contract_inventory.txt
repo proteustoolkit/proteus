@@ -22,6 +22,13 @@
 #   unmeasured  may carry history; a hot start rebuilds it from the restart state and nobody has measured
 #               what that costs. Moving a class out of here means measuring it (test/hotstart_measure).
 #
+# Not restored, by decision (cekees, 2026-11-06): the dof history's dof_last_last (FemTools.FiniteElementFunction).
+# An archive hot start shifts the dof history twice before its first step (before the stepping loop and at the
+# step), so there dof_last_last equals dof_last, where the uninterrupted run holds the previous step's dofs; dof_last
+# itself is exact. Nothing in the tree reads dof_last_last for a computation today (the PUMI adapt only transfers it,
+# as *_old_old fields nobody reads); the PUMI hot start reloads it from its checkpoint and is right. A kernel that
+# starts reading it must archive dof_last and skip the first shift on a continue hot start.
+#
 # family  module  class  category
 SC ShockCapturing Eikonal_SC unmeasured
 SC ShockCapturing HamiltonJacobiJaffre_SC unmeasured
