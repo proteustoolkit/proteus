@@ -1,10 +1,10 @@
-"""TwoPhaseFlow's RANS2P preconditioner setting (cekees/proteus#198).
+"""TwoPhaseFlow's RANS2P preconditioner setting (cekees/proteus#198, C19 round 3).
 
 ``SystemPhysics.modelDict['flow'].preconditioner`` picks the preconditioner of RANS2P's iterative solve
-(``useSuperlu`` off): ``'asm'`` (the default, GMRES + ASM with an LU per subdomain) or
-``'schur_boomeramg'`` (opt-in: a Schur complement fieldsplit with BoomerAMG blocks). The opt-in
-needs a PETSc with hypre; without it, or for an unknown name, the problem refuses to initialize
-instead of failing at the first linear solve.
+(``useSuperlu`` off): ``'auto'`` (the default: ``'schur_boomeramg'`` when PETSc has hypre, ``'asm'`` when it
+does not), ``'schur_boomeramg'`` (a Schur complement fieldsplit with BoomerAMG blocks) or ``'asm'`` (GMRES +
+ASM with an LU per subdomain). An explicit ``'schur_boomeramg'`` without hypre, or an unknown name, makes the
+problem refuse to initialize instead of failing at the first linear solve.
 """
 import os
 import subprocess
@@ -48,17 +48,22 @@ def load(tmp_path, params, no_hypre=False):
     return [line for line in proc.stdout.splitlines() if line.startswith(('LOADED', 'REFUSED'))][-1]
 
 
-def test_default_is_asm(tmp_path):
-    line = load(tmp_path, '')
-    assert line == 'LOADED pc_type=asm side=right lag=true ctest=r', line
-
-
-def test_schur_boomeramg_is_an_opt_in(tmp_path):
+def test_default_is_schur_boomeramg_with_hypre(tmp_path):
     from petsc4py import PETSc
     if not PETSc.Sys.hasExternalPackage('hypre'):
         pytest.skip('this PETSc has no hypre')
-    line = load(tmp_path, 'flow.preconditioner=schur_boomeramg')
+    line = load(tmp_path, '')
     assert line == 'LOADED pc_type=fieldsplit side=right lag=true ctest=r', line
+
+
+def test_default_without_hypre_is_asm(tmp_path):
+    line = load(tmp_path, '', no_hypre=True)
+    assert line == 'LOADED pc_type=asm side=right lag=true ctest=r', line
+
+
+def test_asm_on_request(tmp_path):
+    line = load(tmp_path, 'flow.preconditioner=asm')
+    assert line == 'LOADED pc_type=asm side=right lag=true ctest=r', line
 
 
 def test_schur_boomeramg_without_hypre_is_refused_at_setup(tmp_path):
@@ -68,4 +73,4 @@ def test_schur_boomeramg_without_hypre_is_refused_at_setup(tmp_path):
 
 def test_an_unknown_preconditioner_is_refused(tmp_path):
     line = load(tmp_path, 'flow.preconditioner=ilu')
-    assert line.startswith('REFUSED') and "'asm' or 'schur_boomeramg'" in line, line
+    assert line.startswith('REFUSED') and "'auto', 'asm' or 'schur_boomeramg'" in line, line
