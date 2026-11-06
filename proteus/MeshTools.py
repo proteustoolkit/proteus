@@ -7884,8 +7884,13 @@ def subdomainViewMesh(archive, name="Spatial_Domain"):
     mesh.nodeNumbering_global_old2new = None
     mesh.elementNumbering_global_old2new = None
     renumbered = attrs.get("renumbered", np.zeros(2))
-    mesh._viewInputNumbering = (arrays["NodeMapInput"] if renumbered[0] else None,
-                                arrays["CellMapInput"] if renumbered[1] else None)
+    # in the dtype the global path gives them (the partition's old2new numbering, int32), so the archive
+    # the restart writes declares the maps as the global path's does (the view stores them as int64)
+    mesh._viewInputNumbering = (
+        np.asarray(arrays["NodeMapInput"], dtype=np.asarray(mesh.nodeNumbering_subdomain2global).dtype)
+        if renumbered[0] else None,
+        np.asarray(arrays["CellMapInput"], dtype=np.asarray(mesh.elementNumbering_subdomain2global).dtype)
+        if renumbered[1] else None)
     if attrs.get("fingerprint") is not None:
         mesh._inputFingerprint = str(attrs["fingerprint"])
     mesh.fromSubdomainViews = True

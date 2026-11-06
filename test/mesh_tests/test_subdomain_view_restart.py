@@ -109,6 +109,29 @@ def test_a_same_rank_restart_from_the_views_is_the_global_restart_bit_for_bit(gr
         assert [n for n in theirs if not np.array_equal(mine[n], theirs[n])] == []
 
 
+@pytest.mark.parametrize("document", ["per-rank", "global"], ids=["C", "B"])
+def test_a_tetrahedra_restart_from_the_views_is_the_global_restart_bit_for_bit(document, tmp_path):
+    """A VOF blob on gmsh_cube.msh's 1125 tetrahedra (graph-partitioned, so the partition renumbers and
+    the archive carries CellMapInput), 2 ranks, stopped at step 3 and hot started to step 7 from the
+    views and from the global path: every dataset of both ranks' files is equal. The views path wrote
+    CellMapInput as int64 and the global path as int32, so the restart's ymf documents differed."""
+    stop = tmp_path / "stop"
+    _run(2, "restart_views_tet.py", stop, "stop", 3, "views", document, cwd=tmp_path)
+    runs = {}
+    for mesh_from in ("views", "global"):
+        shutil.copytree(stop, tmp_path / mesh_from)
+        out = _run(2, "restart_views_tet.py", tmp_path / mesh_from, "hot", 3, mesh_from, document, cwd=tmp_path)
+        assert ("views=1" if mesh_from == "views" else "views=0") in out, out
+        log = (tmp_path / mesh_from / "proteus_default.log").read_text()
+        assert "no solver state to restore" not in log
+        runs[mesh_from] = [_datasets(tmp_path / mesh_from / ("tetviews_p%d.h5" % r)) for r in range(2)]
+    for mine, theirs in zip(runs["views"], runs["global"]):
+        assert set(mine) == set(theirs)
+        assert any(name.startswith("vof_p") for name in mine)
+        assert any(name.startswith("CellMapInput") for name in mine)
+        assert [n for n in theirs if not np.array_equal(mine[n], theirs[n])] == []
+
+
 def test_another_number_of_ranks_takes_the_old_path_and_says_why(tmp_path):
     _run(2, "subdomain_view_restart_mpi.py", SQUARE, "reversed", "per-rank", tmp_path, cwd=tmp_path)
     from proteus import Comm
