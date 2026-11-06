@@ -1372,6 +1372,9 @@ class NS_base(object):  # (HasTraits):
                 levels.append(([lm.u[ci].dof.copy() for ci in range(lm.coefficients.nc)], owners,
                                {k: v.copy() for k, v in self._coupledFields(lm)}, m.uList[level].copy()))
             self._systemStepState.append(levels)
+        # where each model's last step ended: SO_base.modelStepTaken (Sequential_MinModelStep, the default system
+        # controller) moves it to the end of the system step as soon as the model's step is taken
+        self._systemStepModelTimes = [getattr(m.stepController, "t_model_last", None) for m in self.modelList]
 
     #: the quadrature-point and face fields that one model reads from another (RANS2P reads VOF's and NCLS's
     #: ('u', 0) and ('grad(u)', 0), the transport models read the flow model's ('velocity', 0), ...); they are
@@ -1409,6 +1412,11 @@ class NS_base(object):  # (HasTraits):
                 for owner, st in owners.items():
                     if st is not None:
                         getattr(lm, owner).set_state(copy.deepcopy(st))
+        # a model that had finished in the failed attempt kept its end as the end of its last step, and the retry,
+        # stepping to an earlier time, skipped it (and every later step of it lagged one step behind)
+        for m, t in zip(self.modelList, getattr(self, "_systemStepModelTimes", ())):
+            if t is not None:
+                m.stepController.t_model_last = t
         self.endSystemStep(accepted=False)
         logEvent("restored the models to the start of the system step for the retry", level=3)
 

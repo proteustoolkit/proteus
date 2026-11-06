@@ -53,3 +53,44 @@ def test_beam_channel_on_two_ranks_is_the_serial_answer(tmp_path, launch_policy,
         assert serial["xv"] > 1.01                          # and bends (1.0 is upright)
     worst = {k: abs(serial[k] - parallel[k]) / abs(serial[k]) for k in serial}
     assert max(worst.values()) < 1e-11, worst
+
+
+STEP_RETRY = os.path.join(os.path.dirname(HERE), "step_retry_mpi.py")
+_LU = " ".join("-%s_ksp_type preonly -%s_pc_type lu -%s_pc_factor_mat_solver_type superlu" % (p, p, p)
+               for p in ("rans2p", "dye"))
+
+
+def _retry_run(cwd, **overrides):
+    import numpy
+    cwd.mkdir()
+    env = dict(os.environ, OMP_NUM_THREADS="1", DIR="rans2p_ib", SO="beam_channel_so.py", PETSC_OPTIONS=_LU)
+    env.setdefault("FI_PROVIDER", "tcp")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env.update(overrides)
+    out = subprocess.run([sys.executable, STEP_RETRY], capture_output=True, text=True, timeout=600, env=env,
+                         cwd=str(cwd))
+    assert out.returncode == 0, (out.stdout + out.stderr)[-4000:]
+    return numpy.loadtxt(str(cwd / "u.csv"), delimiter=",", skiprows=1), str(cwd / "accepted.txt")
+
+
+@pytest.mark.parametrize("opts", ["beamRigid=True", "beamRigid=False"])
+def test_a_later_models_failure_is_retried_from_the_step_start(tmp_path, opts):
+    """The beam channel with a dye after RANS2P_IB (beam_channel_so.py, Sequential_MinModelStep): the dye's third
+    solve is reported failed, after RANS2P_IB has taken its step, so the system step is cut and retried. The retry
+    must give the run that takes the same steps without failing (step_retry_mpi.py's REPLAY), in both models.
+
+    Measured, largest relative difference over each model's dofs (rigid and flexible alike):
+      main: 9.2e-2. The retry skipped RANS2P_IB (Sequential_MinModelStep had already moved its last step's end to
+            the failed attempt's end), which then ran one step behind the dye and never reached T.
+      RANS2P_IB stepped again, without its state(): 6.4e-6, the lagged beam drag of the failed attempt."""
+    import numpy
+    forced, accepted = _retry_run(tmp_path / "forced", OPTS=opts, FAILMODEL="dye", FAILAT="3")
+    replay, _ = _retry_run(tmp_path / "replay", OPTS=opts, REPLAY=accepted)
+    assert int(open(str(tmp_path / "forced" / "retries.txt")).read()) == 1
+    times = numpy.loadtxt(accepted)
+    assert 0.025 in numpy.round(times, 12) and abs(times[-1] - 0.04) < 1e-12, times
+    assert forced.shape == replay.shape and numpy.abs(forced[:, :4] - replay[:, :4]).max() == 0.0
+    for key in numpy.unique(forced[:, 0]):
+        k = forced[:, 0] == key
+        worst = numpy.abs(forced[k, 4] - replay[k, 4]).max() / numpy.abs(replay[k, 4]).max()
+        assert worst < 1e-5, (key, worst)  # the lagged drag: next commit
