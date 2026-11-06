@@ -8936,7 +8936,7 @@ def msh2simplex(fileprefix, nd):
         if nodes[edge[1]-1][-1] == 0:  # update node flags
             nodes[edge[1]-1][-1] = edge[3]
         if nodes[edge[2]-1][-1] == 0:  # update node flags
-            nodes[edge[1]-1][-1] = edge[3]
+            nodes[edge[2]-1][-1] = edge[3]
 
     if nd == 2:
         logEvent('msh2simplex: writing .node .ele .edge files')
@@ -8944,12 +8944,13 @@ def msh2simplex(fileprefix, nd):
         logEvent('msh2simplex: writing .node .ele .edge .face files')
     header = '{0:d} {1:d} 0 1'.format(node_nb, nd)
 
+    # %.17g: the coordinates as gmsh wrote them (%f kept six decimals, moving nodes by up to 5e-7)
     if nd == 2:
         nodes = np.array(nodes)
         nodes = np.delete(nodes, 3, 1)
-        fmt = ['%d', '%f', '%f', '%d']
+        fmt = ['%d', '%.17g', '%.17g', '%d']
     elif nd == 3:
-       fmt = ['%d', '%f', '%f', '%f', '%d']
+       fmt = ['%d', '%.17g', '%.17g', '%.17g', '%d']
     np.savetxt(fileprefix+'.node', nodes, fmt=fmt, header=header, comments='')
 
     header = '{0:d} 1'.format(edge_nb)
