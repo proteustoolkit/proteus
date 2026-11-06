@@ -7943,7 +7943,20 @@ def writeHexMesh(mesh_info,hexfile_base,index_base=0):
         np.savetxt(mout,elems_with_mat,fmt='%d')
 
 
+NURBS_DEPRECATION = (
+    "%s is deprecated since 2.0 and will be removed with the in-tree importers (C7.1 step G, decided by "
+    "cekees 2026-11-06): no function space uses NURBS elements, there is no NURBS geometry reader, and it "
+    "cannot build a mesh (cmeshTools lost generateNURBSMeshFromRectangularGrid in 2018). An isogeometric "
+    "mesh would come from a ymf converter of PetIGA's own files.")
+
+
+def _warnNURBSDeprecated(name):
+    import warnings
+    warnings.warn(NURBS_DEPRECATION % (name,), DeprecationWarning, stacklevel=3)
+
+
 class MultilevelNURBSMesh(MultilevelMesh):
+    """Deprecated: see NURBS_DEPRECATION."""
     def __init__(self,
                  nx, ny, nz,
                  x=0.0, y=0.0, z=0.0,
@@ -7955,6 +7968,7 @@ class MultilevelNURBSMesh(MultilevelMesh):
                  parallelPartitioningType=MeshParallelPartitioningTypes.node):
         from .import cmeshTools
         from . import Comm
+        _warnNURBSDeprecated("MultilevelNURBSMesh")
         MultilevelMesh.__init__(self)
         self.useC = True
         self.nLayersOfOverlap = nLayersOfOverlap; self.parallelPartitioningType = parallelPartitioningType
@@ -8005,10 +8019,11 @@ class MultilevelNURBSMesh(MultilevelMesh):
 
 
 class NURBSMesh(HexahedralMesh):
-    """A mesh consisting of NURBS.
+    """A mesh consisting of NURBS. Deprecated: see NURBS_DEPRECATION.
 
     """
     def __init__(self):
+        _warnNURBSDeprecated("NURBSMesh")
         HexahedralMesh.__init__(self)
 
     def generateHexahedralMeshFromRectangularGrid(self,nx,ny,nz,Lx,Ly,Lz):
@@ -9360,6 +9375,7 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                 meshOptions.hex = False
             
             if (meshOptions.NURBS):
+                _warnNURBSDeprecated("MeshOptions.NURBS")
                 mlMesh = MultilevelNURBSMesh(nnx,nny,nnz,
                                                                meshOptions.px,meshOptions.py,meshOptions.pz,
                                                                domain.x[0], domain.x[1], domain.x[2],

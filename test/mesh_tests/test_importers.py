@@ -8,7 +8,7 @@ run in proteustoolkit/ymf-import-sms against its converter.
 
 - IFISS (``QuadrilateralMesh.generateFromQuadFileIFISS``): ``.mat`` grids made in the
   test, in the reader's own layout and in IFISS 3.7's.
-- NURBS (``MultilevelNURBSMesh``): the box.
+- NURBS (``MultilevelNURBSMesh``): deprecated (no function space uses it, it cannot build a mesh).
 - DMPlex is round-tripped in ``test_generate_mesh_errors.py`` (a proteus mesh through a cell
   list), and here: ``gmsh_cube.msh`` read by PETSc, against the same file through msh2simplex.
 - gmsh (``use_gmsh`` PSLG/PLC domains: ``msh2simplex``, then the triangle/tetgen readers):
@@ -198,13 +198,15 @@ def test_the_ifiss_grid_transcription_is_the_unit_square():
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError,
-                   reason="cmeshTools lost generateNURBSMeshFromRectangularGrid in the "
-                          "cmeshTools refactor (10689f82); mesh.cpp still has "
-                          "regularNURBSMeshElements")
-def test_a_nurbs_box_is_meshed():
-    MeshTools.MultilevelNURBSMesh(3, 3, 3, 1, 1, 1, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
-                                  refinementLevels=1)
+def test_the_nurbs_mesh_is_deprecated():
+    """Deprecated (cekees 2026-11-06): no function space uses NURBS elements, there is no NURBS reader,
+    and it cannot build a mesh -- cmeshTools lost generateNURBSMeshFromRectangularGrid in the cmeshTools
+    refactor (10689f82), so the constructor raises AttributeError after warning. Removed in C7.1 step G."""
+    with pytest.warns(DeprecationWarning, match="MultilevelNURBSMesh is deprecated"):
+        with pytest.raises(AttributeError, match="generateNURBSMeshFromRectangularGrid"):
+            MeshTools.MultilevelNURBSMesh(3, 3, 3, refinementLevels=1)
+    with pytest.warns(DeprecationWarning, match="NURBSMesh is deprecated"):
+        MeshTools.NURBSMesh()
 
 
 # --------------------------------------------------------------------------
