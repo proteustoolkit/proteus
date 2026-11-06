@@ -385,3 +385,73 @@ def test_ymf_run_refuses_a_boundary_no_setter_imposes_before_anything_runs(tmp_p
     assert "level_set_clsvof: split into sub-problems (flow, clsvof). It dispatches to flow RANS2P, clsvof CLSVOF, " \
         "and cannot run: region top (side y+): no BC_RANS setter imposes its closed conditions" in err
     assert not os.listdir(str(tmp_path))
+
+
+def _dispatch_record(path, old, new):
+    """Edit the dispatch an archive records (rank 0's write), so that a rerun differs from it."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    head, _, tail = text.partition("      dispatch:\n")
+    assert old in tail
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(head + "      dispatch:\n" + tail.replace(old, new, 1))
+
+
+def test_ymf_run_keeps_reproduces_and_refuses_a_split_output(tmp_path, capsys):
+    """make for a split discretization: an output already in the archive is kept; --check reruns it and finds it
+    bitwise the same; a rerun that differs from its record is refused (exit 1) unless --keep-different keeps it
+    as <key>~2; and pro msh has nothing to mesh for it."""
+    from proteus.cli import ymfrun
+    from ymf import closure
+    spec = os.path.join(HERE, "dambreak_short.ymf")
+    out = str(tmp_path)
+    archive = os.path.join(out, "dambreak_short.archive.ymf")
+    assert ymfrun.main([spec, "--outdir", out]) == 0
+    capsys.readouterr()
+    assert ymfrun.main([spec, "--outdir", out]) == 0
+    assert "h 0.2576, levels 1  1234a3751d55  in the archive" in capsys.readouterr().out
+    assert ymfrun.main([archive, "--check"]) == 0
+    text = capsys.readouterr().out
+    assert "1234a3751d55  reproduced, bitwise" in text
+    assert "every rerun reproduced its record" in text
+    # a record the rerun does not match: refused, then kept
+    _dispatch_record(archive, "runCFL: 0.25", "runCFL: 0.3")
+    assert ymfrun.main([archive, "--check"]) == 1
+    text = capsys.readouterr().out
+    assert "1234a3751d55  DIFFERENT, refused" in text and "the dispatch differs" in text
+    assert ymfrun.main([archive, "--check", "--keep-different"]) == 0
+    assert "1234a3751d55~2  DIFFERENT, kept" in capsys.readouterr().out
+    _, outputs, _ = closure.load(archive, check_state=False)
+    assert sorted(k.split("/")[-1] for k in outputs) == ["1234a3751d55", "1234a3751d55~2"]
+    assert ymfrun.main([spec, "--outdir", out], mesh_only=True) == 0
+    assert "a split discretization meshes as part of its solve: level_set_five" in capsys.readouterr().out
+
+
+def test_ymf_run_ignore_leaves_out_a_split_it_cannot_run(tmp_path, capsys):
+    """--ignore runs the split discretizations that can run and leaves out the others, saying why."""
+    from proteus.cli import ymfrun
+    spec = tmp_path / "both.ymf"
+    spec.write_text("""extends: %s
+remove:
+  - "solution_paths.discretizations[clsvof_projection]"
+model:
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 0.01]"
+    initial_conditions:
+      - {field: v, type: constant, value: 0.0}
+      - {field: p, type: constant, value: 0.0}
+      - {field: φ, type: function, units: m,
+         formula: "hypot(max(x − 1.2, 0), max(y − 0.6, 0)) + min(max(x − 1.2, y − 0.6), 0)"}
+solution_paths:
+  discretizations:
+    - name: level_set_five
+      mesh: {h: 0.2576}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
+""" % os.path.join(HERE, "dambreak.ymf"), encoding="utf-8")
+    out = tmp_path / "out"
+    assert ymfrun.main([str(spec), "--outdir", str(out), "--ignore"]) == 1     # not closed: one is left out
+    text = capsys.readouterr().out
+    assert "level_set_clsvof -- left out (--ignore): level_set_clsvof: split into sub-problems (flow, clsvof). " \
+        "It dispatches to flow RANS2P, clsvof CLSVOF, and cannot run" in text
+    assert "level_set_five -- split, dispatched to flow RANS2P" in text
+    assert "1 outputs, 1 new" in text
