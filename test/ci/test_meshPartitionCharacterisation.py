@@ -706,6 +706,34 @@ def test_files_node_number_exchange(tmp_path, n):
                        'directory': got['directory']}
 
 
+@pytest.mark.parametrize('n', [1, 2, 3, 4])
+@pytest.mark.parametrize('case,message', [
+    ('directory', 'entity 0 (asked by rank {asker}, of rank 0) has no owner'),
+    ('range', 'entity 37 (asked by rank {asker}) is outside [0,37)'),
+    ('node', 'node 37 (asked by rank {asker}) is outside [0,37)')])
+def test_files_lookup_of_a_number_no_rank_holds_ends_the_run(tmp_path, case, message, n):
+    """The -F partitioners' directory lookups (askOwningRanks) asked for a
+    number no rank can answer: an entity of a subdomain that no rank owns came
+    back as -1 and was used as a new number, and a number outside the ranks'
+    ranges was an out-of-bounds access (SEGV); the asserts that would have
+    caught them are compiled out. Each now ends the run on every rank with a
+    message naming the number and the rank that asked
+    (meshPartition_missing_owner_mpi.py)."""
+    env = dict(os.environ)
+    env['PYTHONPATH'] = os.pathsep.join([p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    env.setdefault('OMPI_MCA_rmaps_base_oversubscribe', '1')
+    env.setdefault('PRTE_MCA_rmaps_default_mapping_policy', ':oversubscribe')
+    mpiexec = _mpiexec()
+    if mpiexec is None:
+        pytest.skip('no MPI launcher available')
+    cmd = [mpiexec, '-n', str(n), sys.executable, os.path.join(HERE, 'meshPartition_missing_owner_mpi.py'), case, '37']
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=120)
+    out = result.stdout + result.stderr
+    assert result.returncode != 0, out
+    assert 'RESULT' not in result.stdout, out
+    assert message.format(asker=n - 1) in out, out
+
+
 @pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
                                                          ('plc.face', 3, True), ('plc.edge', 2, False)])
 def test_files_reader_faces_and_edges(ext, nNodes, headerHasMarkers):
