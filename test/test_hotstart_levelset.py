@@ -101,6 +101,22 @@ def test_rans3p_hot_start_continues_the_uninterrupted_run(tmp_path, mode):
                                          numpy.loadtxt(str(tmp_path / "full" / rows)))
 
 
+def test_a_hot_started_ss_controller_takes_the_uninterrupted_steps(tmp_path):
+    """Sequential_MinAdaptiveModelStep_SS (no deck of its own: forced by SYSTEMCONTROLLER) grows each step from
+    dt_system_last, x1.1 when the models converge fast. SO_base.setNextStep put the archived step back as dt_system
+    but left dt_system_last at the restart's own choice, so the first step after a hot start was grown from the
+    wrong step: 0.0469 -> 0.060 -> 0.080 -> 0.1 (4 steps, dofs 7.0e-1 off) against the uninterrupted
+    0.0469 -> 0.0545 -> 0.060 ... (8 steps)."""
+    dtout, t, ft = CASES["lagged"]
+    ss = dict(SYSTEMCONTROLLER="Sequential_MinAdaptiveModelStep_SS")
+    full = _run(tmp_path / "full", FT=ft, DTOUT=dtout, **ss)
+    _run(tmp_path / "hot", FT=t, DTOUT=dtout, **ss)
+    hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t, **ss)
+    after = numpy.loadtxt(str(tmp_path / "full" / "accepted.txt"))
+    numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt")), after[after > t + 1e-12])
+    assert _worst(full, hot) == 0.0
+
+
 def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
     """The check that the test above can fail: --hotStartMode restart rebuilds the history from the restart
     state, as every hot start did before the solver state carried it."""

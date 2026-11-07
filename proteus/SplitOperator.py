@@ -54,6 +54,9 @@ class SO_base(object):
         ``choose_dt_system`` leaves it (before ``stepExact_system``). A hot start puts back the step the
         uninterrupted run chose after the archived step (NumericalSolution's ``systemStep`` owner)."""
         self.dt_system = float(dt_system)
+        if hasattr(self, "dt_system_last"):
+            # the step the controller grows the next one from (Sequential_MinAdaptiveModelStep_SS: x1.1)
+            self.dt_system_last = self.dt_system
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence = [(self.t_system, m) for (_, m) in self.stepSequence]
         for model in self.modelList:

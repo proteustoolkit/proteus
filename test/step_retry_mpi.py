@@ -10,7 +10,8 @@ FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as fail
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
 land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
-the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry.
+the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry. SYSTEMCONTROLLER=<class of proteus.SplitOperator> runs the deck under that
+system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its own).
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
 HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
@@ -45,6 +46,9 @@ def init(self, so, pList, nList, *args, **kwargs):
     if os.environ.get("NOHOTSTARTMODE"):
         # options from a driver older than --hotStartMode (sList, opts follow nList)
         delattr(args[1], "hotStartMode")
+    if os.environ.get("SYSTEMCONTROLLER"):
+        # SYSTEMCONTROLLER=<class in proteus.SplitOperator>: run the deck under that system step controller
+        so.systemStepControllerType = getattr(SplitOperator, os.environ["SYSTEMCONTROLLER"])
     if os.environ.get("REPLAY"):
         # the system steps land on the replayed run's accepted times, the first step included
         so.systemStepSchedule = np.loadtxt(os.environ["REPLAY"])
@@ -111,7 +115,8 @@ elif os.environ.get("FAILMODEL"):
         NonlinearSolvers.CLSVOFNewton.solve = csolve
 
 # the system step controllers the decks use: the adaptive one (TwoPhaseFlow, so files) and the default (SWFlow)
-CONTROLLERS = (SplitOperator.Sequential_MinAdaptiveModelStep, SplitOperator.Sequential_MinModelStep)
+CONTROLLERS = (SplitOperator.Sequential_MinAdaptiveModelStep, SplitOperator.Sequential_MinModelStep,
+               SplitOperator.Sequential_MinAdaptiveModelStep_SS)
 
 
 accepted = []
