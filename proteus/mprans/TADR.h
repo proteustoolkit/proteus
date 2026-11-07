@@ -1803,10 +1803,23 @@ inline
                   flux_fluid_ext = boundary_flow_w*rho_up_fluid;
                 }
 
-              ebqe_flux.data()[ebNE_kb] = flux_ext;
+              // ImplicitEV without the flow model's edge fluxes: on an upwinded
+              // OUTFLOW face the residual applies c_i times the fluid flux to
+              // row i (see the residual update below), not the trace flux.
+              const bool outflow_upwind =
+                STABILIZATION_TYPE == STABILIZATION::ImplicitEV && !USE_EDGE_FLUX &&
+                boundary_flow_w >= 0.0 &&
+                ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
+                 (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
+              // Record the flux the residual applies.  On an upwinded outflow face
+              // sum_i c_i F^f w_i = c_h F^f at each quadrature point, so c_h F^f is
+              // that flux pointwise.  n.f(c_h) = (v.n) rho(c_h) c_h differs from it
+              // through the density, which F^f freezes at rho(c^n).
+              const double flux_adv_applied = outflow_upwind ? u_ext*flux_fluid_ext : flux_adv_ext;
+              ebqe_flux.data()[ebNE_kb] = outflow_upwind ? flux_adv_applied + flux_diff_ext : flux_ext;
               // advective/dispersive split + quadrature weight, see the note at
               // the ebqe_flux_adv declaration
-              ebqe_flux_adv.data()[ebNE_kb] = flux_adv_ext;
+              ebqe_flux_adv.data()[ebNE_kb] = flux_adv_applied;
               ebqe_dS_ext.data()[ebNE_kb]   = dS;
               if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                 ebqe_u.data()[ebNE_kb] = bc_u_ext;
@@ -1889,9 +1902,8 @@ inline
                     // the other nodes of the face with a positive off-diagonal,
                     // which broke the M-matrix of the low-order row (Zalesak level
                     // 4 FCT: c^L = -2.9e-9 at the outflow wall node (0, 0.625)).
-                    const bool outflow_upwind = boundary_flow_w >= 0.0 &&
-                      ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
-                       (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
+                    // outflow_upwind: decided once per quadrature point, above,
+                    // where the recorded flux is set from the same condition
                     const double flux_i = outflow_upwind
                       ? u_dof.data()[u_l2g.data()[eN*nDOF_test_element+i]]*flux_fluid_ext + flux_diff_ext
                       : flux_ext;
