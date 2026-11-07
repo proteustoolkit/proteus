@@ -16,7 +16,10 @@ What is pinned here:
   (``missing`` is zero), on simplices, quadrilaterals and hexahedra, for node and
   element partitioning; and the off-process share of the prolongation is small;
 * the control is real: without inheritance ``missing`` is large, so the zero
-  above is the partitioner's doing and not a property of the small meshes;
+  above is the partitioner's doing and not a property of the small meshes. The
+  control's independent levels are pinned (pinned_partitions.py: slabs across an
+  axis that turns with the level), not cut by the graph partitioner, whose cut is
+  a random draw that can nest by luck;
 * the element table the subdomain hierarchy relies on agrees with matching
   elements through their nodes, which does not depend on how the partitioner
   numbers anything;
@@ -61,17 +64,16 @@ def _launch(helper, args, n_ranks, env_extra=None, check=True, timeout=300):
     return result
 
 
-def _measure(kind, consistent, by, n_ranks, levels=3):
-    result = _launch('level_consistent_mpi.py', [kind, str(levels), str(int(consistent)), by],
-                     n_ranks)
+def _measure(kind, consistent, by, n_ranks, levels=3, independent='graph'):
+    result = _launch('level_consistent_mpi.py',
+                     [kind, str(levels), str(int(consistent)), by, independent], n_ranks)
     line = [l for l in result.stdout.splitlines() if l.startswith('RESULT')][0]
     return dict(item.split('=') for item in line.split()[1:])
 
 
 OFFPROC_BOUND = 0.25
-# the control: independent cuts are random, 0.24-0.99 over a few runs on a 4-rank quad mesh, so
-# only a bound well below the worst luck can be asserted of them
-INDEPENDENT_OFFPROC_FLOOR = 0.15
+# the control's pinned slabs put 0.64-0.72 of the prolongation off process on these meshes
+INDEPENDENT_OFFPROC_FLOOR = 0.5
 
 
 @pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
@@ -90,19 +92,19 @@ def test_every_parent_of_an_owned_node_is_on_the_rank(kind, by, n_ranks):
 @pytest.mark.parametrize('kind', ['tri', 'tet', 'quad', 'hex'])
 @pytest.mark.parametrize('by', ['node', 'element'])
 def test_independent_partitions_do_not_have_this_property(kind, by):
-    got = _measure(kind, False, by, 4)
+    # Pinned, not drawn: the graph partitioner's independent cuts change from run to
+    # run, and one in a few dozen nests by luck (missing == 0 on hex, CI run 42024054393).
+    # The slabs turn axis from level to level, so they never nest, on any build.
+    got = _measure(kind, False, by, 4, independent='slabs')
     assert int(got['missing']) > 0, got
     if by == 'node':
-        # independent cuts of the finer levels vary from run to run (hex on 4
-        # ranks: 0.40-0.99 over ten runs, quad 0.24-0.90, against a fixed ~0.12 inherited),
-        # so the control is only that they stay well above what inheritance gets
         assert float(got['offproc']) > INDEPENDENT_OFFPROC_FLOOR, got
 
 
 @pytest.mark.parametrize('space,degree', [('p2', 2), ('ncp1', 1)])
 def test_operators_without_level_consistency_are_refused_not_wrong(space, degree):
     result = _launch('space_transfer_mpi.py', [space, '3', str(degree)], 4,
-                     env_extra={'PROTEUS_TEST_INDEPENDENT_PARTITIONS': '1'},
+                     env_extra={'PROTEUS_TEST_INDEPENDENT_PARTITIONS': 'slabs'},
                      check=False)
     assert result.returncode != 0, result.stdout
     assert 'level-consistent' in result.stdout + result.stderr, result.stdout + result.stderr

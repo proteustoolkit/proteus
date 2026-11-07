@@ -10,6 +10,7 @@ NOFIX=1 turns off the owner-to-ghost scatters of MCorr, as a control.
 import os, shutil, sys
 import numpy as np
 from proteus import Comm, MeshTools as MT, default_s
+import rank_staging  # every rank stages the same files: atomically
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LS_with_edgeBased_EV", "MCorr")
 os.makedirs("mcpkg", exist_ok=True)
@@ -18,7 +19,7 @@ for name in os.listdir(SRC):
         text = open(os.path.join(SRC, name)).read()
         if name == "thelper_cons_ls.py":
             text = text.replace("parallel = False", "parallel = " + os.environ.get("PAR", "True"))
-        open(os.path.join("mcpkg", name), "w").write(text)
+        rank_staging.write(os.path.join("mcpkg", name), text)
 sys.path.insert(0, os.getcwd())
 
 import proteus

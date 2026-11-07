@@ -5102,6 +5102,9 @@ namespace proteus
         proteus::pyarray<double>& nodeDiametersArray = args.array<double>("nodeDiametersArray");
         double hFactor = args.scalar<double>("hFactor");
         int nElements_global = args.scalar<int>("nElements_global");
+        // the beam loads (q1-q3), vel_avg and netBeamDrag are summed over ranks by the caller, so only owned
+        // elements add to them; every local element still gets q_dragBeam*, the fluid's source
+        int nElements_owned = args.scalar<int>("nElements_owned");
         int nElementBoundaries_owned = args.scalar<int>("nElementBoundaries_owned");
         double useRBLES = args.scalar<double>("useRBLES");
         double useMetrics = args.scalar<double>("useMetrics");
@@ -5257,6 +5260,8 @@ namespace proteus
         double globalConservationError=0.0;
         for(int eN=0;eN<nElements_global;eN++)
           {
+            const bool owned = eN < nElements_owned;
+            double ghostBeamDrag[1] = {0.0};
             double eps_rho,eps_mu;
             //
             //loop over quadrature points and compute integrands
@@ -5460,7 +5465,8 @@ namespace proteus
                                    q_dragBeam2.data()[eN_k],
                                    q_dragBeam3.data()[eN_k],
                                    dV,
-                                   netBeamDrag.data());
+                                   owned ? netBeamDrag.data() : ghostBeamDrag);
+                if (owned)
                 calculateBeamLoads(nBeams,
                                    nBeamElements,
                                    beam_quadOrder,

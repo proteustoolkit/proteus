@@ -24,6 +24,8 @@ def pytest_configure(config):
     """
     import signal
     import threading
+    config.addinivalue_line('markers', 'mumps(reason): needs a PETSc built with MUMPS '
+                            '(skipped without it, except under GitHub Actions)')
     if (threading.current_thread() is threading.main_thread()
             and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL):
         signal.signal(signal.SIGTERM, _end_launches_on_sigterm)
@@ -78,6 +80,42 @@ def pytest_ignore_collect(collection_path, config):
         if top in spec['paths']:
             return True
     return None
+
+
+# MUMPS. Every CI leg's PETSc (conda-forge) has it; a PETSc built without it (the fleet's
+# pip-built dev_pip prefix, a hand-built PETSc) cannot run a test that names MUMPS or that needs
+# the direct solve it stands for: the singular and saddle-point systems whose fallback,
+# `linear_solver: petsc` with PETSc's default GMRES+ILU(0), fails or diverges (a known gap:
+# proteus has no scalable no-MUMPS solver for them yet). Such a test carries
+# @pytest.mark.mumps(reason) and is skipped there, with the reason in the summary, instead of
+# failing 22 times a night. Under GitHub Actions nothing is skipped: a CI environment that lost
+# MUMPS must fail, not go quietly green. The probe runs once, in a subprocess (importing petsc4py
+# here would start PETSc before a test could give it its own options), and only when a marked test
+# is about to run.
+_MUMPS = []
+
+
+def petsc_has_mumps():
+    """Whether the PETSc that petsc4py loads was built with MUMPS (probed once per process)."""
+    if not _MUMPS:
+        probe = ("import petsc4py; petsc4py.init([]); from petsc4py import PETSc; "
+                 "print(int(PETSc.Sys.hasExternalPackage('mumps')))")
+        try:
+            out = subprocess.run([sys.executable, '-c', probe], capture_output=True, text=True,
+                                 timeout=120).stdout.strip()
+            _MUMPS.append(out.endswith('1'))
+        except (OSError, subprocess.SubprocessError):
+            _MUMPS.append(True)     # cannot tell: run the test and let it say
+    return _MUMPS[0]
+
+
+def pytest_runtest_setup(item):
+    marker = item.get_closest_marker('mumps')
+    if marker is None or os.environ.get('GITHUB_ACTIONS') == 'true':
+        return
+    if not petsc_has_mumps():
+        why = marker.args[0] if marker.args else marker.kwargs.get('reason', 'it solves with MUMPS')
+        pytest.skip('this PETSc was built without MUMPS, and ' + why)
 
 
 def pytest_report_header(config):
@@ -469,6 +507,60 @@ def opts():
     from proteus import runtime
     runtime.start()
     return runtime.RunOptions()
+
+
+_DEFAULTS_MODULES = ("proteus.default_p", "proteus.default_n", "proteus.default_so")
+
+
+def _snapshot_defaults():
+    """The namespaces of default_p/default_n/default_so, their dicts and lists copied (a
+    deck that sets n.femSpaces[0] changes the dict, not the name).
+
+    proteus.defaults goes first: when it is first imported it takes its lists of
+    physics and numerics option names from dir(default_p) and dir(default_n), so
+    first imported by a deck in the middle of changing them, it would count that
+    deck's names (p.rdomain) as Proteus options, and Physics_base() would fail
+    once they were put back. (It imports petsc4py, as the first test module
+    collected would; Comm.init hands Comm.argv to the options database when PETSc
+    has already started.)"""
+    import importlib
+    import proteus.defaults  # noqa: F401
+    snapshot = {}
+    for name in _DEFAULTS_MODULES:
+        namespace = vars(importlib.import_module(name))
+        snapshot[name] = dict((key, (value.copy() if type(value) in (dict, list) else value))
+                              for key, value in namespace.items())
+    return snapshot
+
+
+def _restore_defaults(snapshot):
+    for name, saved in snapshot.items():
+        namespace = vars(sys.modules[name])
+        for key in list(namespace):
+            if key not in saved:
+                del namespace[key]
+        namespace.update(saved)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """Put default_p/default_n/default_so back after each test module is imported.
+
+    Some test modules build their problem at import, and the decks they import
+    reload proteus.default_p/default_n and set attributes on them (the BDM and
+    mass-matrix templates: n.triangleOptions = "Yp", p.nd, ...). Importing is
+    collecting, which happens before any test and outside the per-test restore
+    below, so every test file collected after one of them star-imported its
+    settings as Proteus's defaults: run reversed, poisson_2d, TADR, VOF, NCLS,
+    vortex and CLSVOF+RANS2P failed. Forward, they were collected first and
+    passed.
+    """
+    if not isinstance(collector, pytest.Module):
+        yield
+        return
+    snapshot = _snapshot_defaults()
+    yield
+    _restore_defaults(snapshot)
 
 
 @pytest.fixture(autouse=True)

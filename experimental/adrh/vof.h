@@ -29,10 +29,12 @@ namespace adrh
   // What a scalar coefficient functor returns at a point: mass m(u), an advective flux f(u) (weak form -f . grad w) and a
   // Hamiltonian H(u, grad u) (weak form H w), with their derivatives. A functor declares which of f and H it has (hasF, hasH);
   // the kernel compiles only those terms, so VOF (f only) and NCLS (H only) cost what they did as separate kernels.
+  // RDLS (rdls.h) adds a reaction r (weak form r w, independent of u) and an extra isotropic diffusion nuExtra that the
+  // functor computes from its fields (hasR); VOF and NCLS do not set them.
   template <int nS>
   struct ScalarTerms
   {
-    double m, dm, f[nS], df[nS], H, dH[nS];
+    double m, dm, f[nS], df[nS], H, dH[nS], r, nuExtra;
   };
 
   // VOF's coefficients (mprans/VOF.h evaluateCoefficients), in the form a generator emits: fields = (v_0..v_{nS-1}, porosity).
@@ -40,7 +42,8 @@ namespace adrh
   struct VOFCoefficients
   {
     static constexpr int nSpace = nS_, nFields = nS_ + 1;
-    static constexpr bool hasF = true, hasH = false;
+    static constexpr bool hasF = true, hasH = false, hasR = false;
+    static constexpr int tauForm = 0;
     ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, const double *, ScalarTerms<nS_> &T) const
     {
       const double porosity = fld[nS_];
@@ -62,6 +65,7 @@ namespace adrh
     double sc_beta;
     double sc_drop_time;
     double Ct_sge;      // 4 in proteus
+    int lag_sc = 1;     // 1: nu = numDiffLast (VOF, NCLS); 0: nu = the numDiff computed here (RDLS)
   };
 
   // One element. X (nDOF,3) node coordinates; ue (nDOF); per point q: fields (nQ, nFields), beta (nQ), numDiffLast (nQ);
@@ -122,8 +126,12 @@ namespace adrh
         }
       }
       cfl[q] = std::sqrt(nrm_v) / h;
-      const double tau = 1.0 / std::sqrt(P.Ct_sge * dm_t * dm_t + vGv + 1.0e-8);
-      const double pdeResidual = m_t + dfgu;
+      // tauForm 0 (VOF, NCLS): 1/sqrt(Ct dm_t^2 + a.Ga + 1e-8); 1 (RDLS, no time term): 1/(sqrt(a.Ga) + 1e-8)
+      double tau;
+      if constexpr (Coefficients::tauForm == 1) tau = 1.0 / (std::sqrt(vGv) + 1.0e-8);
+      else tau = 1.0 / std::sqrt(P.Ct_sge * dm_t * dm_t + vGv + 1.0e-8);
+      double pdeResidual = m_t + dfgu;
+      if constexpr (Coefficients::hasR) pdeResidual += T.r;
       const double subgridError = -tau * pdeResidual;
       {
         const double h1 = 1.0 / std::sqrt(guGgu + 1.0e-12);
@@ -131,7 +139,8 @@ namespace adrh
         numDiff[q] = P.sc_c * std::fabs(pdeResidual - P.sc_drop_time * m_t) * std::pow(h1, 2.0 - P.sc_beta) *
                      std::pow(h2, P.sc_beta - 1.0);
       }
-      const double nu = numDiffLast[q];
+      double nu = P.lag_sc ? numDiffLast[q] : numDiff[q];
+      if constexpr (Coefficients::hasR) nu += T.nuExtra;
       double Lstar[nD], dR[nD];
       for (int i = 0; i < nD; ++i)
       {
@@ -152,6 +161,7 @@ namespace adrh
           weak -= fgw * dV;
         }
         if constexpr (Coefficients::hasH) weak += T.H * w[i] * dV;
+        if constexpr (Coefficients::hasR) weak += T.r * w[i] * dV;
         Rloc[i] += weak + subgridError * Lstar[i] + nu * gugw * dV;
         for (int j = 0; j < nD; ++j)
         {

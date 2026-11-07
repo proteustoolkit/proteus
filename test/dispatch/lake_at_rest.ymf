@@ -1,0 +1,36 @@
+# Well-balancing (C35's first row): a lake at rest over a parabolic bump
+# stays at rest, h + Z = 0.5 and q = 0, to round-off. Exact.
+extends: proteus_numerics.ymf
+
+model:
+  name: "Lake at rest over a bump, 25 m × 1 m"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 25] × [0, 1],  t ∈ (0, 10]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_sets:
+      - {region: all, set: wall}
+    initial_conditions:
+      - {field: h, type: function, formula: "0.5 − Z", units: m}
+      - {field: q, type: constant, value: 0.0}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.01}
+      θ: {value: 1.0}
+      Z: {formula: "max(0, 0.2 − 0.05 (x − 10)²)"}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical:
+    - name: at_rest
+      provenance: human_specified
+      method: closed_form
+      solution:
+        formula: |-
+          h = 0.5 − Z
+          q = (0, 0)
+  discretizations:
+    - name: convex_limited
+      mesh: {cells: [50, 100, 200]}

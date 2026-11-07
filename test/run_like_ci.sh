@@ -123,6 +123,7 @@ else
     --ignore="$REPO/test/richards/bio2d" --ignore="$REPO/test/richards/bio2d_FCT"
     --ignore="$REPO/test/richards/Raingarden" --ignore="$REPO/test/richards/Tracy_convergence"
     --ignore="$REPO/test/richards/WRR_input_files" --ignore="$REPO/test/richards/WRR_draft"
+    --ignore="$REPO/test/salinity/comp_geoscience_reproduce"
     --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_sdf
     --deselect=test/FSI/test_FSI.py::TestIBM::test_fallingCylinderIBM_ball
     "$REPO/test"

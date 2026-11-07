@@ -6,15 +6,19 @@ serial one: damBreak, the TwoPhaseFlow default, drifted from serial by 2e-2 in g
 t=0.1 with the cut at x=1.6. The indicator is now computed in Python on the owned dofs and scattered to the ghosts;
 the control runs without that scatter and differs.
 """
+import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 
 import numpy
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# a failed launch keeps its whole output (loaded by path: --import-mode=importlib)
+_spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HERE, "launch_output.py"))
+launch_output = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "av_partition_mpi.py")
 
 
@@ -39,8 +43,7 @@ def _pressure(ranks, cwd, **overrides):
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=1800, env=env, cwd=str(cwd))
-    assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
+    out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     return numpy.loadtxt(os.path.join(str(cwd), "pressure.csv"), delimiter=",", skiprows=1)
 
 

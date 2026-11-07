@@ -1,0 +1,167 @@
+# The 2-D dam break of test/TwoPhaseFlow, three ways, as discretizations of one
+# model (YMF_MODEL_FAMILIES_C42 section 2.5, with ymf's tests/fixtures/two_phase
+# for the case). test_dispatch.py checks that proteus.Dispatch maps each one
+# onto exactly the modules and flags TwoPhaseFlow builds for its deck:
+#
+#   level_set_five     damBreakLevelSet.py              RANS2P, VOF, NCLS, RDLS, MCorr
+#   level_set_clsvof   damBreakLevelSet.py interface=1  RANS2P, CLSVOF
+#   clsvof_projection  damBreak.py                      CLSVOF, RANS3PF, PresInc, Pres, PresInit
+#
+# All three solve the non-conservative inertia form: RANS2P's default
+# (NONCONSERVATIVE_FORM = 1.0) and the only one RANS3PF has.
+# The proteus: blocks are interim hints (D8): model names are checked against
+# the dispatch, and eb_penalty_constant (the decks' 1e6, the table's default
+# 100) is an option ymf does not type yet.
+extends: two_phase_level_set.ymf
+
+model:
+  name: "Dam break, 3.22 m × 1.8 m tank, 1.2 m × 0.6 m column (2-D)"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 3]"
+    boundary_regions:
+      - {name: walls, where: "x = 0 or x = 3.22 or y = 0"}
+      - {name: top, where: "y = 1.8"}
+    boundary_sets:
+      - {region: walls, set: free_slip}
+      - {region: top, set: atmosphere}
+    initial_conditions:
+      - {field: v, type: constant, value: 0.0}
+      - {field: p, type: constant, value: 0.0}
+      - field: φ
+        type: function
+        formula: "sqrt(max(x − 1.2, 0)² + max(y − 0.6, 0)²) + min(max(x − 1.2, y − 0.6), 0)"
+        units: m
+    coefficients:
+      ρw: {value: 998.2}
+      νw: {value: 1.004e-6}
+      ρa: {value: 1.205}
+      νa: {value: 1.5e-5}
+      g:  {formula: "(0, -9.8)"}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: level_set_five
+      provenance: proteus_derived
+      from_weak_form: nonconservative_inertia
+      mesh: {h: 0.0322}
+      binds:
+        h: {meaning: element_size}
+        ε: {formula: "1.5 h"}
+      regularize:
+        heaviside: {by: smoothed_heaviside, width: ε}
+      step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      subproblems:
+        - name: flow
+          solves: [momentum, continuity]
+          lags: {φ: previous_step, χ: {via: vof, at: previous_step}}
+          finite_element: {velocity: {family: CG, order: 1}, pressure: {family: CG, order: 1}}
+          time_integration: backward_euler
+          stabilization: {method: ASGS, lag: true, shock_capturing: {factor: 0.5, lag: true}}
+          solver: {max_iterations: 100}
+          proteus: {model: RANS2P, useVF: 1.0, eb_penalty_constant: 1000000.0}
+        - name: vof
+          introduces: {name: χh, approximates: χ, units: "1"}
+          equation: "∂χh/∂t + ∇·(v χh) = 0"
+          initial_condition: "heaviside(φ)"
+          lags: {v: {via: flow, at: current_step}}
+          finite_element: {fields: {family: CG, order: 1}}
+          time_integration: backward_euler
+          stabilization: {method: SUPG, shock_capturing: {factor: 0.5, lag: true, sc_uref: 1.0, sc_beta: 1.5}}
+          proteus: {model: VOF}
+        - name: ncls
+          solves: [interface]
+          lags: {v: {via: flow, at: current_step}}
+          finite_element: {fields: {family: CG, order: 1}}
+          time_integration: backward_euler
+          stabilization: {method: SUPG, shock_capturing: {factor: 0.5, lag: true, sc_uref: 1.0, sc_beta: 1.5}}
+          proteus: {model: NCLS}
+        - name: rdls
+          enforces: "norm(∇φ) = 1"
+          for: φ
+          equation: "sign(φs) (norm(∇φ) − 1) = 0"
+          lags: {φs: {of: φ, via: ncls, at: current_step}}
+          regularize: {sign: {by: smoothed_sign, width: εr}}
+          binds: {εr: {formula: "0.75 h"}}
+          pseudo_time: steady
+          writes_back: {φ: replace}
+          finite_element: {fields: {family: CG, order: 1}}
+          stabilization: {shock_capturing: {factor: 0.9, lag: false}}
+          proteus: {model: RDLS, epsFact: 0.75}
+        - name: mcorr
+          enforces: "heaviside(φ) = χh"
+          introduces: {name: φc, correction_of: φ, units: m}
+          equation: "heaviside(φ + φc) − χh − ∇·(εd ∇φc) = 0"
+          binds: {εd: {formula: "10 h"}}
+          lags: {φ: {via: rdls, at: current_step}, χh: {via: vof, at: current_step}}
+          writes_back: {φ: add}
+          finite_element: {fields: {family: CG, order: 1}}
+          time_integration: none
+          proteus: {model: MCorr}
+
+    # RANS2P with CLSVOF in place of the four interface solves
+    - name: level_set_clsvof
+      provenance: proteus_derived
+      from_weak_form: nonconservative_inertia
+      mesh: {h: 0.0322}
+      binds:
+        h: {meaning: element_size}
+        ε: {formula: "1.5 h"}
+      regularize:
+        heaviside: {by: smoothed_heaviside, width: ε}
+      step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      subproblems:
+        - name: flow
+          solves: [momentum, continuity]
+          lags: {φ: previous_step, χ: {via: clsvof, at: previous_step}}
+          finite_element: {velocity: {family: CG, order: 1}, pressure: {family: CG, order: 1}}
+          time_integration: backward_euler
+          solver: {max_iterations: 100}
+          proteus: {model: RANS2P, eb_penalty_constant: 1000000.0}
+        - name: clsvof
+          solves: [interface]
+          enforces: "norm(∇φ) = 1"
+          lags: {v: {via: flow, at: current_step}}
+          finite_element: {fields: {family: CG, order: 1}}
+          time_integration: backward_euler
+
+    # damBreak.py: CLSVOF first, then the projection scheme's velocity step
+    # (P2), the pressure increment and update, and a pressure spin-up
+    - name: clsvof_projection
+      provenance: proteus_derived
+      from_weak_form: nonconservative_inertia
+      mesh: {h: 0.0322}
+      binds:
+        h: {meaning: element_size}
+        ε: {formula: "1.5 h"}
+      regularize:
+        heaviside: {by: smoothed_heaviside, width: ε}
+      step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc}
+      subproblems:
+        - name: clsvof
+          solves: [interface]
+          enforces: "norm(∇φ) = 1"
+          lags: {v: {via: flow, at: previous_step}}
+          solver: {max_iterations: 50}
+          proteus: {model: CLSVOF, disc_ICs: true}
+        - name: flow
+          solves: [momentum]
+          lags: {φ: {via: clsvof, at: current_step}, χ: {via: clsvof, at: current_step}}
+          finite_element: {velocity: {family: CG, order: 2}}
+          time_integration: vbdf
+          solver: {max_iterations: 1}
+          proteus: {model: RANS3PF, eb_penalty_constant: 1000000.0}
+        - name: pressureInc
+          enforces: "∇·v = 0"
+          solver: {max_iterations: 50}
+          proteus: {model: PresInc}
+        - name: pressure
+          solves: [continuity]
+          proteus: {model: Pres}
+        - name: pressureInit
+          spin_up: true
+          proteus: {model: PresInit}

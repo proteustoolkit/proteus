@@ -36,3 +36,20 @@ totals = mpi.allreduce(np.array([len(owned), len(answered)]), op=MPI.SUM)
 assert totals[0] == n
 if rank == 0:
     print('RESULT ranks=%d owned=%d asked=%d' % (size, totals[0], totals[1]))
+
+#the directory exchange of the element/face/edge numberings
+#(cpartitioning.subdomainNumbers): random owners, so the owned file numbers
+#are scattered and each rank's new range is uneven (possibly empty); each
+#subdomain is its owned entities plus a random sample of the others
+owner = rng.integers(0, size, n)
+counts = np.bincount(owner, minlength=size)
+expected = np.empty(n, dtype=int)
+for r in range(size):
+    expected[np.flatnonzero(owner == r)] = counts[:r].sum() + np.arange(counts[r])
+mineOwned = np.flatnonzero(owner == rank)
+subdomain = np.union1d(mineOwned, wanted)
+got = cpartitioning.subdomainNumbers(mpi, n, int(counts[:rank].sum()), mineOwned.tolist(), subdomain.tolist())
+assert got == {int(s): int(expected[s]) for s in subdomain}, (rank, got)
+dirTotal = mpi.allreduce(len(got) - len(mineOwned), op=MPI.SUM)
+if rank == 0:
+    print('RESULT directory=%d' % dirTotal)

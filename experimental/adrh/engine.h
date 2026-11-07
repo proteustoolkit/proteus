@@ -20,6 +20,23 @@ namespace adrh
   template <class C>
   struct HasBindElement<C, std::void_t<decltype(std::declval<const C &>().bindElement(0))>> : std::true_type {};
 
+  // A functor with data at the quadrature points (another model's solution there: MCorr's level set and VOF) also defines
+  // `bindPoint(int q) const`, returning the functor for point q of the element bindElement selected. evaluateAt calls it when it
+  // exists, so a functor without it is evaluated as before.
+  template <class C, class = void>
+  struct HasBindPoint : std::false_type {};
+  template <class C>
+  struct HasBindPoint<C, std::void_t<decltype(std::declval<const C &>().bindPoint(0))>> : std::true_type {};
+
+  template <class C, class... A>
+  ADRH_FN ADRH_FORCE_INLINE void evaluateAt(const C &c, int q, A &&... a)
+  {
+    if constexpr (HasBindPoint<C>::value)
+      c.bindPoint(q).evaluate(std::forward<A>(a)...);
+    else
+      c.evaluate(std::forward<A>(a)...);
+  }
+
   // One element of any Lagrange space: X (nDOF, 3) the DOF coordinates, ue and uo (nc, nDOF; uo null for a steady problem),
   // R (nc, nDOF) and J (nc, nDOF, nc, nDOF) out. The function a Kokkos kernel calls per element (kokkos_kernel.h);
   // elementKernelSpace below is the loop over it. PointGeometry and the Terms are per call, on the caller's stack.
@@ -58,13 +75,13 @@ namespace adrh
         }
       }
       zeroMasked<Co>(T);
-      C.evaluate(t, G.x, uq, gu, T);
+      evaluateAt(C, q, t, G.x, uq, gu, T);
       double mold[nc] = {};
       if constexpr (Co::has_mass)
         if (dt > 0.0 && uo)
         {
           zeroMasked<Co>(To);
-          C.evaluate(t - dt, G.x, uoq, guo, To);
+          evaluateAt(C, q, t - dt, G.x, uoq, guo, To);
           constexpr_for<0, nc>([&](auto i_) ADRH_LAMBDA_INLINE {
             constexpr int i = decltype(i_)::value;
             if constexpr (Co::m_nz(i)) mold[i] = To.m[i];

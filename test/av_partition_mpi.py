@@ -9,17 +9,18 @@ NOFIX=1 turns off the owner-to-ghost scatter of the smoothness indicator, as a c
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm, MeshTools as MT
+import rank_staging  # every rank stages the same files: atomically
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "TwoPhaseFlow")
 for name in os.listdir(SRC):
     if name.startswith("meshDambreak") or name == "__init__.py":
-        shutil.copy(os.path.join(SRC, name), name)
+        rank_staging.copy(os.path.join(SRC, name), name)
 case = open(os.path.join(SRC, "damBreak.py")).read()
 case += ("\n[(setattr(mm.n, 'nl_atol_res', 1.0e-10), setattr(mm.n, 'l_atol_res', 1.0e-14), "
          "(setattr(mm.n, 'linTolFac', 1.0e-14) if hasattr(mm.n, 'linTolFac') else None)) "
          "for mm in myTpFlowProblem.SystemPhysics.modelDict.values()]\n")
-open("damBreak.py", "w").write(case)
+rank_staging.write("damBreak.py", case)
 
 if os.environ.get("NOFIX"):
     from proteus.mprans import RANS3PF

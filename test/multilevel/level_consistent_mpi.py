@@ -11,7 +11,11 @@ levels, how local it is:
   owned by another rank, i.e. what PETSc has to communicate.
 * ``imbalance`` -- largest owned-node count over the mean, per level.
 
-Usage: level_consistent_mpi.py KIND LEVELS CONSISTENT [node|element]   (KIND tri, tet, quad or hex)
+Usage: level_consistent_mpi.py KIND LEVELS CONSISTENT [node|element [graph|slabs]]   (KIND tri, tet, quad or hex)
+
+With CONSISTENT 0, ``graph`` (the default) cuts every level with the graph partitioner,
+a draw that changes from run to run and can nest by luck; ``slabs`` pins each level to
+slabs across an axis that turns with the level (pinned_partitions.py), which do not nest.
 
 With element partitioning ``missing`` counts the fine elements this rank owns whose
 parent element is not in the coarse subdomain, and ``offproc`` is not measured.
@@ -35,7 +39,11 @@ kind = sys.argv[1]
 nLevels = int(sys.argv[2])
 consistent = bool(int(sys.argv[3]))
 by = sys.argv[4] if len(sys.argv) > 4 else 'node'
+independentOwners = sys.argv[5] if len(sys.argv) > 5 else 'graph'
 MeshTools.MultilevelMesh.levelConsistentPartitioning = consistent
+if not consistent and independentOwners == 'slabs':
+    from pinned_partitions import pin_independent_levels
+    pin_independent_levels(2 if kind in ('tri', 'quad') else 3)
 part = (MeshTools.MeshParallelPartitioningTypes.node if by == 'node'
         else MeshTools.MeshParallelPartitioningTypes.element)
 if kind == 'tri':

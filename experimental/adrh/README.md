@@ -711,3 +711,77 @@ Dirichlet points, so that branch is not exercised. `ncls_test.py` checks the eng
 | solution after one Newton step | 1.9e-16 |
 
 The viscosity is not amplified here as it is for VOF: the level set is not flat away from the interface.
+
+## Two-phase level set, slice 3: RDLS (`rdls.h`, `rdls_test.py`)
+
+RDLS (`mprans/RDLS.h` with `ELLIPTIC_REDISTANCING=0`, `freezeLevelSet=1`, `useExact=0`, the damBreakLevelSet
+configuration) is the same element kernel again, with the template's first nonlinear Hamiltonian:
+
+- `RDLSCoefficients`: S = H_eps(phi) - (1 - H_eps(phi)) with eps = epsFact h_phi, H = S |grad u|,
+  dH = S grad u / (|grad u| + 1e-12), and a reaction r = -S. Its fields are NCLS's level set at the point, h_phi (the
+  node diameters interpolated to the point) and the element diameter.
+- What the kernel gained, each behind a functor trait or a parameter so VOF and NCLS compile as before (their fixtures
+  pass with the same numbers):
+  - a reaction term r (`hasR`), in the weak form and the strong residual;
+  - RDLS's tau, 1/(sqrt(dH . G dH) + 1e-8) (`tauForm = 1`). There is no time term (dm_t = 0), and VOF's form
+    1/sqrt(4 dm_t^2 + a . G a + 1e-8) would differ at 1e-8, not at round-off;
+  - shock capturing at the current u (`SUPGParameters::lag_sc = 0`), plus a background diffusion the functor returns
+    (`nuExtra`: backgroundDiffusionFactor h_e where |phi| > 2 eps).
+- The Jacobian is proteus's, not the exact one. The H term is exact (dH/d(grad u) = dH). The subgrid term keeps dH and
+  tau frozen, and nu is not differentiated.
+- `rdlsPinElement` is the interface pin. After an element's quadrature, every node whose starting value is within eps
+  of zero has its element residual row replaced by (u - u_last) wDF h_e and its Jacobian row by wDF h_e on the
+  diagonal. eps there is the element's value at its last quadrature point, because RDLS.h reuses the loop variable.
+  A node shared by several elements can therefore be pinned in some of them and not in others.
+- No boundary terms (`NumericalFlux.DoNothing`). `rdlsTraceFace` returns the trace and its normalized gradient
+  (`ebqe_u`, `ebqe_n`).
+- RDLS.h writes `q[('grad(u)',0)]` from an uninitialized local (`dir`, whose assignment is commented out). That output
+  is not reproduced.
+
+`vof_capture.py OUT model=rdls` records the first RDLS Newton iteration at or after T. RDLS's kernel gets only
+element-local CSR offsets, so the capture takes the Jacobian's CSR structure from the matrix. `rdls_damBreak_he0.05.npz`
+(733 triangles, t = 0.062) has 30 pinned nodes (165 pinned element rows). `rdls_test.py`:
+
+| check | max difference, relative |
+|---|---|
+| residual | 4.1e-14 of its max; 4.5e-17 absolute, 3e-15 of a node's H and r terms (O(sum w dV) = 1.5e-2), which cancel where \|grad u\| = 1 |
+| Jacobian | 3.9e-17 |
+| shock-capturing viscosity (current u) | 4.7e-15 |
+| CFL | 3.2e-16 |
+| boundary trace | bitwise |
+| normalized boundary gradient | 2.4e-15 |
+| next Newton iterate (one step with the engine's R and J) | 1.9e-16 |
+| residual at the next iterate (pinned rows nonzero there) | 6.9e-14 of its max |
+
+## Two-phase level set, slice 4: MCorr (`mcorr.h`, `mcorr_test.py`)
+
+MCorr (`mprans/MCorr.h` with `useExact=0`, `useExact_s=0`, the damBreakLevelSet configuration) is not SUPG. It is a
+steady nonlinear reaction-diffusion problem for the level-set correction u, so it runs on the generic element kernel
+(`engine.h`, `elementKernelSpace`), the one Richards uses, not on the VOF/NCLS/RDLS template:
+
+- `MCorrCoefficients`: r = porosity (H_epsH(phi + u) - H_vof), dr = porosity delta_epsD(phi + u), a = eps_diff I,
+  phi = u, all scaled by H_s = H_0(phi_s) (1 in the fluid). eps_X = epsFact_X (useMetrics h_phi + (1 - useMetrics)
+  h_e). No mass, advection or Hamiltonian; the masks say so, so the kernel skips those blocks. The Jacobian is exact.
+- Point data: phi (NCLS's level set), H_vof (VOF's solution), the porosity, h_phi, h_e and phi_s come in as point fields.
+  The generic kernel gained one hook for this, `bindPoint(q)` beside `bindElement(eN)` (`engine.h`): a functor that has
+  it is evaluated as `C.bindElement(eN).bindPoint(q)`. A functor without it compiles to what it did before (the Richards
+  tests print the same digits with the module built before and after the hook).
+- `mcorrPointOutputs` writes what MCorr hands to the other models at the points: q_u, q_r (r without H_s) and
+  q_n = grad u / sqrt(1e-8 + |grad u|^2).
+- Active DOFs: with `useExact_s = 0` every element is active, so the marks are all 1 and MCorr.py's masking of the
+  residual and of the Jacobian rows is the identity. The cut-cell path (`useExact_s = 1`: ghost penalty on cut faces,
+  inactive rows) is not reproduced.
+
+`vof_capture.py OUT model=mcorr` records the first MCorr Newton iteration at or after T, plus q_u, q_r and q_n at the next
+iterate (MCorr starts from u = 0, where they are trivial). `mcorr_damBreak_he0.05.npz` (733 triangles, t = 0.063, 125
+elements within eps of the interface) gives:
+
+| check | max difference, relative |
+|---|---|
+| residual | 6.9e-15 |
+| Jacobian | 3.3e-16 |
+| q_r | 5.4e-15 (q_u, q_n are 0 at u = 0, and the engine gives 0) |
+| every DOF and element active | yes |
+| next Newton iterate (one step with the engine's R and J; MCorr has no line search) | 2.5e-14 |
+| residual at the next iterate | 3.2e-15 of the first residual (4.6e-19 absolute; Newton cut the residual 1e4, so its own max is 2.6e-8) |
+| q_u, q_r, q_n at the next iterate | 1.1e-14 |

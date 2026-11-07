@@ -9,9 +9,10 @@ tolerances apply; MAXITS=n raises every model's maxNonlinearIts to n.
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
-land on the times in the file instead of choosing them, which gives the run a failure-free run with the same steps
-(not the first step: its dt comes from initialize_dt_system). NORESTORE=1 turns off the restore before a retry.
-FT and OPTS set the final time and the deck's other options; DIR and SO run another deck under DIR instead: SO is
+land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
+the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry.
+FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
+HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -41,6 +42,12 @@ def boundary_integral_gauges(pList, nList):
 
 _init = NS.NS_base.__init__
 def init(self, so, pList, nList, *args, **kwargs):
+    if os.environ.get("NOHOTSTARTMODE"):
+        # options from a driver older than --hotStartMode (sList, opts follow nList)
+        delattr(args[1], "hotStartMode")
+    if os.environ.get("REPLAY"):
+        # the system steps land on the replayed run's accepted times, the first step included
+        so.systemStepSchedule = np.loadtxt(os.environ["REPLAY"])
     if os.environ.get("BIGAUGES"):
         boundary_integral_gauges(pList, nList)
     if os.environ.get("ATOL"):
@@ -52,6 +59,15 @@ def init(self, so, pList, nList, *args, **kwargs):
             n.maxNonlinearIts = max(getattr(n, "maxNonlinearIts", 0), int(os.environ["MAXITS"]))
     return _init(self, so, pList, nList, *args, **kwargs)
 NS.NS_base.__init__ = init
+
+if os.environ.get("OTHERPARTITION"):
+    # the archived solver state looks as if another partition wrote it (its fingerprint differs)
+    _fingerprint = NS.NS_base._solver_state_fingerprint
+    def _other_partition(self, model, index):
+        f = _fingerprint(self, model, index)
+        f[3:] += 1  # same ranks and mesh, other pieces of it
+        return f
+    NS.NS_base._solver_state_fingerprint = _other_partition
 
 if os.environ.get("NORESTORE"):
     NS.NS_base.restoreSystemStepState = lambda self: None
@@ -97,22 +113,6 @@ elif os.environ.get("FAILMODEL"):
 # the system step controllers the decks use: the adaptive one (TwoPhaseFlow, so files) and the default (SWFlow)
 CONTROLLERS = (SplitOperator.Sequential_MinAdaptiveModelStep, SplitOperator.Sequential_MinModelStep)
 
-if os.environ.get("REPLAY"):
-    times = np.loadtxt(os.environ["REPLAY"])
-    def replaying(_choose):
-        def choose_dt_system(self):
-            _choose(self)
-            later = times[times > self.t_system_last * (1 + 1e-12) + 1e-15]
-            if len(later):
-                self.dt_system = later[0] - self.t_system_last
-                self.t_system = later[0]
-                self.stepSequence = [(self.t_system, model) for model in self.modelList]
-                for model in self.modelList:
-                    model.stepController.dt_model = self.dt_system
-                    model.stepController.set_dt_allLevels()
-        return choose_dt_system
-    for cls in CONTROLLERS:
-        cls.choose_dt_system = replaying(cls.choose_dt_system)
 
 accepted = []
 def recording(_taken):
@@ -140,7 +140,10 @@ def calc(self, *a, **k):
             x = getattr(lm.u[ci].femSpace.dofMap, "lagrangeNodesArray", lm.mesh.nodeArray)[:, :3]
             rows.append(np.hstack([np.full((x.shape[0], 1), 100 * mi + ci), x, lm.u[ci].dof[:, None]]))
     a = np.vstack(rows)
-    np.savetxt("u.csv", a[np.lexsort((a[:, 3], a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,z,u")
+    # in parallel each rank writes its own dofs (owned and ghost), u<rank>.csv
+    from proteus import Comm
+    comm = Comm.get()
+    np.savetxt("u.csv" if comm.size() == 1 else "u%d.csv" % comm.rank(), a[np.lexsort((a[:, 3], a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,z,u")
     np.savetxt("accepted.txt", np.array(accepted))
     with open("retries.txt", "w") as f:
         f.write("%d\n" % retries[0])
@@ -151,7 +154,13 @@ if SO:
     # SO may be several words: "vos_p.py vos_n.py", or "--SWEs circular_damBreak.py"
     sys.argv = ['parun'] + SO.split() + ['-l' + os.environ.get('LOGL', '1'), '-C', os.environ.get("OPTS", "")]
 else:
-    sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l1', '-C',
-                'final_time=%s dt_output=%s %s' % (os.environ.get("FT", "0.05"), os.environ.get("FT", "0.05"),
+    sys.argv = ['parun', '--TwoPhaseFlow', DECK, '-l' + os.environ.get('LOGL', '1'), '-C',
+                'final_time=%s dt_output=%s %s' % (os.environ.get("FT", "0.05"),
+                                                   os.environ.get("DTOUT", os.environ.get("FT", "0.05")),
                                                    os.environ.get("OPTS", "he=0.1"))]
-runpy.run_path(shutil.which('parun'), run_name='__main__')
+if os.environ.get("HOTSTART"):
+    # continue the archive in this directory from its latest step at or before HOTSTART
+    sys.argv += ['-H', '-t', os.environ["HOTSTART"], '--hotStartMode', os.environ.get("HOTSTARTMODE", "continue")]
+# the source tree's driver when there is one: an installed parun is a copy made at install time
+PARUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "scripts", "parun")
+runpy.run_path(PARUN if os.path.isfile(PARUN) else shutil.which('parun'), run_name='__main__')

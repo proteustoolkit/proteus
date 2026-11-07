@@ -10,6 +10,7 @@ dofs; OLDMAX=1 makes the time step read it again (a control).
 import os, shutil, sys, runpy
 import numpy as np
 from proteus import Comm, MeshTools as MT
+import rank_staging  # every rank stages the same files: atomically
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VOS")
 for name in ("vos.py", "vos_p.py", "vos_n.py"):
@@ -18,7 +19,7 @@ for name in ("vos.py", "vos_p.py", "vos_n.py"):
     text = text.replace("ct.T=1.0\n    ct.nDTout=20", "ct.T=0.4\n    ct.nDTout=8")
     text = text.replace("unstructured=False", "unstructured=True").replace("nny=int((nnx-1)/10+1)", "nny=nnx")
     text = text.replace("0.1 if ct.problem==0 else 1.0", "1.0")
-    open(name, "w").write(text)
+    rank_staging.write(name, text)
 
 _partition = MT.Mesh.partitionMesh
 def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshParallelPartitioningTypes.node,

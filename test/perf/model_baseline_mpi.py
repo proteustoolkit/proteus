@@ -22,6 +22,7 @@ iteration, through a run of the case under ``mpiexec``:
 Usage: model_baseline_mpi.py CASE.py [context='k=v ...'] [ceilings=FILE] [out=FILE] [datadir=DIR]
                              [warmup=3] [superlu=0|1] [petsc='-k v -k2 v2 !-k3'] [ctest=r|r-true]
                              [solution=PREFIX] [n='model.attr=value ...'] [params='model.attr=value ...']
+                             [velocity_block_size=0|1]
 
 ``superlu=0`` overrides the case's ``SystemNumerics.useSuperlu`` before the models are set up, so
 every model gets TwoPhaseFlow's iterative PETSc options (RANS2P: GMRES + ASM with LU blocks; VOF,
@@ -32,11 +33,14 @@ each; the test decks set ``useSuperlu=True``, production runs do not.
 into the options database when the case loads, which overrides the command line); ``!-key`` deletes
 one. ``ctest`` replaces RANS2P's linear convergence test (TwoPhaseFlow: 'r-true', a Python callback
 that builds the true residual every Krylov iteration). ``solution`` writes every model's final
-solution, per rank, to PREFIX.<rank>.npz, to compare two solver choices on the same partition, and
+solution, per rank, to PREFIX.<rank>.npz (with the owned nodes' coordinates, MODEL_x, so that runs on different
+partitions can be matched node by node), to compare two solver choices, and
 prints each model's integral of u over the domain (VOF: the water volume). ``n`` sets numerics-module
 attributes of a model (``n='rans2p.nl_atol_res=1e-12'``: a tightly converged reference run).
 ``params`` sets attributes of a TwoPhaseFlow model's Parameters object before the problem initializes
-(``params='rans2p.preconditioner=schur_boomeramg'``).
+(``params='rans2p.preconditioner=schur_boomeramg'``). ``velocity_block_size=1`` gives the velocity split of a Schur
+fieldsplit (NavierStokesSchur, interlaced dofs) the block size nSpace, so BoomerAMG on that block sees nSpace functions
+per node (its systems mode, and what ``-..._pc_hypre_boomeramg_nodal_coarsen`` needs); proteus leaves it at 1.
 
 CASE.py is a TwoPhaseFlow case module (test/TwoPhaseFlow/damBreak.py, marin.py); the
 context string is the case's ``-C`` options (``'final_time=0.05 he=0.05'``). Run from a
@@ -69,7 +73,7 @@ def parse(argv):
         raise SystemExit(__doc__)
     opts = {'case': argv[0], 'context': None, 'ceilings': None, 'out': None, 'datadir': '.',
             'warmup': '3', 'superlu': None, 'petsc': '', 'ctest': None, 'solution': None, 'n': '',
-            'params': ''}
+            'params': '', 'velocity_block_size': '0'}
     for arg in argv[1:]:
         key, _, value = arg.partition('=')
         if key not in opts:
@@ -145,6 +149,27 @@ petsc_events = {}
 def petsc_event_seconds():
     """Seconds this rank has spent in each of PETSC_EVENTS (PETSc logging on)."""
     return {name: ev.getPerfInfo()['time'] for name, ev in petsc_events.items()}
+
+
+def set_velocity_block_size():
+    """SchurPrecon's velocity index set with block size nSpace (interlaced dofs): BoomerAMG's num_functions.
+
+    A copy of SchurPrecon._initializeIS with one line added (setBlockSize); the fieldsplit takes its splits once."""
+    from petsc4py import PETSc
+
+    def _initializeIS(self):
+        L_range = self.L.getOwnershipRange()
+        neqns = self.L.getSizes()[0][0]
+        dof_order_cls = self.model_info.get_dof_order_class()
+        dof_arrays = dof_order_cls.create_DOF_lists(L_range, neqns, self.model_info.nc)
+        self.isp = PETSc.IS()
+        self.isp.createGeneral(dof_arrays[1], comm=PETSc.COMM_WORLD)
+        self.isv = PETSc.IS()
+        self.isv.createGeneral(dof_arrays[0], comm=PETSc.COMM_WORLD)
+        if dof_order_cls.__class__.__name__ == 'InterlacedDofOrderType':
+            self.isv.setBlockSize(self.model_info.nc - 1)
+        self.pc.setFieldSplitIS(('velocity', self.isv), ('pressure', self.isp))
+    LinearSolvers.SchurPrecon._initializeIS = _initializeIS
 
 
 def instrument_linear_solvers():
@@ -333,6 +358,8 @@ def write_solution(ns, prefix):
         lm = m.levelModelList[-1]
         for ci, u in lm.u.items():
             arrays['%s_%d' % (m.name, ci)] = np.array(u.dof)
+        #the owned nodes' coordinates, to compare runs on different partitions (P1: dof = node)
+        arrays['%s_x' % m.name] = np.array(lm.mesh.nodeArray[:lm.mesh.nNodes_owned])
         #the integral of the first component over the owned elements (VOF: the water volume)
         if ('u', 0) in lm.q and 'dV' in lm.q:
             nE = lm.mesh.nElements_owned
@@ -353,6 +380,8 @@ def main(argv):
     runopts.dataDir = opts['datadir']
     instrument_classes()
     instrument_linear_solvers()
+    if int(opts['velocity_block_size']):
+        set_velocity_block_size()
     so, pList, nList, sList, two_phase = load_case(opts['case'], opts['context'], opts['superlu'], opts['params'])
     apply_solver_overrides(opts, pList, nList)
     ceilings = acc.load_ceilings(opts['ceilings'], size)

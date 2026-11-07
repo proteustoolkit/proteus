@@ -1,0 +1,43 @@
+# The shallow-water equations with porosity, bed friction and canopy drag
+# (C42's second family, C35's model): the model only. Unknowns are the depth
+# h and the discharge q = h u. The pressure is written as a flux so the
+# system is one ADR system; Proteus's SW2DCV discretizes the well-balanced
+# non-conservative form θ g h ∇(h + Z), which is the same strong form.
+# Friction and drag are coefficients of the state; a dry node (h = 0) makes
+# q/h singular, which is the discretization's to regularize (SW2DCV's hEps:
+# proteus_numerics.ymf reads 1/h as its one_over_hReg).
+ymf_state: abstract
+
+model:
+  physical_model:
+    provenance: human_specified
+    processes: [free_surface_flow, bed_friction, canopy_drag]
+    assumptions: [hydrostatic, depth_averaged, nondispersive]
+  units: {convention: SI, default: true}
+  strong_form:
+    provenance: human_specified
+    unknowns:
+      - {name: h, units: m}
+      - {name: q, units: m2/s, rank: 1}
+    equation_formulation: "shallow-water equations, conservative variables, porous medium"
+    equations:
+      - name: mass
+        for: h
+        equation: "∂(θ h)/∂t + ∇·(θ q) = 0  in Ω"
+      - name: momentum
+        for: q
+        equation: "∂(θ q)/∂t + ∇·(θ q⊗q/h) + ∇(θ g h²/2) − (g h²/2)∇θ + θ g h ∇Z + θ τb + Fd = 0  in Ω"
+    coefficients:
+      τb: {formula: "g n² norm(q) q / h^(7/3)"}      # Manning bed friction
+      Fd: {formula: "(α + β norm(q)/h) q"}           # Darcy-Forchheimer drag, per unit plan area
+      g:  {units: m/s2}
+      n:  {units: s/m^(1/3)}
+      θ:  {units: "1"}                               # porosity: 1 - m π D²/4 in a canopy, 1 elsewhere
+      Z:  {units: m}                                 # the bed
+      α:  {units: 1/s}
+      β:  {units: 1/m}
+    condition_sets:
+      wall:                                          # a no-flux wall (SW2DCV's integrated-by-parts walls)
+        - {variable: q, type: slip}
+      outflow:                                       # the natural outflow (an open end)
+        - {variable: q, type: open}

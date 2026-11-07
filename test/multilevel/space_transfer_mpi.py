@@ -24,9 +24,14 @@ from proteus import (MeshTools, defaults, default_n, default_s, default_so,
 rank, size = comm.rank(), comm.size()
 mpi = comm.comm.tompi4py()
 testroot = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# a control: partition every level independently, as proteus used to
+# a control: partition every level independently, as proteus used to; 'slabs' pins the
+# levels to partitions that do not nest (pinned_partitions.py), anything else draws them
+# from the graph partitioner
 if os.environ.get('PROTEUS_TEST_INDEPENDENT_PARTITIONS'):
     MeshTools.MultilevelMesh.levelConsistentPartitioning = False
+    from pinned_partitions import requested, pin_independent_levels
+    if requested():
+        pin_independent_levels(2)
 spaceName = sys.argv[1]
 nLevels = int(sys.argv[2])
 degree = int(sys.argv[3])
