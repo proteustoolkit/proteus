@@ -13,9 +13,11 @@ temporary it was handed (VOF.FCTStep passes three per step).
 """
 import ctypes, gc, glob, os, runpy, shutil, sys
 
+import rank_staging  # every rank stages the same files: atomically
+
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TwoPhaseFlow")
 for f in [os.path.join(SRC, "damBreakLevelSet.py")] + glob.glob(os.path.join(SRC, "meshDambreak*")):
-    shutil.copy(f, ".")
+    rank_staging.copy(f, ".")
 
 from mpi4py import MPI
 from proteus import Comm
