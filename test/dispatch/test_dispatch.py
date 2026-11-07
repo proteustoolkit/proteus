@@ -455,3 +455,47 @@ solution_paths:
         "It dispatches to flow RANS2P, clsvof CLSVOF, and cannot run" in text
     assert "level_set_five -- split, dispatched to flow RANS2P" in text
     assert "1 outputs, 1 new" in text
+
+
+# ---- round 2 fixes -----------------------------------------------------------------------------------------------
+
+def test_pro_msh_on_split_discretizations_stops_after_meshing(tmp_path, capsys):
+    """pro msh meshes (here: nothing to mesh, a split meshes in its solve), writes no archive and exits 0, whatever
+    the discretization kind. Before, it fell through to the run's tail: an archive written, exit 1 ("not closed")."""
+    from proteus.cli import ymfrun
+    out = tmp_path / "out"
+    assert ymfrun.main([os.path.join(HERE, "dambreak_short.ymf"), "--outdir", str(out)], mesh_only=True) == 0
+    assert "a split discretization meshes as part of its solve: level_set_five" in capsys.readouterr().out
+    assert not [f for f in os.listdir(str(out)) if f.endswith(".archive.ymf")]
+
+
+def test_petsc_options_restored_puts_back_what_the_run_deleted():
+    from petsc4py import PETSc
+    from proteus.DispatchRun import petsc_options_restored
+    options = PETSc.Options()
+    options.setValue("c5test_changed", "a")
+    options.setValue("c5test_deleted", "b")
+    try:
+        with petsc_options_restored():
+            options.setValue("c5test_changed", "z")
+            options.setValue("c5test_added", "c")
+            options.delValue("c5test_deleted")
+        found = options.getAll()
+        assert found["c5test_changed"] == "a" and found["c5test_deleted"] == "b"
+        assert "c5test_added" not in found
+    finally:
+        for key in ("c5test_changed", "c5test_deleted", "c5test_added"):
+            options.delValue(key)
+
+
+def test_a_constant_density_and_viscosity_are_accepted_and_a_missing_one_is_refused(dambreak):
+    from proteus.DispatchRun import RealizeError, _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    coefficients = doc["model"]["strong_form"]["coefficients"]
+    coefficients["ρ"] = {"value": 1000.0}
+    coefficients["μ"] = {"value": 1.0e-3}
+    found = _two_phase_values(doc, 2)
+    assert (found["rho_0"], found["rho_1"], found["nu_0"], found["nu_1"]) == (1000.0, 1000.0, 1.0e-6, 1.0e-6)
+    coefficients["ρ"] = {"units": "kg/m3"}
+    with pytest.raises(RealizeError, match="coefficient ρ has neither a formula nor a value.*density"):
+        _two_phase_values(doc, 2)

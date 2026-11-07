@@ -775,13 +775,10 @@ class NS_base(object):  # (HasTraits):
             #the spin-up above, and the step controllers' initializeTimeHistory
             #in initialize_dt_system, rebuilt the lag state from the restart
             #state; put back the state the archived step ended with
-            self._solverStateRefused = []
-            restored = [self.restoreSolverState(m,index,self.tCount) for index,m in enumerate(self.modelList)]
-            self._warnSolverStateRefused()
-            for index,m in enumerate(self.modelList):
-                if restored[index]:
-                    self.restoreArchivedDofs(m,index)
-            if all(restored):
+            restored = self.restoreSolverStates(self.tCount)
+            #a copy of every model's dofs, needed only by that restore: do not hold it for the whole run
+            self._archivedDofs = {}
+            if restored:
                 #the models' first-step branches (a low-order first step, no extrapolation from the
                 #previous solutions) belong to a run with no history; this one has its history back
                 self.firstStep = False
@@ -1533,13 +1530,14 @@ class NS_base(object):  # (HasTraits):
 
     def _warnSolverStateRefused(self):
         """One warning, on the first rank, when a continue hot start could not restore some model's solver state
-        and so goes on as a restart: the run then differs from the uninterrupted one, which the per-model log
+        and so goes on as a restart (restoreSolverStates restores all models or none, so every model is rebuilt): the run then differs from the uninterrupted one, which the per-model log
         lines alone made easy to miss (a hot start through the global mesh path re-partitions with the graph
         partitioner, and an unpinned partitioner need not reproduce the archived partition)."""
         if not self._solverStateRefused:
             return
         reasons = sorted(set(why for _, why in self._solverStateRefused))
-        message = ("hot start (continue): no solver state restored for %s (%s), so the run continues as a restart "
+        message = ("hot start (continue): the solver state of %s was refused (%s), so no model's state is restored "
+                   "(the state of the models is one state of the system) and the run continues as a restart "
                    "and will differ from the uninterrupted run; restart on the archived partition (same ranks; "
                    "the per-rank mesh views, or -mat_partitioning_type current) to continue exactly, or use "
                    "--hotStartMode restart to ask for a restart"
@@ -1558,21 +1556,37 @@ class NS_base(object):  # (HasTraits):
         dofs (the mass-corrected ones, where the uninterrupted run still holds RDLS's own last solution, from
         which its next preStep builds the normal reconstruction), and the spin-up solves its models again at
         the restart time (rising_bubble_rans3p's pressureInitial, solved at t=0 only in the uninterrupted run).
-        The solver's unknowns (uList) are the unknowns owner's, put back in restoreSolverState."""
+        The solver's unknowns (uList) are the unknowns owner's, put back in _applySolverState."""
         for lm, dofs in zip(model.levelModelList, self._archivedDofs.get(index, [])):
             for cj, dof in enumerate(dofs):
                 lm.u[cj].dof[:] = dof
 
-    def restoreSolverState(self, model, index, tCount):
-        """Hot start: put back what archiveSolverState wrote at ``tCount``,
-        after the spin-up has rebuilt (and so overwritten) the lag state.
+    def restoreSolverStates(self, tCount):
+        """Hot start: put back what archiveSolverState wrote at ``tCount`` for every model, all or none.
 
-        Only the last archived step has its state, and only for the partition
-        that wrote it (same number of ranks and the same pieces of the mesh): if
-        any rank finds another step or another fingerprint, none restores and
-        the run goes on as a restart, history rebuilt from the restart state,
-        with a message saying so. Returns whether the state was restored.
+        The state of the models is one state of the system: the next system step is archived with the first
+        model, the dofs and unknowns and the lags of each model belong to the same step. A system with some
+        models restored and others rebuilt from the restart state is neither the uninterrupted run nor a
+        restart, so if any model's state is refused (another step, rank count or partition, on any rank) none
+        is applied, the run goes on as a restart with one warning naming the refused models and saying that
+        all were rebuilt. Returns whether the state was restored.
         """
+        self._solverStateRefused = []
+        usable = [self._solverStateUsable(m, index, tCount) for index, m in enumerate(self.modelList)]
+        if not all(usable):
+            if self.hotStartMode == "continue":
+                self._warnSolverStateRefused()
+            return False
+        for index, m in enumerate(self.modelList):
+            self._applySolverState(m, index)
+        for index, m in enumerate(self.modelList):
+            self.restoreArchivedDofs(m, index)
+        return True
+
+    def _solverStateUsable(self, model, index, tCount):
+        """Whether the archive holds the solver state of ``tCount`` for ``model`` that this partition can read
+        (collective). A refusal is recorded with its reason in ``_solverStateRefused``; a step policy that
+        differs from the archived run's raises."""
         ar = self.ar[index]
         hdf = ar.hdfFile
         if ar.inline or ar.dataItemFormat != "HDF" or hdf is None:
@@ -1619,6 +1633,13 @@ class NS_base(object):  # (HasTraits):
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
             self._solverStateRefused.append((model.name, why))
             return False
+        return True
+
+    def _applySolverState(self, model, index):
+        """Put back the owners' archived state of ``model`` (checked usable by ``_solverStateUsable``)."""
+        ar = self.ar[index]
+        hdf = ar.hdfFile
+        suffix = "_p%d" % ar.rank
         for owner, obj in self._solver_state_owners(model):
             if obj.state() is None or not hasattr(obj, "set_state"):
                 continue
@@ -1635,7 +1656,6 @@ class NS_base(object):  # (HasTraits):
                 value = hdf[path][name][...]
                 st[key] = value if kind == "a" else value.reshape(-1)[0].item()
             obj.set_state(st)
-        return True
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None):

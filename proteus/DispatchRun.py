@@ -199,8 +199,12 @@ def _two_phase_values(doc, dim):
     parse = Parser(space).expression
 
     def at(name, chi):
-        expr = parse(formulas[name])
-        return expr.subs(symbols[indicator], chi)
+        if name in formulas:
+            return parse(formulas[name]).subs(symbols[indicator], chi)
+        if symbols[name] in numbers:               # a constant: the same in both phases
+            return symbols[name]
+        raise RealizeError("coefficient %s has neither a formula nor a value, and the two-phase realizer needs a "
+                           "number for the %s at each phase" % (name, [r for r, n in names.items() if n == name][0]))
 
     out = {}
     for phase in (0, 1):
@@ -695,8 +699,9 @@ def petsc_options_restored():
         for key in after:
             if key not in before:
                 options.delValue(key)
-            elif after[key] != before[key]:
-                options.setValue(key, before[key])
+        for key, value in before.items():          # changed, or deleted inside the context
+            if after.get(key) != value:
+                options.setValue(key, value)
 
 
 def run(realized, name, opts=None):

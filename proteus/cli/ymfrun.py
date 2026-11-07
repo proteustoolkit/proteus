@@ -675,6 +675,8 @@ def _run(args, prog, mesh_only, comm):
         split = []
     for entry in split:
         _run_split(args, doc, entry, planned, outputs, new, refused, outdir, stem, env, comm)
+    if mesh_only and not others:
+        return 0                  # pro msh stops after meshing, whatever the kind: no archive, no state report
     if not others:
         return _finish(args, comm, archive, doc, outputs, new, refused, outdir)
 
