@@ -246,3 +246,50 @@ class TestTADR(object):
         # the low-order operator's off-diagonals are -d_ij + c_ij.v <= 0 by construction; 1e-12 of the row's
         # diagonal only allows for round-off
         assert (nzval[off] <= 1.0e-12 * np.abs(diagonal[rows[off]])).all()
+
+    def test_stab5_outflow_boundary_flux_is_the_applied_flux(self, opts, monkeypatch):
+        """STABILIZATION_TYPE=5 (ImplicitEV) records, in ebqe ('advectiveFlux', 0) (what the boundary_flux
+        diagnostic integrates), the boundary solute flux its residual applies. On an upwinded outflow face the
+        residual applies c_i F^f to row i, F^f = (v.n) rho(c^n) the fluid flux, whose sum over the face's test
+        functions is c_h F^f; the recorded flux was the trace flux n.f(c_h) = (v.n) rho(c_h) c_h, which differs
+        through the density. Zalesak disk (problem 1: weak Dirichlet walls with inflow and outflow), rho_s =
+        3 rho_f.
+
+        The applied flux comes from the residual itself. The solved row is the conservative solute row minus
+        c_i times the fluid row (fluidResidual, its flux part), so sum_i (r_i + c_i fluidResidual_i) is the
+        conservative row's sum: storage/dt plus the boundary solute flux, the interior fluxes cancelling.
+        Evaluated at dt and 2 dt, its dt-independent part is the applied boundary flux. Before the fix it was
+        6.7218e-4 against 6.7921e-4 recorded (1.0e-2 relative; 1.1e-3 at rho_s = 1.5 rho_f); after, 1e-16."""
+        from proteus import Context
+        monkeypatch.setattr(Context, 'contextOptionsString',
+                            'problem=1 nd=2 T=0.01 nDTout=1 refinement=1 STABILIZATION_TYPE=5 FCT=False cfl=0.5')
+        try:
+            reload(thelper_tadr)
+            reload(default_n)
+            p = reload(thelper_tadr_p)
+            n = reload(thelper_tadr_n)
+            p.coefficients.rho_s = 3.0 * p.coefficients.rho_f
+            self.so.tnList = n.tnList
+            self.so.name = p.name + "_stab5_outflow_flux"
+            ns = proteus.NumericalSolution.NS_base(self.so, [p], [n], self.sList, opts)
+            ns.calculateSolution('tadr')
+            model = ns.modelList[0].levelModelList[-1]
+            r = np.zeros_like(model.u[0].dof)
+            dt = model.timeIntegration.dt
+            conservative_sum = []
+            for scale in (1.0, 2.0):
+                model.timeIntegration.dt = scale * dt
+                model.getResidual(model.u[0].dof, r)
+                conservative_sum.append(r.sum() + (model.u[0].dof * model.fluidResidual).sum())
+            model.timeIntegration.dt = dt
+            recorded = (model.ebqe[('advectiveFlux', 0)] * model.ebqe['dS']).sum()
+        finally:
+            monkeypatch.undo()
+            reload(thelper_tadr)
+            reload(default_n)
+            reload(thelper_tadr_p)
+            reload(thelper_tadr_n)
+        applied = 2.0 * conservative_sum[1] - conservative_sum[0]
+        # the case has solute leaving (6.7e-4): a zero flux would pass trivially
+        assert applied > 1.0e-4
+        assert abs(applied - recorded) <= 1.0e-10 * abs(applied)
