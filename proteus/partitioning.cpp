@@ -1413,13 +1413,28 @@ std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector
 namespace
 {
   /* MPI: ask, for every key, the rank whose range of offsets holds it, and
-     return key -> that rank's answer(key). Two exchanges; collective. */
+     return key -> that rank's answer(key). Two exchanges; collective.
+     answer(key) is a number >= 0, or -1 when the asked rank holds none for
+     key (no rank owns it: an inconsistent set of mesh files, or a partition
+     that left an entity unowned). Neither that nor a key outside
+     [offsets[0], offsets[size]) has a meaning for any caller, and the
+     asserts are compiled out, so either one ends the run on every rank
+     (MPI_Abort), naming the `what`, the number and the rank that asked. */
   template<class Answer>
   std::map<int,int> askOwningRanks(const MPI_Comm& comm, const std::vector<int>& offsets,
-                                   const std::set<int>& keys, Answer answer)
+                                   const std::set<int>& keys, Answer answer, const char* what)
   {
-    int size;
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
+    if (!keys.empty() && (*keys.begin() < offsets[0] || *keys.rbegin() >= offsets[size]))
+      {
+        const int key = *keys.begin() < offsets[0] ? *keys.begin() : *keys.rbegin();
+        std::cerr<<"partitioning: "<<what<<" "<<key<<" (asked by rank "<<rank<<") is outside ["
+                 <<offsets[0]<<","<<offsets[size]<<"), the numbers the ranks hold"
+                 <<" (are the mesh files consistent?)"<<std::endl;
+        MPI_Abort(comm, 1);
+      }
     std::vector<std::vector<int> > requests(size);
     for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
       requests[rankOfNumber(offsets, *k)].push_back(*k);
@@ -1436,9 +1451,20 @@ namespace
         answers[r].push_back(answer(asked[i]));
     std::vector<int> answered = exchangeIntsCounted(comm, answers, requestCounts);
     std::map<int,int> result;
+    int unanswered = 0;
     for (int r = 0, i = 0; r < size; r++)
       for (int k = 0; k < requestCounts[r]; k++, i++)
-        result[requests[r][k]] = answered[i];
+        {
+          if (answered[i] < 0 && unanswered++ == 0)
+            std::cerr<<"partitioning: "<<what<<" "<<requests[r][k]<<" (asked by rank "<<rank<<", of rank "<<r
+                     <<") has no owner: no rank holds a number for it (are the mesh files consistent?)"<<std::endl;
+          result[requests[r][k]] = answered[i];
+        }
+    if (unanswered)
+      {
+        std::cerr<<"partitioning: rank "<<rank<<" asked for "<<unanswered<<" "<<what<<"(s) with no owner"<<std::endl;
+        MPI_Abort(comm, 1);
+      }
     return result;
   }
 }
@@ -1450,7 +1476,7 @@ std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<
   MPI_Comm_rank(comm, &rank);
   const int begin = nodeOffsets_old[rank];
   return askOwningRanks(comm, nodeOffsets_old, wanted,
-                        [&](int nN_old) { return old2new_chunk[nN_old - begin]; });
+                        [&](int nN_old) { return old2new_chunk[nN_old - begin]; }, "node");
 }
 
 /* MPI: file number -> new number for the entities `subdomain` (elements,
@@ -1466,7 +1492,7 @@ std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<
    as (old, new) pairs sorted by old. */
 std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
                                                              const std::set<int>& owned,
-                                                             const std::vector<int>& subdomain)
+                                                             const std::vector<int>& subdomain, const char* what)
 {
   int rank, size;
   MPI_Comm_rank(comm, &rank);
@@ -1496,7 +1522,7 @@ std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& com
     if (owned.find(*it) == owned.end())
       wanted.insert(*it);
   std::map<int,int> ghosts = askOwningRanks(comm, offsets, wanted,
-                                            [&](int n_old) { return directory[n_old - begin]; });
+                                            [&](int n_old) { return directory[n_old - begin]; }, what);
   std::vector<std::pair<int,int> > old2new;
   old2new.reserve(mine.size() + ghosts.size());
   std::merge(mine.begin(), mine.end(), ghosts.begin(), ghosts.end(), std::back_inserter(old2new));
@@ -1592,11 +1618,13 @@ int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFi
       if (exterior && !owned && (!flagsFromFile || sub.elementBoundaryMaterialTypes[ebN] == 0))
         askAbout.insert(ebN_global);
     }
+  //the owner of a face holds it in its subdomain; -1 (not there) ends the run in askOwningRanks
   std::map<int,int> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](int ebN_global) {
       std::map<int,int>::const_iterator it = global2subdomain.find(ebN_global);
-      assert(it != global2subdomain.end());
+      if (it == global2subdomain.end())
+        return -1;
       return int(sub.elementBoundaryElementsArray[it->second*2+1] == -1);
-    });
+    }, "face");
   int marked = 0;
   for (std::map<int,int>::const_iterator it = meshExterior.begin(); it != meshExterior.end(); it++)
     if (!it->second)
@@ -1846,7 +1874,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   //
   const SubdomainNumbering elementNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElements_global, elementOffsets_new[rank],
-                                elements_subdomain_owned, keysOf(elementNodesArrayMap)));
+                                elements_subdomain_owned, keysOf(elementNodesArrayMap), "element"));
   const SubdomainNumbering elementNumbering_new2old_subdomain_map = elementNumbering_old2new_subdomain_map.inverse();
   PetscLogEventEnd(build_subdomains_global_numbering_elements_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating element numbering new2old/old2new");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
@@ -2007,7 +2035,8 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   const SubdomainNumbering elementBoundaryNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nElementBoundaries_global, elementBoundaryOffsets_new[rank],
                                 elementBoundaries_subdomain_owned,
-                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end())));
+                                vector<int>(elementBoundaries_subdomain.begin(), elementBoundaries_subdomain.end()),
+                                "face"));
   PetscLogEventEnd(build_subdomains_faces_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating elementBoudnary old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   int build_subdomains_edges_event;
@@ -2161,7 +2190,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   //directory (no mappings-file read)
   const SubdomainNumbering edgeNumbering_old2new_subdomain_map(
     subdomainNumbersByDirectory(PROTEUS_COMM_WORLD, nEdges_global, edgeOffsets_new[rank],
-                                edges_subdomain_owned, keysOf(edgeNodesMap)));
+                                edges_subdomain_owned, keysOf(edgeNodesMap), "edge"));
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done allocating edgeNumering old2new/new2old");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
   //6. Figure out what is in the node stars but not locally owned, create ghost information
