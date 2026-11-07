@@ -117,6 +117,37 @@ def test_a_hot_started_ss_controller_takes_the_uninterrupted_steps(tmp_path):
     assert _worst(full, hot) == 0.0
 
 
+def test_a_refused_model_makes_the_whole_hot_start_a_restart(tmp_path):
+    """The solver state of the models is one state of the system (the next system step is archived with the first
+    model; the dofs, unknowns and lags of each model belong to one step). With one model's state missing from the
+    archive (VOF's step stamp deleted) the others used to be restored and VOF rebuilt: a mixture that is neither
+    run, with a warning saying "no solver state restored for vof". Now none is applied: the result is the
+    --hotStartMode restart one (0.0 apart; both 5.2e-1 from the uninterrupted run, the mixture was 5.1e-1), with
+    one warning naming vof and saying no model's state was restored."""
+    import h5py
+    dtout, t, ft = CASES["lagged"]
+    _run(tmp_path / "stop", FT=t, DTOUT=dtout)
+    for name in ("mixed", "restart"):
+        shutil.copytree(str(tmp_path / "stop"), str(tmp_path / name))
+    with h5py.File(str(tmp_path / "mixed" / "damBreakLevelSet.h5"), "r+") as f:
+        del f["solver_state/vof/step_p0"]
+    mixed = _run(tmp_path / "mixed", FT=ft, DTOUT=dtout, HOTSTART=t)
+    restart = _run(tmp_path / "restart", FT=ft, DTOUT=dtout, HOTSTART=t, HOTSTARTMODE="restart")
+    assert _worst(mixed, restart) == 0.0
+    # the warning: run the hot start again from the archive of the mixed directory's stop state
+    shutil.copytree(str(tmp_path / "stop"), str(tmp_path / "warn"))
+    with h5py.File(str(tmp_path / "warn" / "damBreakLevelSet.h5"), "r+") as f:
+        del f["solver_state/vof/step_p0"]
+    env = dict(os.environ, OMP_NUM_THREADS="1", DECK="damBreakLevelSet.py", FT=str(ft), DTOUT=str(dtout), HOTSTART=str(t))
+    env.setdefault("FI_PROVIDER", "tcp")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    out = subprocess.run([sys.executable, HELPER], capture_output=True, text=True, timeout=1800, env=env,
+                         cwd=str(tmp_path / "warn"))
+    assert out.returncode == 0, out.stderr[-2000:]
+    warned = [line for line in out.stderr.splitlines() if "RuntimeWarning: hot start (continue)" in line]
+    assert len(warned) == 1 and "vof was refused" in warned[0] and "no model's state is restored" in warned[0], out.stderr[-3000:]
+
+
 def test_a_restart_that_rebuilds_the_history_differs(tmp_path):
     """The check that the test above can fail: --hotStartMode restart rebuilds the history from the restart
     state, as every hot start did before the solver state carried it."""
