@@ -122,30 +122,30 @@ if os.environ.get("HS_INJECT"):
     from proteus.NumericalSolution import NS_base
     _truth = pickle.load(open(os.environ["HS_TRUE"], "rb"))
     _groups = os.environ["HS_INJECT"].split(",")
-    _orig = NS_base.restoreSolverState
+    _orig = NS_base.restoreSolverStates
 
-    def _restore(self, model, index, tCount):
-        _orig(self, model, index, tCount)
-        if index == len(self.modelList) - 1:
-            if os.environ.get("HS_FIRST_FALSE"):  # the stepping loop's own flag, which preStep reads
-                self.firstStep = False
-            own = _owners(self)
-            for g in own:
-                if "all" in _groups or any(g.startswith(w) for w in _groups):
-                    _put(own[g], _truth[g], g)
-    NS_base.restoreSolverState = _restore
+    def _restore(self, tCount):
+        restored = _orig(self, tCount)  # all models' state, once for the system
+        if os.environ.get("HS_FIRST_FALSE"):  # the stepping loop's own flag, which preStep reads
+            self.firstStep = False
+        own = _owners(self)
+        for g in own:
+            if "all" in _groups or any(g.startswith(w) for w in _groups):
+                _put(own[g], _truth[g], g)
+        return restored
+    NS_base.restoreSolverStates = _restore
 
 if os.environ.get("HS_NO_COEF"):  # the archive as it was before the coefficients owner
     proteus.NumericalSolution.NS_base.SOLVER_STATE_OWNERS = ("shockCapturing", "stabilization", "timeIntegration")
 if os.environ.get("HS_DUMP_START"):  # the state a hot run starts stepping from, to diff against a stop run's HS_DUMP
     from proteus.NumericalSolution import NS_base as _NS
-    _prev = _NS.restoreSolverState
+    _prev = _NS.restoreSolverStates
 
-    def _restore_and_dump(self, model, index, tCount):
-        _prev(self, model, index, tCount)
-        if index == len(self.modelList) - 1:
-            pickle.dump({g: _grab(o, g) for g, o in _owners(self).items()}, open(os.environ["HS_DUMP_START"], "wb"))
-    _NS.restoreSolverState = _restore_and_dump
+    def _restore_and_dump(self, tCount):
+        restored = _prev(self, tCount)
+        pickle.dump({g: _grab(o, g) for g, o in _owners(self).items()}, open(os.environ["HS_DUMP_START"], "wb"))
+        return restored
+    _NS.restoreSolverStates = _restore_and_dump
 
 if os.environ.get("HS_GAUGES"):  # gauges on the momentum model: their files continue across the hot start
     from proteus.Gauges import PointGauges, LineIntegralGauges, BoundaryIntegralGauges  # noqa: E402
