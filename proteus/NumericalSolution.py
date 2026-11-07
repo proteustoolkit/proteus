@@ -776,6 +776,8 @@ class NS_base(object):  # (HasTraits):
             #in initialize_dt_system, rebuilt the lag state from the restart
             #state; put back the state the archived step ended with
             restored = self.restoreSolverStates(self.tCount)
+            #a copy of every model's dofs, needed only by that restore: do not hold it for the whole run
+            self._archivedDofs = {}
             if restored:
                 #the models' first-step branches (a low-order first step, no extrapolation from the
                 #previous solutions) belong to a run with no history; this one has its history back
