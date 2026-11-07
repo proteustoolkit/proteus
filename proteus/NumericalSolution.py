@@ -1556,7 +1556,7 @@ class NS_base(object):  # (HasTraits):
         dofs (the mass-corrected ones, where the uninterrupted run still holds RDLS's own last solution, from
         which its next preStep builds the normal reconstruction), and the spin-up solves its models again at
         the restart time (rising_bubble_rans3p's pressureInitial, solved at t=0 only in the uninterrupted run).
-        The solver's unknowns (uList) are the unknowns owner's, put back in restoreSolverState."""
+        The solver's unknowns (uList) are the unknowns owner's, put back in _applySolverState."""
         for lm, dofs in zip(model.levelModelList, self._archivedDofs.get(index, [])):
             for cj, dof in enumerate(dofs):
                 lm.u[cj].dof[:] = dof
