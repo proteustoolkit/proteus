@@ -1339,15 +1339,16 @@ namespace
     return int(std::upper_bound(offsets.begin(), offsets.end(), n) - offsets.begin()) - 1;
   }
 
-  //one round of MPI_Alltoallv of ints: sendBuffers[r] goes to rank r; returns
-  //what each rank sent here, concatenated in rank order
-  std::vector<int> exchangeInts(const MPI_Comm& comm, const std::vector<std::vector<int> >& sendBuffers)
+  //one MPI_Alltoallv of ints whose counts both sides already know: sendBuffers[r]
+  //goes to rank r, and recvCounts[r] ints come from rank r; returns what each
+  //rank sent here, concatenated in rank order
+  std::vector<int> exchangeIntsCounted(const MPI_Comm& comm, const std::vector<std::vector<int> >& sendBuffers,
+                                       const std::vector<int>& recvCounts)
   {
     const int size = int(sendBuffers.size());
-    std::vector<int> sendCounts(size), recvCounts(size), sendDispls(size+1, 0), recvDispls(size+1, 0);
+    std::vector<int> sendCounts(size), sendDispls(size+1, 0), recvDispls(size+1, 0);
     for (int r = 0; r < size; r++)
       sendCounts[r] = int(sendBuffers[r].size());
-    MPI_Alltoall(sendCounts.data(), 1, MPI_INT, recvCounts.data(), 1, MPI_INT, comm);
     for (int r = 0; r < size; r++)
       {
         sendDispls[r+1] = sendDispls[r] + sendCounts[r];
@@ -1358,6 +1359,24 @@ namespace
       std::copy(sendBuffers[r].begin(), sendBuffers[r].end(), send.begin() + sendDispls[r]);
     MPI_Alltoallv(send.data(), sendCounts.data(), sendDispls.data(), MPI_INT,
                   recv.data(), recvCounts.data(), recvDispls.data(), MPI_INT, comm);
+    return recv;
+  }
+
+  //one round of MPI_Alltoall (the counts) and MPI_Alltoallv of ints:
+  //sendBuffers[r] goes to rank r; returns what each rank sent here,
+  //concatenated in rank order, and, in recvCounts if given, how many came
+  //from each rank
+  std::vector<int> exchangeInts(const MPI_Comm& comm, const std::vector<std::vector<int> >& sendBuffers,
+                                std::vector<int>* recvCounts = nullptr)
+  {
+    const int size = int(sendBuffers.size());
+    std::vector<int> sendCounts(size), counts(size);
+    for (int r = 0; r < size; r++)
+      sendCounts[r] = int(sendBuffers[r].size());
+    MPI_Alltoall(sendCounts.data(), 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+    std::vector<int> recv = exchangeIntsCounted(comm, sendBuffers, counts);
+    if (recvCounts)
+      *recvCounts = std::move(counts);
     return recv;
   }
 }
@@ -1404,17 +1423,18 @@ namespace
     std::vector<std::vector<int> > requests(size);
     for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
       requests[rankOfNumber(offsets, *k)].push_back(*k);
-    //which ranks asked what, so the answers go back in the same order
-    std::vector<int> requestCounts(size), askedCounts(size);
+    //which ranks asked what (the request exchange's own counts), so the
+    //answers go back in the same order; each rank answers as many keys as it
+    //was asked, so the answer exchange needs no counts of its own
+    std::vector<int> requestCounts(size), askedCounts;
     for (int r = 0; r < size; r++)
       requestCounts[r] = int(requests[r].size());
-    MPI_Alltoall(requestCounts.data(), 1, MPI_INT, askedCounts.data(), 1, MPI_INT, comm);
-    std::vector<int> asked = exchangeInts(comm, requests);
+    std::vector<int> asked = exchangeInts(comm, requests, &askedCounts);
     std::vector<std::vector<int> > answers(size);
     for (int r = 0, i = 0; r < size; r++)
       for (int k = 0; k < askedCounts[r]; k++, i++)
         answers[r].push_back(answer(asked[i]));
-    std::vector<int> answered = exchangeInts(comm, answers);
+    std::vector<int> answered = exchangeIntsCounted(comm, answers, requestCounts);
     std::map<int,int> result;
     for (int r = 0, i = 0; r < size; r++)
       for (int k = 0; k < requestCounts[r]; k++, i++)
