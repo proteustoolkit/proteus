@@ -81,6 +81,9 @@ def meshArrays(prefix, mesh):
             out[prefix + name] = np.array(value, copy=True)
     #what _markRankInterfaces left: flags with -1 on the faces cut by the partition
     out[prefix + 'elementBoundaryMaterialTypes'] = np.array(mesh.elementBoundaryMaterialTypes, copy=True)
+    #the .edge file's markers, which every path here reads (None for a mesh without them)
+    if getattr(mesh, 'edgeMaterialTypes', None) is not None:
+        out[prefix + 'edgeMaterialTypes'] = np.array(mesh.edgeMaterialTypes, copy=True)
     return out
 
 

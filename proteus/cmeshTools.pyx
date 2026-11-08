@@ -88,6 +88,9 @@ cdef class CMesh:
         self.elementMaterialTypes = _intArray(self.mesh.elementMaterialTypes, self.mesh.nElements_global)
         self.elementBoundaryMaterialTypes = _intArray(self.mesh.elementBoundaryMaterialTypes, self.mesh.nElementBoundaries_global)
         self.nodeMaterialTypes = _intArray(self.mesh.nodeMaterialTypes, self.mesh.nNodes_global)
+        #the .edge file's markers: None unless a reader or partitioner read them
+        self.edgeMaterialTypes = (_intArray(self.mesh.edgeMaterialTypes, self.mesh.nEdges_global)
+                                  if self.mesh.edgeMaterialTypes != NULL else None)
         self.nodeArray = _doubleArray(self.mesh.nodeArray, self.mesh.nNodes_global, 3)
         self.nx = self.mesh.nx
         self.ny = self.mesh.ny
@@ -365,6 +368,7 @@ cpdef void generateFromTriangleFiles(CMesh cmesh,
         raise IOError("could not read a triangle mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_triangle(cmesh.mesh);
     failed = cppm.readTriangleElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
+    cppm.readEdgeMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
 cpdef void writeTriangleFiles(CMesh cmesh,
                              unicode filebase,
@@ -417,6 +421,7 @@ cpdef void generateFromTetgenFiles(CMesh cmesh,
         raise IOError("could not read a tetgen mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh);
     failed = cppm.readTetgenElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
+    cppm.readEdgeMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
 cpdef void generateFromTetgenFilesParallel(CMesh cmesh,
                                           unicode filebase,
@@ -427,6 +432,7 @@ cpdef void generateFromTetgenFilesParallel(CMesh cmesh,
         raise IOError("could not read a tetgen mesh from %s.node and %s.ele" % (filebase, filebase))
     cppm.constructElementBoundaryElementsArray_tetrahedron(cmesh.mesh);
     failed = cppm.readTetgenElementBoundaryMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
+    cppm.readEdgeMaterialTypes(cmesh.mesh,filebase.encode('utf8'),base);
 
 cpdef void writeTetgenFiles(CMesh cmesh,
                            unicode filebase,

@@ -604,6 +604,22 @@ OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
     }
   return overlap;
 }
+
+//the subdomain's edge flags from the global mesh's (the .edge markers a
+//reader kept), through the subdomain's edges' new global numbers and the
+//global edges' new-to-old permutation; nothing when the mesh has none
+void subdomainEdgeMaterialTypes(const Mesh& mesh, Mesh& subdomain,
+                                const std::valarray<int>& edgeNumbering_subdomain2global,
+                                const std::vector<int>& edgeNumbering_global_new2old)
+{
+  if (mesh.edgeMaterialTypes == NULL)
+    return;
+  if (subdomain.edgeMaterialTypes != NULL)
+    delete [] subdomain.edgeMaterialTypes;
+  subdomain.edgeMaterialTypes = new int[subdomain.nEdges_global];
+  for (int i = 0; i < subdomain.nEdges_global; i++)
+    subdomain.edgeMaterialTypes[i] = mesh.edgeMaterialTypes[edgeNumbering_global_new2old[edgeNumbering_subdomain2global[i]]];
+}
 }//namespace
 
 /* Steps 4-8 of partitionNodes: given the owner of every node, which every rank
@@ -947,6 +963,7 @@ for (int i=nEdges_subdomain_new[rank]; i < nEdges_subdomain_new[rank] + int(edge
   edgeNumbering_subdomain2global[i] = ig;
   
 }
+subdomainEdgeMaterialTypes(mesh, *mesh.subdomainp, edgeNumbering_subdomain2global, edgeNumbering_global_new2old);
 
 //now build rest of subdomain mesh connectivity information etc
 mesh.subdomainp->px = mesh.px;
@@ -1277,7 +1294,8 @@ bool readSimplexElementsTouching(const std::string& elementFileName, const char*
    node among the keys of `nodes` (0-based file numbers): their file numbers,
    file nodes and, when headerHasMarkers and the header announces them,
    markers. With headerHasMarkers false only the count is read from the header
-   and markers are never read (what both -F partitioners do with .edge files).
+   and markers are never read (what both -F partitioners did with .edge files
+   until 2026-11; they now read them as the subdomain's edgeMaterialTypes).
    Entities with no such node are skipped: the -F partitioners do nothing with
    them. Returns false, having said why, if the file cannot be opened. */
 bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
@@ -2048,12 +2066,12 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   //
   logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
   //the edges with a node of a subdomain element; the others play no part below.
-  //The .edge markers are not read (header count only), as always.
-  bool hasEdgeMarkers = false;
+  //Their markers become the subdomain's edgeMaterialTypes (in 2D the .edge
+  //file is also the face file, read above for the face flags).
   int nEdges_global;
   int ihasEdgeMarkers(0);
   vector<int> edNumbers, edNodes, edIds;
-  if (!readSimplexSubentitiesTouching(edgeFileName, format, "edge", 2, indexBase, false,
+  if (!readSimplexSubentitiesTouching(edgeFileName, format, "edge", 2, indexBase, true,
                                       nodes_old2new_subdomain_map, nEdges_global,
                                       ihasEdgeMarkers, edNumbers, edNodes, edIds))
     {
@@ -2061,10 +2079,6 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
       return failed;
     }
   assert(nEdges_global > 0);
-  if (ihasEdgeMarkers > 0)
-    {
-      hasEdgeMarkers = true;
-    }
   newMesh.nEdges_global = nEdges_global;
   set<int> edges_subdomain_owned;
   vector<set<int> > nodeEdgesStar(nNodes_subdomain_new[rank]);
@@ -2101,8 +2115,10 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           //pick up all the edges on the subdomain and store their nodes
           edgeNodesMap[ned].first = nodeTuple.nodes[0];
           edgeNodesMap[ned].second = nodeTuple.nodes[1];
+          //an edge flag is its marker or 0, never -1 (TetGen's marker for
+          //the edges of segments), as in readEdgeMaterialTypes
           if (ihasEdgeMarkers > 0)
-            edgeMaterialTypesMap[ned]=edId;
+            edgeMaterialTypesMap[ned] = (edId == -1) ? 0 : edId;
           for (auto elementp=edgeElementsMap[nodeTuple].begin();
                elementp != edgeElementsMap[nodeTuple].end();
                elementp++)
@@ -2467,6 +2483,13 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
         }
     }
+  //the .edge markers, 0 where the file has none
+  if (newMesh.subdomainp->edgeMaterialTypes != NULL)
+    delete [] newMesh.subdomainp->edgeMaterialTypes;
+  newMesh.subdomainp->edgeMaterialTypes = new int[newMesh.subdomainp->nEdges_global]();
+  for (auto edmp = edgeMaterialTypesMap.begin(); edmp != edgeMaterialTypesMap.end(); edmp++)
+    newMesh.subdomainp->edgeMaterialTypes[edgeNumbering_global2subdomainMap[edgeNumbering_old2new_subdomain_map[edmp->first]]]
+      = edmp->second;
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);
   int build_subdomains_cleanup_event;
@@ -3536,6 +3559,8 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
       mesh.subdomainp->edgeNodesArray[2*i+1]=nN1_subdomain;
       edgeNumbering_subdomain2global[i] = ig;
     }
+  //(the global mesh is still in its old edge numbering here; renumbered below)
+  subdomainEdgeMaterialTypes(mesh, *mesh.subdomainp, edgeNumbering_subdomain2global, edgeNumbering_global_new2old);
   //now fill in rest of boundary information, etc
   mesh.subdomainp->px = mesh.px;
   mesh.subdomainp->py = mesh.py;
@@ -3648,6 +3673,12 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   //std::cout<<"edgeNodesArray"<<std::endl;
   for (int i=0;i<mesh.nEdges_global*2;i++)
     mesh.edgeNodesArray[i] = edgeNodesArray_newNodesAndEdges[i];
+  if (mesh.edgeMaterialTypes != NULL)
+    {
+      std::vector<int> edgeMaterialTypes_old(mesh.edgeMaterialTypes, mesh.edgeMaterialTypes + mesh.nEdges_global);
+      for (int ig = 0; ig < mesh.nEdges_global; ig++)
+        mesh.edgeMaterialTypes[ig] = edgeMaterialTypes_old[edgeNumbering_global_new2old[ig]];
+    }
   //std::cout<<"nodeStarArray"<<std::endl;
   for (int i=0;i<mesh.nodeStarOffsets[mesh.nNodes_global];i++)
     mesh.nodeStarArray[i] = nodeStarArray_new[i];

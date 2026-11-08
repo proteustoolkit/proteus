@@ -1347,6 +1347,9 @@ class Mesh(object):
          self.hMin,
          self.sigmaMax,
          self.volume) = cmeshTools.buildPythonMeshInterface(self.cmesh)
+        #the .edge file's markers (0 none, never -1), or None when no reader
+        #or partitioner read them: Triangle/TetGen files and their partitions
+        self.edgeMaterialTypes = self.cmesh.edgeMaterialTypes
         # print("from C")
         # print("nElements_global = ", self.nElements_global),
         # print("nNodes_global = ", self.nNodes_global),

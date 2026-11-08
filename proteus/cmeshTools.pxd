@@ -51,6 +51,7 @@ cdef class CMesh:
         cdef np.ndarray elementMaterialTypes,
         cdef np.ndarray elementBoundaryMaterialTypes,
         cdef np.ndarray nodeMaterialTypes,
+        cdef object edgeMaterialTypes,
         cdef np.ndarray nodeArray,
 
         cdef int nx

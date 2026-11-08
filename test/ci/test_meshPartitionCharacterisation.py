@@ -918,6 +918,64 @@ def test_node_flags_are_the_vertex_markers_or_0_on_every_path(tmp_path, mesh, ve
         assert byFiles == markers
 
 
+def _edgeMarkerMesh(tmp_path, mesh):
+    """The stored mesh with markers on its .edge file (all 0 there): edge k
+    gets k % 6, and in TetGen's also -1 on every seventh (its marker for the
+    edges of segments; Triangle's .edge is the face file, where -1 would read as
+    a cut face). Returns (filebase, {sorted coordinate pair: expected flag})."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = str(tmp_path / (os.path.basename(stored) + '_edges'))
+    for ext in ('node', 'ele', 'face') if mesh == 'tet' else ('node', 'ele'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    nd = {'tri': 2, 'tet': 3}[mesh]
+    with open(stored + '.node') as f:
+        rows = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')][1:]
+    x = {int(r[0]): tuple([float(v) for v in r[1:1 + nd]] + [0.0] * (3 - nd)) for r in rows}
+    with open(stored + '.edge') as f:
+        lines = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    out, expected = ['%s 1' % lines[0][0]], {}
+    for k, l in enumerate(lines[1:]):
+        marker = -1 if (mesh == 'tet' and k % 7 == 0) else k % 6
+        out.append(' '.join(l[:3] + [str(marker)]))
+        expected[tuple(sorted((x[int(l[1])], x[int(l[2])])))] = 0 if marker == -1 else marker
+    with open(base + '.edge', 'w') as f:
+        f.write('\n'.join(out) + '\n')
+    return base, expected
+
+
+def _edgeFlagsByCoordinates(ranks):
+    """{sorted coordinate pair of an edge: set of flags over every rank's copies}."""
+    flags = {}
+    for a in ranks:
+        x = [tuple(p) for p in a['sub.nodeArray'].reshape(-1, 3).tolist()]
+        for (n0, n1), f in zip(a['sub.edgeNodesArray'].tolist(), a['sub.edgeMaterialTypes'].tolist()):
+            flags.setdefault(tuple(sorted((x[n0], x[n1]))), set()).add(f)
+    return flags
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+@pytest.mark.parametrize('path', ['files', 'node', 'element'])
+@pytest.mark.parametrize('n', [1, 2])
+def test_edge_flags_are_the_edge_markers_on_every_path(tmp_path, mesh, path, n):
+    """The .edge file's markers are each edge's flag (edgeMaterialTypes), 0 for
+    -1 as with node flags, on every copy of the edge: the in-memory readers
+    read them (readEdgeMaterialTypes) and partitionNodes / partitionElements
+    carry them to the subdomains; parun -F reads them itself. Until 2026-11
+    neither path read .edge markers (decision 12 of 2026-11-06)."""
+    base, expected = _edgeMarkerMesh(tmp_path, mesh)
+    if path == 'files':
+        _, ranks = run_files(tmp_path / 'files', mesh, n, base)
+    else:
+        d = tmp_path / path
+        os.makedirs(str(d))
+        _launch([mesh, path, 'graph', 1, d / 'out', base], n, cwd=str(d))
+        ranks = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(n)]
+    flags = _edgeFlagsByCoordinates(ranks)
+    assert set(flags) == set(expected)
+    assert {e: f for e, f in flags.items() if f != {expected[e]}} == {}
+    assert len(set(expected.values())) > 1
+
+
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])
 def test_files_marks_rank_interfaces_without_face_flags(tmp_path, mesh):
     """Element-boundary files without markers (.face, or Triangle's .edge, header

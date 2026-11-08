@@ -33,6 +33,7 @@ cdef extern from "mesh.h":
       int *elementMaterialTypes
       int *elementBoundaryMaterialTypes
       int *nodeMaterialTypes
+      int *edgeMaterialTypes
 
       int *elementIJK
       double *weights
@@ -272,6 +273,9 @@ cdef extern from "mesh.h":
     cdef int readTetgenElementBoundaryMaterialTypes(Mesh& mesh,
                                                     const char* filebase,
                                                     int base)
+    cdef int readEdgeMaterialTypes(Mesh& mesh,
+                                   const char* filebase,
+                                   int base)
     cdef int writeTetgenMesh(Mesh& mesh,
                              const char* filebase,
                              int base)

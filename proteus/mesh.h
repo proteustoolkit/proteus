@@ -59,7 +59,10 @@ extern "C"
     int *elementBoundaryLocalElementBoundariesArray, //the local element boundary number for the left and right neighbors of the element boundary
       *elementMaterialTypes,           //ids for classifying elements,element boundaries,nodes
       *elementBoundaryMaterialTypes,
-      *nodeMaterialTypes;
+      *nodeMaterialTypes,
+      //the .edge file's edge markers (0 for none, never -1), when a reader
+      //or partitioner has them; NULL otherwise
+      *edgeMaterialTypes;
     
     // NURBS
     int    *elementIJK;                // Cartesian indices of element 
@@ -128,6 +131,7 @@ extern "C"
     mesh.elementMaterialTypes=NULL;
     mesh.elementBoundaryMaterialTypes=NULL;
     mesh.nodeMaterialTypes=NULL;
+    mesh.edgeMaterialTypes=NULL;
     mesh.nodeArray=NULL;
     mesh.elementBarycentersArray=NULL;
     mesh.elementBoundaryBarycentersArray=NULL;
@@ -211,6 +215,7 @@ extern "C"
     if(mesh.elementMaterialTypes!=NULL) delete [] mesh.elementMaterialTypes;
     if(mesh.elementBoundaryMaterialTypes!=NULL) delete [] mesh.elementBoundaryMaterialTypes;
     if(mesh.nodeMaterialTypes!=NULL) delete [] mesh.nodeMaterialTypes;
+    if(mesh.edgeMaterialTypes!=NULL) delete [] mesh.edgeMaterialTypes;
     if(mesh.nodeArray!=NULL) delete [] mesh.nodeArray;
     if(mesh.elementDiametersArray!=NULL) delete [] mesh.elementDiametersArray;
     if(mesh.elementBarycentersArray!=NULL) delete [] mesh.elementBarycentersArray;
@@ -257,6 +262,7 @@ extern "C"
     mesh.elementMaterialTypes=NULL;
     mesh.elementBoundaryMaterialTypes=NULL;
     mesh.nodeMaterialTypes=NULL;
+    mesh.edgeMaterialTypes=NULL;
     mesh.nodeArray=NULL;
     mesh.elementBarycentersArray=NULL;
     mesh.elementBoundaryBarycentersArray=NULL;
@@ -405,6 +411,7 @@ extern "C"
   int writeTriangleMesh(Mesh& mesh, const char* filebase, int base); 
   int readTetgenMesh(Mesh& mesh, const char* filebase, int base);
   int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int base);
+  int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base);
   int writeTetgenMesh(Mesh& mesh, const char* filebase, int base);
   int readHex(Mesh& mesh, const char* filebase, int indexBase);
   int write3dmMesh(Mesh& mesh, const char* filebase, int base);
