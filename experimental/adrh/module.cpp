@@ -607,4 +607,89 @@ PYBIND11_MODULE(adrh_proto, m)
       return py::make_tuple(R, J, qu, qr, qn);
     });
   });
+
+  // MCorr with a solid (mcorr.h steps 1-3, MCorr.h's cut-cell path): mcorr's arguments, then MCorr.h's solid data: xref
+  // (nQ, 3) the reference points as MCorr.h hands them to equivalent_polynomials, phi_s at the nodes (nN) and at the points
+  // (nE, nQ), useExact_s, the mesh's l2g (nE, nD), element faces (nE, nD), face elements and local face numbers (nEB, 2),
+  // face diameters (nEB) and gamma = 10 ghost_penalty_constant. Returns the element residuals and Jacobians (H_s from
+  // the solid), the point outputs, icase (nE), H_s (nE, nQ), the cut faces kept (nF) and their ghost-penalty residuals
+  // (nF, 2, nD) and Jacobian blocks (nF, 2, nD, 2, nD), side 0 being the face's first element.
+  m.def("mcorr_solid", [](int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, double useMetrics, double epsFactHeaviside,
+                          double epsFactDirac, double epsFactDiffusion, Arr xref, Arr phi_s, Arr phi_q, int useExact_s,
+                          IArrV l2g, IArrV elementBoundaries, IArrV boundaryElements, IArrV boundaryLocal, Arr boundaryDiameter,
+                          double gamma) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF;
+      using C = adrh::MCorrCoefficients<nS>;
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != C::nFields)
+        throw std::invalid_argument("mcorr_solid: fields must be (nE, nQ, 6)");
+      if (xref.ndim() != 2 || xref.shape(0) != nQ || xref.shape(1) != 3 || phi_q.shape(0) != nE || phi_q.shape(1) != nQ)
+        throw std::invalid_argument("mcorr_solid: xref must be (nQ, 3) and phi_q (nE, nQ)");
+      if constexpr (nS == 1)
+        throw std::invalid_argument("mcorr_solid: 2D and 3D only");
+      py::array_t<int> icase(nE);
+      py::array_t<double> Hs({nE, nQ});
+      auto solid = [&](auto nQtag) {
+        constexpr int NQ = decltype(nQtag)::value;
+        adrh::MCorrSolid<nS, NQ> gf(useExact_s != 0);
+        for (int eN = 0; eN < nE; ++eN)
+        {
+          double phi_e[nD];
+          for (int a = 0; a < nD; ++a) phi_e[a] = phi_s.data()[l2g.data()[eN * nD + a]];
+          icase.mutable_data()[eN] = gf.element(xn.data() + eN * nD * 3, phi_e, xref.data(), phi_q.data() + eN * nQ,
+                                                Hs.mutable_data() + eN * nQ);
+        }
+      };
+      switch (nQ)
+      {
+        case 3: solid(std::integral_constant<int, 3>{}); break;
+        case 4: solid(std::integral_constant<int, 4>{}); break;
+        case 5: solid(std::integral_constant<int, 5>{}); break;
+        case 6: solid(std::integral_constant<int, 6>{}); break;
+        case 7: solid(std::integral_constant<int, 7>{}); break;
+        default: throw std::invalid_argument("mcorr_solid: nQ must be 3-7");
+      }
+      C coef;
+      coef.useMetrics = useMetrics; coef.epsFactHeaviside = epsFactHeaviside; coef.epsFactDirac = epsFactDirac;
+      coef.epsFactDiffusion = epsFactDiffusion; coef.fields = fields.data(); coef.nQ = nQ; coef.Hs = Hs.data();
+      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), qu({nE, nQ}), qr({nE, nQ}), qn({nE, nQ, nS});
+      adrh::elementKernelSpace<C, S>(coef, nE, nQ, xn.data(), u.data(), nullptr, qp.data(), qw.data(), 0.0, 0.0,
+                                     R.mutable_data(), J.mutable_data());
+      for (int eN = 0; eN < nE; ++eN)
+        adrh::mcorrPointOutputs<S>(coef.bindElement(eN), xn.data() + eN * nD * 3, u.data() + eN * nD, nQ, qp.data(),
+                                   qu.mutable_data() + eN * nQ, qr.mutable_data() + eN * nQ, qn.mutable_data() + eN * nQ * nS);
+      const std::vector<int> cut = adrh::mcorrCutFaces(nE, nD, icase.data(), phi_s.data(), l2g.data(), elementBoundaries.data(),
+                                                       boundaryElements.data());
+      const int nF = (int)cut.size();
+      py::array_t<int> faces(nF);
+      py::array_t<double> Rf({nF, 2, nD}), Jf({nF, 2, nD, 2, nD});
+      for (int k = 0; k < nF; ++k)
+      {
+        const int ebN = cut[k], eL = boundaryElements.data()[ebN * 2], eR = boundaryElements.data()[ebN * 2 + 1];
+        faces.mutable_data()[k] = ebN;
+        if constexpr (nD != nS + 1)
+          throw std::invalid_argument("mcorr_solid: the ghost penalty is reproduced for P1 simplices");
+        else
+          adrh::mcorrGhostFace<S>(xn.data() + eL * nD * 3, xn.data() + eR * nD * 3, u.data() + eL * nD, u.data() + eR * nD,
+                                boundaryLocal.data()[ebN * 2], boundaryLocal.data()[ebN * 2 + 1],
+                                gamma * boundaryDiameter.data()[ebN], Rf.mutable_data() + k * 2 * nD,
+                                Jf.mutable_data() + k * 4 * nD * nD);
+      }
+      return py::make_tuple(R, J, qu, qr, qn, icase, Hs, faces, Rf, Jf);
+    });
+  });
+
+  // MCorr.py's masking after assembly (mcorr.h step 4), in place: r *= activeR, the CSR rows of inactive DOFs become identity
+  // rows, and the DOFs with activeDOF != 1 are zeroed.
+  m.def("replace_inactive_rows", [](py::array_t<int, py::array::c_style> rowptr, py::array_t<int, py::array::c_style> colind,
+                                    py::array_t<double, py::array::c_style> vals, py::array_t<double, py::array::c_style> r,
+                                    Arr activeR, py::array_t<double, py::array::c_style> u_dof, Arr activeDOF) {
+    const int n = r.shape(0);
+    if (rowptr.shape(0) != n + 1 || activeR.shape(0) != n || u_dof.shape(0) != n || activeDOF.shape(0) != n)
+      throw std::invalid_argument("replace_inactive_rows: sizes");
+    adrh::replaceInactiveRows(n, rowptr.data(), colind.data(), vals.mutable_data(), r.mutable_data(), activeR.data(),
+                              u_dof.mutable_data(), activeDOF.data());
+  });
 }

@@ -10,12 +10,16 @@ the interface locator). ``model=rdls`` records the first RDLS Newton iteration a
 fixture's u_next is the next Newton iterate and out_residual_next proteus's residual there), with the Jacobian's CSR
 structure taken from the matrix (RDLS's kernel gets element-local offsets only). ``model=mcorr`` records the first MCorr
 Newton iteration the same way (the kernel's residual and Jacobian before MCorr.py masks inactive rows, and the active-DOF
-marks the kernel wrote).
+marks the kernel wrote). ``solid=CX,CY,R`` (model=mcorr) puts a circular solid of radius R at (CX, CY) on MCorr's cut-cell
+path for the captured solve: just before that solve's first residual, RANS2P's coefficients (which MCorr reads) get
+useExact = True and phi_s, q_phi_solid = the circle's signed distance (positive in the fluid), so MCorr marks the
+elements, adds the ghost penalty on cut faces and masks the inactive rows (MCorr.py). Only MCorr sees the solid: the capture
+stops after that Newton iteration.
 
 Needs a built proteus (PYTHONPATH at a worktree with its extensions) and runs from a scratch directory (the case
 writes its archive there):
 
-    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls|rdls|mcorr]
+    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls|rdls|mcorr] [solid=CX,CY,R]
 """
 import os
 import sys
@@ -48,6 +52,13 @@ KEEP_MCORR = ('mesh_dof', 'mesh_l2g', 'x_ref', 'dV_ref', 'u_trial_ref', 'useMetr
               'epsFactDiffusion', 'u_l2g', 'r_l2g', 'elementDiameter', 'nodeDiametersArray', 'u_dof', 'phi_dof', 'q_phi', 'q_H',
               'q_porosity', 'offset_u', 'stride_u', 'phi_solid_nodes', 'phi_solid', 'useExact_s')
 OUTPUTS_R_MCORR = ('globalResidual', 'q_u', 'q_r', 'q_n', 'isActiveR', 'isActiveDOF', 'isActiveElement')
+#with a solid (MCorr's cut-cell path): the interior-face data its ghost penalty uses
+KEEP_MCORR_SOLID = KEEP_MCORR + ('ghost_penalty_constant', 'elementBoundaryElementsArray', 'elementBoundariesArray',
+                                 'elementBoundaryLocalElementBoundariesArray', 'elementBoundaryDiameter')
+
+
+class Stop(Exception):
+    pass
 
 
 def main(argv):
@@ -57,8 +68,12 @@ def main(argv):
     opts = dict(a.split('=', 1) for a in argv[1:])
     he, T = float(opts.get('he', 0.05)), float(opts.get('T', 0.05))
     model = opts.get('model', 'vof')
+    solid = [float(v) for v in opts['solid'].split(',')] if 'solid' in opts else None
     keep, outputs_r = {'ncls': (KEEP_NCLS, OUTPUTS_R_NCLS), 'rdls': (KEEP_RDLS, OUTPUTS_R_RDLS),
                        'mcorr': (KEEP_MCORR, OUTPUTS_R_MCORR)}.get(model, (KEEP, OUTPUTS_R))
+    if solid is not None:
+        assert model == 'mcorr', 'solid= is for model=mcorr'
+        keep = KEEP_MCORR_SOLID
     here = os.path.dirname(os.path.abspath(__file__))
     case = os.path.join(here, '..', '..', 'test', 'TwoPhaseFlow', 'damBreakLevelSet.py')
 
@@ -133,6 +148,8 @@ def main(argv):
                 copy(seen, ('q_u', 'q_r', 'q_n'), 'out_next_')
             state['phase'] = 'done'
             return
+        if state['phase'] == 'done' and solid is not None:
+            raise Stop()
         residual(argsDict, *extra)
 
     def calculateJacobian(argsDict, *extra):
@@ -147,6 +164,22 @@ def main(argv):
             fixture['jac_u_dof'] = np.array(argsDict.seen['u_dof'], copy=True)
             state['phase'] = 'jacobian'
 
+    if solid is not None:
+        #put the solid into RANS2P's coefficients just before the captured MCorr solve (MCorr.py reads them per call)
+        getResidual = vof.getResidual
+
+        def sdf(x):
+            return np.hypot(x[..., 0] - solid[0], x[..., 1] - solid[1]) - solid[2]
+
+        def getResidualWithSolid(u, r):
+            ti, flow = vof.timeIntegration, vof.coefficients.flowCoefficients
+            if state['phase'] == 'wait' and T <= ti.t <= T + 0.05 and ti.dt < 1.0 and not flow.useExact:
+                flow.useExact = True
+                flow.phi_s[:] = sdf(vof.mesh.nodeArray)
+                flow.q_phi_solid[:] = sdf(flow.model.q['x'])  # RANS2P's points: the same element quadrature
+            return getResidual(u, r)
+        vof.getResidual = getResidualWithSolid
+
     if kernel is not None:
         class Kernel(object):
             def __getattr__(self, name):
@@ -156,11 +189,16 @@ def main(argv):
         setattr(vof, model, proxy)
     else:
         vof.calculateResidual, vof.calculateJacobian = calculateResidual, calculateJacobian
-    ns.calculateSolution(so.name)
+    try:
+        ns.calculateSolution(so.name)
+    except Stop:
+        pass
     if state['phase'] != 'done':
         raise SystemExit('no ' + model + ' solve captured at t >= %g (phase %s)' % (T, state['phase']))
     fixture['he'] = np.array(he)
     fixture['model'] = np.array(model)
+    if solid is not None:
+        fixture['solid'] = np.array(solid)
     np.savez_compressed(out, **fixture)
     print('wrote %s: t=%.4f dt=%.3e nodes=%d elements=%d' % (out, float(fixture['t']), float(fixture.get('dt', np.nan)),
                                                            fixture['mesh_dof'].shape[0], fixture['mesh_l2g'].shape[0]))
