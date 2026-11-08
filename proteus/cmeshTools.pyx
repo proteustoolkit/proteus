@@ -88,9 +88,9 @@ cdef class CMesh:
         self.elementMaterialTypes = _intArray(self.mesh.elementMaterialTypes, self.mesh.nElements_global)
         self.elementBoundaryMaterialTypes = _intArray(self.mesh.elementBoundaryMaterialTypes, self.mesh.nElementBoundaries_global)
         self.nodeMaterialTypes = _intArray(self.mesh.nodeMaterialTypes, self.mesh.nNodes_global)
-        #the .edge file's markers: None unless a reader or partitioner read them
-        self.edgeMaterialTypes = (_intArray(self.mesh.edgeMaterialTypes, self.mesh.nEdges_global)
-                                  if self.mesh.edgeMaterialTypes != NULL else None)
+        #the .edge file's markers, 0 where no .edge file described the edges
+        cppm.allocateEdgeMaterialTypes(self.mesh)
+        self.edgeMaterialTypes = _intArray(self.mesh.edgeMaterialTypes, self.mesh.nEdges_global)
         self.nodeArray = _doubleArray(self.mesh.nodeArray, self.mesh.nNodes_global, 3)
         self.nx = self.mesh.nx
         self.ny = self.mesh.ny

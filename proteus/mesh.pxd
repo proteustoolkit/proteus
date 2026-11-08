@@ -276,6 +276,7 @@ cdef extern from "mesh.h":
     cdef int readEdgeMaterialTypes(Mesh& mesh,
                                    const char* filebase,
                                    int base)
+    cdef int allocateEdgeMaterialTypes(Mesh& mesh)
     cdef int writeTetgenMesh(Mesh& mesh,
                              const char* filebase,
                              int base)

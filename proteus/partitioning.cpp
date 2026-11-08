@@ -607,16 +607,16 @@ OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
 
 //the subdomain's edge flags from the global mesh's (the .edge markers a
 //reader kept), through the subdomain's edges' new global numbers and the
-//global edges' new-to-old permutation; nothing when the mesh has none
+//global edges' new-to-old permutation; 0 when the global mesh has none
 void subdomainEdgeMaterialTypes(const Mesh& mesh, Mesh& subdomain,
                                 const std::valarray<int>& edgeNumbering_subdomain2global,
                                 const std::vector<int>& edgeNumbering_global_new2old)
 {
-  if (mesh.edgeMaterialTypes == NULL)
-    return;
   if (subdomain.edgeMaterialTypes != NULL)
     delete [] subdomain.edgeMaterialTypes;
-  subdomain.edgeMaterialTypes = new int[subdomain.nEdges_global];
+  subdomain.edgeMaterialTypes = new int[subdomain.nEdges_global]();
+  if (mesh.edgeMaterialTypes == NULL)
+    return;
   for (int i = 0; i < subdomain.nEdges_global; i++)
     subdomain.edgeMaterialTypes[i] = mesh.edgeMaterialTypes[edgeNumbering_global_new2old[edgeNumbering_subdomain2global[i]]];
 }

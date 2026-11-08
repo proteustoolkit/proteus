@@ -5386,6 +5386,17 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
    for the edges of segments) reads 0, as for node flags: an edge flag is its
    marker or 0, never -1. Allocates edgeMaterialTypes (nEdges_global).
    Returns 0. */
+/* edgeMaterialTypes as nEdges_global zeros ("no tag", the rule for nodes
+   too) on a mesh that has none yet: one whose edges no .edge file
+   described (generated grids, triangulateio, gmsh/PUMI/array meshes,
+   Triangle/TetGen files read without one). Keeps an existing array. */
+int allocateEdgeMaterialTypes(Mesh& mesh)
+{
+  if (mesh.edgeMaterialTypes == NULL)
+    mesh.edgeMaterialTypes = new int[mesh.nEdges_global]();
+  return 0;
+}
+
 int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base)
 {
   using namespace std;

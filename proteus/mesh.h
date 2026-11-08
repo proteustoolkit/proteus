@@ -60,8 +60,9 @@ extern "C"
       *elementMaterialTypes,           //ids for classifying elements,element boundaries,nodes
       *elementBoundaryMaterialTypes,
       *nodeMaterialTypes,
-      //the .edge file's edge markers (0 for none, never -1), when a reader
-      //or partitioner has them; NULL otherwise
+      //the .edge file's edge markers (0 for none, never -1); 0 on a mesh
+      //whose edges came from anywhere else (allocateEdgeMaterialTypes, which
+      //cmeshTools calls for every mesh it hands to Python); NULL until then
       *edgeMaterialTypes;
     
     // NURBS
@@ -412,6 +413,7 @@ extern "C"
   int readTetgenMesh(Mesh& mesh, const char* filebase, int base);
   int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int base);
   int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base);
+  int allocateEdgeMaterialTypes(Mesh& mesh);
   int writeTetgenMesh(Mesh& mesh, const char* filebase, int base);
   int readHex(Mesh& mesh, const char* filebase, int indexBase);
   int write3dmMesh(Mesh& mesh, const char* filebase, int base);
