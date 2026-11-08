@@ -858,7 +858,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["q_divU"] = self.coefficients.fluidModel.q['divU']
         argsDict["q_vs"] = self.coefficients.fluidModel.coefficients.q_velocity_solid
         argsDict["q_vos"] = self.coefficients.fluidModel.coefficients.q_vos
-        argsDict["rho_s"] = self.coefficients.fluidModel.coefficients.rho_s
+        argsDict["rho_s"] = float(self.coefficients.fluidModel.coefficients.rho_s)  # a deck may give an int
         argsDict["q_rho_f"] = self.coefficients.fluidModel.coefficients.q_rho
         argsDict["rho_s_min"] = self.coefficients.rho_s_min
         argsDict["rho_f_min"] = self.coefficients.rho_f_min
@@ -928,7 +928,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["q_vf"] = self.coefficients.fluidModel.q[('velocity', 0)]
         argsDict["q_vs"] = self.coefficients.fluidModel.coefficients.q_velocity_solid
         argsDict["q_vos"] = self.coefficients.fluidModel.coefficients.q_vos
-        argsDict["rho_s"] = self.coefficients.fluidModel.coefficients.rho_s
+        argsDict["rho_s"] = float(self.coefficients.fluidModel.coefficients.rho_s)  # a deck may give an int
         argsDict["q_rho_f"] = self.coefficients.fluidModel.coefficients.q_rho
         argsDict["rho_s_min"] = self.coefficients.rho_s_min
         argsDict["rho_f_min"] = self.coefficients.rho_f_min
