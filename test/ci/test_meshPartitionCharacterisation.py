@@ -809,8 +809,8 @@ def test_files_path_refuses_element_partitioning(tmp_path, mesh):
 
 def _variantMesh(tmp_path, mesh, vertexFlags):
     """The stored mesh with its vertex flags as a TetGen/Triangle attribute
-    (header ``n d 1 0``, same column) or dropped (``n d 0 0``); the other files
-    copied. Returns the filebase."""
+    (header ``n d 1 0``, same column), dropped (``n d 0 0``), or with every
+    third marker -1 (``minus1``); the other files copied. Returns the filebase."""
     stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
     base = str(tmp_path / ('%s_%s' % (os.path.basename(stored), vertexFlags)))
     for ext in ('ele', 'edge', 'face') if mesh == 'tet' else ('ele', 'edge'):
@@ -822,6 +822,9 @@ def _variantMesh(tmp_path, mesh, vertexFlags):
     rows = [l.split() for l in lines[1:]]
     if vertexFlags == 'attribute':
         out = ['%s %s 1 0' % (n, d)] + [' '.join(r) for r in rows]
+    elif vertexFlags == 'minus1':
+        #TetGen's marker for the vertices of segments, on every third node
+        out = [lines[0]] + [' '.join(r[:-1] + (['-1'] if i % 3 == 0 else r[-1:])) for i, r in enumerate(rows)]
     else:
         out = ['%s %s 0 0' % (n, d)] + [' '.join(r[:1 + int(d)]) for r in rows]
     with open(base + '.node', 'w') as f:
@@ -871,6 +874,48 @@ def test_files_node_flags_without_vertex_markers_are_0(tmp_path, mesh):
         assert not a['sub.nodeMaterialTypes'].any()
         exterior = a['sub.exteriorElementBoundariesArray']
         assert (a['sub.elementBoundaryMaterialTypes'][exterior] > 0).any()
+
+
+def _flagsByCoordinates(ranks):
+    """{node coordinates: set of flags over every rank's copies} of a partitioned mesh."""
+    flags = {}
+    for a in ranks:
+        for x, f in zip(a['sub.nodeArray'].reshape(-1, 3).tolist(), a['sub.nodeMaterialTypes'].tolist()):
+            flags.setdefault(tuple(x), set()).add(f)
+    return flags
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+@pytest.mark.parametrize('vertexFlags', ['markers', 'none', 'minus1'])
+@pytest.mark.parametrize('n', [1, 2])
+def test_node_flags_are_the_vertex_markers_or_0_on_every_path(tmp_path, mesh, vertexFlags, n):
+    """The node-flag rule on both paths: with vertex markers a node's flag is its
+    marker, without them 0, whether the mesh is read into memory and cut by
+    partitionNodes or partitioned by parun -F, at every copy of the node. The
+    in-memory readers gave every boundary node flag 1 without markers (mesh.cpp's
+    EXTERIOR_NODE_MATERIAL), the -F path the flag of a face (48 of pslg's 154
+    and 100 of plc's 131 nodes differed between the paths). A marker -1, which
+    TetGen writes for the vertices of segments, reads 0 on both paths: it is
+    mesh.cpp's "no flag yet", which gave the boundary ones 1 (both paths build
+    their meshes through it)."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = stored if vertexFlags == 'markers' else _variantMesh(tmp_path, mesh, vertexFlags)
+    _, files = run_files(tmp_path / 'files', mesh, n, base)
+    d = tmp_path / 'node'
+    os.makedirs(str(d))
+    _launch([mesh, 'node', 'graph', 1, d / 'out', base], n, cwd=str(d))
+    node = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(n)]
+    byFiles, byNode = _flagsByCoordinates(files), _flagsByCoordinates(node)
+    assert byFiles == byNode
+    assert all(len(f) == 1 for f in byFiles.values())
+    if vertexFlags == 'none':
+        assert set().union(*byFiles.values()) == {0}
+    else:
+        with open(base + '.node') as f:
+            rows = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')][1:]
+        nd = {'tri': 2, 'tet': 3}[mesh]
+        markers = {tuple([float(v) for v in r[1:1 + nd]] + [0.0] * (3 - nd)): {0 if int(r[1 + nd]) == -1 else int(r[1 + nd])} for r in rows}
+        assert byFiles == markers
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])

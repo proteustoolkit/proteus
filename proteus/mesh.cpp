@@ -47,8 +47,14 @@ static double CurrentTime(void)
 //mwftodo decide where to put mesh type tags
 const int DEFAULT_ELEMENT_MATERIAL=0;
 const int DEFAULT_NODE_MATERIAL=-1;
+//a node the reader or generator gave no flag gets 0 ("no tag"), on the
+//boundary too: a node's flag is its vertex marker or 0, never derived (the
+//node-flag rule of 2026-11-06; the parun -F partitioners do the same). So
+//does a marker -1, TetGen's for the vertices of segments, which equals
+//DEFAULT_NODE_MATERIAL. The exterior faces still get
+//EXTERIOR_ELEMENT_BOUNDARY_MATERIAL.
 const int INTERIOR_NODE_MATERIAL=0;
-const int EXTERIOR_NODE_MATERIAL=1;
+const int EXTERIOR_NODE_MATERIAL=0;
 const int INTERIOR_ELEMENT_BOUNDARY_MATERIAL=0;
 const int EXTERIOR_ELEMENT_BOUNDARY_MATERIAL=1;
 
