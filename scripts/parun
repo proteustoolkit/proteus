@@ -602,10 +602,15 @@ while running:
                       runName + '_init_prof')
 
         if doCalculate:
-            systemStepFailed = dispatch(ns.calculateSolution,
-                                        (runName,),
-                                        {},
-                                        runName + '_run_prof')
+            try:
+                systemStepFailed = dispatch(ns.calculateSolution,
+                                            (runName,),
+                                            {},
+                                            runName + '_run_prof')
+            except NumericalSolution.StepTimeError as e:
+                # raised on every rank at once; the archives are closed
+                log("%s run number %i failed: %s" % (so.name, runNumber, e), level=0)
+                systemStepFailed = True
             # reduce so every rank exits with the same status
             if comm.globalMax(int(bool(systemStepFailed))):
                 log("%s run number %i failed: system step failed" % (so.name, runNumber))
