@@ -2533,8 +2533,9 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
     2. Read the stars of the chunk's nodes from the element file and build
        the node graph (readSimplexNodeStars)
     3. Repartition the nodes with the PETSc graph partitioner
-       (MatPartitioning), number them by owner, gather the permutation into
-       newMesh.nodeNumbering_global_old2new, and write it to mappings.h5 too
+       (MatPartitioning), number them by owner, and gather the permutation
+       into newMesh.nodeNumbering_global_old2new (SW2DCV and GN_SW2DCV read
+       it; no mappings.h5 since 2026-11)
     4. Reread the element file for the elements in the support of the owned
        nodes, with the new numbers of their nodes from the ranks that
        computed them (readSubdomainElements)
@@ -2708,9 +2709,9 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   //the mesh's nodeNumbering_global_old2new, the whole permutation on every
   //rank, from each rank's default chunk: what partitionNodes keeps, and what
   //SW2DCV and GN_SW2DCV read to permute a bathymetry given in the file's node
-  //order (they read it from mappings.h5, below, which a run without -F never
-  //wrote and so could find stale). One MPI_Allgatherv; nNodes_global ints per
-  //rank.
+  //order (they read it from mappings.h5, written here until 2026-11, which a
+  //run without -F never wrote and so could find stale). One MPI_Allgatherv;
+  //nNodes_global ints per rank.
   //
   logEvent("Gathering the node numbering",5);
   {
@@ -2729,45 +2730,6 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
                    newMesh.nodeNumbering_global_old2new, counts.data(), displs.data(), MPI_INT,
                    PROTEUS_COMM_WORLD);
   }
-  //
-  //write nodeNumbering_old2new, each rank its default chunk, collectively
-  //
-  logEvent("Writing node numbering to hdf5",5);
-  hid_t mappings_plist_id = H5Pcreate(H5P_FILE_ACCESS);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_fapl_mpio(mappings_plist_id, PROTEUS_COMM_WORLD, MPI_INFO_NULL);
-#endif
-  const char* H5FILE_NAME("mappings.h5");
-  hid_t file_id = H5Fcreate(H5FILE_NAME, H5F_ACC_TRUNC, H5P_DEFAULT, mappings_plist_id);
-  assert(file_id != H5I_INVALID_HID);
-  H5Pclose(mappings_plist_id);
-  hsize_t nodes_global_count[]={static_cast<hsize_t>(nNodes_global)};
-  const hsize_t ARRAY_RANK(1);
-  hid_t nodes_old2new_filespace_id = H5Screate_simple(ARRAY_RANK, nodes_global_count, NULL);
-  hid_t nodes_old2new_dataset_id = H5Dcreate(file_id, "nodeNumbering_old2new", H5T_NATIVE_INT,
-                                             nodes_old2new_filespace_id,
-                                             H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-  hsize_t nodes_subdomain_count[]={static_cast<hsize_t>(nNodes_subdomain_old)};
-  hsize_t nodes_subdomain_offset[]={static_cast<hsize_t>(nodeOffsets_old[rank])};
-  hid_t nodes_old2new_memspace_id = H5Screate_simple(ARRAY_RANK, nodes_subdomain_count, NULL);
-  H5Sselect_hyperslab(nodes_old2new_filespace_id, H5S_SELECT_SET,
-                      nodes_subdomain_offset, NULL,
-                      nodes_subdomain_count, NULL);
-  hid_t nodes_old2new_plist_id = H5Pcreate(H5P_DATASET_XFER);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_dxpl_mpio(nodes_old2new_plist_id, H5FD_MPIO_COLLECTIVE);
-#endif
-  H5Dwrite(nodes_old2new_dataset_id, H5T_NATIVE_INT,
-           nodes_old2new_memspace_id, nodes_old2new_filespace_id,
-           nodes_old2new_plist_id, nodes_subdomain_old2new_array);
-  H5Pclose(nodes_old2new_plist_id);
-  H5Dclose(nodes_old2new_dataset_id);
-  H5Sclose(nodes_old2new_memspace_id);
-  H5Sclose(nodes_old2new_filespace_id);
-  //(nodeNumbering_old2new is the one dataset mappings.h5 holds: SW2DCV and
-  //GN_SW2DCV read it; nothing reads the node new2old, element, face or edge
-  //numberings, which were written here until 2026-11)
-  H5Fclose(file_id);
   PetscLogEventEnd(repartition_nodes_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with masks");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
@@ -2775,7 +2737,7 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   //   nodes (OLD element numbers), and assign their ownership. The new
   //   numbers of their nodes come from the ranks that computed them
   //   (readSubdomainElements answers other ranks' old->new requests from
-  //   nodes_subdomain_old2new_array), not from the mappings file.
+  //   nodes_subdomain_old2new_array).
   //
   logEvent("Collecting elements containing locally owned nodes (element support of the subdomain nodes)",5);
   int build_subdomains_reread_elements_event;
