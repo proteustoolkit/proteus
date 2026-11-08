@@ -3,7 +3,6 @@ from proteus import FemTools
 from proteus import LinearAlgebraTools as LAT
 from proteus.mprans.cSW2DCV import *
 import numpy as np
-import h5py
 from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus.Transport import Quadrature, logEvent, memory, BackwardEuler
 from proteus.Transport import FluxBoundaryConditions, Comm, DOFBoundaryConditions
@@ -459,17 +458,22 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 b_global = self.bathymetry[:,0].copy()
             elif self.bathymetry.shape[1]==3:
                 b_global = self.bathymetry[:,2].copy()
-            if comm.size() > 1: 
-                fname= 'mappings.h5'
-                with h5py.File(fname,'r') as f:
-                    #written by the parun -F partitioners; name it, the file
-                    #held other numberings before 2026-11 (keys()[0] was one)
-                    old2new=np.asarray(f['nodeNumbering_old2new'])       
-                sub2glob=mesh.nodeNumbering_subdomain2global                                   
-                indx=[]
-                for i in range (0, len(sub2glob)):  
-                    indx.append(np.where(old2new==sub2glob[i]))
-                self.b.dof = np.ravel(b_global[indx])
+            if comm.size() > 1:
+                #the array is in the input mesh's node order: take each
+                #subdomain node's entry through the partition's node
+                #permutation, which partitionNodes and the parun -F
+                #partitioners both keep (they wrote mappings.h5 until 2026-11)
+                g = mesh.globalMesh
+                old2new = getattr(g, 'nodeNumbering_global_old2new', None)
+                if old2new is None:
+                    raise ValueError("a bathymetry array is in the input mesh's node order, and this partition "
+                                     "does not record its node permutation (element partitioning, or a mesh "
+                                     "generated per rank): give the bathymetry as a function")
+                old2new = np.asarray(old2new)
+                assert len(old2new) == len(b_global), "one bathymetry value per node of the input mesh"
+                new2old = np.empty_like(old2new)
+                new2old[old2new] = np.arange(len(old2new), dtype=old2new.dtype)
+                self.b.dof = b_global[new2old[np.asarray(g.nodeNumbering_subdomain2global)]]
                 mesh.nodeArray[:,2] = self.b.dof
             else:
                 self.b.dof = self.bathymetry
