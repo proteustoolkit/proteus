@@ -76,7 +76,9 @@ class TestCLSVOF(object):
         actual.close()
 
     def test_case_1(self, opts):
-        from . import (clsvof_p,clsvof_n)
+        # set and reload as test_case_2 does: after test_case_2 (a random order) the decks hold the Zalesak disk
+        parameters.ct.test_case=1
+        self.reload_modules()
         name = "test_case_1"
         # run problem
         self.run_test(opts, clsvof_p,clsvof_n,name)
