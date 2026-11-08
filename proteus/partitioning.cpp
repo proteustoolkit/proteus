@@ -2292,9 +2292,11 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  //0 until a vertex flag or a face flag says otherwise: without vertex markers
-  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
-  //faces take face flags below, so the others used to keep whatever the heap held
+  //a node's flag is its vertex marker (or the attribute taken as one) when the
+  //.node file gives one, and 0 ("no tag") otherwise: never derived from the
+  //faces, which made it depend on the partition (the face visited last), never
+  //-1 (rank interfaces are a face property). Without markers
+  //readSubdomainVertices leaves the flags alone, so they stay this 0.
   newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
@@ -2464,16 +2466,6 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           int ebN_subdomain  = elementBoundaryNumbering_global2subdomainMap[ebN_global_new];
           newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
         }
-      if (!hasVertexMarkers)
-        for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
-          {
-            int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
-            for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-              {
-                int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-                newMesh.subdomainp->nodeMaterialTypes[nN] = newMesh.subdomainp->elementBoundaryMaterialTypes[ebN];
-              }
-          }
     }
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);

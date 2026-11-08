@@ -821,29 +821,24 @@ SCRIBBLE = {'MallocScribble': '1', 'MALLOC_PERTURB_': '85'}
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])
-def test_files_node_flags_without_vertex_markers_are_initialised(tmp_path, mesh):
-    """A .node file without vertex markers: the -F partitioners give the nodes
-    of exterior subdomain faces the face flags and every other node 0. The
-    others used to keep what the heap held (new int[] never written); with the
-    allocator scribbling, they read -1431655766. 2 ranks, Triangle and TetGen:
-    the arrays do not depend on the heap, every flag is 0 or a face flag, and a
-    node on no exterior face reads 0."""
+def test_files_node_flags_without_vertex_markers_are_0(tmp_path, mesh):
+    """A .node file without vertex markers: every node flag is 0 ("no tag") on
+    every rank, whatever the faces say (the node-flag rule of 2026-11-06). The
+    -F partitioners used to give the nodes of exterior subdomain faces the flag
+    of the face visited last, so a flag depended on the partition and a ghost
+    copy could disagree with its owner; before that, the other nodes kept what
+    the heap held (new int[] never written; with the allocator scribbling they
+    read -1431655766). 2 ranks, Triangle and TetGen: the arrays do not depend
+    on the heap, and the faces still carry their flags."""
     base = _variantMesh(tmp_path, mesh, 'none')
     _, plain = run_files(tmp_path / 'plain', mesh, 2, base)
     _, scribbled = run_files(tmp_path / 'scribbled', mesh, 2, base, extraEnv=SCRIBBLE)
     for a, b in zip(plain, scribbled):
         for name in a:
             assert np.array_equal(a[name], b[name]), name
-        flags = a['sub.nodeMaterialTypes']
-        faceFlags = a['sub.elementBoundaryMaterialTypes']
-        faceNodes = a['sub.elementBoundaryNodesArray']
+        assert not a['sub.nodeMaterialTypes'].any()
         exterior = a['sub.exteriorElementBoundariesArray']
-        onExterior = np.zeros(len(flags), bool)
-        onExterior[faceNodes[exterior].ravel()] = True
-        assert np.all(flags[~onExterior] == 0)
-        assert set(flags[onExterior].tolist()) <= set(np.maximum(faceFlags, 0).tolist())
-        assert onExterior.any() and (~onExterior).any()
-
+        assert (a['sub.elementBoundaryMaterialTypes'][exterior] > 0).any()
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])
