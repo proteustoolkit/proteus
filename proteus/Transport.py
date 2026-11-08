@@ -6553,10 +6553,14 @@ class MultilevelTransport(object):
                 logEvent("Setting Boundary Conditions-2b")
                 # Strong Dirichlet constraints kept in the system
                 # (StrongDirichletFactory(keepDOFs=True), for KSP_petsc4py)
-                # still merge periodic pairs; a weak-Dirichlet flux leaves
+                # still merge periodic pairs, and so does a weak-Dirichlet flux
+                # that asks for it (NF_base.mergesPeriodicDOFs: it then treats
+                # the seam as interior); any other weak-Dirichlet flux leaves
                 # periodicity to the flux, as it always has.
                 keptStrong = (numericalFluxType is not None and
-                              getattr(numericalFluxType,'useStrongDirichletConstraints',False))
+                              (getattr(numericalFluxType,'useStrongDirichletConstraints',False) or
+                               (hasattr(numericalFluxType,'mergesPeriodicDOFs') and
+                                numericalFluxType.mergesPeriodicDOFs())))
                 dirichletConditionsDict=dict([(cj,DOFBoundaryConditions(
                     trialSpace,dirichletConditionsSetterDict[cj],useWeakDirichletConditions,options.periodicDirichletConditions[cj],
                     mergeKeptPeriodicDOFs=keptStrong))
@@ -6641,6 +6645,10 @@ class MultilevelTransport(object):
                     trialSpaceDict[ci].dofMap.nDOF_subdomain_owned = trialSpaceDict[0].dofMap.nDOF_subdomain_owned
                     trialSpaceDict[ci].dofMap.nDOF = trialSpaceDict[ci].dofMap.nDOF_subdomain
                     trialSpaceDict[ci].dofMap.range_nDOF = range(trialSpaceDict[ci].dofMap.nDOF)
+                # one unknown per periodic pair now, as the serial merge makes
+                # (NF_base.seamIsInterior reads this)
+                for ci in range(len(trialSpaceDict)):
+                    self.bcDictList[-1][ci].periodicDOFsMerged = True
                 for ci in range(len(testSpaceDict)):
                     testSpaceDict[ci].dofMap.nDOF_subdomain = trialSpaceDict[0].dofMap.nDOF_subdomain
                     testSpaceDict[ci].dofMap.subdomain2global = trialSpaceDict[0].dofMap.subdomain2global

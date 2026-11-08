@@ -455,6 +455,79 @@ inline
 }
 
     
+  // RECORDED BOUNDARY FLUX with the flow model's fluxes (USE_EDGE_FLUX).  The
+  // edge loop applies the solute's advective boundary exchange at the nodes:
+  // B_i c_i + max(B_i, 0)(c_in_i - c_i) into node i (the conservative form of the
+  // cancelled row's max(B_i,0)(c_in - c_i)), B_i = nodalBoundaryFlux.  ebqe_flux
+  // recorded the trace flux n.f(c_h) with this model's own velocity instead
+  // (levee deck, ImplicitEV, cin = 0.7: -2.6 against an applied -68 at the first
+  // step).  The nodal exchange a_i (outward) of each boundary node is spread
+  // over its boundary faces by the lumped boundary mass mb_i = int_dOmega w_i,
+  //   flux_adv(x) = sum_i w_i(x) a_i / mb_i,
+  // so int flux_adv dS = sum_i a_i over the nodes with boundary faces.  B_i at an
+  // interior node (the flow model's Newton residual there) has no boundary
+  // face and is not recorded.  ebqe_flux already holds the applied dispersive
+  // flux.  c is the concentration the edge loop used (c^{n+1} for ImplicitEV,
+  // c^n for the explicit branches).
+  inline void recordEdgeFluxBoundaryExchange(int nExteriorElementBoundaries_global,
+                                             int numDOFs,
+                                             const int* exteriorElementBoundariesArray,
+                                             const int* elementBoundaryElementsArray,
+                                             const int* elementBoundaryLocalElementBoundariesArray,
+                                             const int* elementBoundaryMaterialTypes,
+                                             const int* isExteriorBoundaryPhysical,
+                                             const int* u_l2g,
+                                             const double* u_test_trace_ref,
+                                             const double* ebqe_dS_ext,
+                                             const double* nodalBoundaryFlux,
+                                             const double* c,
+                                             double* ebqe_flux,
+                                             double* ebqe_flux_adv)
+  {
+    std::valarray<double> mb(0.0, numDOFs), a(0.0, numDOFs);
+    for (int pass=0; pass<2; pass++)
+      {
+        for (int ebNE=0; ebNE<nExteriorElementBoundaries_global; ebNE++)
+          {
+            const int ebN = exteriorElementBoundariesArray[ebNE],
+              eN = elementBoundaryElementsArray[ebN*2+0],
+              ebN_local = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
+            // the faces the exterior loop integrates
+            if (elementBoundaryMaterialTypes[ebN] <= 0 || isExteriorBoundaryPhysical[ebNE] == 0 ||
+                elementBoundaryElementsArray[ebN*2+1] >= 0)
+              continue;
+            for (int kb=0; kb<nQuadraturePoints_elementBoundary; kb++)
+              {
+                const int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
+                  ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb;
+                double adv = 0.0;
+                for (int i=0; i<nDOF_test_element; i++)
+                  {
+                    const int gi = u_l2g[eN*nDOF_test_element+i];
+                    const double w = u_test_trace_ref[ebN_local_kb*nDOF_test_element+i];
+                    if (pass == 0)
+                      mb[gi] += w*ebqe_dS_ext[ebNE_kb];
+                    else
+                      adv += w*a[gi];
+                  }
+                if (pass == 1)
+                  {
+                    ebqe_flux_adv[ebNE_kb] = adv;
+                    ebqe_flux[ebNE_kb] += adv;
+                  }
+              }
+          }
+        if (pass == 0)
+          for (int i=0; i<numDOFs; i++)
+            if (mb[i] > 0.0)
+              {
+                const double B_i = nodalBoundaryFlux[i];
+                const double c_in = (cin_den[i] > 0.0) ? cin_num[i]/cin_den[i] : c[i];
+                a[i] = -(B_i*c[i] + fmax(B_i, 0.0)*(c_in - c[i]))/mb[i];
+              }
+      }
+  }
+
  void calculateResidual(arguments_dict& args)
     {
       double dt = args.scalar<double>("dt");
@@ -1821,6 +1894,34 @@ inline
               // the ebqe_flux_adv declaration
               ebqe_flux_adv.data()[ebNE_kb] = flux_adv_applied;
               ebqe_dS_ext.data()[ebNE_kb]   = dS;
+              if (USE_EDGE_FLUX)
+                {
+                  // FLOW-MODEL FLUXES: the advective exchange the residual applies is
+                  // the flow model's NODAL boundary flux (edge loop), not n.f(c_h), so
+                  // it is recorded after the edge loop (recordEdgeFluxBoundaryExchange).
+                  // Here only the dispersive flux the update below applies: on a weak
+                  // Dirichlet face the lumped penalty max_a*penalty*(c_i - g) w_i,
+                  // whose pointwise sum over the face's test functions is
+                  // max_a*penalty*(c_h - g); elsewhere flux_diff_ext.
+                  double flux_disp_applied = flux_diff_ext;
+                  if (isDOFBoundary_u.data()[ebNE_kb] == 1 &&
+                      isDiffusiveFluxBoundary_u.data()[ebNE_kb] == 0)
+                    {
+                      double max_a = 0.0, c_h = 0.0;
+                      for (int m=0; m<a_rowptr.data()[nSpace]; m++)
+                        max_a = fmax(max_a, a_ext[m]);
+                      for (int j=0; j<nDOF_trial_element; j++)
+                        {
+                          const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                          c_h += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
+                            *((STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
+                              ? u_dof.data()[gj] : u_dof_old.data()[gj]);
+                        }
+                      flux_disp_applied = max_a*ebqe_penalty_ext.data()[ebNE_kb]*(c_h - bc_u_ext);
+                    }
+                  ebqe_flux.data()[ebNE_kb] = flux_disp_applied;
+                  ebqe_flux_adv.data()[ebNE_kb] = 0.0;
+                }
               if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                 ebqe_u.data()[ebNE_kb] = bc_u_ext;
               else if (boundary_flow >= 0.0)
@@ -2266,6 +2367,15 @@ inline
               // carried M^{n+1} is round-off by construction
               fluidResidual.data()[i] = ith_flux_term_fluid - B_i;
             }
+          // the recorded boundary flux: what this update applied, at c^n
+          recordEdgeFluxBoundaryExchange(nExteriorElementBoundaries_global,
+                                         numDOFs, exteriorElementBoundariesArray.data(),
+                                         elementBoundaryElementsArray.data(),
+                                         elementBoundaryLocalElementBoundariesArray.data(),
+                                         elementBoundaryMaterialTypes.data(), isExteriorBoundaryPhysical.data(),
+                                         u_l2g.data(), u_test_trace_ref.data(), ebqe_dS_ext.data(),
+                                         nodalBoundaryFlux.data(), u_dof_old.data(),
+                                         ebqe_flux.data(), ebqe_flux_adv.data());
         }
       //edge based stabilization
       else if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity or
@@ -2879,6 +2989,16 @@ inline
                                       + boundary_integral_fluid[i]
                                       - MLi*R_diss_i;
             }//i
+          // the recorded boundary flux: what this residual applied, at c^{n+1}
+          if (USE_EDGE_FLUX)
+            recordEdgeFluxBoundaryExchange(nExteriorElementBoundaries_global,
+                                           numDOFs, exteriorElementBoundariesArray.data(),
+                                           elementBoundaryElementsArray.data(),
+                                           elementBoundaryLocalElementBoundariesArray.data(),
+                                           elementBoundaryMaterialTypes.data(), isExteriorBoundaryPhysical.data(),
+                                           u_l2g.data(), u_test_trace_ref.data(), ebqe_dS_ext.data(),
+                                           nodalBoundaryFlux.data(), u_dof.data(),
+                                           ebqe_flux.data(), ebqe_flux_adv.data());
         }//implicit edge-based
     }
 

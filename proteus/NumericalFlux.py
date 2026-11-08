@@ -344,6 +344,97 @@ class NF_base(object):
             self.HamiltonJacobiNumericalFlux[ci] = False
 
         logEvent(memory("boundary condition data structures","NumericalFlux"),level=4)
+
+    #: Whether OneLevelTransport should merge the DOFs of a periodic pair for
+    #: this flux (serial periodic conditions, not ``parallelPeriodic``). A
+    #: weak-Dirichlet flux otherwise gets two DOFs at each seam point, coupled
+    #: only through its exterior flux. Read by :meth:`mergesPeriodicDOFs`,
+    #: which does not inherit it: see there.
+    mergePeriodicDOFs = False
+
+    @classmethod
+    def mergesPeriodicDOFs(cls):
+        """True when this class itself declares ``mergePeriodicDOFs = True``.
+
+        Not inherited, because the merge is only right for a class whose own
+        exterior flux treats the merged seam as interior
+        (:meth:`seamIsInterior`). The mprans models' fluxes subclass
+        Advection_DiagonalUpwind_Diffusion_IIPG_exterior, but their kernels
+        compute the exterior fluxes from isDOFBoundary and the partner trace
+        and are written for the unmerged map, so they keep it.
+        """
+        return cls.__dict__.get('mergePeriodicDOFs', False)
+
+    def periodicSeamPoints(self,ci):
+        """(ebNE, k) index arrays of component ci's face points in a recorded periodic pair.
+
+        Empty unless the flux was built with periodic conditions and without
+        ``parallelPeriodic`` (which records no pairs).
+        """
+        points = [p for pair in self.periodicBoundaryConditionsDictList[ci].values() for p in pair]
+        if not points:
+            return (numpy.zeros((0,),'i'), numpy.zeros((0,),'i'))
+        ebNE, k = zip(*points)
+        return (numpy.array(ebNE,'i'), numpy.array(k,'i'))
+
+    def seamIsInterior(self,ci):
+        """True when component ci's periodic pairs are one DOF (the map was merged).
+
+        The seam is then interior to the C0 space and carries no boundary term:
+        the exact residual has none, and both sides' terms cancel only for the
+        advective flux (u is the same DOF on both sides). Applied as a weak
+        Dirichlet point instead, the diffusive flux puts the one-sided
+        -a grad(u).n of each side into the residual (grad(u) jumps across the
+        seam, so they do not cancel) and a penalty into the Jacobian, and the
+        advective Jacobian keeps the outflow side's derivative of a pair whose
+        sum is zero. Unmerged (the default for a weak-Dirichlet flux), the seam
+        terms are the only coupling of the two sides and must stay.
+
+        Merged either by the serial DOF map (mergesPeriodicDOFs) or by the
+        parallel periodic numbering (``n.parallelPeriodic``), which merges the
+        pairs for every weak-Dirichlet flux whether it asks or not; a flux
+        that does not pass ``parallelPeriodic`` to NF_base still records the
+        pairs its rank holds.
+        """
+        dbc = getattr(self.vt,'dirichletConditions',None)
+        if dbc is None or ci not in dbc:
+            return False
+        merged = (bool(getattr(dbc[ci],'periodicDOFDict',None)) or       # the serial merge
+                  getattr(dbc[ci],'periodicDOFsMerged',False))            # the parallel periodic numbering
+        return merged and len(self.periodicSeamPoints(ci)[0]) > 0
+
+    def diffusionDOFBoundary(self,ci):
+        """isDOFBoundary[ci] for the diffusive flux: 0 at the periodic face points of a merged seam.
+
+        See :meth:`seamIsInterior`. Built from isDOFBoundary at each call, so
+        later edits to it (Robin points) carry over. isDOFBoundary itself stays
+        1 there for setDirichletValues and the advective flux.
+        """
+        if not self.seamIsInterior(ci):
+            return self.isDOFBoundary[ci]
+        ebNE, k = self.periodicSeamPoints(ci)
+        mask = self.isDOFBoundary[ci].copy()
+        mask[ebNE,k] = 0
+        return mask
+
+    def zeroFluxesOnInteriorSeam(self,ebqe,ci):
+        """No exterior advective or diffusive flux of component ci on a merged periodic seam (seamIsInterior).
+
+        The advective pair cancels in the residual (to round-off: the paired
+        quadrature points are the same physical points), so zeroing it changes
+        the residual by round-off and makes the Jacobian exact; zeroing
+        ``dadvectiveFlux_left`` is what removes it from the Jacobian
+        (updateExteriorNumericalAdvectiveFluxJacobian reads that alone).
+        """
+        if not self.seamIsInterior(ci):
+            return
+        ebNE, k = self.periodicSeamPoints(ci)
+        for key in list(ebqe.keys()):
+            if (isinstance(key,tuple) and
+                ((key[0] in ('advectiveFlux','dadvectiveFlux_left') and key[1] == ci) or
+                 (key[0] == 'diffusiveFlux' and len(key) == 3 and key[2] == ci))):
+                ebqe[key][ebNE,k] = 0.0
+
     def calculateInteriorNumericalFlux(self,q,ebq,ebq_global):
         pass
     def calculateExteriorNumericalFlux(self,inflowFlag,q,ebqe):
@@ -898,6 +989,11 @@ class Advection_DiagonalUpwind_exterior(Advection_DiagonalUpwind):
 
 class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
     hasInterior=False
+    #: serial periodic conditions: one DOF per periodic pair, and the seam is interior (NF_base.seamIsInterior).
+    #: Unmerged, the one-sided weak-Dirichlet coupling across the seam is inconsistent: a C0 P1 periodic Poisson
+    #: problem's L2 error was 1.06e-1, 1.12e-1, 1.15e-1 on 8x8, 16x16, 32x32 cells (620, 2225, 8324 Newton
+    #: iterations); merged, 4.0e-2, 1.08e-2, 2.8e-3 in 1. Not inherited (NF_base.mergesPeriodicDOFs).
+    mergePeriodicDOFs = True
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
@@ -920,6 +1016,10 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
 
         for ci in range(self.nc):
             for bci in list(self.periodicBoundaryConditionsDictList[ci].values()):
+                # a point whose partner is on another rank (parallel periodic numbering) has no
+                # pair here; that seam is merged and interior, so it needs no trace (seamIsInterior)
+                if len(bci) != 2:
+                    continue
                 self.ebqe[('u',ci)][bci[0]]=ebqe[('u',ci)][bci[1]]
                 self.ebqe[('u',ci)][bci[1]]=ebqe[('u',ci)][bci[0]]
         if self.vt.movingDomain:
@@ -945,6 +1045,7 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                                                                    ebqe[('df',ci,ci)],
                                                                    ebqe[('advectiveFlux',ci)],
                                                                    ebqe[('dadvectiveFlux_left',ci,ci)])
+            isDOFBoundary_diffusion = self.diffusionDOFBoundary(ci)
             for ck in range(self.nc):
                 if ('a',ci,ck) in ebqe:
                     if self.vt.sd:
@@ -952,7 +1053,7 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                                                                                   self.mesh.exteriorElementBoundariesArray,
                                                                                   self.mesh.elementBoundaryElementsArray,
                                                                                   self.mesh.elementBoundaryLocalElementBoundariesArray,
-                                                                                  self.isDOFBoundary[ci],
+                                                                                  isDOFBoundary_diffusion,
                                                                                   ebqe['n'],
                                                                                   self.ebqe[('a',ci,ck)],
                                                                                   self.ebqe[('grad(phi)',ck)],
@@ -966,7 +1067,7 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                         cnumericalFlux.calculateExteriorNumericalDiffusiveFlux(self.mesh.exteriorElementBoundariesArray,
                                                                                self.mesh.elementBoundaryElementsArray,
                                                                                self.mesh.elementBoundaryLocalElementBoundariesArray,
-                                                                               self.isDOFBoundary[ci],
+                                                                               isDOFBoundary_diffusion,
                                                                                ebqe['n'],
                                                                                self.ebqe[('a',ci,ck)],
                                                                                self.ebqe[('grad(phi)',ck)],
@@ -976,6 +1077,8 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                                                                                ebqe[('u',ck)],
                                                                                ebqe[('penalty')],
                                                                                ebqe[('diffusiveFlux',ck,ci)])
+            # a merged periodic seam is interior: no boundary flux there (NF_base.seamIsInterior)
+            self.zeroFluxesOnInteriorSeam(ebqe,ci)
         #mwf add for inflow flux?
         #for ci in range(self.nc):
         #    cnumericalFlux.calculateExteriorInflowNumericalAdvectiveFlux(self.mesh.exteriorElementBoundariesArray,
@@ -1011,7 +1114,7 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                                                                                                    self.mesh.exteriorElementBoundariesArray,
                                                                                                    self.mesh.elementBoundaryElementsArray,
                                                                                                    self.mesh.elementBoundaryLocalElementBoundariesArray,
-                                                                                                   self.isDOFBoundary[ck],
+                                                                                                   self.diffusionDOFBoundary(ck),
                                                                                                    ebqe['n'],
                                                                                                    ebqe[('a',ci,ck)],
                                                                                                    ebqe[('da',ci,ck,cj)],
@@ -1026,7 +1129,7 @@ class Advection_DiagonalUpwind_Diffusion_IIPG_exterior(NF_base):
                                                                                                 self.mesh.exteriorElementBoundariesArray,
                                                                                                 self.mesh.elementBoundaryElementsArray,
                                                                                                 self.mesh.elementBoundaryLocalElementBoundariesArray,
-                                                                                                self.isDOFBoundary[ck],
+                                                                                                self.diffusionDOFBoundary(ck),
                                                                                                 ebqe['n'],
                                                                                                 ebqe[('a',ci,ck)],
                                                                                                 ebqe[('da',ci,ck,cj)],

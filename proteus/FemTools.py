@@ -6966,9 +6966,10 @@ class DOFBoundaryConditions(object):
             # nothing is eliminated): the DOFs of a periodic pair are still
             # one unknown. Without this branch the periodic map was never
             # built on that path, and a periodic problem was solved with
-            # its periodic faces simply disconnected. A genuinely weak
-            # Dirichlet flux (IIPG, say) is given the periodic conditions
-            # itself and does not ask for this.
+            # its periodic faces simply disconnected. A weak-Dirichlet flux
+            # asks for it when its own exterior flux treats the merged seam as
+            # interior (NumericalFlux.NF_base.mergesPeriodicDOFs); any other
+            # is given the periodic conditions itself and couples the seam.
             self.freeDOFSet = set(range(femSpace.dim))
             mesh = femSpace.elementMaps.mesh
             interpolation = femSpace.referenceFiniteElement.interpolationConditions
