@@ -10,12 +10,21 @@ the interface locator). ``model=rdls`` records the first RDLS Newton iteration a
 fixture's u_next is the next Newton iterate and out_residual_next proteus's residual there), with the Jacobian's CSR
 structure taken from the matrix (RDLS's kernel gets element-local offsets only). ``model=mcorr`` records the first MCorr
 Newton iteration the same way (the kernel's residual and Jacobian before MCorr.py masks inactive rows, and the active-DOF
-marks the kernel wrote).
+marks the kernel wrote). ``model=rans2p`` records the first RANS2P (RANS2P2D) Newton iteration at or after T: every
+array and scalar its kernel was handed, the residual, the CSR Jacobian and the point outputs (q_velocity, q_numDiff_u, q_cfl),
+(rans2p_test.py's inputs; KEEP_ALL in the script keeps every argument), and the same residual and Jacobian with the
+exterior faces switched off (the kernel called again with
+nExteriorElementBoundaries_global = 0 into fresh arrays: out_elem_globalResidual, out_elem_globalJacobian), so that the
+element integrals can be checked on their own. ``solid=CX,CY,R`` (model=mcorr) puts a circular solid of radius R at (CX, CY) on MCorr's cut-cell
+path for the captured solve: just before that solve's first residual, RANS2P's coefficients (which MCorr reads) get
+useExact = True and phi_s, q_phi_solid = the circle's signed distance (positive in the fluid), so MCorr marks the
+elements, adds the ghost penalty on cut faces and masks the inactive rows (MCorr.py). Only MCorr sees the solid: the capture
+stops after that Newton iteration.
 
 Needs a built proteus (PYTHONPATH at a worktree with its extensions) and runs from a scratch directory (the case
 writes its archive there):
 
-    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls|rdls|mcorr]
+    python vof_capture.py OUT.npz [he=0.05] [T=0.05] [model=vof|ncls|rdls|mcorr|rans2p] [solid=CX,CY,R]
 """
 import os
 import sys
@@ -48,6 +57,26 @@ KEEP_MCORR = ('mesh_dof', 'mesh_l2g', 'x_ref', 'dV_ref', 'u_trial_ref', 'useMetr
               'epsFactDiffusion', 'u_l2g', 'r_l2g', 'elementDiameter', 'nodeDiametersArray', 'u_dof', 'phi_dof', 'q_phi', 'q_H',
               'q_porosity', 'offset_u', 'stride_u', 'phi_solid_nodes', 'phi_solid', 'useExact_s')
 OUTPUTS_R_MCORR = ('globalResidual', 'q_u', 'q_r', 'q_n', 'isActiveR', 'isActiveDOF', 'isActiveElement')
+#RANS2P: what rans2p_test.py reads (the element integrals and the inputs that must be zero for them); KEEP_ALL keeps
+#every argument the kernel was handed
+KEEP_RANS2P = ('mesh_dof', 'mesh_l2g', 'x_ref', 'dV_ref', 'p_l2g', 'vel_l2g', 'elementDiameter', 'p_dof', 'u_dof', 'v_dof',
+               'rho_0', 'nu_0', 'rho_1', 'nu_1', 'g', 'alphaBDF', 'Ct_sge', 'Cd_sge', 'C_dc', 'useMetrics', 'hFactor', 'useVF',
+               'MOMENTUM_SGE', 'PRESSURE_SGE', 'VELOCITY_SGE', 'vf', 'q_porosity', 'q_dV_last', 'q_mom_u_acc_beta_bdf',
+               'q_mom_v_acc_beta_bdf', 'q_numDiff_u_last', 'q_numDiff_v_last', 'q_velocity_sge', 'q_dragAlpha', 'q_dragBeta',
+               'q_mass_source', 'forcex', 'forcey', 'q_eddy_viscosity_last', 'mesh_velocity_dof', 'NONCONSERVATIVE_FORM',
+               'MOVING_DOMAIN', 'useRBLES', 'PRESSURE_PROJECTION_STABILIZATION', 'nParticles', 'useExact',
+               'turbulenceClosureModel', 'phi_solid', 'sdInfo_u_u_rowptr', 'sdInfo_u_u_colind', 'sdInfo_u_v_rowptr',
+               'sdInfo_u_v_colind', 'sdInfo_v_u_rowptr', 'sdInfo_v_u_colind', 'sdInfo_v_v_rowptr', 'sdInfo_v_v_colind',
+               'offset_p', 'offset_u', 'offset_v', 'stride_p', 'stride_u', 'stride_v')
+OUTPUTS_R_RANS2P = ('globalResidual', 'q_velocity', 'q_numDiff_u', 'q_cfl')
+KEEP_ALL = object()
+#with a solid (MCorr's cut-cell path): the interior-face data its ghost penalty uses
+KEEP_MCORR_SOLID = KEEP_MCORR + ('ghost_penalty_constant', 'elementBoundaryElementsArray', 'elementBoundariesArray',
+                                 'elementBoundaryLocalElementBoundariesArray', 'elementBoundaryDiameter')
+
+
+class Stop(Exception):
+    pass
 
 
 def main(argv):
@@ -57,8 +86,12 @@ def main(argv):
     opts = dict(a.split('=', 1) for a in argv[1:])
     he, T = float(opts.get('he', 0.05)), float(opts.get('T', 0.05))
     model = opts.get('model', 'vof')
+    solid = [float(v) for v in opts['solid'].split(',')] if 'solid' in opts else None
     keep, outputs_r = {'ncls': (KEEP_NCLS, OUTPUTS_R_NCLS), 'rdls': (KEEP_RDLS, OUTPUTS_R_RDLS),
-                       'mcorr': (KEEP_MCORR, OUTPUTS_R_MCORR)}.get(model, (KEEP, OUTPUTS_R))
+                       'mcorr': (KEEP_MCORR, OUTPUTS_R_MCORR), 'rans2p': (KEEP_RANS2P, OUTPUTS_R_RANS2P)}.get(model, (KEEP, OUTPUTS_R))
+    if solid is not None:
+        assert model == 'mcorr', 'solid= is for model=mcorr'
+        keep = KEEP_MCORR_SOLID
     here = os.path.dirname(os.path.abspath(__file__))
     case = os.path.join(here, '..', '..', 'test', 'TwoPhaseFlow', 'damBreakLevelSet.py')
 
@@ -100,13 +133,15 @@ def main(argv):
     fixture = {}
 
     def copy(d, keys, prefix=''):
+        if keys is KEEP_ALL:
+            keys = [k for k, v in d.items() if v is not None and np.asarray(v).dtype != object]
         for k in keys:
             v = d[k]
             fixture[prefix + k] = np.array(v, copy=True)
 
     #NCLS and RDLS bind self.calculateResidual = self.<kernel>.calculateResidual on every call, so wrap the kernel object
     #(MCorr calls self.mcorr.calculateResidual directly, which the same wrapper catches)
-    kernel = getattr(vof, model, None) if model in ('ncls', 'rdls', 'mcorr') else None
+    kernel = getattr(vof, model, None) if model in ('ncls', 'rdls', 'mcorr', 'rans2p') else None
     if kernel is not None:
         residual, jacobian = kernel.calculateResidual, kernel.calculateJacobian
     else:
@@ -124,6 +159,8 @@ def main(argv):
             state['phase'] = 'residual'
             residual(argsDict, *extra)
             copy(seen, outputs_r, 'out_')
+            if model == 'rans2p':
+                fixture['out_elem_globalResidual'] = element_only(argsDict, 'globalResidual', residual)
             return
         if state['phase'] == 'jacobian':
             fixture['u_next'] = np.array(seen['u_dof'], copy=True)
@@ -133,19 +170,51 @@ def main(argv):
                 copy(seen, ('q_u', 'q_r', 'q_n'), 'out_next_')
             state['phase'] = 'done'
             return
+        if state['phase'] == 'done' and solid is not None:
+            raise Stop()
         residual(argsDict, *extra)
+
+    def element_only(argsDict, out, call):
+        #the kernel again, exterior faces off, into a fresh output array; the arguments are restored afterwards
+        seen = argsDict.seen
+        saved, nExt = seen[out], seen['nExteriorElementBoundaries_global']
+        fresh = np.zeros_like(saved)
+        argsDict[out] = fresh
+        argsDict['nExteriorElementBoundaries_global'] = 0
+        call(argsDict)
+        argsDict[out] = saved
+        argsDict['nExteriorElementBoundaries_global'] = nExt
+        return fresh.copy()
 
     def calculateJacobian(argsDict, *extra):
         jacobian(argsDict, *extra)
         if state['phase'] == 'residual':
             fixture['out_globalJacobian'] = np.array(argsDict.seen['globalJacobian'], copy=True)
-            if model in ('rdls', 'mcorr'):
+            if model == 'rans2p':
+                fixture['out_elem_globalJacobian'] = element_only(argsDict, 'globalJacobian', jacobian)
+            if model in ('rdls', 'mcorr', 'rans2p'):
                 #RDLS's and MCorr's kernels get element-local CSR offsets only; keep the matrix's own CSR structure, under NCLS's names
                 rowptr, colind = jac_matrix.getCSRrepresentation()[:2]
                 fixture['csrRowIndeces_DofLoops'] = np.array(rowptr, copy=True)
                 fixture['csrColumnOffsets_DofLoops'] = np.array(colind, copy=True)
             fixture['jac_u_dof'] = np.array(argsDict.seen['u_dof'], copy=True)
             state['phase'] = 'jacobian'
+
+    if solid is not None:
+        #put the solid into RANS2P's coefficients just before the captured MCorr solve (MCorr.py reads them per call)
+        getResidual = vof.getResidual
+
+        def sdf(x):
+            return np.hypot(x[..., 0] - solid[0], x[..., 1] - solid[1]) - solid[2]
+
+        def getResidualWithSolid(u, r):
+            ti, flow = vof.timeIntegration, vof.coefficients.flowCoefficients
+            if state['phase'] == 'wait' and T <= ti.t <= T + 0.05 and ti.dt < 1.0 and not flow.useExact:
+                flow.useExact = True
+                flow.phi_s[:] = sdf(vof.mesh.nodeArray)
+                flow.q_phi_solid[:] = sdf(flow.model.q['x'])  # RANS2P's points: the same element quadrature
+            return getResidual(u, r)
+        vof.getResidual = getResidualWithSolid
 
     if kernel is not None:
         class Kernel(object):
@@ -156,11 +225,16 @@ def main(argv):
         setattr(vof, model, proxy)
     else:
         vof.calculateResidual, vof.calculateJacobian = calculateResidual, calculateJacobian
-    ns.calculateSolution(so.name)
+    try:
+        ns.calculateSolution(so.name)
+    except Stop:
+        pass
     if state['phase'] != 'done':
         raise SystemExit('no ' + model + ' solve captured at t >= %g (phase %s)' % (T, state['phase']))
     fixture['he'] = np.array(he)
     fixture['model'] = np.array(model)
+    if solid is not None:
+        fixture['solid'] = np.array(solid)
     np.savez_compressed(out, **fixture)
     print('wrote %s: t=%.4f dt=%.3e nodes=%d elements=%d' % (out, float(fixture['t']), float(fixture.get('dt', np.nan)),
                                                            fixture['mesh_dof'].shape[0], fixture['mesh_l2g'].shape[0]))
