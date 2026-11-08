@@ -166,16 +166,17 @@ def rans2p_preconditioner(choice):
 
 def level_set_preconditioner(model, choice):
     """The preconditioner of VOF's, NCLS's or MCorr's iterative solve (useSuperlu off) a choice resolves to:
-    'auto' is 'boomeramg' when PETSc has hypre, 'asm' when not (the same rule as RANS2P's 'auto'); 'gamg' is PETSc's
-    own algebraic multigrid, on request."""
+    'auto' is 'boomeramg' when PETSc has hypre and 'gamg' (PETSc's own algebraic multigrid) when not; 'asm' (ASM with an
+    LU per subdomain) on request."""
     if choice not in ('auto', 'asm', 'boomeramg', 'gamg'):
         raise ValueError("%s.preconditioner must be 'auto', 'asm', 'boomeramg' or 'gamg', not %r" % (model, choice))
     if choice == 'auto':
         if petsc_has_hypre():
             return 'boomeramg'
-        logEvent("TwoPhaseFlow: this PETSc has no hypre, so %s's preconditioner is 'asm' (ASM/LU) instead of "
-                 "the default 'boomeramg'. Build PETSc with hypre (--download-hypre) for the default." % (model,), level=1)
-        return 'asm'
+        logEvent("TwoPhaseFlow: this PETSc has no hypre, so %s's preconditioner is 'gamg' (PETSc's algebraic multigrid) "
+                 "instead of the default 'boomeramg'. Build PETSc with hypre (--download-hypre) for the default." % (model,),
+                 level=1)
+        return 'gamg'
     if choice == 'boomeramg' and not petsc_has_hypre():
         raise ValueError("%s.preconditioner = 'boomeramg' needs a PETSc built with hypre; this PETSc has no hypre. "
                          "Use 'auto' or 'asm', or rebuild PETSc with hypre." % (model,))
@@ -188,9 +189,10 @@ def set_level_set_preconditioner(OptDB, prefix, preconditioner):
         OptDB.setValue(prefix+'pc_type', 'hypre')
         OptDB.setValue(prefix+'pc_hypre_type', 'boomeramg')
     elif preconditioner == 'gamg':
-        # PETSc's smoothed-aggregation AMG, no external package. damBreakLevelSet (C19 round 4): 3/3/6-8 KSP iterations
-        # per Newton iteration for VOF/NCLS/MCorr in 2D and 3D, where 'asm' takes up to 76 for MCorr and, in 3D, 9x the
-        # time in the subdomain LU of NCLS's and MCorr's face-coupled stencils.
+        # The fallback without hypre: PETSc's smoothed-aggregation AMG, no external package. damBreakLevelSet (C19 round
+        # 4): 3/3/6-8 KSP iterations per Newton iteration for VOF/NCLS/MCorr in 2D and 3D and the closest to a tightly
+        # converged reference, where 'asm' takes up to 76 for MCorr and, in 3D, 9x the time in the subdomain LU of
+        # NCLS's and MCorr's face-coupled stencils (ON_NODE_PERFORMANCE_BASELINE section 9.4).
         OptDB.setValue(prefix+'pc_type', 'gamg')
     else:
         # ASM with an LU per subdomain, as RANS2P's 'asm': PETSc's own LU with nested-dissection ordering.
@@ -1352,8 +1354,8 @@ class ParametersModelVOF(ParametersModelBase):
         self.n.maxLineSearches = 0
         self.n.tolFac = 0.
         # The preconditioner of the iterative solve (useSuperlu off): 'auto' (the default) is 'boomeramg' when
-        # PETSc has hypre and 'asm' (ASM with an LU per subdomain, logged) when it does not; 'boomeramg' without
-        # hypre is refused at setup; 'gamg' (PETSc's AMG) on request.
+        # PETSc has hypre and 'gamg' (PETSc's AMG, logged) when it does not; 'boomeramg' without hypre is refused at
+        # setup; 'asm' (ASM with an LU per subdomain) on request.
         self.preconditioner = 'auto'
         # freeze attributes
         self._freeze()
@@ -1469,8 +1471,8 @@ class ParametersModelNCLS(ParametersModelBase):
         self.n.maxLineSearches = 0
         self.n.tolFac = 0.
         # The preconditioner of the iterative solve (useSuperlu off): 'auto' (the default) is 'boomeramg' when
-        # PETSc has hypre and 'asm' (ASM with an LU per subdomain, logged) when it does not; 'boomeramg' without
-        # hypre is refused at setup; 'gamg' (PETSc's AMG) on request.
+        # PETSc has hypre and 'gamg' (PETSc's AMG, logged) when it does not; 'boomeramg' without hypre is refused at
+        # setup; 'asm' (ASM with an LU per subdomain) on request.
         self.preconditioner = 'auto'
         # freeze attributes
         self._freeze()
@@ -1684,8 +1686,8 @@ class ParametersModelMCorr(ParametersModelBase):
         self.n.maxLineSearches = 0
         self.n.useEisenstatWalker = True
         # The preconditioner of the iterative solve (useSuperlu off): 'auto' (the default) is 'boomeramg' when
-        # PETSc has hypre and 'asm' (ASM with an LU per subdomain, logged) when it does not; 'boomeramg' without
-        # hypre is refused at setup; 'gamg' (PETSc's AMG) on request.
+        # PETSc has hypre and 'gamg' (PETSc's AMG, logged) when it does not; 'boomeramg' without hypre is refused at
+        # setup; 'asm' (ASM with an LU per subdomain) on request.
         self.preconditioner = 'auto'
         # freeze attributes
         self._freeze()

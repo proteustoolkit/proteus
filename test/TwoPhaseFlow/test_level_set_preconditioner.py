@@ -1,10 +1,10 @@
 """TwoPhaseFlow's VOF, NCLS and MCorr preconditioner setting (C19 round 4), the same rule as RANS2P's.
 
 ``SystemPhysics.modelDict[name].preconditioner`` (name in vof, ncls, mcorr) picks the preconditioner of the model's
-iterative solve (``useSuperlu`` off): ``'auto'`` (the default: ``'boomeramg'`` when PETSc has hypre, ``'asm'`` with a
-log line when it does not), ``'boomeramg'`` or ``'asm'`` (ASM with an LU per subdomain). Before, these three asked for
-``pc_type hypre`` whatever the PETSc, so a PETSc without hypre failed at the first linear solve. ``'gamg'`` (PETSc's own
-AMG) is there on request. An explicit
+iterative solve (``useSuperlu`` off): ``'auto'`` (the default: ``'boomeramg'`` when PETSc has hypre, ``'gamg'``,
+PETSc's own algebraic multigrid, with a log line when it does not), ``'boomeramg'``, ``'gamg'`` or ``'asm'`` (ASM with
+an LU per subdomain). Before, these three asked for
+``pc_type hypre`` whatever the PETSc, so a PETSc without hypre failed at the first linear solve. An explicit
 ``'boomeramg'`` without hypre, or an unknown name, makes the problem refuse to initialize.
 """
 import os
@@ -68,21 +68,21 @@ def test_default_is_boomeramg_with_hypre(tmp_path):
     assert logged == 'LOGGED', logged
 
 
-def test_default_without_hypre_is_asm_and_logged(tmp_path):
+def test_default_without_hypre_is_gamg_and_logged(tmp_path):
     loaded, logged = load(tmp_path, '', no_hypre=True)
-    assert loaded == 'LOADED vof=gmres/asm/lu ncls=gmres/asm/lu mcorr=fgmres/asm/lu', loaded
+    assert loaded == 'LOADED vof=gmres/gamg/- ncls=gmres/gamg/- mcorr=fgmres/gamg/-', loaded
     assert logged == 'LOGGED mcorr ncls vof', logged
 
 
-def test_asm_on_request(tmp_path):
-    loaded, logged = load(tmp_path, 'vof.preconditioner=asm ncls.preconditioner=asm mcorr.preconditioner=asm')
+def test_asm_on_request_without_hypre(tmp_path):
+    loaded, logged = load(tmp_path, 'vof.preconditioner=asm ncls.preconditioner=asm mcorr.preconditioner=asm',
+                          no_hypre=True)
     assert loaded == 'LOADED vof=gmres/asm/lu ncls=gmres/asm/lu mcorr=fgmres/asm/lu', loaded
     assert logged == 'LOGGED', logged
 
 
-def test_gamg_on_request_without_hypre(tmp_path):
-    loaded, logged = load(tmp_path, 'vof.preconditioner=gamg ncls.preconditioner=gamg mcorr.preconditioner=gamg',
-                          no_hypre=True)
+def test_gamg_on_request(tmp_path):
+    loaded, logged = load(tmp_path, 'vof.preconditioner=gamg ncls.preconditioner=gamg mcorr.preconditioner=gamg')
     assert loaded == 'LOADED vof=gmres/gamg/- ncls=gmres/gamg/- mcorr=fgmres/gamg/-', loaded
     assert logged == 'LOGGED', logged
 
