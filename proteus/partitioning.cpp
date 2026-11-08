@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <iterator>
+#include <sstream>
 #include <limits>
 #include <stdexcept>
 
@@ -94,6 +95,35 @@ void numberByOwner(const std::vector<int>& owner, int size,
     }
 }
 
+/* A whole message line to stderr in one write(2): a run about to end in
+   MPI_Abort must not have its message split by other output. std::cerr is
+   unit-buffered, so `cerr << a << b` is several writes, and under load
+   Open MPI's MPI_ABORT banner from another rank landed inside one (C3 r7,
+   2026-11-08). One write of less than PIPE_BUF bytes to a pipe is atomic. */
+void writeErrorLine(const std::string& line)
+{
+  std::cerr.flush();
+  const std::string text = line + "\n";
+  const char* p = text.data();
+  size_t left = text.size();
+  while (left > 0)
+    {
+      const ssize_t n = ::write(STDERR_FILENO, p, left);
+      if (n <= 0)
+        break;
+      p += n;
+      left -= size_t(n);
+    }
+}
+
+/* The message, then MPI_Abort on comm. */
+[[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
+{
+  writeErrorLine(message);
+  MPI_Abort(comm, 1);
+  std::abort();
+}
+
 /* Every rank computes the owners of all entities from the same global data, so
    the rule the old mask chain applied in rank order -- an entity belongs to the
    lowest rank that reaches it -- is a minimum, taken locally. Entities start at
@@ -109,7 +139,9 @@ bool everyEntityOwned(const std::vector<int>& owner, int size, const char* what)
   for (size_t i = 0; i < owner.size(); i++)
     if (owner[i] >= size)
       {
-        std::cerr<<"partitioning: "<<what<<" "<<i<<" was reached by no rank"<<std::endl;
+        std::ostringstream message;
+        message<<"partitioning: "<<what<<" "<<i<<" was reached by no rank";
+        writeErrorLine(message.str());
         return false;
       }
   return true;
@@ -128,9 +160,10 @@ std::vector<int> prescribedOwners(const MPI_Comm& comm, const int* owners, int n
   for (int i = 0; i < n; i++)
     if (owner[i] < 0 || owner[i] >= size)
       {
-        std::cerr<<caller<<": "<<what<<" "<<i<<" is assigned to rank "<<owner[i]
-                 <<" but there are "<<size<<" ranks"<<std::endl;
-        MPI_Abort(comm,1);
+        std::ostringstream message;
+        message<<caller<<": "<<what<<" "<<i<<" is assigned to rank "<<owner[i]
+               <<" but there are "<<size<<" ranks";
+        abortWith(comm, message.str());
       }
   return owner;
 }
@@ -1107,8 +1140,7 @@ bool readSimplexNodeStars(const std::string& elementFileName, const char* format
   std::ifstream elementFile(elementFileName.c_str());
   if (!elementFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" element file "
-               <<elementFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" element file "+elementFileName);
       return false;
     }
   //read elements
@@ -1178,8 +1210,7 @@ bool readSubdomainVertices(const std::string& vertexFileName, const char* format
   std::ifstream vertexFile(vertexFileName.c_str());
   if (!vertexFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" node file "
-               <<vertexFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" node file "+vertexFileName);
       return false;
     }
   int nSpace_file(nSpace),nNodes_global,hasVertexAttributes_file,hasVertexMarkers_file;
@@ -1245,8 +1276,7 @@ bool readSimplexElementsTouching(const std::string& elementFileName, const char*
   std::ifstream elementFile(elementFileName.c_str());
   if (!elementFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" elements file"
-               <<elementFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" elements file "+elementFileName);
       return false;
     }
   int nNodesPerSimplex(simplexDim);
@@ -1308,8 +1338,7 @@ bool readSimplexSubentitiesTouching(const std::string& fileName, const char* for
   std::ifstream file(fileName.c_str());
   if (!file.good())
     {
-      std::cerr<<"cannot open "<<format<<" "<<what<<" file "
-               <<fileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" "+what+" file "+fileName);
       return false;
     }
   hasMarkers = 0;
@@ -1449,10 +1478,11 @@ namespace
     if (!keys.empty() && (*keys.begin() < offsets[0] || *keys.rbegin() >= offsets[size]))
       {
         const int key = *keys.begin() < offsets[0] ? *keys.begin() : *keys.rbegin();
-        std::cerr<<"partitioning: "<<what<<" "<<key<<" (asked by rank "<<rank<<") is outside ["
-                 <<offsets[0]<<","<<offsets[size]<<"), the numbers the ranks hold"
-                 <<" (are the mesh files consistent?)"<<std::endl;
-        MPI_Abort(comm, 1);
+        std::ostringstream message;
+        message<<"partitioning: "<<what<<" "<<key<<" (asked by rank "<<rank<<") is outside ["
+               <<offsets[0]<<","<<offsets[size]<<"), the numbers the ranks hold"
+               <<" (are the mesh files consistent?)";
+        abortWith(comm, message.str());
       }
     std::vector<std::vector<int> > requests(size);
     for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
@@ -1471,18 +1501,19 @@ namespace
     std::vector<int> answered = exchangeIntsCounted(comm, answers, requestCounts);
     std::map<int,int> result;
     int unanswered = 0;
+    std::ostringstream message;
     for (int r = 0, i = 0; r < size; r++)
       for (int k = 0; k < requestCounts[r]; k++, i++)
         {
           if (answered[i] < 0 && unanswered++ == 0)
-            std::cerr<<"partitioning: "<<what<<" "<<requests[r][k]<<" (asked by rank "<<rank<<", of rank "<<r
-                     <<") has no owner: no rank holds a number for it (are the mesh files consistent?)"<<std::endl;
+            message<<"partitioning: "<<what<<" "<<requests[r][k]<<" (asked by rank "<<rank<<", of rank "<<r
+                   <<") has no owner: no rank holds a number for it (are the mesh files consistent?)";
           result[requests[r][k]] = answered[i];
         }
     if (unanswered)
       {
-        std::cerr<<"partitioning: rank "<<rank<<" asked for "<<unanswered<<" "<<what<<"(s) with no owner"<<std::endl;
-        MPI_Abort(comm, 1);
+        message<<"; rank "<<rank<<" asked for "<<unanswered<<" "<<what<<"(s) with no owner";
+        abortWith(comm, message.str());
       }
     return result;
   }
@@ -2608,8 +2639,7 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   std::ifstream vertexFile(vertexFileName.c_str());
   if (!vertexFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" node file "
-               <<vertexFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" node file "+vertexFileName);
       return 1;
     }
   int hasVertexMarkers(0),hasVertexAttributes(0),nSpace(simplexDim-1),nNodes_global;

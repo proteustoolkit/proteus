@@ -37,6 +37,7 @@ commit: ``PROTEUS_RECORD_PARTITION_REFERENCE=1 pytest test_meshPartitionCharacte
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -763,7 +764,11 @@ def test_files_lookup_of_a_number_no_rank_holds_ends_the_run(tmp_path, case, mes
     out = result.stdout + result.stderr
     assert result.returncode != 0, out
     assert 'RESULT' not in result.stdout, out
-    assert message.format(asker=n - 1) in out, out
+    #the partitioner writes its message in one write(2), but a launcher's own
+    #MPI_ABORT banner (Open MPI's, a block between rules of dashes) can still
+    #land in the merged stream between another rank's pieces of output: drop it
+    stripped = re.sub(r'-{20,}\n.*?\n-{20,}\n', '', out, flags=re.S)
+    assert message.format(asker=n - 1) in stripped, out
 
 
 @pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
