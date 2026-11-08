@@ -21,7 +21,8 @@
 //    instantiates: moment fit of degree 4) classifies the element by its nodal phi_s (mcorrSolidElement): icase 1 in the
 //    fluid (every node > 1e-8), -1 in the solid (every node < -1e-8), 0 cut. H_s at the points is its H: the moment fit
 //    on a cut element when useExact_s = 1; with useExact_s = 0 it is the regularized H with eps = 0, and every element is
-//    "cut" (Regularized::calculate returns 0). Elements with icase 0 or 1 are active, and so are their nodes' rows and DOFs.
+//    fluid (GeneralizedFunctions_mix::calculate returns 1 without useExact), so there are no cut faces and the masking is
+//    the identity. Elements with icase 0 or 1 are active, and so are their nodes' rows and DOFs.
 // 2. A cut face (mcorrCutFaces) is an interior face of an icase-0 element whose two nodes (local face f opposite local node
 //    f; nodes (f+1)%nD and (f+2)%nD) have phi_s(a) phi_s(b) <= 0, kept when both neighbours are active. Quirks: the
 //    product test is sharp (no 1e-8), and in 3D it reads only two of the face's three nodes (MCorr.h's "only works for

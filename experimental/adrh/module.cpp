@@ -10,6 +10,7 @@
 #include "ncls.h"
 #include "rdls.h"
 #include "mcorr.h"
+#include "rans2p.h"
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -678,6 +679,38 @@ PYBIND11_MODULE(adrh_proto, m)
                                 Jf.mutable_data() + k * 4 * nD * nD);
       }
       return py::make_tuple(R, J, qu, qr, qn, icase, Hs, faces, Rf, Jf);
+    });
+  });
+
+  // RANS2P's element integrals (rans2p.h, the two-phase Navier-Stokes VMS element): xn (nE, nD, 3), u (nE, 1 + nS, nD)
+  // with the components p, u_0, .., qp (nQ, nS), qw (nQ), fields (nE, nQ, 3 + 3 nS) as NavierStokesFields orders them,
+  // h_e (nE), and params = (rho_0, nu_0, rho_1, nu_1, g_0, g_1, g_2, alphaBDF, Ct_sge, Cd_sge, C_dc, useMetrics, hFactor,
+  // useVF, MOMENTUM_SGE, PRESSURE_SGE, VELOCITY_SGE). Returns R (nE, nc, nD), J (nE, nc, nD, nc, nD), q_velocity
+  // (nE, nQ, nS), q_numDiff (nE, nQ), q_cfl (nE, nQ).
+  m.def("rans2p_element", [](int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr h_e, Arr params) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF, nc = 1 + nS;
+      constexpr int nF = adrh::NavierStokesFields<nS>::nFields;
+      const int nE = xn.shape(0), nQ = qw.shape(0);
+      if (u.ndim() != 3 || u.shape(0) != nE || u.shape(1) != nc || u.shape(2) != nD)
+        throw std::invalid_argument("rans2p_element: u must be (nE, 1 + nS, nD)");
+      if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != nF)
+        throw std::invalid_argument("rans2p_element: fields must be (nE, nQ, 3 + 3 nS)");
+      if (params.shape(0) != 17) throw std::invalid_argument("rans2p_element: 17 params");
+      const double *q = params.data();
+      adrh::NavierStokesParams P{q[0], q[1], q[2], q[3], {q[4], q[5], q[6]}, q[7], q[8], q[9], q[10], q[11], q[12], q[13],
+                                 q[14], q[15], q[16]};
+      py::array_t<double> R({nE, nc, nD}), J({nE, nc, nD, nc, nD}), qv({nE, nQ, nS}), qnd({nE, nQ}), qcfl({nE, nQ});
+      {
+        py::gil_scoped_release release;
+        for (int eN = 0; eN < nE; ++eN)
+          adrh::navierStokesVMSElement<S>(P, xn.data() + eN * nD * 3, u.data() + eN * nc * nD, nQ, qp.data(), qw.data(),
+                                          fields.data() + eN * nQ * nF, h_e.data()[eN], R.mutable_data() + eN * nc * nD,
+                                          J.mutable_data() + eN * nc * nD * nc * nD, qv.mutable_data() + eN * nQ * nS,
+                                          qnd.mutable_data() + eN * nQ, qcfl.mutable_data() + eN * nQ);
+      }
+      return py::make_tuple(R, J, qv, qnd, qcfl);
     });
   });
 
