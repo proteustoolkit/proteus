@@ -2,7 +2,6 @@
 """
 Test module for level set transport
 """
-from importlib import reload
 from proteus import NumericalSolution
 import os
 import numpy as np
@@ -38,11 +37,7 @@ class TestRotation2D(object):
                 pass
             
     def test_rotation2D(self,opts,use_strong_constraints=False):
-        from proteus import default_s, default_so, default_p, default_n
-        reload(default_s)
-        reload(default_so)
-        reload(default_p)
-        reload(default_n)
+        from proteus import default_s
         from . import (ls_rotation_2d_p,
                        redist_rotation_2d_p,
                        vof_rotation_2d_p,

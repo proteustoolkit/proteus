@@ -13,7 +13,6 @@ import os
 import numpy as np
 import h5py
 import pytest
-from proteus import default_so
 from . import (parameters,
                risingBubble_so, risingBubble,
                vof_p,
@@ -45,7 +44,6 @@ class TestSurfaceTension(object):
         pass
     
     def reload_modules(self):
-        reload(default_so)
         reload(risingBubble)
         reload(risingBubble_so)
         reload(vof_p)

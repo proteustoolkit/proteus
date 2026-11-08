@@ -5,7 +5,7 @@ Test module for NCLS with EV
 import os
 import proteus
 from importlib import reload
-from proteus import Profiling, default_n, default_s, default_so
+from proteus import Profiling, default_s, default_so
 from proteus import Comm
 comm = Comm.get()
 Profiling.logLevel=2
@@ -48,7 +48,6 @@ class TestNCLS(object):
         ncls.ct.STABILIZATION_TYPE = 0 # SUPG
         ncls.ct.COUPEZ = False
         ncls.ct.DO_REDISTANCING = False
-        reload(default_n)
         reload(ncls_n)
         reload(ncls_p)
         self.so.name = self.pList[0].name+"_pureAdvection_SUPG"        
@@ -75,7 +74,6 @@ class TestNCLS(object):
         ncls.ct.ENTROPY_TYPE = 1 # quadratic entropy
         ncls.ct.COUPEZ = False
         ncls.ct.DO_REDISTANCING = False
-        reload(default_n)
         reload(ncls_n)
         reload(ncls_p)
         self.so.name = self.pList[0].name+"_pureAdvection_EV1"
@@ -102,7 +100,6 @@ class TestNCLS(object):
         ncls.ct.ENTROPY_TYPE = 1
         ncls.ct.COUPEZ = True
         ncls.ct.DO_REDISTANCING = True
-        reload(default_n)
         reload(ncls_n)
         reload(ncls_p)
         self.so.name = self.pList[0].name+"_non_saturated_ls"
@@ -130,7 +127,6 @@ class TestNCLS(object):
         ncls.ct.ENTROPY_TYPE = 2
         ncls.ct.COUPEZ = True
         ncls.ct.DO_REDISTANCING = True
-        reload(default_n)
         reload(ncls_n)
         reload(ncls_p)
         self.so.name = self.pList[0].name+"_saturated_ls"

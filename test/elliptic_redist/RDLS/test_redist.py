@@ -4,7 +4,7 @@ Test module for Elliptic Re-distancing
 """
 import proteus
 from importlib import reload
-from proteus import Profiling, default_p, default_s, default_so
+from proteus import Profiling, default_s
 from proteus import Comm
 comm = Comm.get()
 Profiling.logLevel=7
@@ -113,8 +113,6 @@ class TestEllipticRedistancing(object):
     def test_ELLIPTIC_REDISTANCING_2(self, opts):
         # Set parameters for test #
         vortex2D.ct.ELLIPTIC_REDISTANCING = 2
-        reload(default_p)
-        reload(default_so)
         reload(rdls_p)
         reload(rdls_n)
         reload(vortex2D_so)

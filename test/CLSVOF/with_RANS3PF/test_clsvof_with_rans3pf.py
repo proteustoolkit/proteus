@@ -5,7 +5,7 @@ Test module for CLSVOF with RANS3PF
 import os
 import proteus
 from importlib import reload
-from proteus import Profiling, default_n, default_p, default_s
+from proteus import Profiling, default_s
 from proteus import Comm
 comm = Comm.get()
 Profiling.logLevel=7
@@ -13,7 +13,6 @@ Profiling.verbose=True
 import numpy as np
 import h5py
 import pytest
-from proteus import default_so
 from . import (parameters,
                multiphase,
                multiphase_so,
@@ -39,9 +38,6 @@ class TestCLSVOF_with_RANS3PF(object):
         pass
 
     def reload_modules(self):
-        reload(default_n)
-        reload(default_p)
-        reload(default_so)
         reload(multiphase)
         reload(multiphase_so)
         reload(clsvof_p)

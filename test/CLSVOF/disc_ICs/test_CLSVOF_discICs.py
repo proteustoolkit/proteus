@@ -31,7 +31,6 @@ class TestCLSVOF(object):
         pass
 
     def reload_modules(self):
-        reload(default_so)
         reload(clsvof)
         reload(clsvof_p)
         reload(clsvof_n)
