@@ -37,6 +37,7 @@ commit: ``PROTEUS_RECORD_PARTITION_REFERENCE=1 pytest test_meshPartitionCharacte
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -214,6 +215,49 @@ def test_digest_is_pinned(run, case, n):
             json.dump(REFERENCE, f, indent=1, sort_keys=True)
             f.write('\n')
     assert d == REFERENCE.get(key), key
+
+
+NODE_CASES = [c for c in CASES if c[1] in ('node', 'files')]
+
+
+@pytest.mark.parametrize('n', RANKS)
+@pytest.mark.parametrize('case', NODE_CASES, ids=['-'.join(map(str, c)) for c in NODE_CASES])
+def test_a_node_partition_records_each_subdomain_entitys_input_number(run, serial, case, n):
+    """A node partition records, on every rank, the input mesh's number (the
+    file's) of each subdomain node and element, overlap included: what SW2DCV
+    and GN_SW2DCV permute a bathymetry array with and what the archive writes
+    as NodeMapInput/CellMapInput (MeshTools._localInputNumbering).
+    partitionNodes derives it from its global permutations; the parun -F
+    partitioners return it per rank, O(subdomain), and keep no global
+    permutation (nNodes_global ints on every rank). Until 2026-11 they wrote the
+    node permutation to mappings.h5 instead, which a run without -F never
+    wrote, so a model could read a stale one."""
+    mesh, path = case[0], case[1]
+    got, ranks = run(*(case + (n,)))
+    s = serial(mesh)
+    for r, a in enumerate(ranks):
+        piece = Piece(s, a, r, n)
+        for kind, serialNumbers in (('node', piece.node), ('element', piece.element)):
+            #absent: the partition kept the input numbering (the identity), so the
+            #input number is the global one; -F always returns its file numbers
+            recorded = a.get('map.%sNumbering_subdomain2input' % kind)
+            if path == 'files':
+                assert recorded is not None
+            if recorded is None:
+                recorded = a['map.%sNumbering_subdomain2global' % kind]
+            assert np.array_equal(recorded, serialNumbers), kind
+        if path == 'files':
+            assert 'map.nodeNumbering_global_old2new' not in a
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+def test_files_writes_no_mappings_file(tmp_path, mesh):
+    """parun -F keeps the node permutation on the mesh and writes no
+    mappings.h5 into the run directory (it did until 2026-11; at 192 ranks of
+    a 2.53 M-node cube the file was 9.7 MB, 519 MB before round 3). 2 ranks."""
+    d = tmp_path / 'run'
+    run_files(d, mesh, 2)
+    assert not os.path.exists(str(d / 'mappings.h5'))
 
 
 @pytest.mark.parametrize('n', RANKS)
@@ -731,7 +775,11 @@ def test_files_lookup_of_a_number_no_rank_holds_ends_the_run(tmp_path, case, mes
     out = result.stdout + result.stderr
     assert result.returncode != 0, out
     assert 'RESULT' not in result.stdout, out
-    assert message.format(asker=n - 1) in out, out
+    #the partitioner writes its message in one write(2), but a launcher's own
+    #MPI_ABORT banner (Open MPI's, a block between rules of dashes) can still
+    #land in the merged stream between another rank's pieces of output: drop it
+    stripped = re.sub(r'-{20,}\n.*?\n-{20,}\n', '', out, flags=re.S)
+    assert message.format(asker=n - 1) in stripped, out
 
 
 @pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),
@@ -777,8 +825,8 @@ def test_files_path_refuses_element_partitioning(tmp_path, mesh):
 
 def _variantMesh(tmp_path, mesh, vertexFlags):
     """The stored mesh with its vertex flags as a TetGen/Triangle attribute
-    (header ``n d 1 0``, same column) or dropped (``n d 0 0``); the other files
-    copied. Returns the filebase."""
+    (header ``n d 1 0``, same column), dropped (``n d 0 0``), or with every
+    third marker -1 (``minus1``); the other files copied. Returns the filebase."""
     stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
     base = str(tmp_path / ('%s_%s' % (os.path.basename(stored), vertexFlags)))
     for ext in ('ele', 'edge', 'face') if mesh == 'tet' else ('ele', 'edge'):
@@ -790,6 +838,9 @@ def _variantMesh(tmp_path, mesh, vertexFlags):
     rows = [l.split() for l in lines[1:]]
     if vertexFlags == 'attribute':
         out = ['%s %s 1 0' % (n, d)] + [' '.join(r) for r in rows]
+    elif vertexFlags == 'minus1':
+        #TetGen's marker for the vertices of segments, on every third node
+        out = [lines[0]] + [' '.join(r[:-1] + (['-1'] if i % 3 == 0 else r[-1:])) for i, r in enumerate(rows)]
     else:
         out = ['%s %s 0 0' % (n, d)] + [' '.join(r[:1 + int(d)]) for r in rows]
     with open(base + '.node', 'w') as f:
@@ -821,29 +872,173 @@ SCRIBBLE = {'MallocScribble': '1', 'MALLOC_PERTURB_': '85'}
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])
-def test_files_node_flags_without_vertex_markers_are_initialised(tmp_path, mesh):
-    """A .node file without vertex markers: the -F partitioners give the nodes
-    of exterior subdomain faces the face flags and every other node 0. The
-    others used to keep what the heap held (new int[] never written); with the
-    allocator scribbling, they read -1431655766. 2 ranks, Triangle and TetGen:
-    the arrays do not depend on the heap, every flag is 0 or a face flag, and a
-    node on no exterior face reads 0."""
+def test_files_node_flags_without_vertex_markers_are_0(tmp_path, mesh):
+    """A .node file without vertex markers: every node flag is 0 ("no tag") on
+    every rank, whatever the faces say (the node-flag rule of 2026-11-06). The
+    -F partitioners used to give the nodes of exterior subdomain faces the flag
+    of the face visited last, so a flag depended on the partition and a ghost
+    copy could disagree with its owner; before that, the other nodes kept what
+    the heap held (new int[] never written; with the allocator scribbling they
+    read -1431655766). 2 ranks, Triangle and TetGen: the arrays do not depend
+    on the heap, and the faces still carry their flags."""
     base = _variantMesh(tmp_path, mesh, 'none')
     _, plain = run_files(tmp_path / 'plain', mesh, 2, base)
     _, scribbled = run_files(tmp_path / 'scribbled', mesh, 2, base, extraEnv=SCRIBBLE)
     for a, b in zip(plain, scribbled):
         for name in a:
             assert np.array_equal(a[name], b[name]), name
-        flags = a['sub.nodeMaterialTypes']
-        faceFlags = a['sub.elementBoundaryMaterialTypes']
-        faceNodes = a['sub.elementBoundaryNodesArray']
+        assert not a['sub.nodeMaterialTypes'].any()
         exterior = a['sub.exteriorElementBoundariesArray']
-        onExterior = np.zeros(len(flags), bool)
-        onExterior[faceNodes[exterior].ravel()] = True
-        assert np.all(flags[~onExterior] == 0)
-        assert set(flags[onExterior].tolist()) <= set(np.maximum(faceFlags, 0).tolist())
-        assert onExterior.any() and (~onExterior).any()
+        assert (a['sub.elementBoundaryMaterialTypes'][exterior] > 0).any()
 
+
+def _flagsByCoordinates(ranks):
+    """{node coordinates: set of flags over every rank's copies} of a partitioned mesh."""
+    flags = {}
+    for a in ranks:
+        for x, f in zip(a['sub.nodeArray'].reshape(-1, 3).tolist(), a['sub.nodeMaterialTypes'].tolist()):
+            flags.setdefault(tuple(x), set()).add(f)
+    return flags
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+@pytest.mark.parametrize('vertexFlags', ['markers', 'none', 'minus1'])
+@pytest.mark.parametrize('n', [1, 2])
+def test_node_flags_are_the_vertex_markers_or_0_on_every_path(tmp_path, mesh, vertexFlags, n):
+    """The node-flag rule on both paths: with vertex markers a node's flag is its
+    marker, without them 0, whether the mesh is read into memory and cut by
+    partitionNodes or partitioned by parun -F, at every copy of the node. The
+    in-memory readers gave every boundary node flag 1 without markers (mesh.cpp's
+    EXTERIOR_NODE_MATERIAL), the -F path the flag of a face (48 of pslg's 154
+    and 100 of plc's 131 nodes differed between the paths). A marker -1, which
+    TetGen writes for the vertices of segments, reads 0 on both paths: it is
+    mesh.cpp's "no flag yet", which gave the boundary ones 1 (both paths build
+    their meshes through it)."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = stored if vertexFlags == 'markers' else _variantMesh(tmp_path, mesh, vertexFlags)
+    _, files = run_files(tmp_path / 'files', mesh, n, base)
+    d = tmp_path / 'node'
+    os.makedirs(str(d))
+    _launch([mesh, 'node', 'graph', 1, d / 'out', base], n, cwd=str(d))
+    node = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(n)]
+    byFiles, byNode = _flagsByCoordinates(files), _flagsByCoordinates(node)
+    assert byFiles == byNode
+    assert all(len(f) == 1 for f in byFiles.values())
+    if vertexFlags == 'none':
+        assert set().union(*byFiles.values()) == {0}
+    else:
+        with open(base + '.node') as f:
+            rows = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')][1:]
+        nd = {'tri': 2, 'tet': 3}[mesh]
+        markers = {tuple([float(v) for v in r[1:1 + nd]] + [0.0] * (3 - nd)): {0 if int(r[1 + nd]) == -1 else int(r[1 + nd])} for r in rows}
+        assert byFiles == markers
+
+
+def _edgeMarkerMesh(tmp_path, mesh):
+    """The stored mesh with markers on its .edge file (all 0 there): edge k
+    gets k % 6, and in TetGen's also -1 on every seventh (its marker for the
+    edges of segments; Triangle's .edge is the face file, where -1 would read as
+    a cut face). Returns (filebase, {sorted coordinate pair: expected flag})."""
+    stored = os.path.join(HERE, 'meshPartition', {'tri': 'pslg', 'tet': 'plc'}[mesh])
+    base = str(tmp_path / (os.path.basename(stored) + '_edges'))
+    for ext in ('node', 'ele', 'face') if mesh == 'tet' else ('node', 'ele'):
+        shutil.copy(stored + '.' + ext, base + '.' + ext)
+    nd = {'tri': 2, 'tet': 3}[mesh]
+    with open(stored + '.node') as f:
+        rows = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')][1:]
+    x = {int(r[0]): tuple([float(v) for v in r[1:1 + nd]] + [0.0] * (3 - nd)) for r in rows}
+    with open(stored + '.edge') as f:
+        lines = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    out, expected = ['%s 1' % lines[0][0]], {}
+    for k, l in enumerate(lines[1:]):
+        marker = -1 if (mesh == 'tet' and k % 7 == 0) else k % 6
+        out.append(' '.join(l[:3] + [str(marker)]))
+        expected[tuple(sorted((x[int(l[1])], x[int(l[2])])))] = 0 if marker == -1 else marker
+    with open(base + '.edge', 'w') as f:
+        f.write('\n'.join(out) + '\n')
+    return base, expected
+
+
+def _edgeFlagsByCoordinates(ranks):
+    """{sorted coordinate pair of an edge: set of flags over every rank's copies}."""
+    flags = {}
+    for a in ranks:
+        x = [tuple(p) for p in a['sub.nodeArray'].reshape(-1, 3).tolist()]
+        for (n0, n1), f in zip(a['sub.edgeNodesArray'].tolist(), a['sub.edgeMaterialTypes'].tolist()):
+            flags.setdefault(tuple(sorted((x[n0], x[n1]))), set()).add(f)
+    return flags
+
+
+@pytest.mark.parametrize('mesh', ['tri', 'tet'])
+@pytest.mark.parametrize('path', ['files', 'node', 'element'])
+@pytest.mark.parametrize('n', [1, 2, 4])
+def test_edge_flags_are_the_edge_markers_on_every_path(tmp_path, mesh, path, n):
+    """The .edge file's markers are each edge's flag (edgeMaterialTypes), 0 for
+    -1 as with node flags, on every copy of the edge: the in-memory readers
+    read them (readEdgeMaterialTypes) and partitionNodes / partitionElements
+    carry them to the subdomains; parun -F reads them itself. Until 2026-11
+    neither path read .edge markers (decision 12 of 2026-11-06)."""
+    base, expected = _edgeMarkerMesh(tmp_path, mesh)
+    if path == 'files':
+        _, ranks = run_files(tmp_path / 'files', mesh, n, base)
+    else:
+        d = tmp_path / path
+        os.makedirs(str(d))
+        _launch([mesh, path, 'graph', 1, d / 'out', base], n, cwd=str(d))
+        ranks = [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(n)]
+    flags = _edgeFlagsByCoordinates(ranks)
+    assert set(flags) == set(expected)
+    assert {e: f for e, f in flags.items() if f != {expected[e]}} == {}
+    assert len(set(expected.values())) > 1
+
+
+def _runPath(tmp_path, mesh, path, n, base):
+    """The arrays of every rank for one path ('files', 'node', 'element') on base."""
+    if path == 'files':
+        return run_files(tmp_path / 'files', mesh, n, base)[1]
+    d = tmp_path / path
+    os.makedirs(str(d))
+    _launch([mesh, path, 'graph', 1, d / 'out', base], n, cwd=str(d))
+    return [dict(np.load(str(d / 'out' / ('rank%d.npz' % r)))) for r in range(n)]
+
+
+@pytest.mark.parametrize('n', [1, 2, 4])
+def test_edge_flags_of_a_stored_tetgen_mesh(tmp_path, n):
+    """A stored TetGen mesh with its own marked .edge file (cylinder2D's
+    meshCylinder, tetgen -ee: 1953 edges, 298 marked -1, the rest 0): -F and the
+    in-memory node partition give every copy of every edge the same flag, the
+    file's (-1 read as 0), and both hold every edge of the file once."""
+    base = os.path.join(HERE, '..', 'cylinder2D', 'ibm_rans2p_3D', 'meshCylinder')
+    with open(base + '.edge') as f:
+        lines = [l.split() for l in f.read().splitlines() if l.strip() and not l.lstrip().startswith('#')]
+    assert lines[0] == ['1953', '1']
+    files = _edgeFlagsByCoordinates(_runPath(tmp_path, 'tet', 'files', n, base))
+    node = _edgeFlagsByCoordinates(_runPath(tmp_path, 'tet', 'node', n, base))
+    assert len(files) == len(node) == 1953
+    assert files == node
+    assert set().union(*files.values()) == {0}
+
+
+@pytest.mark.parametrize('path', ['files', 'node'])
+@pytest.mark.parametrize('n', [1, 2, 4])
+def test_triangle_edge_flags_are_its_face_flags(tmp_path, path, n):
+    """In 2D an edge is a face and Triangle's .edge file is both: each edge's
+    flag equals the flag of the face with the same nodes, wherever the
+    partition did not cut that face (-1, a face property only), on -F and on
+    the in-memory node partition. pslg's .edge carries markers 0-5."""
+    stored = os.path.join(HERE, 'meshPartition', 'pslg')
+    ranks = _runPath(tmp_path, 'tri', path, n, stored)
+    compared = 0
+    for a in ranks:
+        x = [tuple(p) for p in a['sub.nodeArray'].reshape(-1, 3).tolist()]
+        faces = {tuple(sorted((x[n0], x[n1]))): f for (n0, n1), f in
+                 zip(a['sub.elementBoundaryNodesArray'].tolist(), a['sub.elementBoundaryMaterialTypes'].tolist())}
+        for (n0, n1), f in zip(a['sub.edgeNodesArray'].tolist(), a['sub.edgeMaterialTypes'].tolist()):
+            face = faces[tuple(sorted((x[n0], x[n1])))]
+            if face != RANK_INTERFACE:
+                assert f == face
+                compared += 1
+    assert compared > 0
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])

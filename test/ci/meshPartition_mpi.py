@@ -81,6 +81,9 @@ def meshArrays(prefix, mesh):
             out[prefix + name] = np.array(value, copy=True)
     #what _markRankInterfaces left: flags with -1 on the faces cut by the partition
     out[prefix + 'elementBoundaryMaterialTypes'] = np.array(mesh.elementBoundaryMaterialTypes, copy=True)
+    #the .edge file's markers, which every path here reads (None for a mesh without them)
+    if getattr(mesh, 'edgeMaterialTypes', None) is not None:
+        out[prefix + 'edgeMaterialTypes'] = np.array(mesh.edgeMaterialTypes, copy=True)
     return out
 
 
@@ -140,6 +143,12 @@ if path != 'serial':
     for name in MAPS:
         if getattr(mesh, name, None) is not None:
             arrays['map.' + name] = np.array(getattr(mesh, name), copy=True)
+    #the input (file) number of each subdomain node and element, as the archive
+    #and SW2DCV read it; None where the partition kept the input numbering
+    for name, value in zip(('nodeNumbering_subdomain2input', 'elementNumbering_subdomain2input'),
+                           MeshTools._localInputNumbering(mesh)):
+        if value is not None:
+            arrays['map.' + name] = np.array(value, copy=True)
     sub = mesh.subdomainMesh
     arrays.update(meshArrays('sub.', sub))
     #the quadratic and DG numberings built on top of the partition
