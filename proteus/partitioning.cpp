@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <unistd.h>
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 
@@ -1525,7 +1526,11 @@ std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& com
                                             [&](int n_old) { return directory[n_old - begin]; }, what);
   std::vector<std::pair<int,int> > old2new;
   old2new.reserve(mine.size() + ghosts.size());
-  std::merge(mine.begin(), mine.end(), ghosts.begin(), ghosts.end(), std::back_inserter(old2new));
+  //by old number only: ghosts' elements are pair<const int,int>, mine's
+  //pair<int,int>, and libstdc++ before 15 has no operator< across the two
+  //(the keys are distinct, so this is the order pair's operator< gave)
+  std::merge(mine.begin(), mine.end(), ghosts.begin(), ghosts.end(), std::back_inserter(old2new),
+             [](const auto& a, const auto& b) { return a.first < b.first; });
   assert(old2new.size() == subdomain.size());
   return old2new;
 }
