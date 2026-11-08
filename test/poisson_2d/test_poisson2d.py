@@ -80,10 +80,8 @@ class TestPoisson2D(object):
             if bcType == 'strong':
                 nList[0].numericalFluxType.useStrongDirichletConstraints=True
         nList[0].nnx=nList[0].nny=nList[0].nn=51
-        reload(default_so)
         so = default_so
         so.name = pList[0].name = "poisson_2d_{0}_{1}_{2}_pe{3}".format(femSpace, bcType,solverType,repr(Comm.get().size()))
-        reload(default_s)
         so.sList=[default_s]
         opts.gatherArchive=True
         soln_name = so.name
@@ -120,10 +118,8 @@ class TestPoisson2D(object):
         poisson_het_2d_c0pk_n.nLevels = nLevels
         pList = [poisson_het_2d_p]
         nList = [poisson_het_2d_c0pk_n]
-        reload(default_so)
         so = default_so
         so.name = pList[0].name = "poisson_2d_c0p1_2dm"+"pe"+repr(Comm.get().size())
-        reload(default_s)
         so.sList=[default_s]
         opts.gatherArchive=True
         nList[0].femSpaces[0]  = default_n.C0_AffineLinearOnSimplexWithNodalBasis
@@ -151,10 +147,8 @@ def test_load_vector_use_weak(opts, use_weak_dirichlet):
     reload(poisson_het_2d_c0pk_n)
     pList = [poisson_het_2d_p]
     nList = [poisson_het_2d_c0pk_n]
-    reload(default_so)
     so = default_so
     so.name = pList[0].name = "poisson_2d_c0p1"+"pe"+repr(Comm.get().size())
-    reload(default_s)
     so.sList=[default_s]
     opts.gatherArchive=True
     nList[0].femSpaces[0]  = default_n.C0_AffineLinearOnSimplexWithNodalBasis
@@ -209,10 +203,8 @@ def test_ncp1_p1nc_velocity(opts):
     # the deck sets nn = 21 but star-imports nnx and nny from default_n, and the mesh takes nnx over nn: a value an
     # earlier test leaves there (3 on a CI worker) gives 8 elements and an error of 0.33
     nList[0].nnx = nList[0].nny = nList[0].nn
-    reload(default_so)
     so = default_so
     so.name = pList[0].name = "poisson_2d_ncp1_pe{0}".format(repr(Comm.get().size()))
-    reload(default_s)
     so.sList = [default_s]
     ns = NumericalSolution.NS_base(so, pList, nList, so.sList, opts)
     ns.calculateSolution(so.name)

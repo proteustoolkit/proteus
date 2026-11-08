@@ -50,7 +50,6 @@ class TestVortex2D(object):
             
     def test_vortex2D(self,opts,use_strong_constraints=False):
         from proteus import default_s
-        reload(default_s)
         opts.gatherArchive=True
         sList=[]
         if ls_vortex_2d_so.sList == []:
@@ -95,7 +94,6 @@ class TestVortex2D(object):
         
     def test_vortex2D_exactHeaviside(self,opts,use_strong_constraints=False):
         from proteus import default_s
-        reload(default_s)
         reload(vortex2D)
         vortex2D.useExact=True
         reload(ls_consrv_vortex_2d_p)

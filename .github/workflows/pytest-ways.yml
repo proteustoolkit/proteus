@@ -17,6 +17,10 @@ concurrency:
 
 jobs:
   way:
+    # The schedule is the canonical repository's canary. A fork runs it only when dispatched: a fork's default branch
+    # carries the same tests (cekees/proteus dev = main + a CI overlay), so its weekly copy would spend six more runner
+    # jobs of up to 5 h on the same answer, and it could not report one (issues are off on cekees/proteus).
+    if: github.event_name != 'schedule' || github.repository == 'proteustoolkit/proteus'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -90,7 +94,7 @@ jobs:
 
   report:
     needs: way
-    if: failure() && github.event_name == 'schedule'
+    if: failure() && github.event_name == 'schedule' && github.repository == 'proteustoolkit/proteus'
     runs-on: ubuntu-latest
     permissions:
       issues: write

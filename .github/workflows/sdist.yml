@@ -245,7 +245,9 @@ jobs:
       - name: Smoke test
         shell: bash -l {0}
         run: |
-          cd /tmp
+          # a directory of this job's own, not /tmp: proteus writes proteus_default.log in the working directory,
+          # and on a shared runner host /tmp/proteus_default.log can be another user's (PermissionError at exit)
+          cd "$(mktemp -d)"
           python -c "import proteus; from proteus import Comm; Comm.init(); print(proteus.__file__)"
 
       # A one-rank test runs its script without mpiexec, as an MPICH

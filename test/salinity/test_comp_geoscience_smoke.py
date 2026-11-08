@@ -134,7 +134,6 @@ def test_zalesak_disk(fct, tmp_path, monkeypatch, opts):
     names = _copy_deck('zalesak', str(tmp_path))
     try:
         p, n = _import_fresh(str(tmp_path), names, ['thelper_tadr_p', 'thelper_tadr_n'])
-        importlib.reload(default_so)
         default_so.tnList = n.tnList
         ns, failed = _run(default_so, [p], [n], 'smoke_zalesak_fct%d' % fct, opts)
         assert not failed
@@ -146,4 +145,3 @@ def test_zalesak_disk(fct, tmp_path, monkeypatch, opts):
     finally:
         for name in names:
             sys.modules.pop(name, None)
-        importlib.reload(default_so)
