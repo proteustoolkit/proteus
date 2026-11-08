@@ -403,18 +403,30 @@ def convertPUMIPartitionToPython(Comm comm, cmeshTools.CMesh cmesh, cmeshTools.C
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
 
+cdef object _intVectorArray(vector[int]& v):
+    """A numpy int32 copy of v."""
+    a = np.empty(v.size(), dtype=np.int32)
+    cdef int[::1] view = a
+    cdef size_t i
+    for i in range(v.size()):
+        view[i] = v[i]
+    return a
+
 def partitionNodesFromTetgenFiles(Comm comm, object filebase, int indexBase, int nLayersOfOverlap, cmeshTools.CMesh cmesh, cmeshTools.CMesh subdomain_cmesh, double memHardLimit):
     #the partitioners need the PETSc C library, which petsc4py would have initialized
     c_ensurePetscInitialized()
     cmesh.mesh.subdomainp = &subdomain_cmesh.mesh
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
+    cdef vector[int] nodesInput, elementsInput
     c_partitionNodesFromTetgenFiles(comm.ob_mpi,
                                     <const char*>(<char*>filebase),
                                     indexBase,
                                     cmesh.mesh,
                                     nLayersOfOverlap,
-                                    memHardLimit)
+                                    memHardLimit,
+                                    &nodesInput,
+                                    &elementsInput)
     return (
         _indexArray(cmesh.mesh.elementOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.elementNumbering_subdomain2global, cmesh.mesh.subdomainp.nElements_global),
@@ -423,7 +435,11 @@ def partitionNodesFromTetgenFiles(Comm comm, object filebase, int indexBase, int
         _indexArray(cmesh.mesh.elementBoundaryOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.elementBoundaryNumbering_subdomain2global, cmesh.mesh.subdomainp.nElementBoundaries_global),
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, comm.size+1),
-        _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
+        _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global),
+        #the file number (0-based) of each subdomain node and element, owned
+        #and overlap: the partition's input numbering on this rank
+        _intVectorArray(nodesInput),
+        _intVectorArray(elementsInput)
     )
 
 def readNodeStars(object filebase, int simplexDim, int indexBase, int nNodes_global, int begin, int end):
@@ -541,11 +557,14 @@ def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, i
     cmesh.mesh.subdomainp = &subdomain_cmesh.mesh
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
+    cdef vector[int] nodesInput, elementsInput
     c_partitionNodesFromTriangleFiles(comm.ob_mpi,
                                     <const char*>(<char*>filebase),
                                     indexBase,
                                     cmesh.mesh,
-                                    nLayersOfOverlap)
+                                    nLayersOfOverlap,
+                                    &nodesInput,
+                                    &elementsInput)
     return (
         _indexArray(cmesh.mesh.elementOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.elementNumbering_subdomain2global, cmesh.mesh.subdomainp.nElements_global),
@@ -554,7 +573,11 @@ def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, i
         _indexArray(cmesh.mesh.elementBoundaryOffsets_subdomain_owned, comm.size+1),
         _indexArray(cmesh.mesh.elementBoundaryNumbering_subdomain2global, cmesh.mesh.subdomainp.nElementBoundaries_global),
         _indexArray(cmesh.mesh.edgeOffsets_subdomain_owned, comm.size+1),
-        _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
+        _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global),
+        #the file number (0-based) of each subdomain node and element, owned
+        #and overlap: the partition's input numbering on this rank
+        _intVectorArray(nodesInput),
+        _intVectorArray(elementsInput)
     )
 
 def buildQuadraticLocal2GlobalMappings(Comm comm,

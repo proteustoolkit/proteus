@@ -1034,7 +1034,8 @@ class Mesh(object):
                      self.elementBoundaryOffsets_subdomain_owned,
                      self.elementBoundaryNumbering_subdomain2global,
                      self.edgeOffsets_subdomain_owned,
-                     self.edgeNumbering_subdomain2global) = cpartitioning.partitionNodesFromTetgenFiles(comm.comm.tompi4py(),
+                     self.edgeNumbering_subdomain2global,
+                     nodes_input, elements_input) = cpartitioning.partitionNodesFromTetgenFiles(comm.comm.tompi4py(),
                                                                                                                 filebase,
                                                                                                                 base,
                                                                                                                 nLayersOfOverlap,
@@ -1049,7 +1050,8 @@ class Mesh(object):
                      self.elementBoundaryOffsets_subdomain_owned,
                      self.elementBoundaryNumbering_subdomain2global,
                      self.edgeOffsets_subdomain_owned,
-                     self.edgeNumbering_subdomain2global) = cpartitioning.partitionNodesFromTriangleFiles(comm.comm.tompi4py(),
+                     self.edgeNumbering_subdomain2global,
+                     nodes_input, elements_input) = cpartitioning.partitionNodesFromTriangleFiles(comm.comm.tompi4py(),
                                                                                                                 filebase,
                                                                                                                 base,
                                                                                                                 nLayersOfOverlap,
@@ -1060,11 +1062,13 @@ class Mesh(object):
         #
         logEvent(memory("partitionMesh 3","MeshTools"),level=4)
         self.buildFromCNoArrays(self.cmesh)
-        #Partitioning renumbered the global nodes; keep the permutation so that
-        #anything built against the original numbering -- the multilevel
-        #hierarchy's node parents, for one -- can be read in the numbering
-        #nodeNumbering_subdomain2global refers to.
+        #The -F partitioners keep no global permutation (nodeNumbering_global_old2new
+        #stays None: it would be nNodes_global ints on every rank). They return the
+        #file number of each subdomain node and element instead, the per-rank input
+        #numbering _localInputNumbering serves (the archive's NodeMapInput and
+        #CellMapInput, the SW2DCV/GN_SW2DCV bathymetry permutation).
         self.nodeNumbering_global_old2new = cpartitioning.getNodeNumbering_global_old2new(self.cmesh)
+        self._viewInputNumbering = (nodes_input, elements_input)
         self.subdomainMesh.buildFromC(self.subdomainMesh.cmesh)
         self.subdomainMesh.rankInterfacesMarked = True     #the -F partitioners flag the cut faces -1 (markRankInterfacesByOwner)
         self._reduceSubdomainMeshSize(comm)

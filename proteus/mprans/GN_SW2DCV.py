@@ -466,20 +466,23 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 b_global = self.bathymetry[:,2].copy()
             if comm.size() > 1:
                 #the array is in the input mesh's node order: take each
-                #subdomain node's entry through the partition's node
-                #permutation, which partitionNodes and the parun -F
-                #partitioners both keep (they wrote mappings.h5 until 2026-11)
+                #subdomain node's entry at its input number, which the
+                #partition records per rank (MeshTools._localInputNumbering:
+                #partitionNodes' permutation, or the parun -F partitioners'
+                #file numbers; mappings.h5 until 2026-11)
+                from proteus import MeshTools
                 g = mesh.globalMesh
-                old2new = getattr(g, 'nodeNumbering_global_old2new', None)
-                if old2new is None:
+                if (getattr(g, 'nodeNumbering_global_old2new', None) is None
+                        and '_viewInputNumbering' not in g.__dict__):
                     raise ValueError("a bathymetry array is in the input mesh's node order, and this partition "
-                                     "does not record its node permutation (element partitioning, or a mesh "
+                                     "does not record its node numbering (element partitioning, or a mesh "
                                      "generated per rank): give the bathymetry as a function")
-                old2new = np.asarray(old2new)
-                assert len(old2new) == len(b_global), "one bathymetry value per node of the input mesh"
-                new2old = np.empty_like(old2new)
-                new2old[old2new] = np.arange(len(old2new), dtype=old2new.dtype)
-                self.b.dof = b_global[new2old[np.asarray(g.nodeNumbering_subdomain2global)]]
+                nodes_input = MeshTools._localInputNumbering(g)[0]
+                if nodes_input is None:     #the partition kept the input numbering
+                    nodes_input = g.nodeNumbering_subdomain2global
+                nodes_input = np.asarray(nodes_input)
+                assert nodes_input.max() < len(b_global), "one bathymetry value per node of the input mesh"
+                self.b.dof = b_global[nodes_input]
                 mesh.nodeArray[:,2] = self.b.dof
             else:
                 self.b.dof = self.bathymetry

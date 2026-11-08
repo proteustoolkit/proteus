@@ -143,6 +143,12 @@ if path != 'serial':
     for name in MAPS:
         if getattr(mesh, name, None) is not None:
             arrays['map.' + name] = np.array(getattr(mesh, name), copy=True)
+    #the input (file) number of each subdomain node and element, as the archive
+    #and SW2DCV read it; None where the partition kept the input numbering
+    for name, value in zip(('nodeNumbering_subdomain2input', 'elementNumbering_subdomain2input'),
+                           MeshTools._localInputNumbering(mesh)):
+        if value is not None:
+            arrays['map.' + name] = np.array(value, copy=True)
     sub = mesh.subdomainMesh
     arrays.update(meshArrays('sub.', sub))
     #the quadratic and DG numberings built on top of the partition

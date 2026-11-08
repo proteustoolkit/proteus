@@ -222,21 +222,32 @@ NODE_CASES = [c for c in CASES if c[1] in ('node', 'files')]
 
 @pytest.mark.parametrize('n', RANKS)
 @pytest.mark.parametrize('case', NODE_CASES, ids=['-'.join(map(str, c)) for c in NODE_CASES])
-def test_node_numbering_global_old2new_is_the_partitions(run, serial, case, n):
-    """A node partition keeps the permutation from the input mesh's node
-    numbers (the file's) to the partition's, on every rank, the whole of it:
-    nodeNumbering_global_old2new, which SW2DCV and GN_SW2DCV read to permute a
-    bathymetry given in the file's node order. partitionNodes always kept it;
-    the parun -F partitioners wrote it to mappings.h5 instead, which a run
-    without -F never wrote, so a model could read a stale one."""
-    mesh = case[0]
+def test_a_node_partition_records_each_subdomain_entitys_input_number(run, serial, case, n):
+    """A node partition records, on every rank, the input mesh's number (the
+    file's) of each subdomain node and element, overlap included: what SW2DCV
+    and GN_SW2DCV permute a bathymetry array with and what the archive writes
+    as NodeMapInput/CellMapInput (MeshTools._localInputNumbering).
+    partitionNodes derives it from its global permutations; the parun -F
+    partitioners return it per rank, O(subdomain), and keep no global
+    permutation (nNodes_global ints on every rank). Until 2026-11 they wrote the
+    node permutation to mappings.h5 instead, which a run without -F never
+    wrote, so a model could read a stale one."""
+    mesh, path = case[0], case[1]
     got, ranks = run(*(case + (n,)))
     s = serial(mesh)
-    for a in ranks:
-        old2new = a['map.nodeNumbering_global_old2new']
-        assert np.array_equal(np.sort(old2new), np.arange(len(s.nodeArray)))
-        assert np.array_equal(old2new[s.nodesOf(a)], a['map.nodeNumbering_subdomain2global'])
-        assert np.array_equal(old2new, ranks[0]['map.nodeNumbering_global_old2new'])
+    for r, a in enumerate(ranks):
+        piece = Piece(s, a, r, n)
+        for kind, serialNumbers in (('node', piece.node), ('element', piece.element)):
+            #absent: the partition kept the input numbering (the identity), so the
+            #input number is the global one; -F always returns its file numbers
+            recorded = a.get('map.%sNumbering_subdomain2input' % kind)
+            if path == 'files':
+                assert recorded is not None
+            if recorded is None:
+                recorded = a['map.%sNumbering_subdomain2global' % kind]
+            assert np.array_equal(recorded, serialNumbers), kind
+        if path == 'files':
+            assert 'map.nodeNumbering_global_old2new' not in a
 
 
 @pytest.mark.parametrize('mesh', ['tri', 'tet'])
