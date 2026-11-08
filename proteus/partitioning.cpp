@@ -2533,9 +2533,8 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
     2. Read the stars of the chunk's nodes from the element file and build
        the node graph (readSimplexNodeStars)
     3. Repartition the nodes with the PETSc graph partitioner
-       (MatPartitioning), number them by owner, and write
-       nodeNumbering_old2new, the one dataset mappings.h5 holds (SW2DCV and
-       GN_SW2DCV read it)
+       (MatPartitioning), number them by owner, gather the permutation into
+       newMesh.nodeNumbering_global_old2new, and write it to mappings.h5 too
     4. Reread the element file for the elements in the support of the owned
        nodes, with the new numbers of their nodes from the ranks that
        computed them (readSubdomainElements)
@@ -2705,6 +2704,31 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   ierr=ISDestroy(&nodePartitioningIS_new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   const PetscInt* nodes_subdomain_old2new_array;
   ISGetIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
+  //
+  //the mesh's nodeNumbering_global_old2new, the whole permutation on every
+  //rank, from each rank's default chunk: what partitionNodes keeps, and what
+  //SW2DCV and GN_SW2DCV read to permute a bathymetry given in the file's node
+  //order (they read it from mappings.h5, below, which a run without -F never
+  //wrote and so could find stale). One MPI_Allgatherv; nNodes_global ints per
+  //rank.
+  //
+  logEvent("Gathering the node numbering",5);
+  {
+    std::vector<int> chunk(nodes_subdomain_old2new_array, nodes_subdomain_old2new_array+nNodes_subdomain_old);
+    std::vector<int> counts(size), displs(size);
+    for (int r = 0; r < size; r++)
+      {
+        counts[r] = nodeOffsets_old[r+1] - nodeOffsets_old[r];
+        displs[r] = nodeOffsets_old[r];
+      }
+    if (newMesh.nodeNumbering_global_old2new != NULL)
+      delete [] newMesh.nodeNumbering_global_old2new;
+    newMesh.nodeNumbering_global_old2new = new proteus_index_t[nNodes_global];
+    static_assert(sizeof(proteus_index_t) == sizeof(int), "MPI_INT carries proteus_index_t");
+    MPI_Allgatherv(chunk.data(), nNodes_subdomain_old, MPI_INT,
+                   newMesh.nodeNumbering_global_old2new, counts.data(), displs.data(), MPI_INT,
+                   PROTEUS_COMM_WORLD);
+  }
   //
   //write nodeNumbering_old2new, each rank its default chunk, collectively
   //

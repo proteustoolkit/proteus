@@ -216,6 +216,28 @@ def test_digest_is_pinned(run, case, n):
     assert d == REFERENCE.get(key), key
 
 
+NODE_CASES = [c for c in CASES if c[1] in ('node', 'files')]
+
+
+@pytest.mark.parametrize('n', RANKS)
+@pytest.mark.parametrize('case', NODE_CASES, ids=['-'.join(map(str, c)) for c in NODE_CASES])
+def test_node_numbering_global_old2new_is_the_partitions(run, serial, case, n):
+    """A node partition keeps the permutation from the input mesh's node
+    numbers (the file's) to the partition's, on every rank, the whole of it:
+    nodeNumbering_global_old2new, which SW2DCV and GN_SW2DCV read to permute a
+    bathymetry given in the file's node order. partitionNodes always kept it;
+    the parun -F partitioners wrote it to mappings.h5 instead, which a run
+    without -F never wrote, so a model could read a stale one."""
+    mesh = case[0]
+    got, ranks = run(*(case + (n,)))
+    s = serial(mesh)
+    for a in ranks:
+        old2new = a['map.nodeNumbering_global_old2new']
+        assert np.array_equal(np.sort(old2new), np.arange(len(s.nodeArray)))
+        assert np.array_equal(old2new[s.nodesOf(a)], a['map.nodeNumbering_subdomain2global'])
+        assert np.array_equal(old2new, ranks[0]['map.nodeNumbering_global_old2new'])
+
+
 @pytest.mark.parametrize('n', RANKS)
 @pytest.mark.parametrize('case', CASES, ids=['-'.join(map(str, c)) for c in CASES])
 def test_owned_pieces_reassemble_the_serial_mesh(run, serial, case, n):
