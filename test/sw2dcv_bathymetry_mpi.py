@@ -21,12 +21,23 @@ GN = bool(os.environ.get("GN"))
 _deck = open(os.path.join(HERE, "SWFlow", "obstacle_flow.py")).read()
 _here = "os.path.dirname(os.path.abspath(__file__))"
 assert _deck.count(_here) == 1          # where the deck finds its stored mesh: the checkout, not the staged copy
+# the deck copies the stored mesh into the run directory on every rank, in place
+# (copyfile truncates, then writes), while other ranks may already read it: stage
+# it once per rank atomically here instead, and drop the deck's copy
+_copy = "copyfile(saved_file, copied_to)"
+assert _deck.count(_copy) == 1
+_deck = _deck.replace(_copy, "pass")
+for _name in ["obstacle.1.neigh", "obstacle.1.poly", "obstacle.edge", "obstacle.ele", "obstacle.node", "obstacle.poly"]:
+    rank_staging.write(_name, open(os.path.join(HERE, "SWFlow", "for_testMeshes", _name)).read())
+# the stored .node file, not the copy in the run directory, which another rank
+# may be writing (the deck copies the mesh in on every rank)
+NODE_FILE = os.path.join(HERE, "SWFlow", "for_testMeshes", "obstacle.node")
 rank_staging.write("obstacle_flow.py", _deck.replace(_here, repr(os.path.join(HERE, "SWFlow"))) + """
 mySWFlowProblem.bathymetry = (lambda xy: 0.01 * xy[:, 0] + 0.02 * xy[:, 1] + 0.001 * np.arange(len(xy)))(np.array(
-    [[float(r[1]), float(r[2])] for r in sorted([l.split() for l in open('obstacle.node').read().splitlines()
+    [[float(r[1]), float(r[2])] for r in sorted([l.split() for l in open(%r).read().splitlines()
                                                  if l.strip() and not l.lstrip().startswith('#')][1:],
                                                 key=lambda r: int(r[0]))]))
-""")
+""" % NODE_FILE)
 rank_staging.write("__init__.py", "")
 
 # which partitioner ran (the proof that the case is the path it is named for), into calls_rank<r>.txt
@@ -47,7 +58,7 @@ def initializeMesh(self, mesh):
     _initializeMesh(self, mesh)
     if not isinstance(self.bathymetry, np.ndarray):
         return
-    rows = [l.split() for l in open('obstacle.node').read().splitlines()
+    rows = [l.split() for l in open(NODE_FILE).read().splitlines()
             if l.strip() and not l.lstrip().startswith('#')][1:]
     xy = {(float(r[1]), float(r[2])): int(r[0]) - 1 for r in rows}
     file_node = np.array([xy[(x, y)] for x, y in mesh.nodeArray[:, :2]])
