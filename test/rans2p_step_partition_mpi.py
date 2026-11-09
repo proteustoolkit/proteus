@@ -42,6 +42,10 @@ so.sList = [default_s]
 mesh_options = p.domain.MeshOptions
 mesh_options.parallelPartitioningType = MeshTools.MeshParallelPartitioningTypes.element
 mesh_options.nLayersOfOverlapForParallel = int(os.environ.get("NLAYERS", "0"))
+if os.environ.get("DIAG"):
+    from proteus import Profiling
+    Profiling.logLevel = 7
+    Profiling.verbose = True
 ns = NumericalSolution.NS_base(so, [p], [n], so.sList, runtime.RunOptions())
 ns.calculateSolution("step2d_part")
 model = ns.modelList[0].levelModelList[-1]
