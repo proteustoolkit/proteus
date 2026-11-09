@@ -20,8 +20,11 @@ rank_staging.write("circular_damBreak.py", open(os.path.join(os.path.dirname(os.
 rank_staging.write("__init__.py", "")
 
 from proteus.mprans import SW2DCV
+_SCATTER_CALLS = [0]
 if os.environ.get("NOSCAT"):
-    SW2DCV.LevelModel.scatterDOFArray = lambda self, a: None
+    def _no_scatter(self, a):
+        _SCATTER_CALLS[0] += 1
+    SW2DCV.LevelModel.scatterDOFArray = _no_scatter
 if os.environ.get("OLDVOL"):
     _update = SW2DCV.LevelModel.updateSecondDifferences
     def update(self):
@@ -85,9 +88,9 @@ def calc(self, *a, **k):
     comm = Comm.get().comm.tompi4py()
     cols = [m.mesh.nodeArray[:nOwned, :2]] + [m.u[i].dof[:nOwned, None] for i in range(3)]
     gathered = comm.gather(np.hstack(cols), root=0)
-    sizes = comm.gather((comm.rank, nOwned, m.mesh.nNodes_global, m.mesh.nNodes_subdomain - nOwned), root=0)
+    sizes = comm.gather((comm.rank, nOwned, m.mesh.nNodes_global - nOwned, _SCATTER_CALLS[0]), root=0)
     if comm.rank == 0:
-        # rank, owned nodes, global nodes, ghost nodes: what the test prints if a control does not differ
+        # (rank, owned nodes, ghost nodes, calls of the disabled scatter): what the test prints if a control does not differ
         with open("info.txt", "w") as f:
             f.write(repr(sizes))
         a = np.vstack(gathered)

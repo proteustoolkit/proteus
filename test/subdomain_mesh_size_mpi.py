@@ -60,7 +60,12 @@ def calculateSolution(self, *args, **kwargs):
     comm = Comm.get().comm.tompi4py()
     gathered = comm.gather(np.column_stack([model.mesh.nodeArray[:nOwned, :2], model.u[0].dof[:nOwned]]), root=0)
     sizes = comm.gather([model.mesh.h, model.mesh.hMin], root=0)
+    diam = comm.gather((comm.rank, nOwned, int(model.mesh.nElements_global), float(model.mesh.elementDiametersArray.max()),
+                        float(model.mesh.elementDiametersArray.min()), model.mesh.h, model.mesh.hMin), root=0)
     if comm.rank == 0:
+        # (rank, owned nodes, elements held, largest and smallest element held, mesh.h, mesh.hMin): printed by the test
+        # if a control does not differ
+        open("diag.txt", "w").write(repr(diam))
         a = np.vstack(gathered)
         np.savetxt("u.csv", a[np.lexsort((a[:, 1], a[:, 0]))], delimiter=",", header="x,y,u")
         np.savetxt("h.csv", np.array(sizes), delimiter=",", header="h,hMin")

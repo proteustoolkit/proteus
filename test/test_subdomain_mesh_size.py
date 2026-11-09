@@ -58,5 +58,7 @@ def test_every_rank_holds_the_global_mesh_size_and_coupez_gives_the_serial_answe
     assert (sizes == serial_sizes).all(), (sizes, serial_sizes)
     assert numpy.abs(serial - parallel).max() < 1e-9
     control, local_sizes = _run(2, tmp_path / "3", LOCALH=1)
-    assert (local_sizes != serial_sizes).any()
+    assert (local_sizes != serial_sizes).any(), (
+        "LOCALH gave every rank the global sizes; (rank, owned nodes, elements held, largest and smallest element "
+        "held, h, hMin): " + (tmp_path / "3" / "diag.txt").read_text())
     assert numpy.abs(serial - control).max() > 1e-7
