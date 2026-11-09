@@ -10,7 +10,10 @@ FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as fail
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
 land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
-the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry. SYSTEMCONTROLLER=<class of proteus.SplitOperator> runs the deck under that
+the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry, NOTMODELRESTORE=1
+only its t_model_last part. NANDT=n makes the n-th system step the controller chooses nan (NANDTRANK=r: on rank r
+only); NOTIMECHECK=1 turns off the stepping loop's time check (NS_base._checkStepTimes). accepted.txt and
+retries.txt are written also when the run stops on a StepTimeError (u.csv is not). SYSTEMCONTROLLER=<class of proteus.SplitOperator> runs the deck under that
 system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its own).
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
 HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
@@ -76,6 +79,21 @@ if os.environ.get("OTHERPARTITION"):
 if os.environ.get("NORESTORE"):
     NS.NS_base.restoreSystemStepState = lambda self: None
 
+if os.environ.get("NOTMODELRESTORE"):
+    # the retry leaves each model's t_model_last where the failed attempt put it (before 83ac62c9): under
+    # Sequential_MinModelStep the system time then walks backwards to -inf and nan
+    _restore_tmodel = NS.NS_base.restoreSystemStepState
+    def restore_without_t_model_last(self):
+        kept = [m.stepController.t_model_last for m in self.modelList]
+        _restore_tmodel(self)
+        for m, t in zip(self.modelList, kept):
+            m.stepController.t_model_last = t
+    NS.NS_base.restoreSystemStepState = restore_without_t_model_last
+
+if os.environ.get("NOTIMECHECK"):
+    # the stepping loop as it was before the time check: a non-finite or backward time goes on
+    NS.NS_base._checkStepTimes = lambda self, *args, **kwargs: True
+
 if os.environ.get("FAILMODEL") and os.environ.get("FAILSTEP"):
     # FAILSTEP=n: report the model's n-th model step as failed (after solving it), whatever its nonlinear solver
     # (the explicit shallow-water solvers do not go through Newton.solve)
@@ -128,6 +146,27 @@ def recording(_taken):
 for cls in CONTROLLERS:
     cls.sequenceTaken = recording(cls.sequenceTaken)
 
+if os.environ.get("NANDT"):
+    # NANDT=n: the n-th system step the controller chooses (choose_dt_system) comes out nan, as a nan CFL or error
+    # estimate would make it; NANDTRANK=r: on rank r only
+    chosen = [0]
+    def nan_dt(_choose):
+        def choose_dt_system(self):
+            _choose(self)
+            chosen[0] += 1
+            from proteus import Comm
+            if (chosen[0] == int(os.environ["NANDT"]) and
+                    int(os.environ.get("NANDTRANK", Comm.get().rank())) == Comm.get().rank()):
+                self.dt_system = float("nan")
+                self.t_system = self.t_system_last + self.dt_system
+                self.stepSequence = [(self.t_system, m) for (_, m) in self.stepSequence]
+                for model in self.modelList:
+                    model.stepController.dt_model = self.dt_system
+                    model.stepController.set_dt_allLevels()
+        return choose_dt_system
+    for cls in CONTROLLERS:
+        cls.choose_dt_system = nan_dt(cls.choose_dt_system)
+
 retries = [0]
 _restore = NS.NS_base.restoreSystemStepState
 def restoreSystemStepState(self):
@@ -137,7 +176,13 @@ NS.NS_base.restoreSystemStepState = restoreSystemStepState
 
 _calc = NS.NS_base.calculateSolution
 def calc(self, *a, **k):
-    r = _calc(self, *a, **k)
+    try:
+        r = _calc(self, *a, **k)
+    finally:
+        # also when the run stops (NumericalSolution.StepTimeError)
+        np.savetxt("accepted.txt", np.array(accepted))
+        with open("retries.txt", "w") as f:
+            f.write("%d\n" % retries[0])
     rows = []
     for mi, mod in enumerate(self.modelList):
         lm = mod.levelModelList[-1]
@@ -149,9 +194,6 @@ def calc(self, *a, **k):
     from proteus import Comm
     comm = Comm.get()
     np.savetxt("u.csv" if comm.size() == 1 else "u%d.csv" % comm.rank(), a[np.lexsort((a[:, 3], a[:, 2], a[:, 1], a[:, 0]))], delimiter=",", header="key,x,y,z,u")
-    np.savetxt("accepted.txt", np.array(accepted))
-    with open("retries.txt", "w") as f:
-        f.write("%d\n" % retries[0])
     return r
 NS.NS_base.calculateSolution = calc
 

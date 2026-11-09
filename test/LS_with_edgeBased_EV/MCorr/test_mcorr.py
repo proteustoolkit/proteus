@@ -5,7 +5,7 @@ Test module for the conservative LS with EV
 import os
 import proteus
 from importlib import reload
-from proteus import Profiling, default_n, default_s
+from proteus import Profiling, default_s
 from proteus import Comm
 comm = Comm.get()
 Profiling.logLevel=2
@@ -46,7 +46,6 @@ class TestMCorr(object):
         thelper_cons_ls.ct.STABILIZATION_TYPE_ncls=0
         thelper_cons_ls.ct.DO_REDISTANCING=False
         thelper_cons_ls.ct.STABILIZATION_TYPE_vof=0
-        reload(default_n)
         reload(thelper_cons_ls_so)
         reload(thelper_ncls_p)
         reload(thelper_ncls_n)

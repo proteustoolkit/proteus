@@ -280,7 +280,13 @@ namespace proteus
   extern std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
                                                    const std::vector<int>& nodeNumbering_global_old2new);
 
-  extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit);
+  /* The parun -F partitioners. When given, nodeNumbering_subdomain2input and
+     elementNumbering_subdomain2input get the file number (0-based) of each
+     node and element of this rank's subdomain, owned and overlap: the
+     partition's input numbering, O(subdomain) per rank. */
+  extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit,
+                                           std::vector<int>* nodeNumbering_subdomain2input=nullptr,
+                                           std::vector<int>* elementNumbering_subdomain2input=nullptr);
 
   /* I/O, no MPI: stream a Triangle or TetGen .ele file (simplexDim nodes per
      element) and return the star of each node in [begin,end) and the element
@@ -357,7 +363,9 @@ namespace proteus
      interior 0, so every exterior cut face is marked, whatever its flag. */
   extern int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFile=true);
 
-  extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap);
+  extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap,
+                                             std::vector<int>* nodeNumbering_subdomain2input=nullptr,
+                                             std::vector<int>* elementNumbering_subdomain2input=nullptr);
 
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);

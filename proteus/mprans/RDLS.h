@@ -346,13 +346,13 @@ namespace proteus
                 //
                 //calculate pde coefficients at quadrature points
                 //
-                /* norm = 1.0e-8; */
-                /* for (int I=0;I<nSpace;I++) */
-                /*        norm += grad_u[I]*grad_u[I]; */
-                /* norm = sqrt(norm); */
-
-                /* for (int I=0;I<nSpace;I++) */
-                /*        dir[I] = grad_u[I]/norm; */
+                // the unit normal, recorded in q_n below (as the exterior loop records ebqe_n)
+                norm = 1.0e-8;
+                for (int I=0;I<nSpace;I++)
+                  norm += grad_u[I]*grad_u[I];
+                norm = sqrt(norm);
+                for (int I=0;I<nSpace;I++)
+                  dir[I] = grad_u[I]/norm;
 
                 /* ck.calculateGScale(G,dir,h_phi); */
 

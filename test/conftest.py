@@ -248,10 +248,29 @@ def scaled_timeout(timeout):
     return timeout * scale
 
 
+# A test's MPI launch is on one host, so Open MPI's TCP traffic between its ranks goes over the loopback interface only.
+# On ceds-model a 2-rank Open MPI launch hung for its whole 1800 s budget (run 42114715099 on ceds-model-2): shared
+# memory failed for one peer (an open(2) ENOENT), the ranks fell back to the TCP BTL, and a connection came from the
+# Docker bridge's address (172.17.0.1), which the peer dropped. Measured with Open MPI 5.0.11 (proteus-ci-main) on
+# ceds-model and spark2 and 5.0.10 on the Mac, 4 ranks with the TCP BTL forced (OMPI_MCA_btl=tcp,self), the
+# fallback's path: nothing set hangs on both Linux hosts (killed at 40 s); OMPI_MCA_btl_tcp_if_include=127.0.0.1/8
+# runs clean on all three, 10 of 10, and the same with shared memory on. The exclude lists that were proposed do not
+# work everywhere: docker0,lo on ceds-model leaves only interfaces Open MPI cannot pair ("Unable to find reachable
+# pairing", 12 warnings per launch, and an abort under TCP alone); docker0 alone still hangs on spark2, which has a
+# second bridge. An interface name is not portable either (lo on Linux, lo0 on macOS); the subnet is. The launcher's
+# own channel (PRRTE) is left alone: it ignores OMPI_MCA_oob_*, segfaults on any two-entry PRTE_MCA_prte_if_exclude,
+# and refuses a loopback-only PRTE_MCA_prte_if_include on Linux. A default only: a host that chose its interfaces,
+# by an include or an exclude (Open MPI refuses both at once), keeps its choice. MPICH reads neither variable.
+OPEN_MPI_TCP_LOOPBACK = ('OMPI_MCA_btl_tcp_if_include', '127.0.0.1/8')
+
+
 def launched_environment(env):
-    """The environment a test's subprocess runs in: the caller's, with faulthandler on."""
+    """The environment a test's subprocess runs in: the caller's, with faulthandler on and Open
+    MPI's TCP traffic on the loopback interface (OPEN_MPI_TCP_LOOPBACK), unless the caller chose."""
     env = dict(os.environ if env is None else env)
     env.setdefault('PYTHONFAULTHANDLER', '1')
+    if 'OMPI_MCA_btl_tcp_if_exclude' not in env:
+        env.setdefault(*OPEN_MPI_TCP_LOOPBACK)
     return env
 
 
@@ -509,12 +528,18 @@ def opts():
     return runtime.RunOptions()
 
 
-_DEFAULTS_MODULES = ("proteus.default_p", "proteus.default_n", "proteus.default_so")
+_DEFAULTS_MODULES = ("proteus.default_p", "proteus.default_n", "proteus.default_so", "proteus.default_s")
+
+
+def _copied_vars(module):
+    """A module's namespace, its dicts and lists copied (a deck that sets
+    n.femSpaces[0] changes default_n's dict, not the name)."""
+    return dict((key, (value.copy() if type(value) in (dict, list) else value))
+                for key, value in vars(module).items())
 
 
 def _snapshot_defaults():
-    """The namespaces of default_p/default_n/default_so, their dicts and lists copied (a
-    deck that sets n.femSpaces[0] changes the dict, not the name).
+    """The namespaces of default_p/default_n/default_so/default_s (_copied_vars).
 
     proteus.defaults goes first: when it is first imported it takes its lists of
     physics and numerics option names from dir(default_p) and dir(default_n), so
@@ -525,12 +550,7 @@ def _snapshot_defaults():
     has already started.)"""
     import importlib
     import proteus.defaults  # noqa: F401
-    snapshot = {}
-    for name in _DEFAULTS_MODULES:
-        namespace = vars(importlib.import_module(name))
-        snapshot[name] = dict((key, (value.copy() if type(value) in (dict, list) else value))
-                              for key, value in namespace.items())
-    return snapshot
+    return dict((name, _copied_vars(importlib.import_module(name))) for name in _DEFAULTS_MODULES)
 
 
 def _restore_defaults(snapshot):
@@ -565,7 +585,7 @@ def pytest_make_collect_report(collector):
 
 @pytest.fixture(autouse=True)
 def _restore_proteus_process_state():
-    """Put proteus.iproteus.opts, the default_p/n/so modules, proteus.Context,
+    """Put proteus.iproteus.opts, the default_p/n/so/s modules, proteus.Context,
     sys.modules (for modules under test/) and the working directory back after
     each test.
 
@@ -576,12 +596,16 @@ def _restore_proteus_process_state():
     cwd = os.getcwd()
     module = sys.modules.get("proteus.iproteus")
     saved = dict(vars(module.opts)) if module is not None else None
-    # default_p/default_n/default_so are modules model files star-import their
-    # defaults from; a test that assigns to one (POD did: numerics = default_n,
-    # then numerics.subgridError = ...) changes every later model's defaults
-    defaults_modules = dict((name, dict(vars(sys.modules[name])))
-                            for name in ("proteus.default_p", "proteus.default_n",
-                                         "proteus.default_so") if name in sys.modules)
+    # default_p/default_n/default_so/default_s are modules model files star-import
+    # their defaults from; a test that assigns to one (POD did: numerics = default_n,
+    # then numerics.subgridError = ...; poisson_2d sets so = default_so, so.sList),
+    # or changes one of its dicts in place (nList[0].femSpaces[0] = ... on a deck
+    # that star-imported femSpaces), changes every later model's defaults. Put
+    # back with their dicts and lists as copies, so that a test needs no
+    # reload(default_n) of its own. Only the ones already imported: importing
+    # one here would import proteus before a test could set it up.
+    defaults_snapshot = dict((name, _copied_vars(sys.modules[name]))
+                             for name in _DEFAULTS_MODULES if name in sys.modules)
     context = sys.modules.get("proteus.Context")
     saved_context = ((context.context, context.contextOptionsString)
                      if context is not None else None)
@@ -605,12 +629,7 @@ def _restore_proteus_process_state():
     if saved is not None:
         vars(module.opts).clear()
         vars(module.opts).update(saved)
-    for name, saved_vars in defaults_modules.items():
-        namespace = vars(sys.modules[name])
-        for key in list(namespace):
-            if key not in saved_vars:
-                del namespace[key]
-        namespace.update(saved_vars)
+    _restore_defaults(defaults_snapshot)
     if saved_context is not None:
         # Context.contextOptionsString (parun -C) is read by every model module
         # that calls Context.Options; one a test leaves set reconfigures every

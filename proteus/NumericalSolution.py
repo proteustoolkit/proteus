@@ -164,6 +164,14 @@ class _SystemStep(object):
         self.controller.setNextStep(state["dt_system"])
 
 
+class StepTimeError(RuntimeError):
+    """A time the stepping loop is about to use is not finite, or the system time does not move forward.
+
+    NS_base.calculateSolution raises it on every rank at once (the check is collective), after closing the
+    archives; parun reports it and exits 1. Before it existed such a run went on: a nan system time ends the loop's
+    ``t_system_last < tn`` test as if the run had reached the final time, so it finished with exit code 0."""
+
+
 class NS_base(object):  # (HasTraits):
     r"""
     The base class for managing the numerical solution of  PDE's.
@@ -562,8 +570,23 @@ class NS_base(object):  # (HasTraits):
         ----------
         runName : str
             A name for the calculated solution.
+
+        Returns True when a system step failed after the controller's retries (parun then exits 1). Raises
+        StepTimeError, on every rank, when a time or time step goes non-finite or the system time stops moving
+        forward (see _checkStepTimes); the archives are closed first.
         """
+        try:
+            return self._calculateSolution(runName)
+        except StepTimeError:
+            for index, model in enumerate(self.modelList):
+                self.finalizeViewSolution(model)
+                self.closeArchive(model, index)
+            raise
+
+    def _calculateSolution(self,runName):
         self._retryingSystemStep = False
+        self._acceptedSystemTime = None
+        self._systemStepRetries = 0
 
 
         logEvent("Setting initial conditions",level=0)
@@ -882,7 +905,8 @@ class NS_base(object):  # (HasTraits):
 
             if self.systemStepController.stepExact and self.systemStepController.t_system_last != self.tn:
                 self.systemStepController.stepExact_system(self.tn)
-            while self.systemStepController.t_system_last < self.tn:
+            # checked before the comparison: a nan t_system_last fails it and would end the run as if done
+            while self._checkStepTimes() and self.systemStepController.t_system_last < self.tn:
                 logEvent("System time step t=%12.5e, dt=%12.5e" % (self.systemStepController.t_system,
                                                               self.systemStepController.dt_system),level=3)
 
@@ -953,6 +977,7 @@ class NS_base(object):  # (HasTraits):
                         while (model.stepController.t_model_last < self.t_stepSequence and
                                not stepFailed and
                                not self.systemStepController.exitModelStep[model]):
+                            self._checkStepTimes(model)
                             logEvent("Model step t=%12.5e, dt=%12.5e for model %s" % (model.stepController.t_model,
                                                                                  model.stepController.dt_model,
                                                                                  model.name),level=3)
@@ -1015,12 +1040,16 @@ class NS_base(object):  # (HasTraits):
                         if not systemStepFailed:
                             stepFailed=False
                             self._retryingSystemStep = True
+                            self._systemStepRetries += 1
                             logEvent("Retrying sequence")
+                            # the step the controller cut to for the retry
+                            self._checkStepTimes(model, retry=True)
                         else:
                             logEvent("Sequence failed")
                     else:
                         self.firstStep=False
                         systemStepFailed=False
+                        self._systemStepRetries = 0
                         logEvent("Step Taken, Model step t=%12.5e, dt=%12.5e for model %s" % (model.stepController.t_model,
                                                                                               model.stepController.dt_model,
                                                                                               model.name))
@@ -1518,6 +1547,78 @@ class NS_base(object):  # (HasTraits):
                 m.stepController.t_model_last = t
         self.endSystemStep(accepted=False)
         logEvent("restored the models to the start of the system step for the retry", level=3)
+
+    def _checkStepTimes(self, model=None, retry=False):
+        """Return True, or raise StepTimeError on every rank when a time the stepping loop is about to use is not
+        finite or the system time does not move forward.
+
+        The stepping loop is the one place every system step controller (SplitOperator) and model step controller
+        (StepControl) passes through, so the check is here rather than in each controller's choose_dt_system,
+        stepExact_system and retry methods. Checked before every system step (the loop's condition), after a
+        retry cut the step (``retry``), and before each step of ``model``: the system controller's t_system_last,
+        t_system and dt_system, and the model's t_model_last, t_model, dt_model and substeps. The accepted system
+        time may not decrease, and a system step that has not reached tn must end later than it starts; otherwise
+        the loop repeats the step forever or walks backwards. The times agree across ranks in a sound run, but a
+        nan need not reach every rank alike (MPI's MIN of a nan is implementation-defined), so the ranks gather what
+        they found: one allgather of a short string per check, a few per system step.
+        """
+        sc = self.systemStepController
+        found = []
+
+        def show(value):
+            try:
+                return repr(float(value))
+            except (TypeError, ValueError):
+                try:
+                    return "[%s]" % ", ".join(repr(float(v)) for v in value)
+                except (TypeError, ValueError):
+                    return repr(value)
+
+        def finite(name, value):
+            try:
+                ok = bool(numpy.all(numpy.isfinite(value)))
+            except TypeError:
+                ok = False
+            if not ok:
+                found.append("%s=%s" % (name, show(value)))
+            return ok
+        system_ok = all([finite("t_system_last", sc.t_system_last), finite("t_system", sc.t_system),
+                         finite("dt_system", sc.dt_system)])
+        if model is not None:
+            mc = model.stepController
+            for name in ("t_model_last", "t_model", "dt_model", "substeps"):
+                if hasattr(mc, name):
+                    finite("%s.%s" % (model.name, name), getattr(mc, name))
+        if system_ok:
+            if (model is None and not retry and self._acceptedSystemTime is not None and
+                    sc.t_system_last < self._acceptedSystemTime):
+                found.append("the system time went back from %s to %s" % (show(self._acceptedSystemTime),
+                                                                           show(sc.t_system_last)))
+            if sc.t_system_last < self.tn and not sc.t_system > sc.t_system_last:
+                found.append("the system step does not move forward: t_system=%s, t_system_last=%s, dt_system=%s"
+                             % (show(sc.t_system), show(sc.t_system_last), show(sc.dt_system)))
+        message = None
+        if found:
+            where = "system step %d" % (self.nSolveSteps + 1,)
+            if self._systemStepRetries:
+                where += " (retry %d)" % (self._systemStepRetries,)
+            if model is not None:
+                where += ", model %s" % (model.name,)
+            models = ", ".join("%s t_model_last=%s dt_model=%s" % (m.name,
+                                                                 show(getattr(m.stepController, "t_model_last", None)),
+                                                                 show(getattr(m.stepController, "dt_model", None)))
+                               for m in self.modelList)
+            message = "%s: %s [models: %s]" % (where, "; ".join(found), models)
+        messages = self.comm.mpi4py_comm.allgather(message)
+        if any(messages):
+            text = "; ".join(m if len(messages) == 1 else "rank %d: %s" % (r, m)
+                             for r, m in enumerate(messages) if m)
+            text = "Stopping: a time step went non-finite or backwards, %s" % (text,)
+            logEvent(text, level=0)
+            raise StepTimeError(text)
+        if model is None and not retry:
+            self._acceptedSystemTime = sc.t_system_last
+        return True
 
     def endSystemStep(self, accepted):
         """Tell every model's coefficients whether the attempt is taken: the history rows their postStep queued

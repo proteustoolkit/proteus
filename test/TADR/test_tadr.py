@@ -5,7 +5,7 @@ Test module for TADR with EV
 import os
 import proteus
 from importlib import reload
-from proteus import Profiling, default_n, default_s, default_so
+from proteus import Profiling, default_s, default_so
 from proteus import Comm
 comm = Comm.get()
 Profiling.logLevel=2
@@ -28,7 +28,6 @@ class TestTADR(object):
 
     def setup_method(self,method):
         """Initialize the test problem. """
-        reload(default_n)
         reload(thelper_tadr)
         self.pList = [thelper_tadr_p]
         self.nList = [thelper_tadr_n]
@@ -48,7 +47,6 @@ class TestTADR(object):
         ########
         thelper_tadr.ct.STABILIZATION_TYPE = 0 # SUPG
         thelper_tadr.ct.FCT = False
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname = "_SUPG"
@@ -75,7 +73,6 @@ class TestTADR(object):
         ##################
         thelper_tadr.ct.STABILIZATION_TYPE = 1 # Taylor Galerkin
         thelper_tadr.ct.FCT = False
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname = "_TaylorGalerkin"
@@ -103,7 +100,6 @@ class TestTADR(object):
         thelper_tadr.ct.ENTROPY_TYPE = 1 #polynomial
         thelper_tadr.ct.cE = 1.0
         thelper_tadr.ct.FCT = True
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname = "_EV1"
@@ -128,7 +124,6 @@ class TestTADR(object):
         thelper_tadr.ct.ENTROPY_TYPE = 1 #logarithmic
         thelper_tadr.ct.cE = 0.1
         thelper_tadr.ct.FCT = True
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname = "_EV2"
@@ -151,7 +146,6 @@ class TestTADR(object):
     def test_SmoothnessBased(self, opts):
         thelper_tadr.ct.STABILIZATION_TYPE = 3 # Smoothness based
         thelper_tadr.ct.FCT = True
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname = "_SmoothnessBased"
@@ -174,7 +168,6 @@ class TestTADR(object):
     def test_stab4(self, opts):
         thelper_tadr.ct.STABILIZATION_TYPE = 4 # Proposed by D.Kuzmin
         thelper_tadr.ct.FCT = True
-        reload(default_n)
         reload(thelper_tadr_p)
         reload(thelper_tadr_n)
         tname="_stab4"
@@ -219,7 +212,6 @@ class TestTADR(object):
                             'problem=1 nd=2 T=0.01 nDTout=1 refinement=1 STABILIZATION_TYPE=5 FCT=False cfl=0.5')
         try:
             reload(thelper_tadr)
-            reload(default_n)
             p = reload(thelper_tadr_p)
             n = reload(thelper_tadr_n)
             self.so.tnList = n.tnList
@@ -235,7 +227,6 @@ class TestTADR(object):
             # default (problem 0) modules back
             monkeypatch.undo()
             reload(thelper_tadr)
-            reload(default_n)
             reload(thelper_tadr_p)
             reload(thelper_tadr_n)
         rowptr, colind, nzval = jacobian.getCSRrepresentation()
@@ -265,7 +256,6 @@ class TestTADR(object):
                             'problem=1 nd=2 T=0.01 nDTout=1 refinement=1 STABILIZATION_TYPE=5 FCT=False cfl=0.5')
         try:
             reload(thelper_tadr)
-            reload(default_n)
             p = reload(thelper_tadr_p)
             n = reload(thelper_tadr_n)
             p.coefficients.rho_s = 3.0 * p.coefficients.rho_f
@@ -286,7 +276,6 @@ class TestTADR(object):
         finally:
             monkeypatch.undo()
             reload(thelper_tadr)
-            reload(default_n)
             reload(thelper_tadr_p)
             reload(thelper_tadr_n)
         applied = 2.0 * conservative_sum[1] - conservative_sum[0]

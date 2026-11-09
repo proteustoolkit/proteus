@@ -221,6 +221,19 @@ def test_the_launched_interpreter_runs_with_faulthandler(monkeypatch):
     assert result.stdout.split() == ['1', 'kept']
 
 
+def test_open_mpi_tcp_stays_on_loopback_unless_the_host_chose(launch_policy):
+    """Decision 22: a 2-rank Open MPI launch on ceds-model fell back to TCP and hung on a
+    connection from the Docker bridge."""
+    env = launch_policy.launched_environment({'PATH': '/bin'})
+    assert env['OMPI_MCA_btl_tcp_if_include'] == '127.0.0.1/8'
+    # a host's own include is kept
+    env = launch_policy.launched_environment({'OMPI_MCA_btl_tcp_if_include': 'ib0'})
+    assert env['OMPI_MCA_btl_tcp_if_include'] == 'ib0'
+    # and so is an exclude, which Open MPI will not take together with an include
+    env = launch_policy.launched_environment({'OMPI_MCA_btl_tcp_if_exclude': 'docker0'})
+    assert 'OMPI_MCA_btl_tcp_if_include' not in env
+
+
 def test_a_rank_that_raises_aborts_the_whole_job(tmp_path):
     """An uncaught exception on rank 1 must end a 3-rank job at once, with its traceback,
     not leave ranks 0 and 2 in a barrier until the launch times out."""

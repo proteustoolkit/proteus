@@ -43,12 +43,19 @@ static double CurrentTime(void)
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <unordered_map>
 
 //mwftodo decide where to put mesh type tags
 const int DEFAULT_ELEMENT_MATERIAL=0;
 const int DEFAULT_NODE_MATERIAL=-1;
+//a node the reader or generator gave no flag gets 0 ("no tag"), on the
+//boundary too: a node's flag is its vertex marker or 0, never derived (the
+//node-flag rule of 2026-11-06; the parun -F partitioners do the same). So
+//does a marker -1, TetGen's for the vertices of segments, which equals
+//DEFAULT_NODE_MATERIAL. The exterior faces still get
+//EXTERIOR_ELEMENT_BOUNDARY_MATERIAL.
 const int INTERIOR_NODE_MATERIAL=0;
-const int EXTERIOR_NODE_MATERIAL=1;
+const int EXTERIOR_NODE_MATERIAL=0;
 const int INTERIOR_ELEMENT_BOUNDARY_MATERIAL=0;
 const int EXTERIOR_ELEMENT_BOUNDARY_MATERIAL=1;
 
@@ -5369,6 +5376,68 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
   //     }
   //     std::cout << std::endl;
   // }
+  return 0;
+}
+
+/* The edge markers of filebase.edge (Triangle or TetGen: "n nodes0 node1
+   marker" per line, header "nEdges hasMarkers") as mesh.edgeMaterialTypes,
+   for a mesh whose edges are built (edgeNodesArray). An edge not in the
+   file, a file without markers, or no file at all: 0. A marker -1 (TetGen's
+   for the edges of segments) reads 0, as for node flags: an edge flag is its
+   marker or 0, never -1. Allocates edgeMaterialTypes (nEdges_global).
+   Returns 0. */
+/* edgeMaterialTypes as nEdges_global zeros ("no tag", the rule for nodes
+   too) on a mesh that has none yet: one whose edges no .edge file
+   described (generated grids, triangulateio, gmsh/PUMI/array meshes,
+   Triangle/TetGen files read without one). Keeps an existing array. */
+int allocateEdgeMaterialTypes(Mesh& mesh)
+{
+  if (mesh.edgeMaterialTypes == NULL)
+    mesh.edgeMaterialTypes = new int[mesh.nEdges_global]();
+  return 0;
+}
+
+int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base)
+{
+  using namespace std;
+  using namespace IOutils;
+  assert(filebase);
+  if (mesh.edgeMaterialTypes != NULL)
+    delete [] mesh.edgeMaterialTypes;
+  mesh.edgeMaterialTypes = new int[mesh.nEdges_global]();
+  ifstream edgeFile((string(filebase) + ".edge").c_str());
+  if (!edgeFile.good())
+    return 0;
+  int nEdges_file(0), hasMarkers(0);
+  edgeFile >> eatcomments >> nEdges_file >> hasMarkers >> eatline;
+  if (hasMarkers <= 0)
+    return 0;
+  unordered_map<long long, int> edgeOfNodes;
+  edgeOfNodes.reserve(mesh.nEdges_global);
+  const long long nNodes = mesh.nNodes_global;
+  for (int edN = 0; edN < mesh.nEdges_global; edN++)
+    {
+      long long n0 = mesh.edgeNodesArray[2*edN], n1 = mesh.edgeNodesArray[2*edN+1];
+      if (n1 < n0)
+        swap(n0, n1);
+      edgeOfNodes[n0*nNodes + n1] = edN;
+    }
+  for (int i = 0; i < nEdges_file; i++)
+    {
+      long long ned, n0, n1;
+      int marker;
+      edgeFile >> eatcomments >> ned >> n0 >> n1 >> marker;
+      if (edgeFile.fail())
+        break;
+      edgeFile >> eatline;   //TetGen -ee may add a column (an element of the edge)
+      n0 -= base;
+      n1 -= base;
+      if (n1 < n0)
+        swap(n0, n1);
+      unordered_map<long long, int>::const_iterator edge = edgeOfNodes.find(n0*nNodes + n1);
+      if (edge != edgeOfNodes.end())
+        mesh.edgeMaterialTypes[edge->second] = (marker == -1) ? 0 : marker;
+    }
   return 0;
 }
 

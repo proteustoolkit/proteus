@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <iterator>
+#include <sstream>
 #include <limits>
 #include <stdexcept>
 
@@ -94,6 +95,35 @@ void numberByOwner(const std::vector<int>& owner, int size,
     }
 }
 
+/* A whole message line to stderr in one write(2): a run about to end in
+   MPI_Abort must not have its message split by other output. std::cerr is
+   unit-buffered, so `cerr << a << b` is several writes, and under load
+   Open MPI's MPI_ABORT banner from another rank landed inside one (C3 r7,
+   2026-11-08). One write of less than PIPE_BUF bytes to a pipe is atomic. */
+void writeErrorLine(const std::string& line)
+{
+  std::cerr.flush();
+  const std::string text = line + "\n";
+  const char* p = text.data();
+  size_t left = text.size();
+  while (left > 0)
+    {
+      const ssize_t n = ::write(STDERR_FILENO, p, left);
+      if (n <= 0)
+        break;
+      p += n;
+      left -= size_t(n);
+    }
+}
+
+/* The message, then MPI_Abort on comm. */
+[[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
+{
+  writeErrorLine(message);
+  MPI_Abort(comm, 1);
+  std::abort();
+}
+
 /* Every rank computes the owners of all entities from the same global data, so
    the rule the old mask chain applied in rank order -- an entity belongs to the
    lowest rank that reaches it -- is a minimum, taken locally. Entities start at
@@ -109,7 +139,9 @@ bool everyEntityOwned(const std::vector<int>& owner, int size, const char* what)
   for (size_t i = 0; i < owner.size(); i++)
     if (owner[i] >= size)
       {
-        std::cerr<<"partitioning: "<<what<<" "<<i<<" was reached by no rank"<<std::endl;
+        std::ostringstream message;
+        message<<"partitioning: "<<what<<" "<<i<<" was reached by no rank";
+        writeErrorLine(message.str());
         return false;
       }
   return true;
@@ -128,9 +160,10 @@ std::vector<int> prescribedOwners(const MPI_Comm& comm, const int* owners, int n
   for (int i = 0; i < n; i++)
     if (owner[i] < 0 || owner[i] >= size)
       {
-        std::cerr<<caller<<": "<<what<<" "<<i<<" is assigned to rank "<<owner[i]
-                 <<" but there are "<<size<<" ranks"<<std::endl;
-        MPI_Abort(comm,1);
+        std::ostringstream message;
+        message<<caller<<": "<<what<<" "<<i<<" is assigned to rank "<<owner[i]
+               <<" but there are "<<size<<" ranks";
+        abortWith(comm, message.str());
       }
   return owner;
 }
@@ -605,6 +638,22 @@ OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
     }
   return overlap;
 }
+
+//the subdomain's edge flags from the global mesh's (the .edge markers a
+//reader kept), through the subdomain's edges' new global numbers and the
+//global edges' new-to-old permutation; 0 when the global mesh has none
+void subdomainEdgeMaterialTypes(const Mesh& mesh, Mesh& subdomain,
+                                const std::valarray<int>& edgeNumbering_subdomain2global,
+                                const std::vector<int>& edgeNumbering_global_new2old)
+{
+  if (subdomain.edgeMaterialTypes != NULL)
+    delete [] subdomain.edgeMaterialTypes;
+  subdomain.edgeMaterialTypes = new int[subdomain.nEdges_global]();
+  if (mesh.edgeMaterialTypes == NULL)
+    return;
+  for (int i = 0; i < subdomain.nEdges_global; i++)
+    subdomain.edgeMaterialTypes[i] = mesh.edgeMaterialTypes[edgeNumbering_global_new2old[edgeNumbering_subdomain2global[i]]];
+}
 }//namespace
 
 /* Steps 4-8 of partitionNodes: given the owner of every node, which every rank
@@ -948,6 +997,7 @@ for (int i=nEdges_subdomain_new[rank]; i < nEdges_subdomain_new[rank] + int(edge
   edgeNumbering_subdomain2global[i] = ig;
   
 }
+subdomainEdgeMaterialTypes(mesh, *mesh.subdomainp, edgeNumbering_subdomain2global, edgeNumbering_global_new2old);
 
 //now build rest of subdomain mesh connectivity information etc
 mesh.subdomainp->px = mesh.px;
@@ -1090,8 +1140,7 @@ bool readSimplexNodeStars(const std::string& elementFileName, const char* format
   std::ifstream elementFile(elementFileName.c_str());
   if (!elementFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" element file "
-               <<elementFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" element file "+elementFileName);
       return false;
     }
   //read elements
@@ -1161,8 +1210,7 @@ bool readSubdomainVertices(const std::string& vertexFileName, const char* format
   std::ifstream vertexFile(vertexFileName.c_str());
   if (!vertexFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" node file "
-               <<vertexFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" node file "+vertexFileName);
       return false;
     }
   int nSpace_file(nSpace),nNodes_global,hasVertexAttributes_file,hasVertexMarkers_file;
@@ -1228,8 +1276,7 @@ bool readSimplexElementsTouching(const std::string& elementFileName, const char*
   std::ifstream elementFile(elementFileName.c_str());
   if (!elementFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" elements file"
-               <<elementFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" elements file "+elementFileName);
       return false;
     }
   int nNodesPerSimplex(simplexDim);
@@ -1278,7 +1325,8 @@ bool readSimplexElementsTouching(const std::string& elementFileName, const char*
    node among the keys of `nodes` (0-based file numbers): their file numbers,
    file nodes and, when headerHasMarkers and the header announces them,
    markers. With headerHasMarkers false only the count is read from the header
-   and markers are never read (what both -F partitioners do with .edge files).
+   and markers are never read (what both -F partitioners did with .edge files
+   until 2026-11; they now read them as the subdomain's edgeMaterialTypes).
    Entities with no such node are skipped: the -F partitioners do nothing with
    them. Returns false, having said why, if the file cannot be opened. */
 bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
@@ -1290,8 +1338,7 @@ bool readSimplexSubentitiesTouching(const std::string& fileName, const char* for
   std::ifstream file(fileName.c_str());
   if (!file.good())
     {
-      std::cerr<<"cannot open "<<format<<" "<<what<<" file "
-               <<fileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" "+what+" file "+fileName);
       return false;
     }
   hasMarkers = 0;
@@ -1431,10 +1478,11 @@ namespace
     if (!keys.empty() && (*keys.begin() < offsets[0] || *keys.rbegin() >= offsets[size]))
       {
         const int key = *keys.begin() < offsets[0] ? *keys.begin() : *keys.rbegin();
-        std::cerr<<"partitioning: "<<what<<" "<<key<<" (asked by rank "<<rank<<") is outside ["
-                 <<offsets[0]<<","<<offsets[size]<<"), the numbers the ranks hold"
-                 <<" (are the mesh files consistent?)"<<std::endl;
-        MPI_Abort(comm, 1);
+        std::ostringstream message;
+        message<<"partitioning: "<<what<<" "<<key<<" (asked by rank "<<rank<<") is outside ["
+               <<offsets[0]<<","<<offsets[size]<<"), the numbers the ranks hold"
+               <<" (are the mesh files consistent?)";
+        abortWith(comm, message.str());
       }
     std::vector<std::vector<int> > requests(size);
     for (std::set<int>::const_iterator k = keys.begin(); k != keys.end(); k++)
@@ -1453,18 +1501,19 @@ namespace
     std::vector<int> answered = exchangeIntsCounted(comm, answers, requestCounts);
     std::map<int,int> result;
     int unanswered = 0;
+    std::ostringstream message;
     for (int r = 0, i = 0; r < size; r++)
       for (int k = 0; k < requestCounts[r]; k++, i++)
         {
           if (answered[i] < 0 && unanswered++ == 0)
-            std::cerr<<"partitioning: "<<what<<" "<<requests[r][k]<<" (asked by rank "<<rank<<", of rank "<<r
-                     <<") has no owner: no rank holds a number for it (are the mesh files consistent?)"<<std::endl;
+            message<<"partitioning: "<<what<<" "<<requests[r][k]<<" (asked by rank "<<rank<<", of rank "<<r
+                   <<") has no owner: no rank holds a number for it (are the mesh files consistent?)";
           result[requests[r][k]] = answered[i];
         }
     if (unanswered)
       {
-        std::cerr<<"partitioning: rank "<<rank<<" asked for "<<unanswered<<" "<<what<<"(s) with no owner"<<std::endl;
-        MPI_Abort(comm, 1);
+        message<<"; rank "<<rank<<" asked for "<<unanswered<<" "<<what<<"(s) with no owner";
+        abortWith(comm, message.str());
       }
     return result;
   }
@@ -1803,7 +1852,9 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
                              std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
                              std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
                              std::map<int,int>& nodes_old2new_subdomain_map,
-                             Mesh& newMesh)
+                             Mesh& newMesh,
+                             std::vector<int>* nodeNumbering_subdomain2input,
+                             std::vector<int>* elementNumbering_subdomain2input)
 {
   using namespace std;
   PetscErrorCode ierr;
@@ -2053,12 +2104,12 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   //
   logEvent("Generating global edge numbering and ownership corresponding to new subdomain ownership",5);
   //the edges with a node of a subdomain element; the others play no part below.
-  //The .edge markers are not read (header count only), as always.
-  bool hasEdgeMarkers = false;
+  //Their markers become the subdomain's edgeMaterialTypes (in 2D the .edge
+  //file is also the face file, read above for the face flags).
   int nEdges_global;
   int ihasEdgeMarkers(0);
   vector<int> edNumbers, edNodes, edIds;
-  if (!readSimplexSubentitiesTouching(edgeFileName, format, "edge", 2, indexBase, false,
+  if (!readSimplexSubentitiesTouching(edgeFileName, format, "edge", 2, indexBase, true,
                                       nodes_old2new_subdomain_map, nEdges_global,
                                       ihasEdgeMarkers, edNumbers, edNodes, edIds))
     {
@@ -2066,14 +2117,12 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
       return failed;
     }
   assert(nEdges_global > 0);
-  if (ihasEdgeMarkers > 0)
-    {
-      hasEdgeMarkers = true;
-    }
   newMesh.nEdges_global = nEdges_global;
   set<int> edges_subdomain_owned;
   vector<set<int> > nodeEdgesStar(nNodes_subdomain_new[rank]);
-  map<int,int> edgeMaterialTypesMap;
+  //(file edge number, marker) of the subdomain's edges, in file order (so
+  //sorted): a vector, not a map, ~8 instead of ~48 bytes an edge
+  vector<pair<int,int> > edgeMaterialTypes_file;
   map<int,vector<int> > elementEdgesMap;
   map<int,pair<int,int> > edgeNodesMap;
   set<int> supportedEdges;
@@ -2106,8 +2155,10 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           //pick up all the edges on the subdomain and store their nodes
           edgeNodesMap[ned].first = nodeTuple.nodes[0];
           edgeNodesMap[ned].second = nodeTuple.nodes[1];
+          //an edge flag is its marker or 0, never -1 (TetGen's marker for
+          //the edges of segments), as in readEdgeMaterialTypes
           if (ihasEdgeMarkers > 0)
-            edgeMaterialTypesMap[ned]=edId;
+            edgeMaterialTypes_file.push_back(make_pair(ned, (edId == -1) ? 0 : edId));
           for (auto elementp=edgeElementsMap[nodeTuple].begin();
                elementp != edgeElementsMap[nodeTuple].end();
                elementp++)
@@ -2297,9 +2348,11 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   map<int,int> elementBoundaryNumbering_global2subdomainMap;
   map<int,int> edgeNumbering_global2subdomainMap;
   newMesh.subdomainp->nodeArray = new double[newMesh.subdomainp->nNodes_global*3];
-  //0 until a vertex flag or a face flag says otherwise: without vertex markers
-  //readSubdomainVertices leaves the flags alone, and only the nodes of exterior
-  //faces take face flags below, so the others used to keep whatever the heap held
+  //a node's flag is its vertex marker (or the attribute taken as one) when the
+  //.node file gives one, and 0 ("no tag") otherwise: never derived from the
+  //faces, which made it depend on the partition (the face visited last), never
+  //-1 (rank interfaces are a face property). Without markers
+  //readSubdomainVertices leaves the flags alone, so they stay this 0.
   newMesh.subdomainp->nodeMaterialTypes = new int[newMesh.subdomainp->nNodes_global]();
   //
   //now finally finish reading node coordinates and node flags
@@ -2469,16 +2522,34 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           int ebN_subdomain  = elementBoundaryNumbering_global2subdomainMap[ebN_global_new];
           newMesh.subdomainp->elementBoundaryMaterialTypes[ebN_subdomain] = ebmp->second;
         }
-      if (!hasVertexMarkers)
-        for (int ebNE = 0; ebNE < newMesh.subdomainp->nExteriorElementBoundaries_global; ebNE++)
-          {
-            int ebN = newMesh.subdomainp->exteriorElementBoundariesArray[ebNE];
-            for (int nN_local = 0; nN_local < newMesh.subdomainp->nNodes_elementBoundary; nN_local++)
-              {
-                int nN = newMesh.subdomainp->elementBoundaryNodesArray[ebN*newMesh.subdomainp->nNodes_elementBoundary+nN_local];
-                newMesh.subdomainp->nodeMaterialTypes[nN] = newMesh.subdomainp->elementBoundaryMaterialTypes[ebN];
-              }
-          }
+    }
+  //the .edge markers, 0 where the file has none
+  if (newMesh.subdomainp->edgeMaterialTypes != NULL)
+    delete [] newMesh.subdomainp->edgeMaterialTypes;
+  newMesh.subdomainp->edgeMaterialTypes = new int[newMesh.subdomainp->nEdges_global]();
+  for (auto edmp = edgeMaterialTypes_file.begin(); edmp != edgeMaterialTypes_file.end(); edmp++)
+    newMesh.subdomainp->edgeMaterialTypes[edgeNumbering_global2subdomainMap[edgeNumbering_old2new_subdomain_map[edmp->first]]]
+      = edmp->second;
+  vector<pair<int,int> >().swap(edgeMaterialTypes_file);
+  //the file number of each subdomain node and element, owned and overlap: the
+  //partition's input numbering, per rank (MeshTools' _viewInputNumbering;
+  //SW2DCV/GN_SW2DCV permute a bathymetry array with it, the archive writes it
+  //as NodeMapInput/CellMapInput)
+  if (nodeNumbering_subdomain2input)
+    {
+      nodeNumbering_subdomain2input->assign(newMesh.subdomainp->nNodes_global, -1);
+      for (auto o2n = nodes_old2new_subdomain_map.begin(); o2n != nodes_old2new_subdomain_map.end(); o2n++)
+        {
+          auto sub = nodeNumbering_global2subdomainMap.find(o2n->second);
+          if (sub != nodeNumbering_global2subdomainMap.end())
+            (*nodeNumbering_subdomain2input)[sub->second] = o2n->first;
+        }
+    }
+  if (elementNumbering_subdomain2input)
+    {
+      elementNumbering_subdomain2input->resize(newMesh.subdomainp->nElements_global);
+      for (int eN = 0; eN < newMesh.subdomainp->nElements_global; eN++)
+        (*elementNumbering_subdomain2input)[eN] = elementNumbering_new2old_subdomain_map[elementNumbering_subdomain2global[eN]];
     }
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with material types");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   PetscLogEventEnd(build_subdomains_renumber_event,0,0,0,0);
@@ -2546,9 +2617,9 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
     2. Read the stars of the chunk's nodes from the element file and build
        the node graph (readSimplexNodeStars)
     3. Repartition the nodes with the PETSc graph partitioner
-       (MatPartitioning), number them by owner, and write
-       nodeNumbering_old2new, the one dataset mappings.h5 holds (SW2DCV and
-       GN_SW2DCV read it)
+       (MatPartitioning) and number them by owner (no mappings.h5 since
+       2026-11: the subdomain's file numbers come back per rank from
+       buildSubdomainFromFiles, below)
     4. Reread the element file for the elements in the support of the owned
        nodes, with the new numbers of their nodes from the ranks that
        computed them (readSubdomainElements)
@@ -2558,7 +2629,9 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
    (every rank reads; a missing file fails on every rank). Collective. */
 template<int simplexDim>
 int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
-                            Mesh& newMesh, int nNodes_overlap, double max_rss_gb)
+                            Mesh& newMesh, int nNodes_overlap, double max_rss_gb,
+                            std::vector<int>* nodeNumbering_subdomain2input,
+                            std::vector<int>* elementNumbering_subdomain2input)
 {
   using namespace std;
   using namespace IOutils;
@@ -2593,8 +2666,7 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   std::ifstream vertexFile(vertexFileName.c_str());
   if (!vertexFile.good())
     {
-      std::cerr<<"cannot open "<<format<<" node file "
-               <<vertexFileName<<std::endl;
+      writeErrorLine(std::string("cannot open ")+format+" node file "+vertexFileName);
       return 1;
     }
   int hasVertexMarkers(0),hasVertexAttributes(0),nSpace(simplexDim-1),nNodes_global;
@@ -2718,45 +2790,6 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   ierr=ISDestroy(&nodePartitioningIS_new);CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   const PetscInt* nodes_subdomain_old2new_array;
   ISGetIndices(nodeNumberingIS_subdomain_old2new, &nodes_subdomain_old2new_array);
-  //
-  //write nodeNumbering_old2new, each rank its default chunk, collectively
-  //
-  logEvent("Writing node numbering to hdf5",5);
-  hid_t mappings_plist_id = H5Pcreate(H5P_FILE_ACCESS);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_fapl_mpio(mappings_plist_id, PROTEUS_COMM_WORLD, MPI_INFO_NULL);
-#endif
-  const char* H5FILE_NAME("mappings.h5");
-  hid_t file_id = H5Fcreate(H5FILE_NAME, H5F_ACC_TRUNC, H5P_DEFAULT, mappings_plist_id);
-  assert(file_id != H5I_INVALID_HID);
-  H5Pclose(mappings_plist_id);
-  hsize_t nodes_global_count[]={static_cast<hsize_t>(nNodes_global)};
-  const hsize_t ARRAY_RANK(1);
-  hid_t nodes_old2new_filespace_id = H5Screate_simple(ARRAY_RANK, nodes_global_count, NULL);
-  hid_t nodes_old2new_dataset_id = H5Dcreate(file_id, "nodeNumbering_old2new", H5T_NATIVE_INT,
-                                             nodes_old2new_filespace_id,
-                                             H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-  hsize_t nodes_subdomain_count[]={static_cast<hsize_t>(nNodes_subdomain_old)};
-  hsize_t nodes_subdomain_offset[]={static_cast<hsize_t>(nodeOffsets_old[rank])};
-  hid_t nodes_old2new_memspace_id = H5Screate_simple(ARRAY_RANK, nodes_subdomain_count, NULL);
-  H5Sselect_hyperslab(nodes_old2new_filespace_id, H5S_SELECT_SET,
-                      nodes_subdomain_offset, NULL,
-                      nodes_subdomain_count, NULL);
-  hid_t nodes_old2new_plist_id = H5Pcreate(H5P_DATASET_XFER);
-#ifdef H5_HAVE_PARALLEL
-  H5Pset_dxpl_mpio(nodes_old2new_plist_id, H5FD_MPIO_COLLECTIVE);
-#endif
-  H5Dwrite(nodes_old2new_dataset_id, H5T_NATIVE_INT,
-           nodes_old2new_memspace_id, nodes_old2new_filespace_id,
-           nodes_old2new_plist_id, nodes_subdomain_old2new_array);
-  H5Pclose(nodes_old2new_plist_id);
-  H5Dclose(nodes_old2new_dataset_id);
-  H5Sclose(nodes_old2new_memspace_id);
-  H5Sclose(nodes_old2new_filespace_id);
-  //(nodeNumbering_old2new is the one dataset mappings.h5 holds: SW2DCV and
-  //GN_SW2DCV read it; nothing reads the node new2old, element, face or edge
-  //numberings, which were written here until 2026-11)
-  H5Fclose(file_id);
   PetscLogEventEnd(repartition_nodes_event,0,0,0,0);
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done with masks");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //
@@ -2764,7 +2797,7 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   //   nodes (OLD element numbers), and assign their ownership. The new
   //   numbers of their nodes come from the ranks that computed them
   //   (readSubdomainElements answers other ranks' old->new requests from
-  //   nodes_subdomain_old2new_array), not from the mappings file.
+  //   nodes_subdomain_old2new_array).
   //
   logEvent("Collecting elements containing locally owned nodes (element support of the subdomain nodes)",5);
   int build_subdomains_reread_elements_event;
@@ -2800,7 +2833,8 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
                                           nNodes_subdomain_new, nodeOffsets_new, elements_subdomain_owned,
                                           nodeElementsStar, nodeStarNew, elementNodesArrayMap,
                                           elementMaterialTypesMap, elementBoundaryElementsMap,
-                                          edgeElementsMap, nodes_old2new_subdomain_map, newMesh))
+                                          edgeElementsMap, nodes_old2new_subdomain_map, newMesh,
+                                          nodeNumbering_subdomain2input, elementNumbering_subdomain2input))
     return 1;
   PetscLogStagePop();
   PetscLogView(PETSC_VIEWER_STDOUT_WORLD);
@@ -2809,18 +2843,23 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
 }
 
 int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
-                                  Mesh& newMesh, int nNodes_overlap, double memHardLimit)
+                                  Mesh& newMesh, int nNodes_overlap, double memHardLimit,
+                                  std::vector<int>* nodeNumbering_subdomain2input,
+                                  std::vector<int>* elementNumbering_subdomain2input)
 {
   //memHardLimit is in MB (parun's memHardLimit); the checks take GB
   return partitionNodesFromFiles<4>(PROTEUS_COMM_WORLD, filebase, indexBase, newMesh, nNodes_overlap,
-                                    memHardLimit/1024.0);
+                                    memHardLimit/1024.0, nodeNumbering_subdomain2input, elementNumbering_subdomain2input);
 }
 
 int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase,
-                                    Mesh& newMesh, int nNodes_overlap)
+                                    Mesh& newMesh, int nNodes_overlap,
+                                    std::vector<int>* nodeNumbering_subdomain2input,
+                                    std::vector<int>* elementNumbering_subdomain2input)
 {
   //no memory checks (the Triangle path never had a limit argument)
-  return partitionNodesFromFiles<3>(PROTEUS_COMM_WORLD, filebase, indexBase, newMesh, nNodes_overlap, 0.0);
+  return partitionNodesFromFiles<3>(PROTEUS_COMM_WORLD, filebase, indexBase, newMesh, nNodes_overlap, 0.0,
+                                    nodeNumbering_subdomain2input, elementNumbering_subdomain2input);
 }
 //todo add overlap for element based partitions
 /* The ownership rules of partitionElements, which follow from the owner of
@@ -3563,6 +3602,8 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
       mesh.subdomainp->edgeNodesArray[2*i+1]=nN1_subdomain;
       edgeNumbering_subdomain2global[i] = ig;
     }
+  //(the global mesh is still in its old edge numbering here; renumbered below)
+  subdomainEdgeMaterialTypes(mesh, *mesh.subdomainp, edgeNumbering_subdomain2global, edgeNumbering_global_new2old);
   //now fill in rest of boundary information, etc
   mesh.subdomainp->px = mesh.px;
   mesh.subdomainp->py = mesh.py;
@@ -3675,6 +3716,12 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   //std::cout<<"edgeNodesArray"<<std::endl;
   for (int i=0;i<mesh.nEdges_global*2;i++)
     mesh.edgeNodesArray[i] = edgeNodesArray_newNodesAndEdges[i];
+  if (mesh.edgeMaterialTypes != NULL)
+    {
+      std::vector<int> edgeMaterialTypes_old(mesh.edgeMaterialTypes, mesh.edgeMaterialTypes + mesh.nEdges_global);
+      for (int ig = 0; ig < mesh.nEdges_global; ig++)
+        mesh.edgeMaterialTypes[ig] = edgeMaterialTypes_old[edgeNumbering_global_new2old[ig]];
+    }
   //std::cout<<"nodeStarArray"<<std::endl;
   for (int i=0;i<mesh.nodeStarOffsets[mesh.nNodes_global];i++)
     mesh.nodeStarArray[i] = nodeStarArray_new[i];
