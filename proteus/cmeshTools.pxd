@@ -6,17 +6,17 @@ cimport mesh as cppm
 cdef class CMesh:
     cdef cppm.Mesh mesh
     cdef public:
-        cdef int nElements_global
-        cdef int nNodes_global
+        cdef cppm.proteus_index_t nElements_global
+        cdef cppm.proteus_index_t nNodes_global
         cdef int nNodes_element
         cdef int nNodes_elementBoundary
         cdef int nElementBoundaries_element,
-        cdef int nElementBoundaries_global,
-        cdef int nInteriorElementBoundaries_global,
-        cdef int nExteriorElementBoundaries_global,
-        cdef int max_nElements_node,
-        cdef int nEdges_global,
-        cdef int max_nNodeNeighbors_node,
+        cdef cppm.proteus_index_t nElementBoundaries_global,
+        cdef cppm.proteus_index_t nInteriorElementBoundaries_global,
+        cdef cppm.proteus_index_t nExteriorElementBoundaries_global,
+        cdef cppm.proteus_index_t max_nElements_node,
+        cdef cppm.proteus_index_t nEdges_global,
+        cdef cppm.proteus_index_t max_nNodeNeighbors_node,
         # cdef int[:,:] elementNodesArray,
         # cdef int[:] nodeElementsArray,
         # cdef int[:] nodeElementOffsets,
