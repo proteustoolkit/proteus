@@ -61,7 +61,10 @@ def test_sw2dcv_circular_damBreak_on_two_ranks_is_the_serial_answer(tmp_path):
     serial = _field(1, tmp_path / "1")
     parallel = _field(2, tmp_path / "2")
     assert numpy.abs(serial - parallel).max() < 1e-10
-    assert numpy.abs(serial - _field(2, tmp_path / "3", NOSCAT=1)).max() > 1e-9
+    noscat = _field(2, tmp_path / "3", NOSCAT=1)
+    # the control only means something if some rank has ghosts whose owner-computed values the scatter delivers
+    assert numpy.abs(serial - noscat).max() > 1e-9, (
+        "NOSCAT matched the serial run; (rank, owned, global, ghost) nodes: " + (tmp_path / "3" / "info.txt").read_text())
     assert numpy.abs(serial - _field(2, tmp_path / "4", OLDVOL=1)).max() > 1e-6
     # the time step reads the cfl of the dofs it owns only: garbage in the ghosts' must not matter
     ghosts = _field(2, tmp_path / "5", GHOSTCFL=1)

@@ -5,7 +5,7 @@ to t=TFINAL (0.08), for test_subdomain_mesh_size.py.
 The Coupez term and NCLS's sign() are scaled by epsFactRedistancing * mesh.h, so they see the subdomain mesh's h.
 Run under mpiexec in an empty directory; leaves u.csv (owned nodes, sorted by x, y) and h.csv (one row per rank:
 h, hMin of the mesh the model holds). The partition is pinned to slanted bands of x + 0.37 y with equal node counts. LOCALH=1 keeps each
-rank's own h and hMin (the old behaviour), as a control.
+rank's own h and hMin (the old behaviour), as a control, on a partition that gives one rank the smallest element.
 """
 import os, shutil, sys, runpy
 import numpy as np
@@ -27,10 +27,24 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                   nodeOwners=None, elementOwners=None, nodeWeights=None):
     if (nodeOwners is None and Comm.get().size() > 1
             and parallelPartitioningType == MT.MeshParallelPartitioningTypes.node):
-        # slanted bands with equal node counts, so every rank owns some
-        s = self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1]
-        cuts = np.quantile(s, np.arange(1, Comm.get().size()) / Comm.get().size())
-        nodeOwners = np.searchsorted(cuts, s, side='right').astype(np.intc)
+        if os.environ.get("LOCALH"):
+            # the control keeps each rank's own h and hMin, which differ from the global ones only if a subdomain
+            # lacks the extreme element. Slanted bands do not promise that (a mesh from another triangle build
+            # can put both extremes in every band), so rank 0 gets a disc around the smallest element and the
+            # others the rest: the smallest element then lies in rank 0's interior, away from their overlap.
+            nodes = self.nodeArray[:, :2]
+            elements = self.elementNodesArray
+            edges = [np.linalg.norm(nodes[elements[:, i]] - nodes[elements[:, (i + 1) % 3]], axis=1) for i in range(3)]
+            diameter = np.max(edges, axis=0)
+            centre = nodes[elements[np.argmin(diameter)]].mean(axis=0)
+            radius = 0.2 * np.ptp(nodes, axis=0).max()
+            nodeOwners = np.where(np.linalg.norm(nodes - centre, axis=1) < radius, 0, 1).astype(np.intc)
+            nodeOwners[nodeOwners > Comm.get().size() - 1] = Comm.get().size() - 1
+        else:
+            # slanted bands with equal node counts, so every rank owns some
+            s = self.nodeArray[:, 0] + 0.37 * self.nodeArray[:, 1]
+            cuts = np.quantile(s, np.arange(1, Comm.get().size()) / Comm.get().size())
+            nodeOwners = np.searchsorted(cuts, s, side='right').astype(np.intc)
     return _partition(self, nLayersOfOverlap=nLayersOfOverlap, parallelPartitioningType=parallelPartitioningType,
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh

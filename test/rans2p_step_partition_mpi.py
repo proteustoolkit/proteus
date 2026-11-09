@@ -27,6 +27,12 @@ so = defaults.load_system("step2d_so", MODULES)
 p = defaults.load_physics("twp_navier_stokes_step2d_p", MODULES)
 n = defaults.load_numerics("twp_navier_stokes_step2d_n", MODULES)
 n.linearSmoother = None
+# the deck stops Newton at max(1e-10, 0.001 he^2) = 1e-5 residual for he=0.1: a serial and a parallel run each stop
+# there, and their answers can differ by about that much (fleet, 2026-11-09: p2 10.396641 vs 10.396764, 1.2e-5),
+# which the test then compares to 1e-6. Converge Newton instead, so the comparison is about the discretization.
+n.nl_atol_res = 1.0e-12
+n.l_atol_res = 1.0e-14
+n.tolFac = 0.0
 options = PETSc.Options()
 options.setValue("rans2p_ksp_type", "preonly")
 options.setValue("rans2p_pc_type", "lu")

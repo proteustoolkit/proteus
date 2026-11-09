@@ -85,7 +85,11 @@ def calc(self, *a, **k):
     comm = Comm.get().comm.tompi4py()
     cols = [m.mesh.nodeArray[:nOwned, :2]] + [m.u[i].dof[:nOwned, None] for i in range(3)]
     gathered = comm.gather(np.hstack(cols), root=0)
+    sizes = comm.gather((comm.rank, nOwned, m.mesh.nNodes_global, m.mesh.nNodes_subdomain - nOwned), root=0)
     if comm.rank == 0:
+        # rank, owned nodes, global nodes, ghost nodes: what the test prints if a control does not differ
+        with open("info.txt", "w") as f:
+            f.write(repr(sizes))
         a = np.vstack(gathered)
         np.savetxt("u.csv", a[np.lexsort((a[:, 1], a[:, 0]))], delimiter=",", header="x,y,h,hu,hv")
     return r
