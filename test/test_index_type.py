@@ -131,3 +131,28 @@ def test_the_multilevel_hierarchy_has_the_index_dtype():
                    mlMesh.elementChildrenOffsetsList):
         for a in arrays:
             assert a.dtype == cmeshTools.INDEX_DTYPE
+
+
+def test_a_finite_element_spaces_dof_numbering_has_the_index_dtype(partitioned_mesh):
+    from proteus import FemTools
+    space = FemTools.C0_AffineLinearOnSimplexWithNodalBasis(partitioned_mesh, 2)
+    assert space.dofMap.l2g.dtype == cmeshTools.INDEX_DTYPE
+    assert space.dofMap.subdomain2global.dtype == cmeshTools.INDEX_DTYPE
+    assert space.dofMap.dof_offsets_subdomain_owned.dtype == cmeshTools.INDEX_DTYPE
+    assert space.dofMap.l2g.shape[0] == partitioned_mesh.nElements_global
+
+
+def test_the_sparsity_pattern_has_the_index_dtype():
+    from proteus import csparsity
+    n = cmeshTools.INDEX_DTYPE
+    empty = np.zeros((0,), dtype=n)
+    # one triangle with three free dofs: the pattern is the full 3x3 block
+    info = csparsity.PySparsityInfo()
+    info.findNonzeros(1, 3, 3, np.array([3], dtype=np.intc), np.arange(3, dtype=n).reshape(1, 3),
+                      np.array([3], dtype=np.intc), np.arange(3, dtype=n).reshape(1, 3),
+                      0, 1, 0, 1, 0, 0, 0, 3, np.full((1, 3), -1, dtype=n), 0, empty,
+                      np.zeros((0, 2), dtype=n), np.zeros((0, 2), dtype=np.intc), 0, 0, empty, 0, 0)
+    rowptr, colind, nnz, nzval = info.getCSR()
+    assert rowptr.dtype == n
+    assert colind.dtype == n
+    assert list(rowptr) == [0, 3, 6, 9]

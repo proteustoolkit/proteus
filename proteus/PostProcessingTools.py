@@ -7,6 +7,7 @@ Collect classes and routines for postprocessing solution to get
    :parts: 1
 """
 import numpy
+from proteus import cmeshTools
 from . import FemTools
 from . import LinearSolvers
 from .LinearAlgebraTools import Mat,Vec,SparseMatFromDict
@@ -381,7 +382,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
             #determine what terms are in equation
             self.potentials[ci] = []
             for cj in list(self.vt.coefficients.diffusion[ci].keys()):
@@ -594,7 +595,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
         self.globalNodeGlobalElement2StarElement = []
         self.nElements_node = numpy.zeros((self.vt.mesh.nNodes_global,),'i')
         self.nodeStarElementsArray = numpy.ones((self.vt.mesh.nElements_global,
-                                                 self.vt.mesh.nNodes_element),'i')
+                                                 self.vt.mesh.nNodes_element),cmeshTools.INDEX_DTYPE)
         self.nodeStarElementsArray[:]=-1
         self.nodeStarElementNeighborsArray = numpy.zeros((self.vt.mesh.nElements_global,
                                                             self.vt.mesh.nNodes_element,
@@ -753,7 +754,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
         #ci
         if self.testSpace is None:
             #all the solution spaces must be C0P1
@@ -1061,7 +1062,7 @@ class VPP_PWL_BDM(VPP_PWL_RT0):
             if ci != self.vtComponents[0] and ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype='i').reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
         #
 
         self.BDMcomponent=self.vtComponents[0]
@@ -1153,7 +1154,7 @@ class VPP_PWL_BDM2(VPP_PWL_RT0):
             if ci != self.vtComponents[0] and ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype='i').reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
 
         self.BDMcomponent=self.vtComponents[0]
         self.BDMprojectionMat_element = numpy.zeros((self.vt.mesh.nElements_global,
@@ -1784,7 +1785,7 @@ class VPP_PWL_BDM_OPT(VPP_PWL_RT0_OPT):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype='i').reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
         #
 
         self.BDMcomponent=self.vtComponents[0]
@@ -1968,7 +1969,7 @@ class VPP_PWC_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
 
             #build jacobian, may have differences in components because of differences in boundary conditions
             #could use one version for all components in an optimized code (but need to address flux bc's someway)
@@ -2197,7 +2198,7 @@ class VPP_SUN_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
 
             #repeat build because of flux boundary condition enforcement
             sunWheelerGlobalDict = {}
@@ -2450,7 +2451,7 @@ class VPP_SUN_GS_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
 
     def postprocess_component(self,ci,verbose=0):
         """compute mass conservative velocity field following Sun and Wheeler
@@ -2589,7 +2590,7 @@ class VPP_DG_RT0(VelocityPostProcessingAlgorithmBase):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype='i').reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.vt.mesh.nElementBoundaries_element),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.vt.mesh.nElementBoundaries_element))
         #
     def postprocess_component(self,ci,verbose=0):
         """
@@ -2676,7 +2677,7 @@ class VPP_DG_BDM(VPP_DG_RT0):
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
                 self.q[('velocity_l2g',ci)]  = self.q[('velocity_l2g',self.vtComponents[0])]
             else:
-                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype='i').reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
+                self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
             #build linear test space for BMD projection if test space isn't P1
 
             if not isinstance(self.vt.u[ci].femSpace,FemTools.DG_AffineLinearOnSimplexWithNodalBasis):

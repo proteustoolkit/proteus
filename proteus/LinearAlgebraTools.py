@@ -9,6 +9,7 @@ representations using PETSc.
    :parts: 1
 """
 import numpy
+from proteus import cmeshTools
 import math
 import sys
 from . import superluWrappers
@@ -485,7 +486,7 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
                         ghosts[j::blockSize]=subdomain2global[n:]*blockSize+j
                 self.createGhostWithArray(ghosts,array,size=(blockSize*n,blockSize*N),bsize=1)
                 if blockSize > 1: #have to build in block dofs
-                    subdomain2globalTotal = numpy.zeros((blockSize*subdomain2global.shape[0],),'i')
+                    subdomain2globalTotal = numpy.zeros((blockSize*subdomain2global.shape[0],),cmeshTools.INDEX_DTYPE)
                     for j in range(blockSize):
                         subdomain2globalTotal[j::blockSize]=subdomain2global*blockSize+j
                     self.subdomain2global=subdomain2globalTotal
@@ -934,7 +935,7 @@ class ParMat_petsc4py(p4pyPETSc.Mat):
             self.setType('aij')
             self.setSizes([[par_n*self.blockSize,par_N*self.blockSize],[par_nc*self.blockSize,par_Nc*self.blockSize]],bsize=1)
             if self.blockSize > 1: #have to build in block dofs
-                subdomain2globalTotal = numpy.zeros((self.blockSize*subdomain2global.shape[0],),'i')
+                subdomain2globalTotal = numpy.zeros((self.blockSize*subdomain2global.shape[0],),cmeshTools.INDEX_DTYPE)
                 for j in range(self.blockSize):
                     subdomain2globalTotal[j::self.blockSize]=subdomain2global*self.blockSize+j
                 self.subdomain2global=subdomain2globalTotal

@@ -1,7 +1,7 @@
 # A type of -*- python -*- file
 import numpy as np
 cimport numpy as np
-from csparsity cimport SparsityInfo
+from csparsity cimport SparsityInfo, proteus_index_t
 
 cdef class PySparsityInfo:
     cdef SparsityInfo cpp
@@ -127,7 +127,7 @@ cdef class PySparsityInfo:
                                 <proteus_index_t*> csrColumnOffsets_eb_eNebN.data)
     def getCSR(self):
         self.cpp.getCSR()
-        return (np.asarray(<int[:self.cpp.nrows]>self.cpp.rowptr),
-                np.asarray(<int[:self.cpp.nnz]>self.cpp.colind),
+        return (np.asarray(<proteus_index_t[:self.cpp.nrows]>self.cpp.rowptr),
+                np.asarray(<proteus_index_t[:self.cpp.nnz]>self.cpp.colind),
                 self.cpp.nnz,
                 np.asarray(<double[:self.cpp.nnz]>self.cpp.nzval))
