@@ -115,7 +115,7 @@ void linearADR_ConstantCoefficientsEvaluate(const int nPoints,
                                             double *r,
                                             double *dr)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   for (k=0;k<nPoints;k++)
     {
@@ -151,7 +151,7 @@ void groundwaterTransportCoefficientsEvaluate(const int nPoints,
                                               double *df,
                                               double *a)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double norm_v;
 
@@ -226,7 +226,7 @@ void groundwaterBiodegradation01EvaluateFC(const int nPoints,
 					   double *dr_x_de,
 					   double *dr_x_dx)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double norm_v;
   double C,E,X,denomC,denomE,denomX,rox,drox_dC,drox_dE,drox_dX;
@@ -336,7 +336,7 @@ void groundwaterBryantDawsonIonExEvaluateFC(const int nPoints,
 					    double *dr_h_dh)
 
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double norm_v;
   double C_m,C_h,C_oh,C_a,Z_m,Z_h,dC_a_dC_h,denomZ;
@@ -426,7 +426,7 @@ void groundwaterTransportCoefficientsEvaluate_hetMat(const int nSimplex,
 						     double *df,
 						     double *a)
 {
-  int i,j,k,I,J,matID;
+  proteus_index_t J; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   double norm_v;
 
@@ -481,7 +481,7 @@ void variablySaturatedGroundwaterTransportCoefficientsEvaluate_hetMat(const int 
 								      double *df,
 								      double *a)
 {
-  int i,j,k,I,J,matID;
+  proteus_index_t J; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   double norm_v;
 
@@ -545,7 +545,7 @@ void variablySaturatedGroundwaterEnergyTransportCoefficientsEvaluate_hetMat(cons
 									    double *df,
 									    double *a)
 {
-  int i,j,k,I,J,matID;
+  proteus_index_t J; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   double norm_v,tmp,sw,Ke,lambda;
 
@@ -619,7 +619,7 @@ void nonlinearADR_pqrstEvaluate(const int nPoints,
                                 double *r,
                                 double *dr)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double uPlus,
     tmp_f, 
@@ -691,7 +691,7 @@ void nonlinearADR_pqrstDualEvaluate(const int nPoints,
                                     double *r,
                                     double *dr)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double max_1mu_0,atmp,datmp;
   const double p2M1=p2-1.0,
@@ -919,7 +919,7 @@ void disVelEvaluate(const int nPoints,
                     double *phi,
                     double *dphi)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2 = nSpace*nSpace;
 
   for (k=0; k < nPoints; k++)
@@ -1045,7 +1045,7 @@ void twophasePotentialFlowEvaluate(int nPoints,
                                    double *r,
                                    double *dr)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   for (k=0;k<nPoints;k++)
     {
@@ -1080,7 +1080,7 @@ void twophasePotentialFlowUpdateFreeSurface(int nPoints,
                                             double* Bcon1, double* Bcon2, double *Bcon,
                                             double C1, double C2, double *C)
 {
-  int k,I,J;
+  proteus_index_t J; int k, I;
   const int nSpace2=nSpace*nSpace;
   double H,oneMinusH;
   for (k=0;k<nPoints;k++)
@@ -1617,7 +1617,7 @@ void redistanceLevelSetSandFCoefficientsEvaluate(int nSimplex,
     }/*ie*/
 }/*func*/
 
-void setWeakDirichletConditionsForLevelSet(int nElements_global,
+void setWeakDirichletConditionsForLevelSet(proteus_index_t nElements_global,
 					   int nDOF_trial_element,
 					   double epsilon_freeze_factor,
 					   const double *elementDiameter,
@@ -1626,7 +1626,7 @@ void setWeakDirichletConditionsForLevelSet(int nElements_global,
 					   int * freeze_nodes_tmp,
 					   int * weakDirichletConditionFlags)
 {
-  int eN,j,jj,signU,j0,J0,J;
+  proteus_index_t J; int eN, j, jj, signU, j0, J0;
   double eps;
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -1669,7 +1669,7 @@ void setWeakDirichletConditionsForLevelSet(int nElements_global,
     }//eN
 }
 
-void setSimpleWeakDirichletConditionsForLevelSet(int nElements_global,
+void setSimpleWeakDirichletConditionsForLevelSet(proteus_index_t nElements_global,
                                                  int nDOF_trial_element,
                                                  double epsilon_freeze_factor,
                                                  const double *elementDiameter,
@@ -1678,7 +1678,7 @@ void setSimpleWeakDirichletConditionsForLevelSet(int nElements_global,
                                                  int * freeze_nodes_tmp,
                                                  int * weakDirichletConditionFlags)
 {
-  int eN,j,J;
+  proteus_index_t J; int eN, j;
   double eps;
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -1715,7 +1715,7 @@ void darcySharpInterfaceFlowEvaluate(int nPoints,
 				     double * dr,
 				     double * dm)
 {
-  int k,I,J,nSpace2;
+  proteus_index_t J; int k, I, nSpace2;
   double He;
 
   nSpace2 = nSpace*nSpace;
@@ -1767,7 +1767,7 @@ void darcySharpInterfaceFlowImEvaluate(int nPoints,
 				       double * dr,
 				       double * dm)
 {
-  int k,I,J,nSpace2;
+  proteus_index_t J; int k, I, nSpace2;
   double He,rhoHe;
   double rhoEps = 0.0; /*do not smear density*/
   nSpace2 = nSpace*nSpace;
@@ -4933,7 +4933,7 @@ void HJBurgersEvaluate(const int nPoints,
 /*                                                         double *phi, */
 /*                                                         double *dphi) */
 /* { */
-/*   int k,I,J; */
+/*   proteus_index_t J; int k, I; */
 /*   const int nSpace2=nSpace*nSpace; */
 /*   register double psiC,alphaPsiC,alphaPsiC_n,alphaPsiC_nM1,onePlus_alphaPsiC_n,sBar,sBarByOnePlus_alphaPsiC_n,sqrt_sBar,sqrt_1minusSbar,thetaW,DsBar_DpC,DthetaW_DpC,vBar,uBar,krW,krN, */
 /*     alphaPsiC_nM2,sBarBy_onePlus_alphaPsiC_n_2,DDsBar_DDpC,DDthetaW_DDpC,DkrW_DpC,rho2=rho*rho; */
@@ -5112,7 +5112,7 @@ void conservativeHeadRichardsL2projMualemVanGenuchtenHomEvaluate(const int nSimp
 								 double *a,
 								 double *da)
 {
-  int k,I,J,eN;
+  proteus_index_t J; int k, I, eN;
   const int nSpace2=nSpace*nSpace;
   register double psiC,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5240,7 +5240,7 @@ void conservativeHeadRichardsL2projMualemVanGenuchtenHomEvaluate(const int nSimp
     }
 }
 /* TODO: figure out how to handle dmass term to get right jacobian*/
-void conservativeHeadRichardsL2projBndMualemVanGenuchtenHomEvaluate(const int nElements,
+void conservativeHeadRichardsL2projBndMualemVanGenuchtenHomEvaluate(const proteus_index_t nElements,
 								    const int nElementBoundaries_element,
 								    const int nPointsPerElementBoundary,
 								    const int nSpace,
@@ -5261,7 +5261,7 @@ void conservativeHeadRichardsL2projBndMualemVanGenuchtenHomEvaluate(const int nE
 								    double *a,
 								    double *da)
 {
-  int k,I,J,eN,ebN;
+  proteus_index_t J; int k, I, eN, ebN;
   const int nSpace2=nSpace*nSpace;
   register double psiC,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5428,7 +5428,7 @@ void conservativeHeadRichardsL2projMualemVanGenuchtenHetEvaluate(const int nSimp
 								 double *a,
 								 double *da)
 {
-  int k,I,J,eN;
+  proteus_index_t J; int k, I, eN;
   const int nSpace2=nSpace*nSpace;
   register double psiC,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5708,7 +5708,7 @@ void l2project2Tensor(const int nSimplices,
 		      double * dV,
 		      double * r)
 {
-  int eN,k,I,J,nSpace2;
+  proteus_index_t J; int eN, k, I, nSpace2;
   double vol;
   /*need different max size, take a chance on variable length array?*/
   double ravg[nSpace*nSpace];
@@ -5741,8 +5741,8 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
 						       const int nPointsPerSimplex,
 						       const int nSpace,
 						       double pc_eps,
-						       const int * rowptr,
-						       const int * colind,
+						       const proteus_index_t * rowptr,
+						       const proteus_index_t * colind,
 						       const int* materialTypes,
 						       const double rho,
 						       const double beta,
@@ -5761,7 +5761,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
 						       double *da,
 						       double* vol_frac)
 {
-  int i,j,k,I,matID,ii;
+  proteus_index_t ii; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,pcBarStar,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5774,7 +5774,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
     thetaS,
     rhom,drhom,m,
     betauStar;
-  const int nnz = rowptr[nSpace];
+  const proteus_index_t nnz = rowptr[nSpace];
   for (i=0; i < nSimplex; i++)
     {
       matID= materialTypes[i];
@@ -5848,8 +5848,8 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
 										const int nPointsPerSimplex,
 										const int nSpace,
 										double linear_break,
-										const int * rowptr,
-										const int * colind,
+										const proteus_index_t * rowptr,
+										const proteus_index_t * colind,
 										const int* materialTypes,
 										const double rho,
 										const double beta,
@@ -5868,7 +5868,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
 										double *da,
 										double* vol_frac)
 {
-  int i,j,k,I,matID,ii;
+  proteus_index_t ii; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,pcBarStar,sBarStar,KWrStar,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5881,7 +5881,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
     thetaS,
     rhom,drhom,m,
     betauStar;
-  const int nnz = rowptr[nSpace];
+  const proteus_index_t nnz = rowptr[nSpace];
   pcBarStar = linear_break;
   
   for (i=0; i < nSimplex; i++)
@@ -11326,7 +11326,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwind(const int
 								       const int nPointsPerSimplex,
 								       const int nSpace,
 								       const int nQuadraturePoints_elementBoundary,
-								       const int* elementBoundaryElementsArray,
+								       const proteus_index_t* elementBoundaryElementsArray,
 								       const int* quadraturePointToElementBoundary,
 								       const int* materialTypes,
 								       const double rho,
@@ -11364,7 +11364,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwind(const int
     rho2=rho*rho,
     thetaS,
     rhom,drhom,m;
-  int eN_upwind,ebN_global;
+  proteus_index_t eN_upwind; int ebN_global;
   register double drive,avgfI,avgdfI,avgaII,avgdaII,vol;
   /*
     loop through and compute point values as normal
@@ -11518,7 +11518,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm(co
 									      const int nPointsPerSimplex,
 									      const int nSpace,
 									      const int nQuadraturePoints_elementBoundary,
-									      const int* elementBoundaryElementsArray,
+									      const proteus_index_t* elementBoundaryElementsArray,
 									      const int* quadraturePointToElementBoundary,
 									      const int* materialTypes,
 									      const double rho,
@@ -11556,7 +11556,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm(co
     rho2=rho*rho,
     thetaS,
     rhom,drhom,m;
-  int eN_upwind,ebN_global;
+  proteus_index_t eN_upwind; int ebN_global;
   register double drive,KWs_harm,KWs_left,KWs_right,krw_val,dkrw_val,vol;
   /*
     loop through and compute point values for m as usual
@@ -11713,9 +11713,9 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
 										 const int nPointsPerSimplex,
 										 const int nSpace,
 										 const int nQuadraturePoints_elementBoundary,
-										 const int *rowptr,
-										 const int *colind,
-										 const int* elementBoundaryElementsArray,
+										 const proteus_index_t *rowptr,
+										 const proteus_index_t *colind,
+										 const proteus_index_t* elementBoundaryElementsArray,
 										 const int* quadraturePointToElementBoundary,
 										 const int* materialTypes,
 										 const double rho,
@@ -11741,7 +11741,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
 										 double *a,
 										 double *da)
 {
-  int i,j,k,I,matID,J,nnz;
+  proteus_index_t J, nnz; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -11753,7 +11753,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
     rho2=rho*rho,
     thetaS,
     rhom,drhom,m;
-  int eN_upwind,ebN_global;
+  proteus_index_t eN_upwind; int ebN_global;
   register double drive,KWs_harm,KWs_left,KWs_right,krw_val,dkrw_val,vol;
   nnz = rowptr[nSpace]; /*sparse mat rep for diffusion*/ 
   /*
@@ -11921,7 +11921,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
   
 }
 
-void applyContactLineSlip(int nExteriorElementBoundaries_global,
+void applyContactLineSlip(proteus_index_t nExteriorElementBoundaries_global,
                           int nQuadraturePoints_elementBoundary,
                           double eps,
                           int* isDOFBoundary,
@@ -11945,7 +11945,7 @@ void applyContactLineSlip(int nExteriorElementBoundaries_global,
     }
 }
 
-void applyContactLineSlipJacobian(int nExteriorElementBoundaries_global,
+void applyContactLineSlipJacobian(proteus_index_t nExteriorElementBoundaries_global,
                                   int nQuadraturePoints_elementBoundary,
                                   int nDOF_trial_element,
                                   double eps,
@@ -12033,7 +12033,7 @@ void diffusiveWave2DEvaluate(const int nd,
     }
 }
 
-void calculateEddyViscosity_Smagorinsky_2D(const int nElements_global,
+void calculateEddyViscosity_Smagorinsky_2D(const proteus_index_t nElements_global,
 					   const int nQuadraturePoints_element,
 					   const double smagorinskyConstant,
 					   const double * h_e,
@@ -12081,7 +12081,7 @@ void calculateEddyViscosity_Smagorinsky_2D(const int nElements_global,
     }
 
 }
-void calculateEddyViscosity_Smagorinsky_3D(const int nElements_global,
+void calculateEddyViscosity_Smagorinsky_3D(const proteus_index_t nElements_global,
 					   const int nQuadraturePoints_element,
 					   const double smagorinskyConstant,
 					   const double * h_e,
@@ -12162,7 +12162,7 @@ void calculateEddyViscosity_Smagorinsky_3D(const int nElements_global,
     }
 
 }
-void calculateEddyViscosity_Smagorinsky2P_2D(const int nElements_global,
+void calculateEddyViscosity_Smagorinsky2P_2D(const proteus_index_t nElements_global,
 					     const int nQuadraturePoints_element,
 					     const double smagorinskyConstant_0,
 					     const double smagorinskyConstant_1,
@@ -12216,7 +12216,7 @@ void calculateEddyViscosity_Smagorinsky2P_2D(const int nElements_global,
     }
 
 }
-void calculateEddyViscosity_Smagorinsky2P_3D(const int nElements_global,
+void calculateEddyViscosity_Smagorinsky2P_3D(const proteus_index_t nElements_global,
 					     const int nQuadraturePoints_element,
 					     const double smagorinskyConstant_0,
 					     const double smagorinskyConstant_1,
