@@ -1118,6 +1118,55 @@ cdef class ProtChBody:
     cdef np.ndarray callPrescribedMotion(self, double t):
         return self.prescribed_motion_function(t)
 
+    #: what a ProtChBody carries from one step to the next on the Python side (arrays and numbers); the Chrono side
+    #: is the system's state()
+    _STATE_ARRAYS = ("position", "position_last", "F", "M", "F_last", "M_last", "F_prot", "M_prot", "F_prot_last",
+                     "M_prot_last", "F_applied", "M_applied", "F_applied_last", "M_applied_last", "F_Aij", "M_Aij",
+                     "F_Aij_last", "M_Aij_last", "acceleration", "acceleration_last", "velocity", "velocity_last",
+                     "ang_acceleration", "ang_acceleration_last", "ang_velocity", "ang_velocity_last", "rotq",
+                     "rotq_last", "h_predict", "h_predict_last", "h_ang_vel_predict", "h_ang_vel_predict_last",
+                     "adams_vel", "Aij")
+    _STATE_NUMBERS = ("ang_vel_norm", "ang_vel_norm_last", "h_ang_predict", "h_ang_predict_last")
+
+    def state(self):
+        """The Python-side values a step carries (copies); see ProtChSystem.state()."""
+        st = {}
+        for name in self._STATE_ARRAYS:
+            v = getattr(self, name, None)
+            if v is not None:
+                st[name] = np.array(v, dtype=float)
+        for name in self._STATE_NUMBERS:
+            st[name] = float(getattr(self, name))
+        st["predicted"] = float(self.predicted)
+        return st
+
+    def set_state(self, state):
+        for name in self._STATE_ARRAYS:
+            if name in state:
+                setattr(self, name, np.array(state[name], dtype=float))
+        for name in self._STATE_NUMBERS:
+            if name in state:
+                setattr(self, name, float(state[name]))
+        self.predicted = state.get("predicted", 0.) != 0.
+        self._passToCpp()
+
+    def _passToCpp(self):
+        """Position and rotation (this step and last) on the C++ side, as poststep() leaves them: hxyz reads them."""
+        cdef ch.ChQuaternion rotq
+        cdef ch.ChQuaternion rotq_last
+        cdef double e0, e1, e2, e3, e0_last, e1_last, e2_last, e3_last
+        cdef double posx, posy, posz, posx_last, posy_last, posz_last
+        e0, e1, e2, e3 = self.rotq
+        e0_last, e1_last, e2_last, e3_last = self.rotq_last
+        posx, posy, posz = self.position
+        posx_last, posy_last, posz_last = self.position_last
+        self.thisptr.pos = ch.ChVector3d(posx, posy, posz)
+        self.thisptr.pos_last = ch.ChVector3d(posx_last, posy_last, posz_last)
+        rotq = ch.ChQuaternion[double](e0, e1, e2, e3)
+        rotq_last = ch.ChQuaternion[double](e0_last, e1_last, e2_last, e3_last)
+        self.thisptr.rotq = rotq
+        self.thisptr.rotq_last = rotq_last
+
     def storeValues(self):
         self.velocity_last = self.velocity
         self.position_last = self.position
@@ -1558,6 +1607,47 @@ cdef class ProtChSystem:
             Minimum number of chrono substeps.
         """
         self.min_nb_steps = nb
+
+    def state(self):
+        """What a step retry or a hot start needs to put the coupled system back where it was: the Chrono system's
+        integrable state (``cppSystem.stateGather``: time, positions, velocities and accelerations of every body and
+        node, Chrono's StateGather/StateGatherAcceleration), the step counters and step sizes of this class, and
+        each body's ``state()``. Plain arrays and floats. Not included: reaction forces, collision contacts, and the
+        bodies' trimesh and recorded-history files."""
+        st = {"chrono": np.array(self.thisptr.stateGather(), dtype=float)}
+        st.update({"step_nb": float(self.step_nb), "first_step": float(self.first_step), "t": self.t,
+                   "tCount": float(self.tCount), "next_sample": self.next_sample,
+                   "record_values": float(self.record_values), "proteus_dt": self.proteus_dt,
+                   "proteus_dt_last": self.proteus_dt_last, "proteus_dt_next": self.proteus_dt_next,
+                   "dt": self.dt, "dt_last": self.dt_last, "dt_fluid": self.dt_fluid,
+                   "dt_fluid_last": self.dt_fluid_last, "dt_fluid_next": self.dt_fluid_next})
+        for i, s in enumerate(self.subcomponents):
+            if isinstance(s, ProtChBody):
+                for key, v in s.state().items():
+                    st["body%d.%s" % (i, key)] = v
+        return st
+
+    def set_state(self, state):
+        """Restore what state() kept (the system must hold the same bodies and links)."""
+        self.thisptr.stateScatter(np.asarray(state["chrono"], dtype=float))
+        self.step_nb = int(state["step_nb"])
+        self.first_step = state["first_step"] != 0.
+        self.t = state["t"]
+        self.tCount = int(state["tCount"])
+        self.next_sample = state["next_sample"]
+        self.record_values = state["record_values"] != 0.
+        self.proteus_dt = state["proteus_dt"]
+        self.proteus_dt_last = state["proteus_dt_last"]
+        self.proteus_dt_next = state["proteus_dt_next"]
+        self.dt = state["dt"]
+        self.dt_last = state["dt_last"]
+        self.dt_fluid = state["dt_fluid"]
+        self.dt_fluid_last = state["dt_fluid_last"]
+        self.dt_fluid_next = state["dt_fluid_next"]
+        for i, s in enumerate(self.subcomponents):
+            if isinstance(s, ProtChBody):
+                prefix = "body%d." % i
+                s.set_state({k[len(prefix):]: v for k, v in state.items() if k.startswith(prefix)})
 
     def step(self, dt):
         self.dt_fluid_last = self.dt_fluid
