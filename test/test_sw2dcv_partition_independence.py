@@ -45,6 +45,9 @@ def _field(ranks, cwd, **overrides):
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    # the partition ParMETIS makes is not the same in every build (a fleet node left a rank without
+    # elements or put the interface elsewhere): pin the contiguous initial one, as the other partition tests do
+    env["PETSC_OPTIONS"] = (env.get("PETSC_OPTIONS", "") + " -mat_partitioning_type current").strip()
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
     out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)

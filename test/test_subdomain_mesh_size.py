@@ -40,7 +40,7 @@ def _run(ranks, cwd, **overrides):
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     env["PYTHONPATH"] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
-    env["PETSC_OPTIONS"] = "-ncls_ksp_rtol 1e-14 -ncls_ksp_atol 1e-40 -ncls_ksp_max_it 5000"
+    env["PETSC_OPTIONS"] = "-mat_partitioning_type current -ncls_ksp_rtol 1e-14 -ncls_ksp_atol 1e-40 -ncls_ksp_max_it 5000"
     env.update({k: str(v) for k, v in overrides.items()})
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
     out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
