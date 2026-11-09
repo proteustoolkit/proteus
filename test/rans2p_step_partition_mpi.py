@@ -4,7 +4,7 @@
 Run by ``test_rank_interface_flux.py`` under ``mpiexec``. Prints the sums over
 owned nodes of p, u and v squared and unsummed, which a serial run must match.
 The system is test/solver_tests/import_modules/step2d, solved with a direct
-solver so the comparison is not limited by a Krylov tolerance. The mesh is
+factorization wrapped in a tightly converged GMRES, so the comparison is not limited by a solver tolerance. The mesh is
 partitioned by the domain's MeshOptions, which also decides how the residual is
 assembled, so both are set there.
 """
@@ -34,7 +34,14 @@ n.nl_atol_res = 1.0e-12
 n.l_atol_res = 1.0e-14
 n.tolFac = 0.0
 options = PETSc.Options()
-options.setValue("rans2p_ksp_type", "preonly")
+# LU as a preconditioner of a converged Krylov solve, not as the solve (preonly): SuperLU_DIST pivots statically, so on
+# this saddle-point Jacobian a parallel LU is not always an exact solve, and on spark2 (PETSc 3.26.0, 2 ranks) Newton
+# stalled at 6e-5 (-0.4% per iteration) with every linear solve preonly, while one rank converged quadratically to 4e-15.
+# The Krylov method corrects an inexact factorization, so the comparison is about the discretization, not the solver.
+options.setValue("rans2p_ksp_type", "gmres")
+options.setValue("rans2p_ksp_rtol", 1.0e-13)
+options.setValue("rans2p_ksp_atol", 1.0e-15)
+options.setValue("rans2p_ksp_max_it", 50)
 options.setValue("rans2p_pc_type", "lu")
 options.setValue("rans2p_pc_factor_mat_solver_type", "superlu_dist" if comm.size() > 1 else "superlu")
 p.name = so.name = "step2d_part"
