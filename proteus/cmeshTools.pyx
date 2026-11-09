@@ -514,7 +514,7 @@ cdef extern from "mesh.h":
     static inline proteus_index_t* proteus_cmeshTools_newIndexArray(proteus_index_t n)
     { return new proteus_index_t[n > 0 ? n : 1]; }
     """
-    cppm.proteus_index_t* proteus_cmeshTools_newIndexArray(proteus_index_t n)
+    cppm.proteus_index_t* proteus_cmeshTools_newIndexArray(cppm.proteus_index_t n)
 
 
 def generateFromNumberedArrays(CMesh cmesh, nodes, elements, elementBoundaries, edges,
