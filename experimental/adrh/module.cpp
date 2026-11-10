@@ -714,6 +714,38 @@ PYBIND11_MODULE(adrh_proto, m)
     });
   });
 
+  // RANS2P's exterior faces (rans2p.h navierStokesExteriorFace): xn (nF, nD, 3) and u (nF, 1 + nS, nD) of each face's element,
+  // faceLocal (nF) the element's local face, xi (nFaces_ref, nQf, nS) the reference faces' points in element coordinates,
+  // qwf (nQf), ff (nF, nQf, NavierStokesFaceFields::nFields), params as rans2p_element. Returns R (nF, nc, nD),
+  // J (nF, nc, nD, nc, nD), the mass flux (nF, nQf) and the boundary velocity (nF, nQf, nS).
+  m.def("rans2p_faces", [](int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi, Arr qwf, Arr ff, Arr params) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      constexpr int nS = S::nS, nD = S::nDOF, nc = 1 + nS;
+      constexpr int nFF = adrh::NavierStokesFaceFields<nS>::nFields;
+      const int nF = xn.shape(0), nQf = qwf.shape(0);
+      if (u.ndim() != 3 || u.shape(0) != nF || u.shape(1) != nc || u.shape(2) != nD)
+        throw std::invalid_argument("rans2p_faces: u must be (nF, 1 + nS, nD)");
+      if (ff.ndim() != 3 || ff.shape(0) != nF || ff.shape(1) != nQf || ff.shape(2) != nFF)
+        throw std::invalid_argument("rans2p_faces: ff must be (nF, nQf, 9 + 6 nS)");
+      if (params.shape(0) != 17) throw std::invalid_argument("rans2p_faces: 17 params");
+      const double *q = params.data();
+      adrh::NavierStokesParams P{q[0], q[1], q[2], q[3], {q[4], q[5], q[6]}, q[7], q[8], q[9], q[10], q[11], q[12], q[13],
+                                 q[14], q[15], q[16]};
+      py::array_t<double> R({nF, nc, nD}), J({nF, nc, nD, nc, nD}), flux({nF, nQf}), vel({nF, nQf, nS});
+      const int *fl = faceLocal.data();
+      {
+        py::gil_scoped_release release;
+        for (int f = 0; f < nF; ++f)
+          adrh::navierStokesExteriorFace<S>(P, xn.data() + f * nD * 3, u.data() + f * nc * nD, fl[f], nQf,
+                                            xi.data() + fl[f] * nQf * nS, qwf.data(), ff.data() + f * nQf * nFF,
+                                            R.mutable_data() + f * nc * nD, J.mutable_data() + f * nc * nD * nc * nD,
+                                            flux.mutable_data() + f * nQf, vel.mutable_data() + f * nQf * nS);
+      }
+      return py::make_tuple(R, J, flux, vel);
+    });
+  });
+
   // MCorr.py's masking after assembly (mcorr.h step 4), in place: r *= activeR, the CSR rows of inactive DOFs become identity
   // rows, and the DOFs with activeDOF != 1 are zeroed.
   m.def("replace_inactive_rows", [](py::array_t<int, py::array::c_style> rowptr, py::array_t<int, py::array::c_style> colind,

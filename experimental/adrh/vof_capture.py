@@ -67,8 +67,18 @@ KEEP_RANS2P = ('mesh_dof', 'mesh_l2g', 'x_ref', 'dV_ref', 'p_l2g', 'vel_l2g', 'e
                'MOVING_DOMAIN', 'useRBLES', 'PRESSURE_PROJECTION_STABILIZATION', 'nParticles', 'useExact',
                'turbulenceClosureModel', 'phi_solid', 'sdInfo_u_u_rowptr', 'sdInfo_u_u_colind', 'sdInfo_u_v_rowptr',
                'sdInfo_u_v_colind', 'sdInfo_v_u_rowptr', 'sdInfo_v_u_colind', 'sdInfo_v_v_rowptr', 'sdInfo_v_v_colind',
-               'offset_p', 'offset_u', 'offset_v', 'stride_p', 'stride_u', 'stride_v')
-OUTPUTS_R_RANS2P = ('globalResidual', 'q_velocity', 'q_numDiff_u', 'q_cfl')
+               'offset_p', 'offset_u', 'offset_v', 'stride_p', 'stride_u', 'stride_v',
+               # the exterior faces (rans2p.h navierStokesExteriorFace): geometry, boundary conditions, the face fields
+               'nExteriorElementBoundaries_global', 'exteriorElementBoundariesArray', 'elementBoundaryElementsArray',
+               'elementBoundaryLocalElementBoundariesArray', 'boundaryFlags', 'nElementBoundaries_owned', 'dS_ref',
+               'vel_trial_trace_ref', 'C_b', 'eb_adjoint_sigma', 'ebqe_penalty_ext', 'ebqe_vf_ext', 'bc_ebqe_vf_ext',
+               'ebqe_porosity_ext', 'ebqe_phi_s', 'ebqe_eddy_viscosity_last', 'isDOFBoundary_p', 'isDOFBoundary_u',
+               'isDOFBoundary_v', 'isAdvectiveFluxBoundary_p', 'isAdvectiveFluxBoundary_u', 'isAdvectiveFluxBoundary_v',
+               'isDiffusiveFluxBoundary_u', 'isDiffusiveFluxBoundary_v', 'ebqe_bc_p_ext', 'ebqe_bc_u_ext', 'ebqe_bc_v_ext',
+               'ebqe_bc_flux_mass_ext', 'ebqe_bc_flux_mom_u_adv_ext', 'ebqe_bc_flux_mom_v_adv_ext',
+               'ebqe_bc_flux_u_diff_ext', 'ebqe_bc_flux_v_diff_ext', 'particle_epsFact',
+               'use_ball_as_particle', 'normalize_pressure')
+OUTPUTS_R_RANS2P = ('globalResidual', 'q_velocity', 'q_numDiff_u', 'q_cfl', 'ebqe_velocity', 'flux', 'isActiveElement')
 KEEP_ALL = object()
 #with a solid (MCorr's cut-cell path): the interior-face data its ghost penalty uses
 KEEP_MCORR_SOLID = KEEP_MCORR + ('ghost_penalty_constant', 'elementBoundaryElementsArray', 'elementBoundariesArray',
@@ -164,6 +174,9 @@ def main(argv):
             return
         if state['phase'] == 'jacobian':
             fixture['u_next'] = np.array(seen['u_dof'], copy=True)
+            if model == 'rans2p':  # all three components of the next Newton iterate
+                fixture['p_next'] = np.array(seen['p_dof'], copy=True)
+                fixture['v_next'] = np.array(seen['v_dof'], copy=True)
             residual(argsDict, *extra)
             fixture['out_residual_next'] = np.array(seen['globalResidual'], copy=True)
             if model == 'mcorr':  # MCorr starts from u = 0, so its point outputs say something only at the next iterate
