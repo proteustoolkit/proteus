@@ -12,6 +12,7 @@ from . import cfemIntegrals
 from . import cpartitioning
 from .Profiling import logEvent
 import numpy as np
+from proteus import cmeshTools
 
 
 class ReferenceElement(object):
@@ -2333,9 +2334,9 @@ class DiscontinuousGalerkinDOFMap(DOFMap):
         """
         from . import Comm
         mpi_comm = Comm.get().comm.tompi4py()
-        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,'i')
+        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,cmeshTools.INDEX_DTYPE)
         self.nDOF_all_processes = 0; self.nDOF_subdomain = 0; self.max_dof_neighbors = 0
-        self.subdomain2global = numpy.zeros((self.nDOF),'i')
+        self.subdomain2global = numpy.zeros((self.nDOF),cmeshTools.INDEX_DTYPE)
         (self.nDOF_all_processes,
          self.nDOF_subdomain,
          self.max_dof_neighbors) = cpartitioning.buildDiscontinuousGalerkinLocal2GlobalMappings(mpi_comm,
@@ -2466,19 +2467,19 @@ class QuadraticLagrangeCubeDOFMap(DOFMap):
                 self.l2g[i][7] = globalMesh.elementBoundariesArray[i][0]+globalMesh.nNodes_global
                 self.l2g[i][len(globalMesh.elementNodesArray[i]) + len(globalMesh.elementBoundariesArray[0]) ] = globalMesh.nNodes_global + globalMesh.nElementBoundaries_global + i
                 # subdomain2global is just the identity mapping in the serial case
-            self.subdomain2global = np.arange(self.nDOF,dtype='i')
+            self.subdomain2global = np.arange(self.nDOF,dtype=cmeshTools.INDEX_DTYPE)
             # dof_offsets_subdomain_owned
             # ARB - the next argument should use shape not len...something is being fed in wrong for 2D-Quads...Fix before
             # final merge
-            self.dof_offsets_subdomain_owned = numpy.zeros(len(globalMesh.nodeOffsets_subdomain_owned),'i')
+            self.dof_offsets_subdomain_owned = numpy.zeros(len(globalMesh.nodeOffsets_subdomain_owned),cmeshTools.INDEX_DTYPE)
             self.dof_offsets_subdomain_owned[1] = self.nDOF
             self.nDOF_all_processes = self.nDOF
             self.nDOF_subdomain = self.nDOF
             self.max_dof_neighbors = 4
         elif self.nd==3:
-            self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,'i')
+            self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,cmeshTools.INDEX_DTYPE)
             self.nDOF_all_processes = 0; self.nDOF_subdomain = 0; self.max_dof_neighbors = 0
-            self.subdomain2global = numpy.zeros((self.nDOF),'i')
+            self.subdomain2global = numpy.zeros((self.nDOF),cmeshTools.INDEX_DTYPE)
             (self.nDOF_all_processes,
              self.nDOF_subdomain,
              self.max_dof_neighbors) = cpartitioning.buildQuadraticCubeLocal2GlobalMappings(mpi_comm,
@@ -2543,7 +2544,7 @@ class QuadraticLagrangeCubeDOFMap(DOFMap):
         ghostBase2 = ghostBase+(nEdges-nEdgesOwned)
         localCell = numpy.where(numpy.arange(nCells) < nCellsOwned,nNodesOwned+nEdgesOwned+numpy.arange(nCells),
                                 ghostBase2+numpy.arange(nCells)-nCellsOwned)
-        self.subdomain2global = numpy.zeros((self.nDOF,),'i')
+        self.subdomain2global = numpy.zeros((self.nDOF,),cmeshTools.INDEX_DTYPE)
         self.subdomain2global[localNode] = nodeIds
         self.subdomain2global[localEdge] = edgeIds
         self.subdomain2global[localCell] = cellIds
@@ -2564,7 +2565,7 @@ class QuadraticLagrangeCubeDOFMap(DOFMap):
         centre[:,0] = 0.5*(x[en[:,0],0]+x[en[:,-1],0])
         centre[:,1] = 0.5*(x[en[:,0],1]+x[en[:,1],1])
         self.lagrangeNodesArray[localCell] = centre
-        self.dof_offsets_subdomain_owned = numpy.zeros(nodeOff.shape,'i')
+        self.dof_offsets_subdomain_owned = numpy.zeros(nodeOff.shape,cmeshTools.INDEX_DTYPE)
         self.dof_offsets_subdomain_owned[:] = blockStart
         self.nDOF_all_processes = int(blockStart[-1])
         self.nDOF_subdomain = self.nDOF
@@ -2622,9 +2623,9 @@ class QuadraticLagrangeDOFMap(DOFMap):
         """
         from . import Comm
         mpi_comm = Comm.get().comm.tompi4py()
-        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,'i')
+        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,cmeshTools.INDEX_DTYPE)
         self.nDOF_all_processes = 0; self.nDOF_subdomain = 0; self.max_dof_neighbors = 0
-        self.subdomain2global = numpy.zeros((self.nDOF),'i')
+        self.subdomain2global = numpy.zeros((self.nDOF),cmeshTools.INDEX_DTYPE)
         (self.nDOF_all_processes,self.nDOF_subdomain,
          self.max_dof_neighbors) = cpartitioning.buildQuadraticLocal2GlobalMappings(mpi_comm,
                                                                                     self.nd,
@@ -2648,7 +2649,7 @@ class QuadraticLagrangeDOFMap(DOFMap):
 class p0DOFMap(DOFMap):
     def __init__(self,mesh):
         DOFMap.__init__(self,mesh.nElements_global)
-        self.l2g=numpy.zeros((mesh.nElements_global,1),'i')
+        self.l2g=numpy.zeros((mesh.nElements_global,1),cmeshTools.INDEX_DTYPE)
         self.updateAfterParallelPartitioning(mesh.globalMesh)
         #for i in range(mesh.nElements_global):
         #    self.l2g[i,0]=i
@@ -2659,9 +2660,9 @@ class p0DOFMap(DOFMap):
         from . import Comm
         mpi_comm = Comm.get().comm.tompi4py()
         local_dim = 1
-        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,'i')
+        self.dof_offsets_subdomain_owned = numpy.zeros(globalMesh.nodeOffsets_subdomain_owned.shape,cmeshTools.INDEX_DTYPE)
         self.nDOF_all_processes = 0; self.nDOF_subdomain = 0; self.max_dof_neighbors = 0
-        self.subdomain2global = numpy.zeros((self.nDOF),'i')
+        self.subdomain2global = numpy.zeros((self.nDOF),cmeshTools.INDEX_DTYPE)
         (self.nDOF_all_processes,self.nDOF_subdomain,
          self.max_dof_neighbors) = cpartitioning.buildDiscontinuousGalerkinLocal2GlobalMappings(mpi_comm,
                                                                                                 local_dim,
@@ -7011,8 +7012,8 @@ class DOFBoundaryConditions(object):
         #not necessarily a 1-1 correspondence between free_dofN and dofN because of
         #periodic bcs, so have to have 2 arrays
         nfree = len(self.global2freeGlobal)
-        self.global2freeGlobal_global_dofs = numpy.zeros((nfree,),'i')
-        self.global2freeGlobal_free_dofs = numpy.zeros((nfree,),'i')
+        self.global2freeGlobal_global_dofs = numpy.zeros((nfree,),cmeshTools.INDEX_DTYPE)
+        self.global2freeGlobal_free_dofs = numpy.zeros((nfree,),cmeshTools.INDEX_DTYPE)
         test = numpy.array(list(range(nfree)),dtype='i')
         for i,dofN in enumerate(self.global2freeGlobal.keys()):
             self.global2freeGlobal_global_dofs[i] = dofN#map each of the unknown DOF's to the original node number
@@ -7137,8 +7138,8 @@ class DOFBoundaryConditions_alt(object):
         #not necessarily a 1-1 correspondence between free_dofN and dofN because of
         #periodic bcs, so have to have 2 arrays
         nfree = len(self.global2freeGlobal)
-        self.global2freeGlobal_global_dofs = numpy.zeros((nfree,),'i')
-        self.global2freeGlobal_free_dofs = numpy.zeros((nfree,),'i')
+        self.global2freeGlobal_global_dofs = numpy.zeros((nfree,),cmeshTools.INDEX_DTYPE)
+        self.global2freeGlobal_free_dofs = numpy.zeros((nfree,),cmeshTools.INDEX_DTYPE)
         test = numpy.array(list(range(nfree)),dtype='i')
         for i,dofN in enumerate(self.global2freeGlobal.keys()):
             self.global2freeGlobal_global_dofs[i] = dofN#map each of the unknown DOF's to the original node number

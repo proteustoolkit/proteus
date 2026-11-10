@@ -1,5 +1,6 @@
 #ifndef TRANSPORTCOEFFICIENTS_H
 #define TRANSPORTCOEFFICIENTS_H
+#include "index_type.h"
 
 #include <math.h>
 #include <assert.h>
@@ -554,7 +555,7 @@ extern void conservativeHeadRichardsL2projMualemVanGenuchtenHomEvaluate(
   double *da
 );
 extern void conservativeHeadRichardsL2projBndMualemVanGenuchtenHomEvaluate(
-  const int nElements,
+  const proteus_index_t nElements,
   const int nElementBoundaries_element,
   const int nPointsPerElementBoundary,
   const int nSpace,
@@ -2148,7 +2149,7 @@ extern void redistanceLevelSetCoefficientsWithWeakPenaltyEvaluate(int nPoints,
 							   double* r,
 								  double* dr);
 
-extern void setWeakDirichletConditionsForLevelSet(int nElements_global,
+extern void setWeakDirichletConditionsForLevelSet(proteus_index_t nElements_global,
 					   int nDOF_trial_element,
 					   double epsilon_freeze_factor,
 					   const double *elementDiameter,
@@ -2338,8 +2339,8 @@ extern void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_satu
 										const int nPointsPerSimplex,
 										const int nSpace,
 										double linear_break,
-										const int * rowptr,
-										const int * colind,
+										const proteus_index_t * rowptr,
+										const proteus_index_t * colind,
 										const int* materialTypes,
 										const double rho,
 										const double beta,
@@ -2361,8 +2362,8 @@ extern void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex
 						       const int nPointsPerSimplex,
 						       const int nSpace,
 						       double pc_eps,
-						       const int * rowptr,
-						       const int * colind,
+						       const proteus_index_t * rowptr,
+						       const proteus_index_t * colind,
 						       const int* materialTypes,
 						       const double rho,
 						       const double beta,
@@ -2468,7 +2469,7 @@ extern void variablySaturatedGroundwaterEnergyTransportCoefficientsEvaluate_hetM
 									    double *df,
 										   double *a);
 
-extern void setSimpleWeakDirichletConditionsForLevelSet(int nElements_global,
+extern void setSimpleWeakDirichletConditionsForLevelSet(proteus_index_t nElements_global,
                                                  int nDOF_trial_element,
                                                  double epsilon_freeze_factor,
                                                  const double *elementDiameter,
@@ -3096,7 +3097,7 @@ extern void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwind(co
 								       const int nPointsPerSimplex,
 								       const int nSpace,
 								       const int nQuadraturePoints_elementBoundary,
-								       const int* elementBoundaryElementsArray,
+								       const proteus_index_t* elementBoundaryElementsArray,
 								       const int* quadraturePointToElementBoundary,
 								       const int* materialTypes,
 								       const double rho,
@@ -3127,7 +3128,7 @@ extern void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAnd
 									      const int nPointsPerSimplex,
 									      const int nSpace,
 									      const int nQuadraturePoints_elementBoundary,
-									      const int* elementBoundaryElementsArray,
+									      const proteus_index_t* elementBoundaryElementsArray,
 									      const int* quadraturePointToElementBoundary,
 									      const int* materialTypes,
 									      const double rho,
@@ -3158,9 +3159,9 @@ extern void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAnd
 										 const int nPointsPerSimplex,
 										 const int nSpace,
 										 const int nQuadraturePoints_elementBoundary,
-										 const int *rowptr,
-										 const int *colind,
-										 const int* elementBoundaryElementsArray,
+										 const proteus_index_t *rowptr,
+										 const proteus_index_t *colind,
+										 const proteus_index_t* elementBoundaryElementsArray,
 										 const int* quadraturePointToElementBoundary,
 										 const int* materialTypes,
 										 const double rho,
@@ -3185,28 +3186,28 @@ extern void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAnd
 										 double *df,
 										 double *a,
 											double *da);
-extern void applyContactLineSlip(int nExteriorElementBoundaries_global,
+extern void applyContactLineSlip(proteus_index_t nExteriorElementBoundaries_global,
                           int nQuadraturePoints_elementBoundary,
                           double eps,
                           int* isDOFBoundary,
                           double* phi,
                           double* advectiveFlux,
 				 double* diffusiveFlux);
-extern void applyContactLineSlipJacobian(int nExteriorElementBoundaries_global,
+extern void applyContactLineSlipJacobian(proteus_index_t nExteriorElementBoundaries_global,
                                   int nQuadraturePoints_elementBoundary,
                                   int nDOF_trial_element,
                                   double eps,
                                   int* isDOFBoundary,
                                   double* phi,
 					 double* fluxJacobian);
-extern void calculateEddyViscosity_Smagorinsky_2D(const int nElements_global,
+extern void calculateEddyViscosity_Smagorinsky_2D(const proteus_index_t nElements_global,
 					   const int nQuadraturePoints_element,
 					   const double smagorinskyConstant,
 					   const double * h_e,
 					   const double * grad_u,
 					   const double * grad_v,
 						  double * nu_t);
-extern void calculateEddyViscosity_Smagorinsky_3D(const int nElements_global,
+extern void calculateEddyViscosity_Smagorinsky_3D(const proteus_index_t nElements_global,
 					   const int nQuadraturePoints_element,
 					   const double smagorinskyConstant,
 					   const double * h_e,
@@ -3214,7 +3215,7 @@ extern void calculateEddyViscosity_Smagorinsky_3D(const int nElements_global,
 					   const double * grad_v,
 					   const double * grad_w,
 						  double * nu_t);
-extern void calculateEddyViscosity_Smagorinsky2P_2D(const int nElements_global,
+extern void calculateEddyViscosity_Smagorinsky2P_2D(const proteus_index_t nElements_global,
 					     const int nQuadraturePoints_element,
 					     const double smagorinskyConstant_0,
 					     const double smagorinskyConstant_1,
@@ -3224,7 +3225,7 @@ extern void calculateEddyViscosity_Smagorinsky2P_2D(const int nElements_global,
 					     const double * grad_u,
 					     const double * grad_v,
 						    double * nu_t);
-extern void calculateEddyViscosity_Smagorinsky2P_3D(const int nElements_global,
+extern void calculateEddyViscosity_Smagorinsky2P_3D(const proteus_index_t nElements_global,
 					     const int nQuadraturePoints_element,
 					     const double smagorinskyConstant_0,
 					     const double smagorinskyConstant_1,

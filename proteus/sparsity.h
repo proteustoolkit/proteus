@@ -1,5 +1,6 @@
 #ifndef SPARSITYINFO_H
 #define SPARSITYINFO_H
+#include "index_type.h"
 #include <map>
 #include <set>
 #include <cassert>
@@ -12,70 +13,70 @@ namespace proteus
   public:
     SparsityInfo();
     ~SparsityInfo();
-    void findNonzeros(int nElements_global,
+    void findNonzeros(proteus_index_t nElements_global,
                       int nDOF_test_element,
                       int nDOF_trial_element,
                       int* nFreeDOF_test,
-                      int* freeGlobal_test,
+                      proteus_index_t* freeGlobal_test,
                       int* nFreeDOF_trial,
-                      int* freeGlobal_trial,
-                      int offset_test,
-                      int stride_test,
-                      int offset_trial,
-                      int stride_trial,
+                      proteus_index_t* freeGlobal_trial,
+                      proteus_index_t offset_test,
+                      proteus_index_t stride_test,
+                      proteus_index_t offset_trial,
+                      proteus_index_t stride_trial,
                       int hasNumericalFlux,
                       int hasDiffusionInMixedForm,
                       int needNumericalFluxJacobian,
                       int nElementBoundaries_element,
-                      int* elementNeighborsArray,
-                      int nInteriorElementBoundaries_global,
-                      int* interiorElementBoundariesArray,
-                      int* elementBoundaryElementsArray,
+                      proteus_index_t* elementNeighborsArray,
+                      proteus_index_t nInteriorElementBoundaries_global,
+                      proteus_index_t* interiorElementBoundariesArray,
+                      proteus_index_t* elementBoundaryElementsArray,
                       int* elementBoundaryLocalElementBoundariesArray,
                       int hasFluxBoundaryConditions,
-                      int nExteriorElementBoundaries_global,
-                      int* exteriorElementBoundariesArray,
+                      proteus_index_t nExteriorElementBoundaries_global,
+                      proteus_index_t* exteriorElementBoundariesArray,
                       int hasOutflowBoundary,
                       int needOutflowJacobian);
-    void getOffsets_CSR(int nElements_global,
+    void getOffsets_CSR(proteus_index_t nElements_global,
                         int nDOF_test_element,
                         int nDOF_trial_element,
                         int* nFreeDOF_test,
-                        int* freeGlobal_test,
+                        proteus_index_t* freeGlobal_test,
                         int* nFreeDOF_trial,
-                        int* freeGlobal_trial,
-                        int offset_test,
-                        int stride_test,
-                        int offset_trial,
-                        int stride_trial,
+                        proteus_index_t* freeGlobal_trial,
+                        proteus_index_t offset_test,
+                        proteus_index_t stride_test,
+                        proteus_index_t offset_trial,
+                        proteus_index_t stride_trial,
                         int hasNumericalFlux,
                         int hasDiffusionInMixedForm,
                         int needNumericalFluxJacobian,
                         int nElementBoundaries_element,
-                        int* elementNeighborsArray,
-                        int nInteriorElementBoundaries_global,
-                        int* interiorElementBoundariesArray,
-                        int* elementBoundaryElementsArray,
+                        proteus_index_t* elementNeighborsArray,
+                        proteus_index_t nInteriorElementBoundaries_global,
+                        proteus_index_t* interiorElementBoundariesArray,
+                        proteus_index_t* elementBoundaryElementsArray,
                         int* elementBoundaryLocalElementBoundariesArray,
                         int hasFluxBoundaryConditions,
-                        int nExteriorElementBoundaries_global,
-                        int* exteriorElementBoundariesArray,
+                        proteus_index_t nExteriorElementBoundaries_global,
+                        proteus_index_t* exteriorElementBoundariesArray,
                         int hasOutflowBoundary,
                         int needOutflowJacobian,
-                        int* rowptr,
-                        int* csrRowIndeces,
-                        int* csrColumnOffsets,
-                        int* csrColumnOffsets_eNebN,
-                        int* csrColumnOffsets_eb,
-                        int* csrColumnOffsets_eb_eNebN);
+                        proteus_index_t* rowptr,
+                        proteus_index_t* csrRowIndeces,
+                        proteus_index_t* csrColumnOffsets,
+                        proteus_index_t* csrColumnOffsets_eNebN,
+                        proteus_index_t* csrColumnOffsets_eb,
+                        proteus_index_t* csrColumnOffsets_eb_eNebN);
     void getCSR();
-    int nrows;
-    int nnz;
-    int *rowptr, *colind;
+    proteus_index_t nrows;
+    proteus_index_t nnz;
+    proteus_index_t *rowptr, *colind;
     double* nzval;
   private:
-    std::map<int,std::set<int> > columnIndecesMap;
-    std::map<int,std::map<int,int> > columnOffsetsMap;
+    std::map<proteus_index_t,std::set<proteus_index_t> > columnIndecesMap;
+    std::map<proteus_index_t,std::map<proteus_index_t,proteus_index_t> > columnOffsetsMap;
   };
 }
 #endif

@@ -73,6 +73,13 @@ def _mpiexec():
     return shutil.which('mpiexec') or shutil.which('mpirun')
 
 
+def _without_launcher_banners(out):
+    """out without the launcher's banners: Open MPI's (a block between rules of
+    dashes, which can begin in the middle of another rank's line) and the NUL
+    that its IOF forwarding wrote after one (pytest-ways load, run 42440251342)."""
+    return re.sub(r'-{20,}\n.*?\n-{20,}\n', '', out, flags=re.S).replace('\0', '')
+
+
 def _launch(args, n_ranks, cwd, script='meshPartition_mpi.py', extraEnv=None):
     """Run script (meshPartition_mpi.py) on n_ranks (None: plain python, no launcher)."""
     env = dict(os.environ)
@@ -776,10 +783,25 @@ def test_files_lookup_of_a_number_no_rank_holds_ends_the_run(tmp_path, case, mes
     assert result.returncode != 0, out
     assert 'RESULT' not in result.stdout, out
     #the partitioner writes its message in one write(2), but a launcher's own
-    #MPI_ABORT banner (Open MPI's, a block between rules of dashes) can still
-    #land in the merged stream between another rank's pieces of output: drop it
-    stripped = re.sub(r'-{20,}\n.*?\n-{20,}\n', '', out, flags=re.S)
-    assert message.format(asker=n - 1) in stripped, out
+    #MPI_ABORT banner can still land in the merged stream between another
+    #rank's pieces of output: drop it
+    assert message.format(asker=n - 1) in _without_launcher_banners(out), out
+
+
+def test_a_launcher_banner_inside_a_line_is_dropped():
+    """The merged output of the failing pytest-ways load run (42440251342,
+    Open MPI 5.0.10): the MPI_ABORT banner began inside the asking rank's line
+    and was followed by a NUL, which the banner regex alone left in it."""
+    rule = '-' * 74 + '\n'
+    out = ('partitioning: entity 0 (asked by rank ' + rule +
+           'MPI_ABORT was invoked on rank 1 in communicator MPI_COMM_WORLD\n  Proc: [[45983,1],1]\n  Errorcode: 1\n\n'
+           'NOTE: invoking MPI_ABORT causes Open MPI to kill all MPI processes.\n' + rule +
+           '\x001, of rank 0) has no owner: no rank holds a number for it (are the mesh files consistent?)\n'
+           'partitioning: rank 1 asked for 1 entity(s) with no owner\n' + rule +
+           'prterun has exited due to process rank 1 with PID 0 on node runner calling\n"abort".\n' + rule)
+    stripped = _without_launcher_banners(out)
+    assert 'entity 0 (asked by rank 1, of rank 0) has no owner' in stripped
+    assert 'MPI_ABORT' not in stripped and 'prterun' not in stripped
 
 
 @pytest.mark.parametrize('ext,nNodes,headerHasMarkers', [('pslg.edge', 2, True), ('pslg.edge', 2, False),

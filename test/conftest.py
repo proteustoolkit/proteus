@@ -24,6 +24,7 @@ def pytest_configure(config):
     """
     import signal
     import threading
+    _register_exit_without_finalize()
     config.addinivalue_line('markers', 'mumps(reason): needs a PETSc built with MUMPS '
                             '(skipped without it, except under GitHub Actions)')
     if (threading.current_thread() is threading.main_thread()
@@ -157,8 +158,41 @@ def pytest_sessionstart(session):
         _STALE_MPI_NAMES[:] = [message]
 
 
+_SESSION = []
+
+
 def pytest_sessionfinish(session, exitstatus):
     _sweep_stale_mpi_names(session.config)
+    _SESSION[:] = [session]
+
+
+# SuperLU_DIST's finalize defect (conda-forge superlu_dist 9.2.1, PETSc 3.25.4, Open MPI 5.0.10): a process
+# that factored a matrix with SuperLU_DIST frees its grid communicator from inside the attribute-delete callback
+# of the communicator PetscFinalize is freeing (PetscFinalize -> MPI_Comm_free -> Petsc_Superlu_dist_keyval_DeleteFn
+# -> superlu_gridexit -> MPI_Comm_free; valgrind: invalid reads in ompi_comm_free). The heap is damaged and glibc
+# aborts the process at exit ("malloc(): unsorted double linked list corrupted", exit 134), or, in a worker, the
+# worker; test_stokesDC_TH_2D.py::test_02_FullRun alone: about 1 run in 8. About twenty test files use
+# superlu_dist. The result of the tests is already decided when this happens, so a pytest process (the main one,
+# and each xdist worker, which exits through the same path) ends the way pytest decided, without running PETSc's
+# finalize: it flushes its streams and calls os._exit with the session's exit status. What this hides: any other
+# defect in PETSc/MPI finalization, PETSc's finalize-time reports (-log_view, unused options, leaked objects) and
+# atexit handlers registered before this one. It does not touch the MPI jobs the tests launch under mpiexec.
+# PROTEUS_TEST_FINALIZE=1 runs the normal finalize (to see the defect, or any other one, again).
+def _exit_without_finalize():
+    if os.environ.get('PROTEUS_TEST_FINALIZE') or not _SESSION:
+        return
+    status = _SESSION[0].exitstatus
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(int(status))
+
+
+def _register_exit_without_finalize():
+    import atexit
+    atexit.register(_exit_without_finalize)
 
 
 # mpiexec itself sometimes fails to start on a CI runner (the macOS Intel runner with Open MPI 5,

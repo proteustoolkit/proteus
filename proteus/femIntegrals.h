@@ -1,5 +1,6 @@
 #ifndef FEMINTEGRALS_H
 #define FEMINTEGRALS_H
+#include "index_type.h"
 
 /*!
  \file femIntegrals.h
@@ -12,17 +13,17 @@
    @{ 
 */
 
-extern void parametricFiniteElementSpace_getHessianValues(int nElements_global, int nQuadraturePoints_element, int nDOF_element, int nSpace_global, double *Hessian_psi, double *inverseJacobianArray, double *Hessian_vArray);
-extern void     updateDiffusion2_strong(int nElements_global, int nQuadraturePoints_element, int nSpace, double *a, double *Hess_phi, double *strong_residual);
-extern void updateDiffusion2_strong_sd(int nElements_global, int nQuadraturePoints_element,int nSpace, int* rowptr, int* colind, double* a, double* Hess_phi, double* strong_residual);
-extern void     updateDiffusionJacobian2_strong(int nElements_global, int nQuadraturePoints_element, int nDOF_trial_element, int nSpace, int *l2g, double *a, double *da, double *v, double *Hess_phi, double *dphi, double *Hess_v, double *dstrong_residual);
-extern void updateDiffusionJacobian2_strong_sd(int nElements_global, 
+extern void parametricFiniteElementSpace_getHessianValues(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_element, int nSpace_global, double *Hessian_psi, double *inverseJacobianArray, double *Hessian_vArray);
+extern void     updateDiffusion2_strong(proteus_index_t nElements_global, int nQuadraturePoints_element, int nSpace, double *a, double *Hess_phi, double *strong_residual);
+extern void updateDiffusion2_strong_sd(proteus_index_t nElements_global, int nQuadraturePoints_element,int nSpace, proteus_index_t* rowptr, proteus_index_t* colind, double* a, double* Hess_phi, double* strong_residual);
+extern void     updateDiffusionJacobian2_strong(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_trial_element, int nSpace, proteus_index_t *l2g, double *a, double *da, double *v, double *Hess_phi, double *dphi, double *Hess_v, double *dstrong_residual);
+extern void updateDiffusionJacobian2_strong_sd(proteus_index_t nElements_global, 
 					       int nQuadraturePoints_element,
 					       int nDOF_trial_element,
 					       int nSpace,
-					       int* rowptr,
-					       int* colind,
-					       int* l2g,
+					       proteus_index_t* rowptr,
+					       proteus_index_t* colind,
+					       proteus_index_t* l2g,
 					       double* a,
 					       double* da,
 					       double* v,
@@ -30,43 +31,43 @@ extern void updateDiffusionJacobian2_strong_sd(int nElements_global,
 					       double* dphi,
 					       double* Hess_v,
 					       double* dstrong_residual);
-extern void     updateDiffusion2_adjoint(int nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, double *a, double *Hess_w_dV, double *Lstar_w_dV);
-void updateDiffusion2_adjoint_sd(int nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, int* rowptr, int* colind, double* a, double* Hess_w_dV, double* Lstar_w_dV);
-extern void     calculateWeightedShapeHessians(int nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, double *dVR, double *abs_det_jac, double *Hess_w, double *Hess_w_dV);
-extern void     calculateFiniteElementFunctionHessianValues(int nElements_global, int nQuadraturePoints_element, int nDOF_trial_element, int nComponents, int nSpace, int *l2g, double *dof, double *Hessian_v, double *Hessian_u);
-extern void     updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_2sided_CSR(int nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, int nDOF_trial_element, int *interiorElementBoundaries, int *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, int *nFreeDOF_element_r, int *freeLocal_r, int *nFreeDOF_element_u, int *freeLocal_u, int *csrRowIndeces_ru, int *csrColumnOffsets_eb_ru, double *elementBoundaryFluxJacobian_2sided, double *w_dS, double *jac);
-extern void     updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_2sided_dense(int nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, int nDOF_trial_element, int offset_r, int stride_r, int offset_u, int stride_u, int nFreeVDOF_global, int *interiorElementBoundaries, int *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, int *nFreeDOF_element_r, int *freeLocal_r, int *freeGlobal_r, int *nFreeDOF_element_u, int *freeLocal_u, int *freeGlobal_u, double *elementBoundaryFluxJacobian_2sided, double *w_dS, double *jac);
-extern void     updateInteriorTwoSidedElementBoundaryFlux(int nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, int *interiorElementBoundaries, int *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *flux, double *w_dS, double *residual);
-extern void     calculateCFLADR2speeds(int nElements_global, int nQuadraturePoints_element, int nSpace, double *elementDiameter, double *dm, double *df1, double *df2, double *cfl);
-extern int      checkElementBoundaryAndExteriorElementBoundaryArraysSame(int nElementBoundaries_element, int nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int nValuesPerQuadraturePoint, double tolerance, const int *exteriorElementBoundariesArray, const int *elementBoundaryElementsArray, const int *elementBoundaryLocalElementBoundariesArray, const double *ebq_val, const double *ebqe_val, int *firstBadIndex);
-extern int      checkGlobalElementBoundaryAndExteriorElementBoundaryArraysSame(int nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int nValuesPerQuadraturePoint, double tolerance, const int *exteriorElementBoundariesArray, const int *elementBoundaryElementsArray, const int *elementBoundaryLocalElementBoundariesArray, const double *ebq_global_val, const double *ebqe_val, int *firstBadIndex);
-extern void     calculateExteriorElementBoundaryStress3D(int nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, int *exteriorElementBoundaries, int *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *mom_flux_vec_w, double *dS, double *n, double *F);
-extern void     calculateExteriorElementBoundaryStress2D(int nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, int *exteriorElementBoundaries, int *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *dS, double *n, double *F);
+extern void     updateDiffusion2_adjoint(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, double *a, double *Hess_w_dV, double *Lstar_w_dV);
+void updateDiffusion2_adjoint_sd(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, proteus_index_t* rowptr, proteus_index_t* colind, double* a, double* Hess_w_dV, double* Lstar_w_dV);
+extern void     calculateWeightedShapeHessians(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_test_element, int nSpace, double *dVR, double *abs_det_jac, double *Hess_w, double *Hess_w_dV);
+extern void     calculateFiniteElementFunctionHessianValues(proteus_index_t nElements_global, int nQuadraturePoints_element, int nDOF_trial_element, int nComponents, int nSpace, proteus_index_t *l2g, double *dof, double *Hessian_v, double *Hessian_u);
+extern void     updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_2sided_CSR(proteus_index_t nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, int nDOF_trial_element, proteus_index_t *interiorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, int *nFreeDOF_element_r, int *freeLocal_r, int *nFreeDOF_element_u, int *freeLocal_u, proteus_index_t *csrRowIndeces_ru, proteus_index_t *csrColumnOffsets_eb_ru, double *elementBoundaryFluxJacobian_2sided, double *w_dS, double *jac);
+extern void     updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_2sided_dense(proteus_index_t nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, int nDOF_trial_element, proteus_index_t offset_r, proteus_index_t stride_r, proteus_index_t offset_u, proteus_index_t stride_u, proteus_index_t nFreeVDOF_global, proteus_index_t *interiorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, int *nFreeDOF_element_r, int *freeLocal_r, proteus_index_t *freeGlobal_r, int *nFreeDOF_element_u, int *freeLocal_u, proteus_index_t *freeGlobal_u, double *elementBoundaryFluxJacobian_2sided, double *w_dS, double *jac);
+extern void     updateInteriorTwoSidedElementBoundaryFlux(proteus_index_t nInteriorElementBoundaries_global, int nElementBoundaries_element, int nQuadraturePoints_elementBoundary, int nDOF_test_element, proteus_index_t *interiorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *flux, double *w_dS, double *residual);
+extern void     calculateCFLADR2speeds(proteus_index_t nElements_global, int nQuadraturePoints_element, int nSpace, double *elementDiameter, double *dm, double *df1, double *df2, double *cfl);
+extern int      checkElementBoundaryAndExteriorElementBoundaryArraysSame(int nElementBoundaries_element, proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int nValuesPerQuadraturePoint, double tolerance, const proteus_index_t *exteriorElementBoundariesArray, const proteus_index_t *elementBoundaryElementsArray, const int *elementBoundaryLocalElementBoundariesArray, const double *ebq_val, const double *ebqe_val, proteus_index_t *firstBadIndex);
+extern int      checkGlobalElementBoundaryAndExteriorElementBoundaryArraysSame(proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int nValuesPerQuadraturePoint, double tolerance, const proteus_index_t *exteriorElementBoundariesArray, const proteus_index_t *elementBoundaryElementsArray, const int *elementBoundaryLocalElementBoundariesArray, const double *ebq_global_val, const double *ebqe_val, proteus_index_t *firstBadIndex);
+extern void     calculateExteriorElementBoundaryStress3D(proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, proteus_index_t *exteriorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *mom_flux_vec_w, double *dS, double *n, double *F);
+extern void     calculateExteriorElementBoundaryStress2D(proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, proteus_index_t *exteriorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *dS, double *n, double *F);
 
 extern void copyLeftElementBoundaryInfo(
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nSpace_global,
-  int nExteriorElementBoundaries_global,
-  int nInteriorElementBoundaries_global,
-  int *elementBoundaryElementsArray,
+  proteus_index_t nExteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t *elementBoundaryElementsArray,
   int *elementBoundaryLocalElementBoundariesArray,
-  int *exteriorElementBoundariesArray,
-  int *interiorElementBoundariesArray,
+  proteus_index_t *exteriorElementBoundariesArray,
+  proteus_index_t *interiorElementBoundariesArray,
   double *x,
   double *n,
   double *xg,
   double *ng
 );
 extern void parametricFiniteElementSpace_getValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *psi,
   double *vArray
 );
 extern void parametricFiniteElementSpace_getValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_element,
@@ -75,7 +76,7 @@ extern void parametricFiniteElementSpace_getValuesTrace(
   double *vArray
 );
 extern void parametricFiniteElementSpace_getGradientValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   int nSpace_global,
@@ -84,7 +85,7 @@ extern void parametricFiniteElementSpace_getGradientValues(
   double *grad_vArray
 );
 extern void parametricFiniteElementSpace_getGradientValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_element,
@@ -95,7 +96,7 @@ extern void parametricFiniteElementSpace_getGradientValuesTrace(
   double *grad_vArray
 );
 extern void parametricMaps_getPermutations(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nSpace_global,
@@ -104,103 +105,103 @@ extern void parametricMaps_getPermutations(
 );
 extern void parametricMaps_getPermutationsGlobalExterior(int nElementBoundaryQuadraturePoints_elementBoundary,
 							 int nSpace_global,
-							 int nExteriorElementBoundaries_global,
-							 const int * exteriorElementBoundariesArray,
-							 const int * elementBoundaryElementsArray,
+							 proteus_index_t nExteriorElementBoundaries_global,
+							 const proteus_index_t * exteriorElementBoundariesArray,
+							 const proteus_index_t * elementBoundaryElementsArray,
 							 const int * elementBoundaryLocalElementBoundariesArray,
 							 double* xiArray,
 							 int* permutations);
-extern void getPermutationsGlobal(int nElementBoundaries_global,
+extern void getPermutationsGlobal(proteus_index_t nElementBoundaries_global,
 				  int nElementBoundaryQuadraturePoints_elementBoundary,
 				  double* xArray,
 				  double* xArrayNew,
 				  int* permutations);
 extern void parametricMaps_getValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   int nSpace_global,
   double *psi,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *xArray
 );
 extern void parametricMaps_getValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_element,
   int nSpace_global,
   double *psi,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *xArray
 );
 extern void parametricMaps_getInverseValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   int nSpace_global,
   double *inverseJacobian,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *xArray,
   double *xiArray
 );
 extern void parametricMaps_getInverseValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_element,
   int nSpace_global,
   double *inverseJacobian,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *xArray,
   double *xiArray
 );
 extern void parametricMaps_getJacobianValues3D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianArray,
   double *jacobianDeterminantArray,
   double *jacobianInverseArray
 );
 extern void parametricMaps_getJacobianValues2D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianArray,
   double *jacobianDeterminantArray,
   double *jacobianInverseArray
 );
 extern void parametricMaps_getJacobianValues1D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianArray,
   double *jacobianDeterminantArray,
   double *jacobianInverseArray
 );
 extern void parametricMaps_getJacobianValuesTrace3D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
   double *boundaryNormals,
   double *boundaryJacobians,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianInverseArray,
   double *metricTensorArray,
@@ -208,14 +209,14 @@ extern void parametricMaps_getJacobianValuesTrace3D(
   double *unitNormalArray
 );
 extern void parametricMaps_getJacobianValuesTrace2D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
   double *boundaryNormals,
   double *boundaryJacobians,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianInverseArray,
   double *metricTensorArray,
@@ -223,14 +224,14 @@ extern void parametricMaps_getJacobianValuesTrace2D(
   double *unitNormalArray
 );
 extern void parametricMaps_getJacobianValuesTrace1D(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *grad_psi,
   double *boundaryNormals,
   double *boundaryJacobians,
-  int *l2g,
+  proteus_index_t *l2g,
   double *nodeArray,
   double *jacobianInverseArray,
   double *metricTensorArray,
@@ -238,7 +239,7 @@ extern void parametricMaps_getJacobianValuesTrace1D(
   double *unitNormalArray
 );
 extern void updateMass_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *mt,
@@ -246,7 +247,7 @@ extern void updateMass_weak(
   double *weak_residual
 );
 extern void updateMassJacobian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -254,7 +255,7 @@ extern void updateMassJacobian_weak(
   double *v_X_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateMassJacobian_weak_lowmem(int nElements_global,
+extern void updateMassJacobian_weak_lowmem(proteus_index_t nElements_global,
                                            int nQuadraturePoints_element,
                                            int nDOF_trial_element,
                                            int nDOF_test_element,
@@ -263,13 +264,13 @@ extern void updateMassJacobian_weak_lowmem(int nElements_global,
                                            double* w_dV,
                                            double* jacobian_weak_residual);
 extern void updateMass_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   double *mt,
   double *strong_residual
 );
 extern void updateMassJacobian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   double *dmt,
@@ -277,7 +278,7 @@ extern void updateMassJacobian_strong(
   double *dstrong_residual
 );
 extern void updateMass_adjoint(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *dmt,
@@ -285,7 +286,7 @@ extern void updateMass_adjoint(
   double *Lstar_w_dV
 );
 extern void updateAdvection_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -294,7 +295,7 @@ extern void updateAdvection_weak(
   double *weak_residual
 );
 extern void updateAdvectionJacobian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -303,7 +304,7 @@ extern void updateAdvectionJacobian_weak(
   double *v_X_grad_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateAdvectionJacobian_weak_lowmem(int nElements_global,
+extern void updateAdvectionJacobian_weak_lowmem(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nDOF_trial_element,
                                                 int nDOF_test_element,
@@ -313,7 +314,7 @@ extern void updateAdvectionJacobian_weak_lowmem(int nElements_global,
                                                 double* grad_w_dV,
                                                 double* jacobian_weak_residual);
 extern void updateAdvection_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *df,
@@ -321,7 +322,7 @@ extern void updateAdvection_strong(
   double *strong_residual
 );
 extern void updateAdvectionJacobian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -330,7 +331,7 @@ extern void updateAdvectionJacobian_strong(
   double *dstrong_residual
 );
 extern void updateAdvection_adjoint(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -339,7 +340,7 @@ extern void updateAdvection_adjoint(
   double *Lstar_w_dV
 );
 extern void updateHamiltonian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *H,
@@ -347,7 +348,7 @@ extern void updateHamiltonian_weak(
   double *weak_residual
 );
 extern void updateHamiltonianJacobian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -356,7 +357,7 @@ extern void updateHamiltonianJacobian_weak(
   double *grad_v_X_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateHamiltonianJacobian_weak_lowmem(int nElements_global,
+extern void updateHamiltonianJacobian_weak_lowmem(proteus_index_t nElements_global,
                                                   int nQuadraturePoints_element,
                                                   int nDOF_trial_element,
                                                   int nDOF_test_element,
@@ -366,7 +367,7 @@ extern void updateHamiltonianJacobian_weak_lowmem(int nElements_global,
                                                   double* w_dV,
                                                   double* jacobian_weak_residual);
 extern void updateHamiltonian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *dH,
@@ -374,7 +375,7 @@ extern void updateHamiltonian_strong(
   double *strong_residual
 );
 extern void updateHamiltonianJacobian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -383,7 +384,7 @@ extern void updateHamiltonianJacobian_strong(
   double *dstrong_residual
 );
 extern void updateHamiltonian_adjoint(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -392,7 +393,7 @@ extern void updateHamiltonian_adjoint(
   double *Lstar_w_dV
 );
 extern void updateDiffusion_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -400,7 +401,7 @@ extern void updateDiffusion_weak(
   double *grad_phi_X_grad_w_dV,
   double *weak_residual
 );
-extern void updateDiffusion_weak_lowmem(int nElements_global,
+extern void updateDiffusion_weak_lowmem(proteus_index_t nElements_global,
                                  int nQuadraturePoints_element,
                                  int nDOF_test_element,
                                  int nSpace,
@@ -408,23 +409,23 @@ extern void updateDiffusion_weak_lowmem(int nElements_global,
                                  double* grad_phi,
                                  double* grad_w_dV,
                                  double* weak_residual);
-extern void updateDiffusion_weak_sd(int nElements_global,
+extern void updateDiffusion_weak_sd(proteus_index_t nElements_global,
 				    int nQuadraturePoints_element,
 				    int nDOF_test_element,
 				    int nSpace,
-				    int* rowptr,
-				    int* colind,
+				    proteus_index_t* rowptr,
+				    proteus_index_t* colind,
 				    double* a,
 				    double* grad_phi,
 				    double* grad_w_dV,
 				    double* weak_residual);
 extern void updateDiffusionJacobian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
   int nSpace,
-  int *l2g,
+  proteus_index_t *l2g,
   double *a,
   double *da,
   double *grad_phi_X_grad_w_dV,
@@ -433,12 +434,12 @@ extern void updateDiffusionJacobian_weak(
   double *grad_v_X_grad_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateDiffusionJacobian_weak_lowmem(int nElements_global,
+extern void updateDiffusionJacobian_weak_lowmem(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nDOF_trial_element,
                                                 int nDOF_test_element,
                                                 int nSpace,
-                                                int* l2g,
+                                                proteus_index_t* l2g,
                                                 double* a,
                                                 double* da,
                                                 double* grad_phi,
@@ -447,14 +448,14 @@ extern void updateDiffusionJacobian_weak_lowmem(int nElements_global,
                                                 double* v,
                                                 double* grad_v,
                                                 double* jacobian_weak_residual);
-extern void updateDiffusionJacobian_weak_sd(int nElements_global,
+extern void updateDiffusionJacobian_weak_sd(proteus_index_t nElements_global,
 					    int nQuadraturePoints_element,
 					    int nDOF_trial_element,
 					    int nDOF_test_element,
 					    int nSpace,
-					    int* rowptr,
-					    int* colind,
-					    int* l2g,
+					    proteus_index_t* rowptr,
+					    proteus_index_t* colind,
+					    proteus_index_t* l2g,
 					    double* a,
 					    double* da,
 					    double* grad_phi,
@@ -464,7 +465,7 @@ extern void updateDiffusionJacobian_weak_sd(int nElements_global,
 					    double* grad_v,
 					    double* jacobian_weak_residual);
 extern void updateDiffusion_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *da,
@@ -472,21 +473,21 @@ extern void updateDiffusion_strong(
   double *grad_u,
   double *strong_residual
 );
-extern void updateDiffusion_strong_sd(int nElements_global,
+extern void updateDiffusion_strong_sd(proteus_index_t nElements_global,
 				      int nQuadraturePoints_element,
 				      int nSpace,
-				      int* rowptr,
-				      int* colind,
+				      proteus_index_t* rowptr,
+				      proteus_index_t* colind,
 				      double* da,
 				      double* grad_phi,
 				      double* grad_u,
 				      double* strong_residual);
 extern void updateDiffusionJacobian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
-  int *l2g,
+  proteus_index_t *l2g,
   double *da,
   double *dphi,
   double *grad_phi,
@@ -494,13 +495,13 @@ extern void updateDiffusionJacobian_strong(
   double *grad_v,
   double *dstrong_residual
 );
-extern void updateDiffusionJacobian_strong_sd(int nElements_global,
+extern void updateDiffusionJacobian_strong_sd(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nDOF_trial_element,
 					      int nSpace,
-					      int* rowptr,
-					      int* colind,
-					      int* l2g,
+					      proteus_index_t* rowptr,
+					      proteus_index_t* colind,
+					      proteus_index_t* l2g,
 					      double* da,
 					      double* dphi,
 					      double* grad_phi,
@@ -508,7 +509,7 @@ extern void updateDiffusionJacobian_strong_sd(int nElements_global,
 					      double* grad_v,
 					      double* dstrong_residual);
 extern void updateDiffusion_adjoint(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -517,18 +518,18 @@ extern void updateDiffusion_adjoint(
   double *grad_w_dV,
   double *Lstar_w_dV
 );
-extern void updateDiffusion_adjoint_sd(int nElements_global,
+extern void updateDiffusion_adjoint_sd(proteus_index_t nElements_global,
 				       int nQuadraturePoints_element,
 				       int nDOF_test_element,
 				       int nSpace,
-				       int* rowptr,
-				       int* colind,
+				       proteus_index_t* rowptr,
+				       proteus_index_t* colind,
 				       double* da,
 				       double* grad_phi,
 				       double* grad_w_dV,
 				       double* Lstar_w_dV);
 extern void updateReaction_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *r,
@@ -536,7 +537,7 @@ extern void updateReaction_weak(
   double *weak_residual
 );
 extern void updateReactionJacobian_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -544,7 +545,7 @@ extern void updateReactionJacobian_weak(
   double *v_X_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateReactionJacobian_weak_lowmem(int nElements_global,
+extern void updateReactionJacobian_weak_lowmem(proteus_index_t nElements_global,
                                                int nQuadraturePoints_element,
                                                int nDOF_trial_element,
                                                int nDOF_test_element,
@@ -553,13 +554,13 @@ extern void updateReactionJacobian_weak_lowmem(int nElements_global,
                                                double* w_dV,
                                                double* jacobian_weak_residual);
 extern void updateReaction_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   double *r,
   double *strong_residual
 );
 extern void updateReactionJacobian_strong(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   double *dr,
@@ -567,7 +568,7 @@ extern void updateReactionJacobian_strong(
   double *dstrong_residual
 );
 extern void updateReaction_adjoint(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *dr,
@@ -575,7 +576,7 @@ extern void updateReaction_adjoint(
   double *Lstar_w_dV
 );
 extern void updateSubgridError(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *error,
@@ -583,7 +584,7 @@ extern void updateSubgridError(
   double *weak_residual
 );
 extern void updateSubgridErrorJacobian(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -592,7 +593,7 @@ extern void updateSubgridErrorJacobian(
   double *jacobian_weak_residual
 );
 extern void updateNumericalDiffusion(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -600,7 +601,7 @@ extern void updateNumericalDiffusion(
   double *grad_u_X_grad_w_dV,
   double *weak_residual
 );
-extern void updateNumericalDiffusion_lowmem(int nElements_global,
+extern void updateNumericalDiffusion_lowmem(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nDOF_test_element,
                                      int nSpace,
@@ -609,7 +610,7 @@ extern void updateNumericalDiffusion_lowmem(int nElements_global,
                                      double* grad_w_dV,
                                      double* weak_residual);
 extern void updateNumericalDiffusionJacobian(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -618,7 +619,7 @@ extern void updateNumericalDiffusionJacobian(
   double *grad_v_X_grad_w_dV,
   double *jacobian_weak_residual
 );
-extern void updateNumericalDiffusionJacobian_lowmem(int nElements_global,
+extern void updateNumericalDiffusionJacobian_lowmem(proteus_index_t nElements_global,
                                                     int nQuadraturePoints_element,
                                                     int nDOF_trial_element,
                                                     int nDOF_test_element,
@@ -628,14 +629,14 @@ extern void updateNumericalDiffusionJacobian_lowmem(int nElements_global,
                                                     double* grad_w_dV,
                                                     double* jacobian_weak_residual);
 extern void calculateScalarScalarProduct(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   double *s1,
   double *s2,
   double *sResult
 );
 extern void calculateVectorScalarProduct(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *v,
@@ -643,7 +644,7 @@ extern void calculateVectorScalarProduct(
   double *vResult
 );
 extern void calculateTensorScalarProduct(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *t,
@@ -651,196 +652,196 @@ extern void calculateTensorScalarProduct(
   double *tResult
 );
 extern void updateInteriorElementBoundaryFlux(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *flux,
   double *w_dS,
   double *residual
 );
 extern void updateExteriorElementBoundaryFlux(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *flux,
   double *w_dS,
   double *residual
 );
 extern void updateGlobalResidualFromElementResidual(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nDOF_test_element,
-  int offset_r,
-  int stride_r,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   double *elementResidual,
   double *globalResidual
 );
 extern void updateGlobalJacobianFromElementJacobian_dense(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementJacobian,
   double *globalJacobian
 );
 extern void updateGlobalJacobianFromElementJacobian_eb_dense(
-  int *elementNeighbors,
-  int nElements_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementJacobian_eb,
   double *globalJacobian
 );
 extern void updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_dense(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementBoundaryFluxJacobian,
   double *w_dS,
   double *jac
 );
 extern void
 updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_eb_dense(
-  int *elementNeighbors,
-  int nElements_global,
-  int nInteriorElementBoundaries_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nElements_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementBoundaryFluxJacobian_eb,
   double *w_dS,
   double *jac
 );
 extern void updateGlobalJacobianFromExteriorElementBoundaryFluxJacobian_dense(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementBoundaryFluxJacobian,
   double *w_dS,
   double *jac
 );
 extern void
 updateGlobalJacobianFromExteriorElementBoundaryFluxJacobian_eb_dense(
-  int *elementNeighbors,
-  int nElements_global,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nElements_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int offset_r,
-  int stride_r,
-  int offset_u,
-  int stride_u,
-  int nFreeVDOF_global,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t offset_r,
+  proteus_index_t stride_r,
+  proteus_index_t offset_u,
+  proteus_index_t stride_u,
+  proteus_index_t nFreeVDOF_global,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
-  int *freeGlobal_r,
+  proteus_index_t *freeGlobal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *freeGlobal_u,
+  proteus_index_t *freeGlobal_u,
   double *elementBoundaryFluxJacobian_eb,
   double *w_dS,
   double *jac
 );
 extern void updateGlobalJacobianFromElementJacobian_CSR(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nDOF_test_element,
   int nDOF_trial_element,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_ru,
   double *elementJacobian,
   double *globalJacobian
 );
 extern void updateGlobalJacobianFromElementJacobian_eb_CSR(
-  int *elementNeighbors,
-  int nElements_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nDOF_test_element,
   int nDOF_trial_element,
@@ -848,91 +849,91 @@ extern void updateGlobalJacobianFromElementJacobian_eb_CSR(
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_eb_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_eb_ru,
   double *elementJacobian_eb,
   double *globalJacobian
 );
 extern void updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_CSR(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_eb_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_eb_ru,
   double *elementBoundaryFluxJacobian,
   double *w_dS,
   double *jac
 );
 extern void updateGlobalJacobianFromExteriorElementBoundaryFluxJacobian_CSR(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_eb_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_eb_ru,
   double *elementBoundaryFluxJacobian,
   double *w_dS,
   double *jac
 );
 extern void updateGlobalJacobianFromInteriorElementBoundaryFluxJacobian_eb_CSR(
-  int *elementNeighbors,
-  int nInteriorElementBoundaries_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_eb_eNebN_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_eb_eNebN_ru,
   double *elementBoundaryFluxJacobian_eb,
   double *w_dS,
   double *jac
 );
 extern void updateGlobalJacobianFromExteriorElementBoundaryFluxJacobian_eb_CSR(
-  int *elementNeighbors,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t *elementNeighbors,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nDOF_trial_element,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   int *nFreeDOF_element_r,
   int *freeLocal_r,
   int *nFreeDOF_element_u,
   int *freeLocal_u,
-  int *csrRowIndeces_ru,
-  int *csrColumnOffsets_eb_eNebN_ru,
+  proteus_index_t *csrRowIndeces_ru,
+  proteus_index_t *csrColumnOffsets_eb_eNebN_ru,
   double *elementBoundaryFluxJacobian_eb,
   double *w_dS,
   double *jac
 );
 extern void calculateWeightedShape(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   double *dVR,
@@ -941,7 +942,7 @@ extern void calculateWeightedShape(
   double *w_dV
 );
 extern void calculateWeightedShapeGradients(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -951,7 +952,7 @@ extern void calculateWeightedShapeGradients(
   double *grad_w_dV
 );
 extern void calculateShape_X_weightedShape(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -960,7 +961,7 @@ extern void calculateShape_X_weightedShape(
   double *v_X_w_dV
 );
 extern void calculateShape_X_weightedGradShape(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -970,7 +971,7 @@ extern void calculateShape_X_weightedGradShape(
   double *v_X_grad_w_dV
 );
 extern void calculateGradShape_X_weightedShape(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -980,7 +981,7 @@ extern void calculateGradShape_X_weightedShape(
   double *grad_v_X_w_dV
 );
 extern void calculateGradShape_X_weightedGradShape(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
@@ -990,7 +991,7 @@ extern void calculateGradShape_X_weightedGradShape(
   double *grad_v_X_grad_w_dV
 );
 extern void calculateWeightedShapeTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_test_element,
@@ -1000,7 +1001,7 @@ extern void calculateWeightedShapeTrace(
   double *w_dS
 );
 extern void calculateShape_X_weightedShapeTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_trial_element,
@@ -1010,7 +1011,7 @@ extern void calculateShape_X_weightedShapeTrace(
   double *v_X_w_dS
 );
 extern void calculateGradShape_X_weightedShapeTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_trial_element,
@@ -1021,14 +1022,14 @@ extern void calculateGradShape_X_weightedShapeTrace(
   double *grad_v_X_w_dS
 );
 extern void calculateIntegrationWeights(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   double *abs_det_J,
   double *referenceWeights,
   double *weights
 );
 extern void calculateElementBoundaryIntegrationWeights(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   double *sqrt_det_g,
@@ -1036,63 +1037,63 @@ extern void calculateElementBoundaryIntegrationWeights(
   double *weights
 );
 extern void calculateFiniteElementFunctionValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nComponents,
-  int *l2g,
+  proteus_index_t *l2g,
   double *dof,
   double *v,
   double *u
 );
 extern void calculateFiniteElementFunctionGradientValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nComponents,
   int nSpace,
-  int *l2g,
+  proteus_index_t *l2g,
   double *dof,
   double *grad_v,
   double *grad_u
 );
 extern void calculateFiniteElementFunctionGradientTensorValues(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nDOF_test_element,
   int nComponents,
   int nSpace,
-  int *l2g,
+  proteus_index_t *l2g,
   double *dof,
   double *grad_v_X_grad_w_dV,
   double *grad_u_X_grad_w_dV
 );
 extern void calculateFiniteElementFunctionValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_trial_element,
   int nComponents,
-  int *l2g,
+  proteus_index_t *l2g,
   double *dof,
   double *v,
   double *u
 );
 extern void calculateFiniteElementFunctionGradientValuesTrace(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_trial_element,
   int nComponents,
   int nSpace,
-  int *l2g,
+  proteus_index_t *l2g,
   double *dof,
   double *grad_v,
   double *grad_u
 );
 extern void calculateFlowVelocity(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *f,
@@ -1106,23 +1107,23 @@ extern void updateAddJacobian_CSR(
   double *jac
 );
 extern void zeroJacobian_CSR(
-  int nNonzeros,
+  proteus_index_t nNonzeros,
   double *jac
 );
 extern void setInflowFlux(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nQuadraturePoints_elementBoundary,
-  int *exteriorElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
   double *inflowFlux,
   double *flux
 );
 extern void calculateInteriorElementBoundaryVelocities(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *m,
   double *a,
@@ -1134,12 +1135,12 @@ extern void calculateInteriorElementBoundaryVelocities(
   double *mJump
 );
 extern void calculateExteriorElementBoundaryVelocities(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *m,
   double *a,
@@ -1151,21 +1152,21 @@ extern void calculateExteriorElementBoundaryVelocities(
   double *mJump
 );
 extern void calculateConservationResidualPWL(
-  int nElements_global,
-  int nInteriorElementBoundaries_global,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nElements_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nNodes_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
-  int *elementNodes,
-  int *nodeStarElements,
-  int *nodeStarElementNeighbors,
-  int *nodeStarOffsets,
+  proteus_index_t *elementNodes,
+  proteus_index_t *nodeStarElements,
+  proteus_index_t *nodeStarElementNeighbors,
+  proteus_index_t *nodeStarOffsets,
   int *nElements_node,
   double *elementResidual,
   double *vAverage,
@@ -1179,55 +1180,55 @@ extern void calculateConservationResidualPWL(
   double *vConservative_element
 );
 extern void calculateConservationJacobianPWL(
-  int nNodes_global,
-  int nNodes_internal,
-  int nElements_global,
-  int nInteriorElementBoundaries_global,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nNodes_global,
+  proteus_index_t nNodes_internal,
+  proteus_index_t nElements_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nNodes_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
-  int *elementNodes,
-  int *nodeStarElements,
-  int *nodeStarElementNeighbors,
-  int *nodeStarOffsets,
-  int *nodeStarJacobianOffsets,
+  proteus_index_t *elementNodes,
+  proteus_index_t *nodeStarElements,
+  proteus_index_t *nodeStarElementNeighbors,
+  proteus_index_t *nodeStarOffsets,
+  proteus_index_t *nodeStarJacobianOffsets,
   int *nElements_node,
-  int *internalNodes,
+  proteus_index_t *internalNodes,
   double *w,
   double *normal,
   double *starJacobian
 );
 extern void calculateConservationFluxPWL(
-  int nNodes_global,
-  int nNodes_internal,
+  proteus_index_t nNodes_global,
+  proteus_index_t nNodes_internal,
   int *nElements_node,
-  int *nodeStarOffsets,
-  int *nodeStarJacobianOffsets,
-  int *internalNodes,
+  proteus_index_t *nodeStarOffsets,
+  proteus_index_t *nodeStarJacobianOffsets,
+  proteus_index_t *internalNodes,
   double *starR,
   double *starJ,
   double *starU
 );
 extern void setExteriorGlobalElementBoundaryVelocityValues(
   int updateFluxValues,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *n,
   double *vn_in,
   double *v_out
 );
 extern void calculateDimensionlessNumbersADR(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   int computeDiffusiveTimeStepLimit,
@@ -1240,12 +1241,12 @@ extern void calculateDimensionlessNumbersADR(
   double *pe,
   double *cfl
 );
-extern void calculateDimensionlessNumbersADR_sd(int nElements_global,
+extern void calculateDimensionlessNumbersADR_sd(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          int nSpace,
                                          int computeDiffusiveTimeStepLimit,
-                                         int* rowptr,
-                                         int* colind,
+                                         proteus_index_t* rowptr,
+                                         proteus_index_t* colind,
                                          double* elementDiameter,
                                          double* df,
                                          double* a,
@@ -1255,7 +1256,7 @@ extern void calculateDimensionlessNumbersADR_sd(int nElements_global,
                                          double* pe,
                                          double* cfl);
 extern void calculateCFLADR(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -1264,131 +1265,131 @@ extern void calculateCFLADR(
   double *cfl
 );
 extern void updateInteriorElementBoundaryDiffusiveVelocity(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *a,
   double *grad_phi,
   double *velocity
 );
-extern void updateInteriorElementBoundaryDiffusiveVelocity_sd(int nInteriorElementBoundaries_global,
+extern void updateInteriorElementBoundaryDiffusiveVelocity_sd(proteus_index_t nInteriorElementBoundaries_global,
 							      int nElementBoundaries_element,
 							      int nQuadraturePoints_elementBoundary,
 							      int nSpace,
-							      int* rowptr,
-							      int* colind,
-							      int* interiorElementBoundaries,
-							      int* elementBoundaryElements,
+							      proteus_index_t* rowptr,
+							      proteus_index_t* colind,
+							      proteus_index_t* interiorElementBoundaries,
+							      proteus_index_t* elementBoundaryElements,
 							      int* elementBoundaryLocalElementBoundaries,
 							      double* a,
 							      double* grad_phi,
 							      double* velocity);
 extern void updateExteriorElementBoundaryDiffusiveVelocity(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *a,
   double *grad_phi,
   double *velocity
 );
-extern void updateExteriorElementBoundaryDiffusiveVelocity_sd(int nExteriorElementBoundaries_global,
+extern void updateExteriorElementBoundaryDiffusiveVelocity_sd(proteus_index_t nExteriorElementBoundaries_global,
 							      int nElementBoundaries_element,
 							      int nQuadraturePoints_elementBoundary,
 							      int nSpace,
-							      int* rowptr,
-							      int* colind,
-							      int* exteriorElementBoundaries,
-							      int* elementBoundaryElements,
+							      proteus_index_t* rowptr,
+							      proteus_index_t* colind,
+							      proteus_index_t* exteriorElementBoundaries,
+							      proteus_index_t* elementBoundaryElements,
 							      int* elementBoundaryLocalElementBoundaries,
 							      double* a,
 							      double* grad_phi,
 							      double* velocity);
 extern void updateInteriorElementBoundaryAdvectiveVelocity(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *f,
   double *velocity
 );
 extern void updateExteriorElementBoundaryAdvectiveVelocity(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *f,
   double *velocity
 );
 extern void updateInteriorElementBoundaryShockCapturingVelocity(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nQuadraturePoints_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *numDiff,
   double *grad_u,
   double *velocity
 );
 extern void updateExteriorElementBoundaryShockCapturingVelocity(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nQuadraturePoints_element,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *numDiff,
   double *grad_u,
   double *velocity
 );
 extern void calculateInteriorElementBoundaryAverageVelocity(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *v,
   double *vAverage
 );
 extern void calculateExteriorElementBoundaryAverageVelocity(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *v,
   double *vAverage
 );
 extern void calculateConservationResidualDG(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nDOF_test_element,
   double *elementResidual,
   double *conservationResidual
 );
 extern void calculateConservationResidual(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nDOF_test_element,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
@@ -1400,16 +1401,16 @@ extern void calculateConservationResidual(
   double *conservationResidual
 );
 extern void calculateConservationResidualGlobalBoundaries(
-  int nElements_global,
-  int nInteriorElementBoundaries_global,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nElements_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nNodes_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *dS,
   double *normal,
@@ -1418,37 +1419,37 @@ extern void calculateConservationResidualGlobalBoundaries(
   double *conservationResidual
 );
 extern void copyGlobalElementBoundaryVelocityToElementBoundary(
-  int nElements_global,
-  int nInteriorElementBoundaries_global,
-  int nExteriorElementBoundaries_global,
-  int nElementBoundaries_global,
+  proteus_index_t nElements_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
+  proteus_index_t nElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElementsArray,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElementsArray,
   int *elementBoundaryLocalElementBoundariesArray,
   double *velocityBoundary_global,
   double *velocityBoundary_element
 );
 extern void loadBoundaryFluxIntoGlobalElementBoundaryVelocity(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nQuadraturePoints_elementBoundary,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *fluxElementBoundaries,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *fluxElementBoundaries,
   double *normal,
   double *flux,
   double updateCoef,
   double *velocity
 );
 extern void calculateInteriorNumericalTrace_Potential(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *phi,
   double *dphi,
@@ -1458,11 +1459,11 @@ extern void calculateInteriorNumericalTrace_Potential(
 );
 extern void calculateExteriorNumericalTrace_Potential(
   int *isDOFBoundary,
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *phi_bc,
   double *phi,
@@ -1471,13 +1472,13 @@ extern void calculateExteriorNumericalTrace_Potential(
   double *dphi_trace_left
 );
 extern void updateInteriorElementBoundary_MixedForm_weak(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *n,
   double *phi_trace,
@@ -1485,13 +1486,13 @@ extern void updateInteriorElementBoundary_MixedForm_weak(
   double *b
 );
 extern void updateInteriorElementBoundary_MixedForm_weakJacobian(
-  int nInteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nSpace,
-  int *interiorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *interiorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *n,
   double *dphi_trace_left,
@@ -1502,13 +1503,13 @@ extern void updateInteriorElementBoundary_MixedForm_weakJacobian(
   double *db_eb
 );
 extern void updateExteriorElementBoundary_MixedForm_weak(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *n,
   double *phi_trace,
@@ -1516,13 +1517,13 @@ extern void updateExteriorElementBoundary_MixedForm_weak(
   double *b
 );
 extern void updateExteriorElementBoundary_MixedForm_weakJacobian(
-  int nExteriorElementBoundaries_global,
+  proteus_index_t nExteriorElementBoundaries_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_elementBoundary,
   int nDOF_test_element,
   int nSpace,
-  int *exteriorElementBoundaries,
-  int *elementBoundaryElements,
+  proteus_index_t *exteriorElementBoundaries,
+  proteus_index_t *elementBoundaryElements,
   int *elementBoundaryLocalElementBoundaries,
   double *n,
   double *dphi_trace_left,
@@ -1532,7 +1533,7 @@ extern void updateExteriorElementBoundary_MixedForm_weakJacobian(
   double *db_eb
 );
 extern void updatePotential_MixedForm_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -1541,7 +1542,7 @@ extern void updatePotential_MixedForm_weak(
   double *b
 );
 extern void updatePotential_MixedForm_weakJacobian(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -1551,7 +1552,7 @@ extern void updatePotential_MixedForm_weakJacobian(
   double *db
 );
 extern void calculateVelocityQuadrature_MixedForm(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_element,
@@ -1565,7 +1566,7 @@ extern void calculateVelocityQuadrature_MixedForm(
   double *qV
 );
 extern void calculateVelocityQuadrature_MixedForm_Jacobian(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
   int nDOF_element,
@@ -1582,14 +1583,14 @@ extern void calculateVelocityQuadrature_MixedForm_Jacobian(
   double *qDV_eb
 );
 extern void calculateVelocityProjectionMatrixLDG(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *vXw_dV,
   double *A_inv
 );
 extern void updateDiffusion_MixedForm_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_test_element,
   int nSpace,
@@ -1599,7 +1600,7 @@ extern void updateDiffusion_MixedForm_weak(
   double *weak_residual
 );
 extern void updateDiffusionJacobian_MixedForm_weak(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
@@ -1616,7 +1617,7 @@ extern void updateDiffusionJacobian_MixedForm_weak(
   double *jacobian_weak_residual_eb
 );
 extern void estimate_mt(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_element,
   double *v,
@@ -1624,74 +1625,74 @@ extern void estimate_mt(
   double *elementSpatialResidual,
   double *mt
   );
-extern void estimate_mt_lowmem(int nElements_global,
+extern void estimate_mt_lowmem(proteus_index_t nElements_global,
                                int nQuadraturePoints_element,
                                int nDOF_element,
                                double* v,
                                double* w_dV,
                                double* elementSpatialResidual,
                                double* mt);
-extern double scalarDomainIntegral(int nElements_global,
+extern double scalarDomainIntegral(proteus_index_t nElements_global,
                                    int nQuadraturePoints_element,
                                    double* dV,
                                    double* nValueArray);
-extern double scalarHeavisideDomainIntegral(int nElements_global,
+extern double scalarHeavisideDomainIntegral(proteus_index_t nElements_global,
                                             int nQuadraturePoints_element,
                                             double* dV,
                                             double* nValueArray);
-extern double scalarSmoothedHeavisideDomainIntegral(int nElements_global,
+extern double scalarSmoothedHeavisideDomainIntegral(proteus_index_t nElements_global,
 						    int nQuadraturePoints_element,
 						    double epsFact,
 						    double* elementDiameter,
 						    double* dV,
 						    double* nValueArray);
-extern double fluxDomainBoundaryIntegral(int nExteriorElementBoundaries,
-					 int nElementBoundaries_owned,
+extern double fluxDomainBoundaryIntegral(proteus_index_t nExteriorElementBoundaries,
+					 proteus_index_t nElementBoundaries_owned,
                                          int nQuadraturePoints_elementBoundary,
                                          int* flag,
-                                         int* exteriorElementBoundariesArray,
+                                         proteus_index_t* exteriorElementBoundariesArray,
                                          double* dS,
                                          double* nValueArray);
 
-extern double fluxDomainBoundaryIntegralFromVector(int nExteriorElementBoundaries,
-						   int nElementBoundaries_owned,
+extern double fluxDomainBoundaryIntegralFromVector(proteus_index_t nExteriorElementBoundaries,
+						   proteus_index_t nElementBoundaries_owned,
 						   int nQuadraturePoints_elementBoundary,
 						   int nSpace,
 						   int* flag,
-						   int* exteriorElementBoundaries,
+						   proteus_index_t* exteriorElementBoundaries,
 						   double* dS,
 						   double* nValueArray,
 						   double* normal);
 extern
-void copyExteriorElementBoundaryValuesFromElementBoundaryValues(int nExteriorElementBoundaries_global,
-								int nElements_global,
+void copyExteriorElementBoundaryValuesFromElementBoundaryValues(proteus_index_t nExteriorElementBoundaries_global,
+								proteus_index_t nElements_global,
 								int nElementBoundaries_element,
 								int nQuadraturePoints_elementBoundary,
 								int nValuesPerQuadraturePoint,
-								const int * exteriorElementBoundaries,
-								const int* elementBoundaryElements,
+								const proteus_index_t * exteriorElementBoundaries,
+								const proteus_index_t* elementBoundaryElements,
 								const int * elementBoundaryLocalElementBoundaries,
 								const double * ebq_val,
 								double * ebqe_val);
 
 extern
-void copyExteriorElementBoundaryValuesToElementBoundaryValues(int nExteriorElementBoundaries_global,
-							      int nElements_global,
+void copyExteriorElementBoundaryValuesToElementBoundaryValues(proteus_index_t nExteriorElementBoundaries_global,
+							      proteus_index_t nElements_global,
 							      int nElementBoundaries_element,
 							      int nQuadraturePoints_elementBoundary,
 							      int nValuesPerQuadraturePoint,
-							      const int * exteriorElementBoundaries,
-							      const int* elementBoundaryElements,
+							      const proteus_index_t * exteriorElementBoundaries,
+							      const proteus_index_t* elementBoundaryElements,
 							      const int * elementBoundaryLocalElementBoundaries,
 							      const double * ebqe_val,
 							      double * ebq_val);
 
 extern
-void copyExteriorElementBoundaryValuesToGlobalElementBoundaryValues(int nExteriorElementBoundaries_global,
+void copyExteriorElementBoundaryValuesToGlobalElementBoundaryValues(proteus_index_t nExteriorElementBoundaries_global,
 								    int nQuadraturePoints_elementBoundary,
 								    int nValuesPerQuadraturePoint,
-								    const int * exteriorElementBoundaries,
-								    const int* elementBoundaryElements,
+								    const proteus_index_t * exteriorElementBoundaries,
+								    const proteus_index_t* elementBoundaryElements,
 								    const int * elementBoundaryLocalElementBoundaries,
 								    const double * ebqe_val,
 								    double * ebq_global_val);
@@ -1699,11 +1700,11 @@ void copyExteriorElementBoundaryValuesToGlobalElementBoundaryValues(int nExterio
 
 
 extern
-void copyExteriorElementBoundaryValuesFromGlobalElementBoundaryValues(int nExteriorElementBoundaries_global,
+void copyExteriorElementBoundaryValuesFromGlobalElementBoundaryValues(proteus_index_t nExteriorElementBoundaries_global,
 								      int nQuadraturePoints_elementBoundary,
 								      int nValuesPerQuadraturePoint,
-								      const int * exteriorElementBoundaries,
-								      const int* elementBoundaryElements,
+								      const proteus_index_t * exteriorElementBoundaries,
+								      const proteus_index_t* elementBoundaryElements,
 								      const int * elementBoundaryLocalElementBoundaries,
 								      const double * ebq_global_val,
 								      double * ebqe_val);
@@ -1712,41 +1713,41 @@ void copyExteriorElementBoundaryValuesFromGlobalElementBoundaryValues(int nExter
 
 
 extern
-void computeC0P1InterpolantDGP0(int nElements_global,
-				int nNodes_global,
+void computeC0P1InterpolantDGP0(proteus_index_t nElements_global,
+				proteus_index_t nNodes_global,
 				int nNodes_element,
 				int nDOF_element,
 				int dim_dof,
-				const int* elementNodesArray,
-				const int* nodeElementOffsets,
-				const int* nodeElementsArray,
-				const int* l2g,
+				const proteus_index_t* elementNodesArray,
+				const proteus_index_t* nodeElementOffsets,
+				const proteus_index_t* nodeElementsArray,
+				const proteus_index_t* l2g,
 				const double * dof,
 				double* nodalAverage);
 
 extern
-void computeC0P1InterpolantNCP1(int nElements_global,
-				int nNodes_global,
+void computeC0P1InterpolantNCP1(proteus_index_t nElements_global,
+				proteus_index_t nNodes_global,
 				int nNodes_element,
 				int nDOF_element,
 				int dim_dof,
-				const int* elementNodesArray,
-				const int* nodeElementOffsets,
-				const int* nodeElementsArray,
-				const int* l2g,
+				const proteus_index_t* elementNodesArray,
+				const proteus_index_t* nodeElementOffsets,
+				const proteus_index_t* nodeElementsArray,
+				const proteus_index_t* l2g,
 				const double * dof,
 				double* nodalAverage);
 
 extern
-void computeC0P1InterpolantDGP12(int nElements_global,
-				 int nNodes_global,
+void computeC0P1InterpolantDGP12(proteus_index_t nElements_global,
+				 proteus_index_t nNodes_global,
 				 int nNodes_element,
 				 int nDOF_element,
 				 int dim_dof,
-				 const int* elementNodesArray,
-				 const int* nodeElementOffsets,
-				 const int* nodeElementsArray,
-				 const int* l2g,
+				 const proteus_index_t* elementNodesArray,
+				 const proteus_index_t* nodeElementOffsets,
+				 const proteus_index_t* nodeElementsArray,
+				 const proteus_index_t* l2g,
 				 const double * dof,
 				 double* nodalAverage);
 
@@ -1757,9 +1758,9 @@ extern
 void parametricFiniteElementSpace_getValuesGlobalExteriorTrace(int nElementBoundaries_element,
 							       int nElementBoundaryQuadraturePoints_elementBoundary,
 							       int nDOF_element,
-							       int nExteriorElementBoundaries_global,
-							       const int* exteriorElementBoundariesArray,
-							       const int* elementBoundaryElementsArray,
+							       proteus_index_t nExteriorElementBoundaries_global,
+							       const proteus_index_t* exteriorElementBoundariesArray,
+							       const proteus_index_t* elementBoundaryElementsArray,
 							       const int* elementBoundaryLocalElementBoundariesArray,
 							       double* psi,
 							       double* vArray);
@@ -1770,9 +1771,9 @@ void parametricFiniteElementSpace_getGradientValuesGlobalExteriorTrace(int nElem
 								       int nElementBoundaryQuadraturePoints_elementBoundary,
 								       int nDOF_element,
 								       int nSpace_global,
-								       int nExteriorElementBoundaries_global,
-								       const int *exteriorElementBoundariesArray,
-								       const int *elementBoundaryElementsArray,
+								       proteus_index_t nExteriorElementBoundaries_global,
+								       const proteus_index_t *exteriorElementBoundariesArray,
+								       const proteus_index_t *elementBoundaryElementsArray,
 								       const int *elementBoundaryLocalElementBoundariesArray,
 								       double* grad_psi,
 								       double* inverseJacobianArray,
@@ -1783,12 +1784,12 @@ extern
 void parametricMaps_getValuesGlobalExteriorTrace(int nQuadraturePoints_elementBoundary,
 						 int nDOF_element,
 						 int nSpace_global,
-						 int nExteriorElementBoundaries_global,
-						 const int* exteriorElementBoundariesArray,
-						 const int* elementBoundaryElementsArray,
+						 proteus_index_t nExteriorElementBoundaries_global,
+						 const proteus_index_t* exteriorElementBoundariesArray,
+						 const proteus_index_t* elementBoundaryElementsArray,
 						 const int* elementBoundaryLocalElementBoundariesArray,
 						 double* psi,
-						 int* l2g,
+						 proteus_index_t* l2g,
 						 double* nodeArray,
 						 double* xArray);
 
@@ -1797,12 +1798,12 @@ extern
 void parametricMaps_getInverseValuesGlobalExteriorTrace(int nElementBoundaryQuadraturePoints_elementBoundary,
 							int nDOF_element,
 							int nSpace_global,
-							int nExteriorElementBoundaries_global,
-							const int* exteriorElementBoundariesArray,
-							const int* elementBoundaryElementsArray,
+							proteus_index_t nExteriorElementBoundaries_global,
+							const proteus_index_t* exteriorElementBoundariesArray,
+							const proteus_index_t* elementBoundaryElementsArray,
 							const int* elementBoundaryLocalElementBoundariesArray,
 							double* inverseJacobian,
-							int* l2g,
+							proteus_index_t* l2g,
 							double* nodeArray,
 							double* xArray,
 							double* xiArray);
@@ -1812,14 +1813,14 @@ void parametricMaps_getInverseValuesGlobalExteriorTrace(int nElementBoundaryQuad
 extern
 void parametricMaps_getJacobianValuesGlobalExteriorTrace1D(int nQuadraturePoints_element,
 							   int nDOF_element,
-							   int nExteriorElementBoundaries_global,
-							   const int * exteriorElementBoundariesArray,
-							   const int * elementBoundaryElementsArray,
+							   proteus_index_t nExteriorElementBoundaries_global,
+							   const proteus_index_t * exteriorElementBoundariesArray,
+							   const proteus_index_t * elementBoundaryElementsArray,
 							   const int * elementBoundaryLocalElementBoundariesArray,
 							   double* grad_psi,
 							   double* boundaryNormals,
 							   double* boundaryJacobians,
-							   int* l2g,
+							   proteus_index_t* l2g,
 							   double* nodeArray,
 							   double* jacobianInverseArray,
 							   double* metricTensorArray,
@@ -1833,14 +1834,14 @@ void parametricMaps_getJacobianValuesGlobalExteriorTrace1D(int nQuadraturePoints
 extern
 void parametricMaps_getJacobianValuesGlobalExteriorTrace2D(int nQuadraturePoints_element,
 							   int nDOF_element,
-							   int nExteriorElementBoundaries_global,
-							   const int * exteriorElementBoundariesArray,
-							   const int * elementBoundaryElementsArray,
+							   proteus_index_t nExteriorElementBoundaries_global,
+							   const proteus_index_t * exteriorElementBoundariesArray,
+							   const proteus_index_t * elementBoundaryElementsArray,
 							   const int * elementBoundaryLocalElementBoundariesArray,
 							   double* grad_psi,
 							   double* boundaryNormals,
 							   double* boundaryJacobians,
-							   int* l2g,
+							   proteus_index_t* l2g,
 							   double* nodeArray,
 							   double* jacobianInverseArray,
 							   double* metricTensorArray,
@@ -1849,15 +1850,15 @@ void parametricMaps_getJacobianValuesGlobalExteriorTrace2D(int nQuadraturePoints
 extern
 void parametricMaps_getJacobianValuesGlobalExteriorTrace2D_movingDomain(int nQuadraturePoints_element,
 									int nDOF_element,
-									int nExteriorElementBoundaries_global,
-									const int * exteriorElementBoundariesArray,
-									const int * elementBoundaryElementsArray,
+									proteus_index_t nExteriorElementBoundaries_global,
+									const proteus_index_t * exteriorElementBoundariesArray,
+									const proteus_index_t * elementBoundaryElementsArray,
 									const int * elementBoundaryLocalElementBoundariesArray,
 									double* xtArray,
 									double* grad_psi,
 									double* boundaryNormals,
 									double* boundaryJacobians,
-									int* l2g,
+									proteus_index_t* l2g,
 									double* nodeArray,
 									double* jacobianInverseArray,
 									double* metricTensorArray,
@@ -1866,14 +1867,14 @@ void parametricMaps_getJacobianValuesGlobalExteriorTrace2D_movingDomain(int nQua
 extern
 void parametricMaps_getJacobianValuesGlobalExteriorTrace3D(int nQuadraturePoints_element,
 							   int nDOF_element,
-							   int nExteriorElementBoundaries_global,
-							   const int * exteriorElementBoundariesArray,
-							   const int * elementBoundaryElementsArray,
+							   proteus_index_t nExteriorElementBoundaries_global,
+							   const proteus_index_t * exteriorElementBoundariesArray,
+							   const proteus_index_t * elementBoundaryElementsArray,
 							   const int * elementBoundaryLocalElementBoundariesArray,
 							   double* grad_psi,
 							   double* boundaryNormals,
 							   double* boundaryJacobians,
-							   int* l2g,
+							   proteus_index_t* l2g,
 							   double* nodeArray,
 							   double* jacobianInverseArray,
 							   double* metricTensorArray,
@@ -1882,11 +1883,11 @@ void parametricMaps_getJacobianValuesGlobalExteriorTrace3D(int nQuadraturePoints
 
 
 extern
-void updateGlobalExteriorElementBoundaryFlux(int nExteriorElementBoundaries_global,
+void updateGlobalExteriorElementBoundaryFlux(proteus_index_t nExteriorElementBoundaries_global,
 					     int nQuadraturePoints_elementBoundary,
 					     int nDOF_test_element,
-					     int* exteriorElementBoundaries,
-					     int* elementBoundaryElements,
+					     proteus_index_t* exteriorElementBoundaries,
+					     proteus_index_t* elementBoundaryElements,
 					     int* elementBoundaryLocalElementBoundaries,
 					     double* flux,
 					     double* w_dS,
@@ -1895,68 +1896,68 @@ void updateGlobalExteriorElementBoundaryFlux(int nExteriorElementBoundaries_glob
 
 
 extern
-void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_eb_dense(int* elementNeighbors,
-										int nElements_global,
-										int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_eb_dense(proteus_index_t* elementNeighbors,
+										proteus_index_t nElements_global,
+										proteus_index_t nExteriorElementBoundaries_global,
 										int nElementBoundaries_element,
 										int nQuadraturePoints_elementBoundary,
 										int nDOF_test_element,
 										int nDOF_trial_element,
-										int offset_r,
-										int stride_r,
-										int offset_u,
-										int stride_u,
-										int nFreeVDOF_global,
-										int* exteriorElementBoundaries,
-										int* elementBoundaryElements,
+										proteus_index_t offset_r,
+										proteus_index_t stride_r,
+										proteus_index_t offset_u,
+										proteus_index_t stride_u,
+										proteus_index_t nFreeVDOF_global,
+										proteus_index_t* exteriorElementBoundaries,
+										proteus_index_t* elementBoundaryElements,
 										int* elementBoundaryLocalElementBoundaries,
 										int* nFreeDOF_element_r,
 										int* freeLocal_r,
-										int* freeGlobal_r,
+										proteus_index_t* freeGlobal_r,
 										int* nFreeDOF_element_u,
 										int* freeLocal_u,
-										int* freeGlobal_u,
+										proteus_index_t* freeGlobal_u,
 										double* elementBoundaryFluxJacobian_eb,
 										double* w_dS,
 										double* jac);
 
 extern
-void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_dense(int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_dense(proteus_index_t nExteriorElementBoundaries_global,
 									     int nQuadraturePoints_elementBoundary,
 									     int nDOF_test_element,
 									     int nDOF_trial_element,
-									     int offset_r,
-									     int stride_r,
-									     int offset_u,
-									     int stride_u,
-									     int nFreeVDOF_global,
-									     int* exteriorElementBoundaries,
-									     int* elementBoundaryElements,
+									     proteus_index_t offset_r,
+									     proteus_index_t stride_r,
+									     proteus_index_t offset_u,
+									     proteus_index_t stride_u,
+									     proteus_index_t nFreeVDOF_global,
+									     proteus_index_t* exteriorElementBoundaries,
+									     proteus_index_t* elementBoundaryElements,
 									     int* elementBoundaryLocalElementBoundaries,
 									     int* nFreeDOF_element_r,
 									     int* freeLocal_r,
-									     int* freeGlobal_r,
+									     proteus_index_t* freeGlobal_r,
 									     int* nFreeDOF_element_u,
 									     int* freeLocal_u,
-									     int* freeGlobal_u,
+									     proteus_index_t* freeGlobal_u,
 									     double* elementBoundaryFluxJacobian,
 									     double* w_dS,
 									     double* jac);
 
 extern
-void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_CSR(int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_CSR(proteus_index_t nExteriorElementBoundaries_global,
 									   int nQuadraturePoints_elementBoundary,
 									   int nDOF_test_element,
 									   int nDOF_trial_element,
-									   int* exteriorElementBoundaries,
-									   int* elementBoundaryElements,
+									   proteus_index_t* exteriorElementBoundaries,
+									   proteus_index_t* elementBoundaryElements,
 									   int* elementBoundaryLocalElementBoundaries,
 									   int* nFreeDOF_element_r,
 									   int* freeLocal_r,
 									   int* nFreeDOF_element_u,
 									   int* freeLocal_u,
-									   int* csrRowIndeces_ru,
-									   int* csrColumnOffsets_eb_ru,
+									   proteus_index_t* csrRowIndeces_ru,
+									   proteus_index_t* csrColumnOffsets_eb_ru,
 									   double* elementBoundaryFluxJacobian,
 									   double* w_dS,
 									   double* jac);
@@ -1964,21 +1965,21 @@ void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_CSR(int n
 
 
 extern
-void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_eb_CSR(int* elementNeighbors,
-									      int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_eb_CSR(proteus_index_t* elementNeighbors,
+									      proteus_index_t nExteriorElementBoundaries_global,
 									      int nElementBoundaries_element,
 									      int nQuadraturePoints_elementBoundary,
 									      int nDOF_test_element,
 									      int nDOF_trial_element,
-									      int* exteriorElementBoundaries,
-									      int* elementBoundaryElements,
+									      proteus_index_t* exteriorElementBoundaries,
+									      proteus_index_t* elementBoundaryElements,
 									      int* elementBoundaryLocalElementBoundaries,
 									      int* nFreeDOF_element_r,
 									      int* freeLocal_r,
 									      int* nFreeDOF_element_u,
 									      int* freeLocal_u,
-									      int* csrRowIndeces_ru,
-									      int* csrColumnOffsets_eb_eNebN_ru,
+									      proteus_index_t* csrRowIndeces_ru,
+									      proteus_index_t* csrColumnOffsets_eb_eNebN_ru,
 									      double* elementBoundaryFluxJacobian_eb,
 									      double* w_dS,
 									      double* jac);
@@ -1986,9 +1987,9 @@ void updateGlobalJacobianFromGlobalExteriorElementBoundaryFluxJacobian_eb_CSR(in
 extern
 void calculateWeightedShapeGlobalExteriorTrace(int nElementBoundaryQuadraturePoints_elementBoundary,
 					       int nDOF_test_element,
-					       int nExteriorElementBoundaries_global,
-					       const int* exteriorElementBoundariesArray,
-					       const int* elementBoundaryElementsArray,
+					       proteus_index_t nExteriorElementBoundaries_global,
+					       const proteus_index_t* exteriorElementBoundariesArray,
+					       const proteus_index_t* elementBoundaryElementsArray,
 					       const int* elementBoundaryLocalElementBoundariesArray,
 					       double* dSR,
 					       double* sqrt_det_g,
@@ -2000,9 +2001,9 @@ extern
 void calculateShape_X_weightedShapeGlobalExteriorTrace(int nElementBoundaryQuadraturePoints_elementBoundary,
 						       int nDOF_trial_element,
 						       int nDOF_test_element,
-						       int nExteriorElementBoundaries_global,
-						       const int* exteriorElementBoundariesArray,
-						       const int* elementBoundaryElementsArray,
+						       proteus_index_t nExteriorElementBoundaries_global,
+						       const proteus_index_t* exteriorElementBoundariesArray,
+						       const proteus_index_t* elementBoundaryElementsArray,
 						       const int* elementBoundaryLocalElementBoundariesArray,
 						       double* v,
 						       double* w_dS,
@@ -2013,9 +2014,9 @@ void calculateGradShape_X_weightedShapeGlobalExteriorTrace(int nElementBoundaryQ
 							   int nDOF_trial_element,
 							   int nDOF_test_element,
 							   int nSpace,
-							   int nExteriorElementBoundaries_global,
-							   const int* exteriorElementBoundariesArray,
-							   const int* elementBoundaryElementsArray,
+							   proteus_index_t nExteriorElementBoundaries_global,
+							   const proteus_index_t* exteriorElementBoundariesArray,
+							   const proteus_index_t* elementBoundaryElementsArray,
 							   const int* elementBoundaryLocalElementBoundariesArray,
 							   double* grad_v,
 							   double* w_dS,
@@ -2024,7 +2025,7 @@ void calculateGradShape_X_weightedShapeGlobalExteriorTrace(int nElementBoundaryQ
 
 extern
 void calculateGlobalExteriorElementBoundaryIntegrationWeights(int nQuadraturePoints_elementBoundary,
-							      int nExteriorElementBoundaries_global,
+							      proteus_index_t nExteriorElementBoundaries_global,
 							      double* sqrt_det_g,
 							      double* referenceWeights,
 							      double* weights);
@@ -2033,11 +2034,11 @@ extern
 void calculateFiniteElementFunctionValuesGlobalExteriorTrace(int nQuadraturePoints_elementBoundary,
 							     int nDOF_trial_element,
 							     int nComponents,
-							     int nExteriorElementBoundaries_global,
-							     const int * exteriorElementBoundariesArray,
-							     const int * elementBoundaryElementsArray,
+							     proteus_index_t nExteriorElementBoundaries_global,
+							     const proteus_index_t * exteriorElementBoundariesArray,
+							     const proteus_index_t * elementBoundaryElementsArray,
 							     const int * elementBoundaryLocalElementBoundariesArray,
-							     int* l2g,
+							     proteus_index_t* l2g,
 							     double* dof,
 							     double* v,
 							     double* u);
@@ -2047,22 +2048,22 @@ void calculateFiniteElementFunctionGradientValuesGlobalExteriorTrace(int nQuadra
 								     int nDOF_trial_element,
 								     int nComponents,
 								     int nSpace,
-								     int nExteriorElementBoundaries_global,
-								     const int * exteriorElementBoundariesArray,
-								     const int * elementBoundaryElementsArray,
+								     proteus_index_t nExteriorElementBoundaries_global,
+								     const proteus_index_t * exteriorElementBoundariesArray,
+								     const proteus_index_t * elementBoundaryElementsArray,
 								     const int * elementBoundaryLocalElementBoundariesArray,
-								     int* l2g,
+								     proteus_index_t* l2g,
 								     double* dof,
 								     double* grad_v,
 								     double* grad_u);
 
 
 extern
-void updateGlobalExteriorElementBoundaryDiffusiveVelocity(int nExteriorElementBoundaries_global,
+void updateGlobalExteriorElementBoundaryDiffusiveVelocity(proteus_index_t nExteriorElementBoundaries_global,
 							  int nQuadraturePoints_elementBoundary,
 							  int nSpace,
-							  int* exteriorElementBoundaries,
-							  int* elementBoundaryElements,
+							  proteus_index_t* exteriorElementBoundaries,
+							  proteus_index_t* elementBoundaryElements,
 							  int* elementBoundaryLocalElementBoundaries,
 							  double* a,
 							  double* grad_phi,
@@ -2070,22 +2071,22 @@ void updateGlobalExteriorElementBoundaryDiffusiveVelocity(int nExteriorElementBo
 
 
 extern
-void updateGlobalExteriorElementBoundaryAdvectiveVelocity(int nExteriorElementBoundaries_global,
+void updateGlobalExteriorElementBoundaryAdvectiveVelocity(proteus_index_t nExteriorElementBoundaries_global,
 							  int nQuadraturePoints_elementBoundary,
 							  int nSpace,
-							  int* exteriorElementBoundaries,
-							  int* elementBoundaryElements,
+							  proteus_index_t* exteriorElementBoundaries,
+							  proteus_index_t* elementBoundaryElements,
 							  int* elementBoundaryLocalElementBoundaries,
 							  double* f,
 							  double* velocity);
 
 
 extern
-void updateGlobalExteriorElementBoundaryShockCapturingVelocity(int nExteriorElementBoundaries_global,
+void updateGlobalExteriorElementBoundaryShockCapturingVelocity(proteus_index_t nExteriorElementBoundaries_global,
 							       int nQuadraturePoints_elementBoundary,
 							       int nSpace,
-							       int* exteriorElementBoundaries,
-							       int* elementBoundaryElements,
+							       proteus_index_t* exteriorElementBoundaries,
+							       proteus_index_t* elementBoundaryElements,
 							       int* elementBoundaryLocalElementBoundaries,
 							       double* numDiff,
 							       double* grad_u,
@@ -2094,29 +2095,29 @@ void updateGlobalExteriorElementBoundaryShockCapturingVelocity(int nExteriorElem
 
 
 extern
-void copyFreeUnknownsToGlobalUnknowns(int nDOF2set,
-				      int offset,
-				      int stride,
-				      const int* globalDOFids,
-				      const int* freeDOFids,
+void copyFreeUnknownsToGlobalUnknowns(proteus_index_t nDOF2set,
+				      proteus_index_t offset,
+				      proteus_index_t stride,
+				      const proteus_index_t* globalDOFids,
+				      const proteus_index_t* freeDOFids,
 				      const double * free_u,
 				      double * u);
 extern
-void copyGlobalUnknownsToFreeUnknowns(int nDOF2set,
-				      int offset,
-				      int stride,
-				      const int* globalDOFids,
-				      const int* freeDOFids,
+void copyGlobalUnknownsToFreeUnknowns(proteus_index_t nDOF2set,
+				      proteus_index_t offset,
+				      proteus_index_t stride,
+				      const proteus_index_t* globalDOFids,
+				      const proteus_index_t* freeDOFids,
 				      const double * u,
 				      double * free_u);
 extern
-void updateInteriorElementBoundaryDiffusionAdjoint(int nInteriorElementBoundaries_global,
+void updateInteriorElementBoundaryDiffusionAdjoint(proteus_index_t nInteriorElementBoundaries_global,
 						   int nElementBoundaries_element,
 						   int nQuadraturePoints_elementBoundary,
 						   int nDOF_test_element,
 						   int nSpace,
-						   int* interiorElementBoundaries,
-						   int* elementBoundaryElements,
+						   proteus_index_t* interiorElementBoundaries,
+						   proteus_index_t* elementBoundaryElements,
 						   int* elementBoundaryLocalElementBoundaries,
 						   double sigma,
 						   double* u,
@@ -2126,13 +2127,13 @@ void updateInteriorElementBoundaryDiffusionAdjoint(int nInteriorElementBoundarie
 						   double* dS,
 						   double* residual);
 extern
-void updateExteriorElementBoundaryDiffusionAdjoint(int nExteriorElementBoundaries_global,
+void updateExteriorElementBoundaryDiffusionAdjoint(proteus_index_t nExteriorElementBoundaries_global,
 						   int nQuadraturePoints_elementBoundary,
 						   int nDOF_test_element,
 						   int nSpace,
 						   int* isDOFBoundary,
-						   int* exteriorElementBoundaries,
-						   int* elementBoundaryElements,
+						   proteus_index_t* exteriorElementBoundaries,
+						   proteus_index_t* elementBoundaryElements,
 						   int* elementBoundaryLocalElementBoundaries,
 						   double sigma,
 						   double* u,
@@ -2143,26 +2144,26 @@ void updateExteriorElementBoundaryDiffusionAdjoint(int nExteriorElementBoundarie
 						   double* dS,
 						   double* residual);
 extern
-void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense(int nInteriorElementBoundaries_global,
+void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense(proteus_index_t nInteriorElementBoundaries_global,
 									   int nElementBoundaries_element,
 									   int nQuadraturePoints_elementBoundary,
 									   int nDOF_test_element,
 									   int nDOF_trial_element,
 									   int nSpace,
-									   int offset_r,
-									   int stride_r,
-									   int offset_u,
-									   int stride_u,
-									   int nFreeVDOF_global,
-									   int* interiorElementBoundaries,
-									   int* elementBoundaryElements,
+									   proteus_index_t offset_r,
+									   proteus_index_t stride_r,
+									   proteus_index_t offset_u,
+									   proteus_index_t stride_u,
+									   proteus_index_t nFreeVDOF_global,
+									   proteus_index_t* interiorElementBoundaries,
+									   proteus_index_t* elementBoundaryElements,
 									   int* elementBoundaryLocalElementBoundaries,
 									   int* nFreeDOF_element_r,
 									   int* freeLocal_r,
-									   int* freeGlobal_r,
+									   proteus_index_t* freeGlobal_r,
 									   int* nFreeDOF_element_u,
 									   int* freeLocal_u,
-									   int* freeGlobal_u,
+									   proteus_index_t* freeGlobal_u,
 									   double sigma,
 									   double* v,
 									   double* n,
@@ -2171,25 +2172,25 @@ void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense(int n
 									   double* dS,
 									   double* jac);
 extern
-void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense(int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense(proteus_index_t nExteriorElementBoundaries_global,
 									   int nQuadraturePoints_elementBoundary,
 									   int nDOF_test_element,
 									   int nDOF_trial_element,
 									   int nSpace,
-									   int offset_r,
-									   int stride_r,
-									   int offset_u,
-									   int stride_u,
-									   int nFreeVDOF_global,
-									   int* exteriorElementBoundaries,
-									   int* elementBoundaryElements,
+									   proteus_index_t offset_r,
+									   proteus_index_t stride_r,
+									   proteus_index_t offset_u,
+									   proteus_index_t stride_u,
+									   proteus_index_t nFreeVDOF_global,
+									   proteus_index_t* exteriorElementBoundaries,
+									   proteus_index_t* elementBoundaryElements,
 									   int* elementBoundaryLocalElementBoundaries,
 									   int* nFreeDOF_element_r,
 									   int* freeLocal_r,
-									   int* freeGlobal_r,
+									   proteus_index_t* freeGlobal_r,
 									   int* nFreeDOF_element_u,
 									   int* freeLocal_u,
-									   int* freeGlobal_u,
+									   proteus_index_t* freeGlobal_u,
 									   int* isDOFBoundary,
 									   double sigma,
 									   double* v,
@@ -2199,15 +2200,15 @@ void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense(int n
 									   double* dS,
 									   double* jac);
 extern
-void updateInteriorElementBoundaryDiffusionAdjoint_sd(int nInteriorElementBoundaries_global,
+void updateInteriorElementBoundaryDiffusionAdjoint_sd(proteus_index_t nInteriorElementBoundaries_global,
 						      int nElementBoundaries_element,
 						      int nQuadraturePoints_elementBoundary,
 						      int nDOF_test_element,
 						      int nSpace,
-						      int* rowptr,
-						      int* colind,
-						      int* interiorElementBoundaries,
-						      int* elementBoundaryElements,
+						      proteus_index_t* rowptr,
+						      proteus_index_t* colind,
+						      proteus_index_t* interiorElementBoundaries,
+						      proteus_index_t* elementBoundaryElements,
 						      int* elementBoundaryLocalElementBoundaries,
 						      double sigma,
 						      double* u,
@@ -2217,15 +2218,15 @@ void updateInteriorElementBoundaryDiffusionAdjoint_sd(int nInteriorElementBounda
 						      double* dS,
 						      double* residual);
 extern
-void updateExteriorElementBoundaryDiffusionAdjoint_sd(int nExteriorElementBoundaries_global,
+void updateExteriorElementBoundaryDiffusionAdjoint_sd(proteus_index_t nExteriorElementBoundaries_global,
 						      int nQuadraturePoints_elementBoundary,
 						      int nDOF_test_element,
 						      int nSpace,
-						      int* rowptr,
-						      int* colind,
+						      proteus_index_t* rowptr,
+						      proteus_index_t* colind,
 						      int* isDOFBoundary,
-						      int* exteriorElementBoundaries,
-						      int* elementBoundaryElements,
+						      proteus_index_t* exteriorElementBoundaries,
+						      proteus_index_t* elementBoundaryElements,
 						      int* elementBoundaryLocalElementBoundaries,
 						      double sigma,
 						      double* u,
@@ -2236,28 +2237,28 @@ void updateExteriorElementBoundaryDiffusionAdjoint_sd(int nExteriorElementBounda
 						      double* dS,
 						      double* residual);
 extern
-void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense_sd(int nInteriorElementBoundaries_global,
+void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense_sd(proteus_index_t nInteriorElementBoundaries_global,
 									      int nElementBoundaries_element,
 									      int nQuadraturePoints_elementBoundary,
 									      int nDOF_test_element,
 									      int nDOF_trial_element,
 									      int nSpace,
-									      int* rowptr,
-									      int* colind,
-									      int offset_r,
-									      int stride_r,
-									      int offset_u,
-									      int stride_u,
-									      int nFreeVDOF_global,
-									      int* interiorElementBoundaries,
-									      int* elementBoundaryElements,
+									      proteus_index_t* rowptr,
+									      proteus_index_t* colind,
+									      proteus_index_t offset_r,
+									      proteus_index_t stride_r,
+									      proteus_index_t offset_u,
+									      proteus_index_t stride_u,
+									      proteus_index_t nFreeVDOF_global,
+									      proteus_index_t* interiorElementBoundaries,
+									      proteus_index_t* elementBoundaryElements,
 									      int* elementBoundaryLocalElementBoundaries,
 									      int* nFreeDOF_element_r,
 									      int* freeLocal_r,
-									      int* freeGlobal_r,
+									      proteus_index_t* freeGlobal_r,
 									      int* nFreeDOF_element_u,
 									      int* freeLocal_u,
-									      int* freeGlobal_u,
+									      proteus_index_t* freeGlobal_u,
 									      double sigma,
 									      double* v,
 									      double* n,
@@ -2266,27 +2267,27 @@ void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_dense_sd(in
 									      double* dS,
 									      double* jac);
 extern
-void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense_sd(int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense_sd(proteus_index_t nExteriorElementBoundaries_global,
 									      int nQuadraturePoints_elementBoundary,
 									      int nDOF_test_element,
 									      int nDOF_trial_element,
 									      int nSpace,
-									      int* rowptr,
-									      int* colind,
-									      int offset_r,
-									      int stride_r,
-									      int offset_u,
-									      int stride_u,
-									      int nFreeVDOF_global,
-									      int* exteriorElementBoundaries,
-									      int* elementBoundaryElements,
+									      proteus_index_t* rowptr,
+									      proteus_index_t* colind,
+									      proteus_index_t offset_r,
+									      proteus_index_t stride_r,
+									      proteus_index_t offset_u,
+									      proteus_index_t stride_u,
+									      proteus_index_t nFreeVDOF_global,
+									      proteus_index_t* exteriorElementBoundaries,
+									      proteus_index_t* elementBoundaryElements,
 									      int* elementBoundaryLocalElementBoundaries,
 									      int* nFreeDOF_element_r,
 									      int* freeLocal_r,
-									      int* freeGlobal_r,
+									      proteus_index_t* freeGlobal_r,
 									      int* nFreeDOF_element_u,
 									      int* freeLocal_u,
-									      int* freeGlobal_u,
+									      proteus_index_t* freeGlobal_u,
 									      int* isDOFBoundary,
 									      double sigma,
 									      double* v,
@@ -2296,30 +2297,30 @@ void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_dense_sd(in
 									      double* dS,
 									      double* jac);
 extern
-void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_CSR_sd(int nInteriorElementBoundaries_global,
+void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_CSR_sd(proteus_index_t nInteriorElementBoundaries_global,
 									    int nElementBoundaries_element,
 									    int nQuadraturePoints_elementBoundary,
 									    int nDOF_test_element,
 									    int nDOF_trial_element,
 									    int nSpace,
-									    int* rowptr,
-									    int* colind,
-									    int offset_r,
-									    int stride_r,
-									    int offset_u,
-									    int stride_u,
-									    int nFreeVDOF_global,
-									    int* interiorElementBoundaries,
-									    int* elementBoundaryElements,
+									    proteus_index_t* rowptr,
+									    proteus_index_t* colind,
+									    proteus_index_t offset_r,
+									    proteus_index_t stride_r,
+									    proteus_index_t offset_u,
+									    proteus_index_t stride_u,
+									    proteus_index_t nFreeVDOF_global,
+									    proteus_index_t* interiorElementBoundaries,
+									    proteus_index_t* elementBoundaryElements,
 									    int* elementBoundaryLocalElementBoundaries,
 									    int* nFreeDOF_element_r,
 									    int* freeLocal_r,
-									    int* freeGlobal_r,
+									    proteus_index_t* freeGlobal_r,
 									    int* nFreeDOF_element_u,
 									    int* freeLocal_u,
-									    int* freeGlobal_u,
-									    int* csrRowIndeces_ru,
-									    int* csrColumnOffsets_eb_ru,
+									    proteus_index_t* freeGlobal_u,
+									    proteus_index_t* csrRowIndeces_ru,
+									    proteus_index_t* csrColumnOffsets_eb_ru,
 									    double sigma,
 									    double* v,
 									    double* n,
@@ -2328,29 +2329,29 @@ void updateGlobalJacobianFromInteriorElementBoundaryDiffusionAdjoint_CSR_sd(int 
 									    double* dS,
 									    double* jac);
 extern
-void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_CSR_sd(int nExteriorElementBoundaries_global,
+void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_CSR_sd(proteus_index_t nExteriorElementBoundaries_global,
 									    int nQuadraturePoints_elementBoundary,
 									    int nDOF_test_element,
 									    int nDOF_trial_element,
 									    int nSpace,
-									    int* rowptr,
-									    int* colind,
-									    int offset_r,
-									    int stride_r,
-									    int offset_u,
-									    int stride_u,
-									    int nFreeVDOF_global,
-									    int* exteriorElementBoundaries,
-									    int* elementBoundaryElements,
+									    proteus_index_t* rowptr,
+									    proteus_index_t* colind,
+									    proteus_index_t offset_r,
+									    proteus_index_t stride_r,
+									    proteus_index_t offset_u,
+									    proteus_index_t stride_u,
+									    proteus_index_t nFreeVDOF_global,
+									    proteus_index_t* exteriorElementBoundaries,
+									    proteus_index_t* elementBoundaryElements,
 									    int* elementBoundaryLocalElementBoundaries,
 									    int* nFreeDOF_element_r,
 									    int* freeLocal_r,
-									    int* freeGlobal_r,
+									    proteus_index_t* freeGlobal_r,
 									    int* nFreeDOF_element_u,
 									    int* freeLocal_u,
-									    int* freeGlobal_u,
-									    int* csrRowIndeces_ru,
-									    int* csrColumnOffsets_eb_ru,
+									    proteus_index_t* freeGlobal_u,
+									    proteus_index_t* csrRowIndeces_ru,
+									    proteus_index_t* csrColumnOffsets_eb_ru,
 									    int* isDOFBoundary,
 									    double sigma,
 									    double* v,
@@ -2360,20 +2361,20 @@ void updateGlobalJacobianFromExteriorElementBoundaryDiffusionAdjoint_CSR_sd(int 
 									    double* dS,
 									    double* jac);
 extern
-void update_f_movingDomain_q(int nElements_global,
+void update_f_movingDomain_q(proteus_index_t nElements_global,
 			     int nQuadraturePoints_element,
 			     int nSpace,
 			     double* xt,
 			     double* m,
 			     double* f);
 extern
-void update_f_movingDomain_constantMass_q(int nElements_global,
+void update_f_movingDomain_constantMass_q(proteus_index_t nElements_global,
 					  int nQuadraturePoints_element,
 					  int nSpace,
 					  double* xt,
 					  double* f);
 extern
-void update_f_movingDomain_ebq(int nElements_global,
+void update_f_movingDomain_ebq(proteus_index_t nElements_global,
 			       int nElementBoundaries_element,
 			       int nQuadraturePoints_elementBoundary,
 			       int nSpace,
@@ -2381,14 +2382,14 @@ void update_f_movingDomain_ebq(int nElements_global,
 			       double* m,
 			       double* f);
 extern
-void update_f_movingDomain_constantMass_ebq(int nElements_global,
+void update_f_movingDomain_constantMass_ebq(proteus_index_t nElements_global,
 					    int nElementBoundaries_element,
 					    int nQuadraturePoints_elementBoundary,
 					    int nSpace,
 					    double* xt,
 					    double* f);
 extern
-void updateStress_weak(int nElements_global,
+void updateStress_weak(proteus_index_t nElements_global,
 		       int nQuadraturePoints_element,
 		       int nDOF_test_element,
 		       int nSpace,
@@ -2398,7 +2399,7 @@ void updateStress_weak(int nElements_global,
 		       double* weak_residual_y,
 		       double* weak_residual_z);
 extern
-void updateStressJacobian_weak(int nElements_global,
+void updateStressJacobian_weak(proteus_index_t nElements_global,
 			       int nQuadraturePoints_element,
 			       int nDOF_trial_element,
 			       int nDOF_test_element,
@@ -2424,21 +2425,21 @@ void updateStressJacobian_weak(int nElements_global,
 			       double* jacobian_weak_residual_zy,
 			       double* jacobian_weak_residual_zz);
 extern
-void projectFromNodalInterpolationConditions(int nElements_global,
+void projectFromNodalInterpolationConditions(proteus_index_t nElements_global,
 					     int nDOF_element,
 					     int dim_dof,
-					     const int * l2g,
+					     const proteus_index_t * l2g,
 					     const int * functional_map_element,
 					     const double * interpolationValues,
 					     double * dofs);
-extern void calculateVelocityQuadrature_MixedForm2_sd(int nElements_global,
+extern void calculateVelocityQuadrature_MixedForm2_sd(proteus_index_t nElements_global,
                                                int nElementBoundaries_element,
                                                int nElementBoundaryQuadraturePoints_elementBoundary,
                                                int nDOF_element,
                                                int nSpace,
                                                int nQuadraturePoints_element,
-                                               const int * rowptr,
-                                               const int * colind,
+                                               const proteus_index_t * rowptr,
+                                               const proteus_index_t * colind,
                                                double* qa,
                                                double* qw_dV,
                                                double* b,
@@ -2446,26 +2447,26 @@ extern void calculateVelocityQuadrature_MixedForm2_sd(int nElements_global,
                                                double* V,
                                                double* qv,
                                                double* qV);
-extern void updateDiffusion_MixedForm_weak_sd(int nElements_global,
+extern void updateDiffusion_MixedForm_weak_sd(proteus_index_t nElements_global,
                                        int nQuadraturePoints_element,
                                        int nDOF_test_element,
                                        int nSpace,
                                        int rho_split,
-                                       int* rowptr,
-                                       int* colind,
+                                       proteus_index_t* rowptr,
+                                       proteus_index_t* colind,
                                        double* a,
                                        double* qV,
                                        double* grad_w_dV,
                                        double* velocity, /* added for ldg coupling */
                                        double* weak_residual);
-extern void calculateVelocityQuadrature_MixedForm2_Jacobian_sd(int nElements_global,
+extern void calculateVelocityQuadrature_MixedForm2_Jacobian_sd(proteus_index_t nElements_global,
                                                         int nElementBoundaries_element,
                                                         int nElementBoundaryQuadraturePoints_elementBoundary,
                                                         int nDOF_element,
                                                         int nSpace,
                                                         int nQuadraturePoints_element,
-                                                        const int *rowptr,
-                                                        const int *colind,
+                                                        const proteus_index_t *rowptr,
+                                                        const proteus_index_t *colind,
                                                         double* qa,
                                                         double* qw_dV,
                                                         double* db,
@@ -2476,14 +2477,14 @@ extern void calculateVelocityQuadrature_MixedForm2_Jacobian_sd(int nElements_glo
                                                         double* qv,
                                                         double* qDV,
                                                         double* qDV_eb);
-extern void updateDiffusionJacobian_MixedForm_weak_sd(int nElements_global,
+extern void updateDiffusionJacobian_MixedForm_weak_sd(proteus_index_t nElements_global,
                                                int nElementBoundaries_element,
                                                int nQuadraturePoints_element,
                                                int nDOF_trial_element,
                                                int nDOF_test_element,
                                                int nSpace,
-                                               int* rowptr,
-                                               int* colind,
+                                               proteus_index_t* rowptr,
+                                               proteus_index_t* colind,
                                                double* a,
                                                double* da,
                                                double* qV,

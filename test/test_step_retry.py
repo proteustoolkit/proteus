@@ -155,3 +155,37 @@ def test_without_the_restore_the_retry_differs(tmp_path, case):
     forced, accepted = _run(tmp_path / "forced", NORESTORE=1, **options)
     replay, _ = _run(tmp_path / "replay", REPLAY=accepted, **_replay_options(options))
     assert _worst(forced, replay) > 1e-5
+
+
+def _fsi_options():
+    """test/FSI floatingCylinder (moving mesh, Chrono body, added mass; stored mesh, fixed dt 0.01, to 0.11): the
+    FSI tests' PETSc options."""
+    with open(os.path.join(HERE, "FSI", "petsc.options.superlu_dist")) as f:
+        petsc = f.read().replace("\n", " ")
+    return dict(DIR="FSI", DECK="floatingCylinder.py", OPTS="", FT=0.1, PETSC_OPTIONS=petsc)
+
+
+def _fsi_replay(tmp_path, failing_model, step, **forced_extra):
+    options = dict(_fsi_options(), FAILMODEL=failing_model, FAILSTEP=step, **forced_extra)
+    forced, accepted = _run(tmp_path / "forced", **options)
+    assert int(open(os.path.join(str(tmp_path / "forced"), "retries.txt")).read()) >= 1, "the failure was not retried"
+    replay, _ = _run(tmp_path / "replay", REPLAYDT=os.path.join(str(tmp_path / "forced"), "steps.txt"),
+                     **_replay_options(options))
+    return forced, replay
+
+
+@pytest.mark.parametrize("model,step", [("rans2p", 5), ("mcorr", 5), ("rans2p", 1)])
+def test_a_retried_moving_mesh_fsi_step_is_the_step_taken_without_failing(tmp_path, model, step):
+    """A moving mesh keeps state outside the models' dofs: MoveMesh.postStep adds the displacement to the mesh nodes
+    (MoveMesh.state()) and the flow models' postStep copies dV to dV_last (restored with the dofs). The Chrono system
+    is not advanced during a retry (ProtChSystem.calculate runs after the accepted step). Measured, a failure in the
+    5th step of rans2p / mcorr / the 1st step of rans2p, against the same dts replayed bit for bit, worst over all
+    models' dofs: before 1.5e-1 / 1.9 (6.8e-1 with the nodes restored) / ...; after 0.0. Two runs of ~10 s each."""
+    forced, replay = _fsi_replay(tmp_path, model, step)
+    assert _worst(forced, replay) == 0.0
+
+
+def test_without_the_restore_the_moving_mesh_retry_differs(tmp_path):
+    forced, replay = _fsi_replay(tmp_path, "rans2p", 5, NORESTORE=1)
+    # the mesh moved twice: the dofs' own coordinates differ as well
+    assert numpy.abs(forced[:, :4] - replay[:, :4]).max() > 1e-5

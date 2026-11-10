@@ -318,7 +318,7 @@ cdef class CMultilevelMesh:
                                                False);
 
     def buildPythonMultilevelMeshInterface(self):
-        cdef int dim
+        cdef cppm.proteus_index_t dim
         self.cmeshList = [CMesh_FromMesh(self.multilevelMesh.meshArray[0])]
         self.elementParentsArrayList = [np.zeros(0)]
         self.elementChildrenArrayList = []
@@ -326,11 +326,11 @@ cdef class CMultilevelMesh:
         for n in range(1, self.multilevelMesh.nLevels):
             self.cmeshList += [CMesh_FromMesh(self.multilevelMesh.meshArray[n])]
             dim = self.multilevelMesh.meshArray[n].nElements_global
-            self.elementParentsArrayList += [np.asarray(<int[:dim]> self.multilevelMesh.elementParentsArray[n])]
+            self.elementParentsArrayList += [np.asarray(<cppm.proteus_index_t[:dim]> self.multilevelMesh.elementParentsArray[n])]
             dim = self.multilevelMesh.elementChildrenOffsets[n-1][self.multilevelMesh.meshArray[n-1].nElements_global]
-            self.elementChildrenArrayList += [np.asarray(<int[:dim]> self.multilevelMesh.elementChildrenArray[n-1])]
+            self.elementChildrenArrayList += [np.asarray(<cppm.proteus_index_t[:dim]> self.multilevelMesh.elementChildrenArray[n-1])]
             dim = self.multilevelMesh.meshArray[n-1].nElements_global+1;
-            self.elementChildrenOffsetsList += [np.asarray(<int[:dim]> self.multilevelMesh.elementChildrenOffsets[n-1])]
+            self.elementChildrenOffsetsList += [np.asarray(<cppm.proteus_index_t[:dim]> self.multilevelMesh.elementChildrenOffsets[n-1])]
 
 def buildPythonMultilevelMeshInterface(cmultilevelMesh):
     cmultilevelMesh.buildPythonMultilevelMeshInterface()
@@ -465,9 +465,10 @@ def _fillNodesAndElements(CMesh cmesh, nodes, elements, nodeMaterialTypes=None, 
     cdef double[:, ::1] x = np.ascontiguousarray(nodes, dtype=np.float64)
     cdef cppm.proteus_index_t[:, ::1] e = np.ascontiguousarray(elements, dtype=INDEX_DTYPE)
     cdef int[::1] nmt, emt
-    cdef int i, j
-    cdef int nNodes = x.shape[0]
-    cdef int nElements = e.shape[0]
+    cdef cppm.proteus_index_t i
+    cdef int j
+    cdef cppm.proteus_index_t nNodes = x.shape[0]
+    cdef cppm.proteus_index_t nElements = e.shape[0]
     cdef int nNodes_element = e.shape[1]
     if x.shape[1] != 3:
         raise ValueError("nodes must have shape (nNodes, 3), not (%d, %d)" % (x.shape[0], x.shape[1]))
@@ -510,10 +511,10 @@ def generateFromArrays(CMesh cmesh, nodes, elements, nodeMaterialTypes=None,
 cdef extern from "mesh.h":
     """
     // new[]: the Mesh frees its arrays with delete[] (deleteMeshDataStructures)
-    static inline proteus_index_t* proteus_cmeshTools_newIndexArray(int n)
+    static inline proteus_index_t* proteus_cmeshTools_newIndexArray(proteus_index_t n)
     { return new proteus_index_t[n > 0 ? n : 1]; }
     """
-    cppm.proteus_index_t* proteus_cmeshTools_newIndexArray(int n)
+    cppm.proteus_index_t* proteus_cmeshTools_newIndexArray(cppm.proteus_index_t n)
 
 
 def generateFromNumberedArrays(CMesh cmesh, nodes, elements, elementBoundaries, edges,
@@ -531,10 +532,11 @@ def generateFromNumberedArrays(CMesh cmesh, nodes, elements, elementBoundaries, 
     cdef cppm.proteus_index_t[:, ::1] b = np.ascontiguousarray(elementBoundaries, dtype=INDEX_DTYPE)
     cdef cppm.proteus_index_t[:, ::1] ed = np.ascontiguousarray(edges, dtype=INDEX_DTYPE).reshape(-1, 2)
     cdef int[::1] ebmt = np.ascontiguousarray(elementBoundaryMaterialTypes, dtype=np.intc)
-    cdef int i, j
-    cdef int nElements = b.shape[0]
+    cdef cppm.proteus_index_t i
+    cdef int j
+    cdef cppm.proteus_index_t nElements = b.shape[0]
     cdef int nEB = b.shape[1]
-    cdef int nEdges = ed.shape[0]
+    cdef cppm.proteus_index_t nEdges = ed.shape[0]
     nNodes_element = np.ascontiguousarray(elements).shape[1]
     if nEB != nNodes_element:
         raise ValueError("a simplex has as many boundaries as nodes: %d, not %d" % (nNodes_element, nEB))
@@ -571,8 +573,8 @@ cpdef void allocateGeometricInfo_tetrahedron(CMesh cmesh):
     cppm.allocateGeometricInfo_tetrahedron(cmesh.mesh);
 
 cpdef void allocateNodeAndElementNodeDataStructures(CMesh cmesh,
-                                                    int nElements_global,
-                                                    int nNodes_global,
+                                                    cppm.proteus_index_t nElements_global,
+                                                    cppm.proteus_index_t nNodes_global,
                                                     int nNodes_element):
     cppm.allocateNodeAndElementNodeDataStructures(cmesh.mesh,nElements_global,nNodes_global,nNodes_element);
 

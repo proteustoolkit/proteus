@@ -1,5 +1,6 @@
 #ifndef ANALYTICALSOLUTIONS_H
 #define ANALYTICALSOLUTIONS_H
+#include "index_type.h"
 /**
    \file analyticalSolutions.h
    \defgroup analyticalSolutions analyticalSolutions
