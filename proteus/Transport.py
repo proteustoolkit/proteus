@@ -7089,7 +7089,8 @@ class MultilevelTransport(object):
                 par_du = None
                 par_jacobian = None
             
-            if par_r is not None:
+            # parallel periodic numbering renumbers the subdomain dofs (merged pairs): left as it was
+            if par_r is not None and not (options.periodicDirichletConditions and getattr(options, 'parallelPeriodic', False)):
                 attachStrongDirichletAuthority(transport, par_r, par_jacobian)
             self.par_uList.append(par_u)
             self.par_duList.append(par_du)

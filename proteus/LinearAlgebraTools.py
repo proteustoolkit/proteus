@@ -11,6 +11,7 @@ representations using PETSc.
 import numpy
 import math
 import sys
+from mpi4py import MPI
 from . import superluWrappers
 from . import Comm
 from .Comm import globalSum, globalMax
@@ -2440,15 +2441,26 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     Returns the local dof indices to zero (an int array, maybe empty).
     """
     mpi = Comm.get().comm.tompi4py()
+    size, rank = mpi.Get_size(), mpi.Get_rank()
+    if size == 1:
+        return numpy.zeros(0, dtype='i')
     nproc = par_r.dim_proc
     s2g = numpy.asarray(par_r.subdomain2global)
     nloc = s2g.shape[0]
     hold = numpy.zeros(nloc, dtype=bool)
+    outside = 0
     for cj, dbc in model.dirichletConditionsForceDOF.items():
         for dofN in dbc.DOFBoundaryConditionsDict:
-            hold[model.offset[cj] + model.stride[cj] * dofN] = True
-    size, rank = mpi.Get_size(), mpi.Get_rank()
-    if size == 1:
+            d = model.offset[cj] + model.stride[cj] * dofN
+            if d < nloc:
+                hold[d] = True
+            else:
+                outside += 1
+    # a layout whose Dirichlet dofs are not subdomain dofs (a serial-periodic numbering) is left as it was;
+    # every rank must agree, so the decision is collective
+    # (and likewise where two local dofs share a global number, as merged periodic dofs do)
+    shared_numbers = int(numpy.unique(s2g).shape[0] != nloc)
+    if mpi.allreduce(outside + shared_numbers, op=MPI.SUM) > 0:
         return numpy.zeros(0, dtype='i')
     ranges = numpy.asarray(par_r.getOwnershipRanges())
     ghosts = numpy.arange(nproc, nloc)
