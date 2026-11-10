@@ -8,7 +8,7 @@ the deck's own history files. ATOL=a sets every model's nonlinear atol to a (lin
 tolerances apply; MAXITS=n raises every model's maxNonlinearIts to n.
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
-TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAY=<file> makes the system step
+TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAYDT=<steps.txt> replays the accepted steps' dts bit for bit. REPLAY=<file> makes the system step
 land on the times in the file instead of choosing them (so.systemStepSchedule, the first step included), which gives
 the run a failure-free run with the same steps. NORESTORE=1 turns off the restore before a retry, NOTMODELRESTORE=1
 only its t_model_last part. NANDT=n makes the n-th system step the controller chooses nan (NANDTRANK=r: on rank r
@@ -21,6 +21,7 @@ parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS th
 """
 import glob, os, runpy, shutil, sys
 import numpy as np
+numpy = np
 
 SO = os.environ.get("SO")
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.environ.get("DIR", "TwoPhaseFlow"))
@@ -167,6 +168,30 @@ if os.environ.get("NANDT"):
     for cls in CONTROLLERS:
         cls.choose_dt_system = nan_dt(cls.choose_dt_system)
 
+# steps.txt: (t_system_last, dt_system) of every accepted step, hex floats (exact). REPLAYDT=<that file> makes the system
+# steps take those dts bit for bit: REPLAY lands on the accepted times, and the dt it derives (t - t_last) differs from
+# the controller's in the last bits, which a moving-mesh FSI deck amplifies to 4.5e-8 in a run without any failure
+taken = []
+def taking(_taken):
+    def sequenceTaken(self):
+        taken.append((self.t_system_last, self.dt_system))
+        return _taken(self)
+    return sequenceTaken
+for cls in CONTROLLERS:
+    cls.sequenceTaken = taking(cls.sequenceTaken)
+if os.environ.get("REPLAYDT"):
+    _dts = {}
+    for line in open(os.environ["REPLAYDT"]):
+        a, b = line.split()
+        _dts[float.fromhex(a)] = float.fromhex(b)
+    _scheduled = SplitOperator.SO_base.scheduled_dt
+    SplitOperator.SO_base.scheduled_dt = lambda self, dt: _dts[self.t_system_last] if self.t_system_last in _dts else _scheduled(self, dt)
+    _init_dt = init
+    def init_dt(self, so, pList, nList, *args, **kwargs):
+        so.systemStepSchedule = numpy.array(sorted(a + b for a, b in _dts.items()))
+        return _init_dt(self, so, pList, nList, *args, **kwargs)
+    NS.NS_base.__init__ = init_dt
+
 retries = [0]
 _restore = NS.NS_base.restoreSystemStepState
 def restoreSystemStepState(self):
@@ -181,6 +206,9 @@ def calc(self, *a, **k):
     finally:
         # also when the run stops (NumericalSolution.StepTimeError)
         np.savetxt("accepted.txt", np.array(accepted))
+        with open("steps.txt", "w") as f:
+            for a, b in taken:
+                f.write("%s %s\n" % (float(a).hex(), float(b).hex()))
         with open("retries.txt", "w") as f:
             f.write("%d\n" % retries[0])
     rows = []

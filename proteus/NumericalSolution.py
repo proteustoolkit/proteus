@@ -1486,6 +1486,9 @@ class NS_base(object):  # (HasTraits):
         state() of its lagged objects (SOLVER_STATE_OWNERS, the contract a hot start restores) and the fields other
         models read from it (COUPLED_FIELD_NAMES)."""
         self._systemStepState = []
+        # q['dV_last'] (postStep copies dV to it): on a moving mesh the failed attempt's copy is not the step's start
+        self._systemStepDVLast = [[lm.q['dV_last'].copy() if isinstance(getattr(lm, 'q', None), dict) and 'dV_last' in lm.q else None
+                                   for lm in m.levelModelList] for m in self.modelList]
         for m in self.modelList:
             levels = []
             for level, lm in enumerate(m.levelModelList):
@@ -1529,6 +1532,10 @@ class NS_base(object):  # (HasTraits):
         normals at t_n from that guess), the dof history was shifted a second time, a model that had finished
         in the failed attempt kept the lags its postStep had moved forward, and the next model read the failed
         attempt's fields at the quadrature points (RANS2P reads VOF's and NCLS's)."""
+        for m, dVs in zip(self.modelList, self._systemStepDVLast):
+            for lm, dV in zip(m.levelModelList, dVs):
+                if dV is not None:
+                    lm.q['dV_last'][:] = dV
         for m, levels in zip(self.modelList, self._systemStepState):
             for level, (lm, (dofs, owners, fields, unknowns)) in enumerate(zip(m.levelModelList, levels)):
                 for ci in range(lm.coefficients.nc):

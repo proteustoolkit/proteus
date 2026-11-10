@@ -785,3 +785,34 @@ elements within eps of the interface) gives:
 | next Newton iterate (one step with the engine's R and J; MCorr has no line search) | 2.5e-14 |
 | residual at the next iterate | 3.2e-15 of the first residual (4.6e-19 absolute; Newton cut the residual 1e4, so its own max is 2.6e-8) |
 | q_u, q_r, q_n at the next iterate | 1.1e-14 |
+
+## Two-phase flow, slice 5: RANS2P2D (`rans2p.h`, `rans2p_test.py`)
+
+RANS2P (`mprans/RANS2P2D.h`, the damBreakLevelSet configuration: non-conservative form, `useVF = 1`, equal-order P1, no
+turbulence closure, drag, particles, moving mesh or RBLES) is the first vector model: unknowns (p, u_0, .., u_{nS-1}),
+nSpace-generic, checked in 2D.
+
+- `navierStokesVMSElement`: the element integrals, the residual-based VMS stabilization with the lagged subgrid velocity
+  and the lagged shock-capturing viscosity (round 4, e433fece).
+- `navierStokesExteriorFace`: the weak boundary conditions on the exterior faces (round 5). The continuity flux
+  porosity u . n; the momentum flux upwinded on the normal flow speed s = rho porosity u . n (inflow: (g - u) s, with
+  g = 0 where a component has no Dirichlet value; outflow: 0) plus n (p_bc - p) where p has a Dirichlet value; prescribed
+  fluxes where the advective-flux flags say so; for each entry of the stress, the SIPG flux -(a grad u_d) . n +
+  max(a) C_b/h_n (u_d - g_d) with h_n = (n . G n)^(-1/2), and the symmetric adjoint term (u_d - g_d)(a n) . grad w. Two
+  quirks kept: the adjoint is switched off by the row's own diffusive-flux flag (proteus passes `isDiffusiveFluxBoundary_u`
+  for the (u, v) entry), and the diffusive-flux flag wins over the Dirichlet flag (the deck's top boundary has both for v).
+  The Jacobian is exact, including d s/d u in the inflow upwinding.
+
+`vof_capture.py OUT model=rans2p` records the first RANS2P Newton iteration at or after T, the face arrays and boundary
+conditions, the element integrals alone (the kernel called again with no exterior faces), and the next Newton iterate with
+proteus's residual there (the deck solves with SuperLU). `rans2p_damBreak_he0.05.npz` (733 triangles, 79 exterior faces,
+t = 0.063; the faces are 8.2e-5 of the residual and 3.4e-2 of the Jacobian) gives:
+
+| check | max difference, relative |
+|---|---|
+| residual, element integrals / elements + faces / the faces' share | 3.3e-16 / 3.3e-16 / 3.3e-16 |
+| Jacobian, element integrals / elements + faces / the faces' share | 2.9e-16 / 2.9e-16 / 4.6e-15 |
+| q_velocity, q_numDiff_u, q_cfl | 1.6e-16, 5.3e-16, 8.4e-17 |
+| boundary mass flux, ebqe_velocity | 2.2e-16, 1.5e-16 |
+| next Newton iterate (one step with the engine's R and J) | 1.1e-13: the solve's floor (cond(J) = 7.7e8; proteus's own J and r through three LU orderings give 1.3e-13 to 9.1e-13) |
+| residual at the next iterate | 1.1e-14 |

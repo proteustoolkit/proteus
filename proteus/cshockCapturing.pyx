@@ -2,8 +2,11 @@
 # cython: language_level=3
 import numpy as np
 cimport numpy as np
+cdef extern from "index_type.h":
+    ctypedef int proteus_index_t
+
 cdef extern from "shockCapturing.h":
-    void ccalculateNumericalDiffusionResGrad "calculateNumericalDiffusionResGrad"(int nElements_global,
+    void ccalculateNumericalDiffusionResGrad "calculateNumericalDiffusionResGrad"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nSpace,
                                                 double shockCapturingDiffusion,
@@ -11,7 +14,7 @@ cdef extern from "shockCapturing.h":
                                                 double* strong_residual,
                                                 double* grad_u,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionResGradQuad "calculateNumericalDiffusionResGradQuad"(int nElements_global,
+    void ccalculateNumericalDiffusionResGradQuad "calculateNumericalDiffusionResGradQuad"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nSpace,
                                                 double shockCapturingDiffusion,
@@ -19,13 +22,13 @@ cdef extern from "shockCapturing.h":
                                                 double* strong_residual,
                                                 double* grad_u,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionEikonal "calculateNumericalDiffusionEikonal"(int nElements_global,
+    void ccalculateNumericalDiffusionEikonal "calculateNumericalDiffusionEikonal"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 double shockCapturingDiffusion,
                                                 double* elementDiameter,
                                                 double* strong_residual,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionHJ "calculateNumericalDiffusionHJ"(int nElements_global,
+    void ccalculateNumericalDiffusionHJ "calculateNumericalDiffusionHJ"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 char shockCapturing,
                                                 double shockCapturingDiffusion,
@@ -34,7 +37,7 @@ cdef extern from "shockCapturing.h":
                                                 double* mt,
                                                 double* H,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusion_A_1 "calculateNumericalDiffusion_A_1"(int nElements_global,
+    void ccalculateNumericalDiffusion_A_1 "calculateNumericalDiffusion_A_1"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nSpace,
                                                 double shockCapturingFactor,
@@ -43,7 +46,7 @@ cdef extern from "shockCapturing.h":
                                                 double* mt,
                                                 double* df,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionResGradJuanes "calculateNumericalDiffusionResGradJuanes"(int nElements_global,
+    void ccalculateNumericalDiffusionResGradJuanes "calculateNumericalDiffusionResGradJuanes"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nSpace,
                                                 double shockCapturingDiffusion,
@@ -52,7 +55,7 @@ cdef extern from "shockCapturing.h":
                                                 double* strong_residual,
                                                 double* grad_u,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionJaffre "calculateNumericalDiffusionJaffre"(int nElements_global,
+    void ccalculateNumericalDiffusionJaffre "calculateNumericalDiffusionJaffre"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nSpace,
                                                 double shockCapturingDiffusion,
@@ -61,7 +64,7 @@ cdef extern from "shockCapturing.h":
                                                 double* strong_residual,
                                                 double* grad_u,
                                                 double* numDiff)
-    void ccalculateNumericalDiffusionHJV2 "calculateNumericalDiffusionHJV2"(int nElements_global,
+    void ccalculateNumericalDiffusionHJV2 "calculateNumericalDiffusionHJV2"(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 char shockCapturing,
                                                 double shockCapturingDiffusion,

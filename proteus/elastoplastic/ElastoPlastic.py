@@ -3,6 +3,7 @@ from proteus import FemTools, Archiver
 from .cElastoPlastic import *
 from math import atan, tan
 import numpy as np
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport, sqrt, TC_base
 from proteus.Transport import NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
@@ -552,7 +553,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=np.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=np.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
         #

@@ -51,6 +51,9 @@ def _launch(helper, args, n_ranks, timeout):
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    # a rank must own elements on the coarse mesh (a discontinuous space needs it), which the partition
+    # ParMETIS makes does not promise in every build (a fleet node left rank 2 empty): pin the initial one
+    env['PETSC_OPTIONS'] = (env.get('PETSC_OPTIONS', '') + ' -mat_partitioning_type current').strip()
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper] + args,
                             capture_output=True, text=True, env=env, timeout=timeout)
     assert result.returncode == 0, result.stdout + result.stderr

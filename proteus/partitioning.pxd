@@ -42,10 +42,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                      int size,
                                                                      int nNodes_overlap,
                                                                      const vector[int]& nodeOwner)
-    extern void c_nodeGraphRows "proteus::nodeGraphRows" (const mesh.Mesh& mesh, int begin, int end,
-                                                          vector[int]& offsets, vector[int]& neighbors)
-    extern void c_elementGraphRows "proteus::elementGraphRows" (const mesh.Mesh& mesh, int begin, int end,
-                                                                vector[int]& offsets, vector[int]& neighbors)
+    extern void c_nodeGraphRows "proteus::nodeGraphRows" (const mesh.Mesh& mesh, mesh.proteus_index_t begin, mesh.proteus_index_t end,
+                                                          vector[mesh.proteus_index_t]& offsets, vector[mesh.proteus_index_t]& neighbors)
+    extern void c_elementGraphRows "proteus::elementGraphRows" (const mesh.Mesh& mesh, mesh.proteus_index_t begin, mesh.proteus_index_t end,
+                                                                vector[mesh.proteus_index_t]& offsets, vector[mesh.proteus_index_t]& neighbors)
     extern vector[int] c_nodeOwnersFromElementOwners "proteus::nodeOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
     extern vector[int] c_elementBoundaryOwnersFromElementOwners "proteus::elementBoundaryOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
     extern vector[int] c_edgeOwnersFromElementOwners "proteus::edgeOwnersFromElementOwners" (const mesh.Mesh& mesh, const vector[int]& elementOwner, int size)
@@ -57,57 +57,57 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                                              int size)
     extern vector[int] c_edgeOwnersFromNodeOwners "proteus::edgeOwnersFromNodeOwners" (const mesh.Mesh& mesh,
                                                                                        const vector[int]& nodeOwner,
-                                                                                       const vector[int]& nodeNumbering_global_old2new)
+                                                                                       const vector[mesh.proteus_index_t]& nodeNumbering_global_old2new)
     extern int c_partitionNodesFromTetgenFiles "proteus::partitionNodesFromTetgenFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap,
                                                                                          double memHardLimit,
-                                                                                         vector[int]* nodeNumbering_subdomain2input,
-                                                                                         vector[int]* elementNumbering_subdomain2input);
+                                                                                         vector[mesh.proteus_index_t]* nodeNumbering_subdomain2input,
+                                                                                         vector[mesh.proteus_index_t]* elementNumbering_subdomain2input);
     extern cppbool c_readSimplexNodeStars "proteus::readSimplexNodeStars" (const string& elementFileName, const char* format,
                                                                            int simplexDim, int indexBase,
-                                                                           int nNodes_global, int begin, int end,
-                                                                           int& nElements_global, vector[cppset[int]]& nodeStar)
+                                                                           mesh.proteus_index_t nNodes_global, mesh.proteus_index_t begin, mesh.proteus_index_t end,
+                                                                           mesh.proteus_index_t& nElements_global, vector[cppset[mesh.proteus_index_t]]& nodeStar)
     extern cppbool c_readSimplexElementsTouching "proteus::readSimplexElementsTouching" (const string& elementFileName, const char* format,
-                                                                                         int simplexDim, int indexBase, int nNodes_global,
-                                                                                         const cppmap[int,int]& nodes,
-                                                                                         int& nElements_global, int& hasElementMarkers,
-                                                                                         vector[int]& elements, vector[int]& elementNodes,
+                                                                                         int simplexDim, int indexBase, mesh.proteus_index_t nNodes_global,
+                                                                                         const cppmap[mesh.proteus_index_t,mesh.proteus_index_t]& nodes,
+                                                                                         mesh.proteus_index_t& nElements_global, int& hasElementMarkers,
+                                                                                         vector[mesh.proteus_index_t]& elements, vector[mesh.proteus_index_t]& elementNodes,
                                                                                          vector[double]& elementIds)
     extern cppbool c_readSimplexSubentitiesTouching "proteus::readSimplexSubentitiesTouching" (const string& fileName, const char* format,
                                                                                                const char* what, int nNodesPerEntity,
                                                                                                int indexBase, cppbool headerHasMarkers,
-                                                                                               const cppmap[int,int]& nodes,
-                                                                                               int& nEntities_global, int& hasMarkers,
-                                                                                               vector[int]& numbers, vector[int]& entityNodes,
+                                                                                               const cppmap[mesh.proteus_index_t,mesh.proteus_index_t]& nodes,
+                                                                                               mesh.proteus_index_t& nEntities_global, int& hasMarkers,
+                                                                                               vector[mesh.proteus_index_t]& numbers, vector[mesh.proteus_index_t]& entityNodes,
                                                                                                vector[int]& ids)
-    extern cppmap[int,int] c_ownedNodesByFileNumber "proteus::ownedNodesByFileNumber" (const MPI_Comm& comm,
-                                                                                       const vector[int]& nodeOffsets_old,
-                                                                                       const vector[int]& nodeOffsets_new,
-                                                                                       const vector[int]& old2new_chunk)
-    extern cppmap[int,int] c_newNumbersOfFileNodes "proteus::newNumbersOfFileNodes" (const MPI_Comm& comm,
-                                                                                     const vector[int]& nodeOffsets_old,
-                                                                                     const vector[int]& old2new_chunk,
-                                                                                     const cppset[int]& wanted)
-    extern vector[pair[int,int]] c_subdomainNumbersByDirectory "proteus::subdomainNumbersByDirectory" (const MPI_Comm& comm,
-                                                                                                       int nGlobal, int ownedBegin,
-                                                                                                       const cppset[int]& owned,
-                                                                                                       const vector[int]& subdomain)
+    extern cppmap[mesh.proteus_index_t,mesh.proteus_index_t] c_ownedNodesByFileNumber "proteus::ownedNodesByFileNumber" (const MPI_Comm& comm,
+                                                                                       const vector[mesh.proteus_index_t]& nodeOffsets_old,
+                                                                                       const vector[mesh.proteus_index_t]& nodeOffsets_new,
+                                                                                       const vector[mesh.proteus_index_t]& old2new_chunk)
+    extern cppmap[mesh.proteus_index_t,mesh.proteus_index_t] c_newNumbersOfFileNodes "proteus::newNumbersOfFileNodes" (const MPI_Comm& comm,
+                                                                                     const vector[mesh.proteus_index_t]& nodeOffsets_old,
+                                                                                     const vector[mesh.proteus_index_t]& old2new_chunk,
+                                                                                     const cppset[mesh.proteus_index_t]& wanted)
+    extern vector[pair[mesh.proteus_index_t,mesh.proteus_index_t]] c_subdomainNumbersByDirectory "proteus::subdomainNumbersByDirectory" (const MPI_Comm& comm,
+                                                                                                       mesh.proteus_index_t nGlobal, mesh.proteus_index_t ownedBegin,
+                                                                                                       const cppset[mesh.proteus_index_t]& owned,
+                                                                                                       const vector[mesh.proteus_index_t]& subdomain)
     extern cppbool c_readSubdomainVertices "proteus::readSubdomainVertices" (const string& vertexFileName, const char* format,
                                                                              int nSpace, int indexBase, int hasVertexMarkers,
-                                                                             const cppmap[int,int]& nodes_old2new,
-                                                                             int ownedBegin, int ownedEnd,
-                                                                             const cppmap[int,int]& nodes_overlap_global2subdomain,
-                                                                             int* nodeNumbering_subdomain2global,
-                                                                             cppmap[int,int]& nodeNumbering_global2subdomainMap,
+                                                                             const cppmap[mesh.proteus_index_t,mesh.proteus_index_t]& nodes_old2new,
+                                                                             mesh.proteus_index_t ownedBegin, mesh.proteus_index_t ownedEnd,
+                                                                             const cppmap[mesh.proteus_index_t,mesh.proteus_index_t]& nodes_overlap_global2subdomain,
+                                                                             mesh.proteus_index_t* nodeNumbering_subdomain2global,
+                                                                             cppmap[mesh.proteus_index_t,mesh.proteus_index_t]& nodeNumbering_global2subdomainMap,
                                                                              double* nodeArray, int* nodeMaterialTypes)
     extern int c_partitionNodesFromTriangleFiles "proteus::partitionNodesFromTriangleFiles" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                                                          const char* filebase,
                                                                                          int indexBase, mesh.Mesh& newMesh,
                                                                                          int nNodes_overlap,
-                                                                                         vector[int]* nodeNumbering_subdomain2input,
-                                                                                         vector[int]* elementNumbering_subdomain2input);
+                                                                                         vector[mesh.proteus_index_t]* nodeNumbering_subdomain2input,
+                                                                                         vector[mesh.proteus_index_t]* elementNumbering_subdomain2input);
 
     extern int c_partitionElementsLocal "proteus::partitionElementsLocal" (mesh.Mesh& mesh,
                                                                            int rank,
@@ -119,10 +119,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                  int nElements_overlap,
                                                                  const int* elementOwners);
     extern int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD, mesh.Mesh& mesh,
-                                                         const int *elementOffsets_subdomain_owned,
-                                                         const int *nodeOffsets_subdomain_owned,
-                                                         const int *elementNumbering_subdomain2global,
-                                                         const int *nodeNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *elementOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *nodeOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *elementNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *nodeNumbering_subdomain2global,
                                                          int& nDOF_all_processes,#total number of dofs in whole domain
                                                          int& nDOF_subdomain,#total number of dofs in sub-domain
                                                          int& max_dof_neighbors,#maximum number of neighbors for connectivity of dofs
@@ -131,10 +131,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                          int* subdomain2global,#subdomain dof to global (parallel) numbering
                                                          double * lagrangeNodesArray);#location of nodes corresponding to dofs
     extern int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD, mesh.Mesh& mesh,
-                                                         const int *elementBoundaryOffsets_subdomain_owned,
-                                                         const int *nodeOffsets_subdomain_owned,
-                                                         const int *elementBoundaryNumbering_subdomain2global,
-                                                         const int *nodeNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *elementBoundaryOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *nodeOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *elementBoundaryNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *nodeNumbering_subdomain2global,
                                                          int& nDOF_all_processes,#total number of dofs in whole domain
                                                          int& nDOF_subdomain,#total number of dofs in sub-domain
                                                          int& max_dof_neighbors,#maximum number of neighbors for connectivity of dofs
@@ -143,10 +143,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                          int *subdomain2global,#subdomain dof to global (parallel) numbering
                                                          double * lagrangeNodesArray);#location of nodes corresponding to dofs
     extern int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, mesh.Mesh& mesh,
-                                                         const int *edgeOffsets_subdomain_owned,
-                                                         const int *nodeOffsets_subdomain_owned,
-                                                         const int *edgeNumbering_subdomain2global,
-                                                         const int *nodeNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *edgeOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *nodeOffsets_subdomain_owned,
+                                                         const mesh.proteus_index_t *edgeNumbering_subdomain2global,
+                                                         const mesh.proteus_index_t *nodeNumbering_subdomain2global,
                                                          int& nDOF_all_processes,#total number of dofs in whole domain
                                                          int& nDOF_subdomain,#total number of dofs in sub-domain
                                                          int& max_dof_neighbors,#maximum number of neighbors for connectivity of dofs
@@ -155,10 +155,10 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                          int *subdomain2global,#subdomain dof to global (parallel) numbering
                                                          double * lagrangeNodesArray);#location of nodes corresponding to dofs
     extern int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, mesh.Mesh& mesh,
-                                                             const int *edgeOffsets_subdomain_owned,
-                                                             const int *nodeOffsets_subdomain_owned,
-                                                             const int *edgeNumbering_subdomain2global,
-                                                             const int *nodeNumbering_subdomain2global,
+                                                             const mesh.proteus_index_t *edgeOffsets_subdomain_owned,
+                                                             const mesh.proteus_index_t *nodeOffsets_subdomain_owned,
+                                                             const mesh.proteus_index_t *edgeNumbering_subdomain2global,
+                                                             const mesh.proteus_index_t *nodeNumbering_subdomain2global,
                                                              int& nDOF_all_processes,#total number of dofs in whole domain
                                                              int& nDOF_subdomain,#total number of dofs in sub-domain
                                                              int& max_dof_neighbors,#maximum number of neighbors for connectivity of dofs
@@ -167,8 +167,8 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                              int *subdomain2global,#subdomain dof to global (parallel) numbering
                                                              double * lagrangeNodesArray);#location of nodes corresponding to dofs
     extern int buildDiscontinuousGalerkinSubdomain2GlobalMappings(const MPI_Comm& PROTEUS_COMM_WORLD, mesh.Mesh& mesh,
-                                                                  const int *elementOffsets_subdomain_owned,
-                                                                  const int *elementNumbering_subdomain2global,
+                                                                  const mesh.proteus_index_t *elementOffsets_subdomain_owned,
+                                                                  const mesh.proteus_index_t *elementNumbering_subdomain2global,
                                                                   int nDOF_element,
                                                                   int& nDOF_all_processes,#total number of dofs in whole domain
                                                                   int& nDOF_subdomain,#total number of dofs in sub-domain

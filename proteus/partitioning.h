@@ -243,11 +243,11 @@ namespace proteus
      of a generated hierarchy, in CSR, with columns in level-1's partitioned
      numbering. */
   extern int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                                          std::vector<int>& rowptr, std::vector<int>& colind, std::vector<double>& nzval);
+                                          std::vector<proteus_index_t>& rowptr, std::vector<proteus_index_t>& colind, std::vector<double>& nzval);
   /* For each element of this rank's subdomain on level, its parent's index in
      the subdomain on level-1, or -1. */
   extern int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                                       std::vector<int>& parents);
+                                       std::vector<proteus_index_t>& parents);
 
   extern int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nNodes_overlap,
                             const int* nodeOwners=NULL, const int* nodeWeights=NULL);
@@ -257,16 +257,16 @@ namespace proteus
      process. See partitioning.cpp. */
   /* The default partition of n entities: contiguous near-equal chunks in input
      order, as offsets (size+1). Plain C++. */
-  extern std::valarray<int> defaultChunkOffsets(int n, int size);
+  extern std::valarray<proteus_index_t> defaultChunkOffsets(proteus_index_t n, int size);
 
   /* Rows begin..end-1 of the node graph (each node's sorted star) in CSR form:
      a rank's slice of what the graph partitioner partitions. Plain C++. */
-  extern void nodeGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+  extern void nodeGraphRows(const Mesh& mesh, proteus_index_t begin, proteus_index_t end, std::vector<proteus_index_t>& offsets, std::vector<proteus_index_t>& neighbors);
 
   /* MPI and PETSc: every node's owner from MatPartitioning, gathered on every
      rank. Collective. */
   extern std::vector<int> graphNodeOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
-                                          const std::valarray<int>& nodeOffsets_old, const int* nodeWeights);
+                                          const std::valarray<proteus_index_t>& nodeOffsets_old, const int* nodeWeights);
 
   extern int partitionNodesLocal(Mesh& mesh, int rank, int size, int nNodes_overlap,
                                  const std::vector<int>& nodeOwner, StageTimer* timer=NULL);
@@ -278,22 +278,22 @@ namespace proteus
   extern std::vector<int> elementOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
   extern std::vector<int> elementBoundaryOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner, int size);
   extern std::vector<int> edgeOwnersFromNodeOwners(const Mesh& mesh, const std::vector<int>& nodeOwner,
-                                                   const std::vector<int>& nodeNumbering_global_old2new);
+                                                   const std::vector<proteus_index_t>& nodeNumbering_global_old2new);
 
   /* The parun -F partitioners. When given, nodeNumbering_subdomain2input and
      elementNumbering_subdomain2input get the file number (0-based) of each
      node and element of this rank's subdomain, owned and overlap: the
      partition's input numbering, O(subdomain) per rank. */
   extern int partitionNodesFromTetgenFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap, double memHardLimit,
-                                           std::vector<int>* nodeNumbering_subdomain2input=nullptr,
-                                           std::vector<int>* elementNumbering_subdomain2input=nullptr);
+                                           std::vector<proteus_index_t>* nodeNumbering_subdomain2input=nullptr,
+                                           std::vector<proteus_index_t>* elementNumbering_subdomain2input=nullptr);
 
   /* I/O, no MPI: stream a Triangle or TetGen .ele file (simplexDim nodes per
      element) and return the star of each node in [begin,end) and the element
      count. False if the file cannot be opened. */
   extern bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
-                                   int indexBase, int nNodes_global, int begin, int end, int& nElements_global,
-                                   std::vector<std::set<int> >& nodeStar);
+                                   int indexBase, proteus_index_t nNodes_global, int begin, int end, proteus_index_t& nElements_global,
+                                   std::vector<std::set<proteus_index_t> >& nodeStar);
 
   /* I/O, local: the vertices of one subdomain from a Triangle (nSpace 2) or
      TetGen (nSpace 3) node file, in the subdomain's numbering: owned new global
@@ -302,11 +302,11 @@ namespace proteus
      nodes the subdomain touches to new global numbers. nodeMaterialTypes is
      written only when hasVertexMarkers. False if the file cannot be opened. */
   extern bool readSubdomainVertices(const std::string& vertexFileName, const char* format, int nSpace, int indexBase,
-                                    int hasVertexMarkers, const std::map<int,int>& nodes_old2new,
-                                    int ownedBegin, int ownedEnd,
-                                    const std::map<int,int>& nodes_overlap_global2subdomain,
-                                    int* nodeNumbering_subdomain2global,
-                                    std::map<int,int>& nodeNumbering_global2subdomainMap,
+                                    int hasVertexMarkers, const std::map<proteus_index_t,proteus_index_t>& nodes_old2new,
+                                    proteus_index_t ownedBegin, proteus_index_t ownedEnd,
+                                    const std::map<proteus_index_t,proteus_index_t>& nodes_overlap_global2subdomain,
+                                    proteus_index_t* nodeNumbering_subdomain2global,
+                                    std::map<proteus_index_t,proteus_index_t>& nodeNumbering_global2subdomainMap,
                                     double* nodeArray, int* nodeMaterialTypes);
 
   /* I/O, local: stream a Triangle or TetGen .ele file and keep, in file order,
@@ -315,9 +315,9 @@ namespace proteus
      elementNodes) and, when the header announces attributes, the first
      (elementIds). False if the file cannot be opened. */
   extern bool readSimplexElementsTouching(const std::string& elementFileName, const char* format, int simplexDim,
-                                          int indexBase, int nNodes_global, const std::map<int,int>& nodes,
-                                          int& nElements_global, int& hasElementMarkers,
-                                          std::vector<int>& elements, std::vector<int>& elementNodes,
+                                          int indexBase, proteus_index_t nNodes_global, const std::map<proteus_index_t,proteus_index_t>& nodes,
+                                          proteus_index_t& nElements_global, int& hasElementMarkers,
+                                          std::vector<proteus_index_t>& elements, std::vector<proteus_index_t>& elementNodes,
                                           std::vector<double>& elementIds);
 
   /* I/O, local: stream a Triangle/TetGen .face or .edge file (nNodesPerEntity
@@ -327,21 +327,21 @@ namespace proteus
      the count and markers are not read. False if the file cannot be opened. */
   extern bool readSimplexSubentitiesTouching(const std::string& fileName, const char* format, const char* what,
                                              int nNodesPerEntity, int indexBase, bool headerHasMarkers,
-                                             const std::map<int,int>& nodes, int& nEntities_global, int& hasMarkers,
-                                             std::vector<int>& numbers, std::vector<int>& entityNodes,
+                                             const std::map<proteus_index_t,proteus_index_t>& nodes, proteus_index_t& nEntities_global, int& hasMarkers,
+                                             std::vector<proteus_index_t>& numbers, std::vector<proteus_index_t>& entityNodes,
                                              std::vector<int>& ids);
 
   /* MPI: file number -> new number of the nodes this rank owns after
      repartitioning, sent by the ranks whose default chunk (nodeOffsets_old)
      computed them (old2new_chunk). One exchange. */
-  extern std::map<int,int> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
-                                                  const std::vector<int>& nodeOffsets_new,
-                                                  const std::vector<int>& old2new_chunk);
+  extern std::map<proteus_index_t,proteus_index_t> ownedNodesByFileNumber(const MPI_Comm& comm, const std::vector<proteus_index_t>& nodeOffsets_old,
+                                                  const std::vector<proteus_index_t>& nodeOffsets_new,
+                                                  const std::vector<proteus_index_t>& old2new_chunk);
 
   /* MPI: the new numbers of the file nodes `wanted`, from the ranks whose
      default chunk holds them. Collective: every rank calls it. */
-  extern std::map<int,int> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<int>& nodeOffsets_old,
-                                                 const std::vector<int>& old2new_chunk, const std::set<int>& wanted);
+  extern std::map<proteus_index_t,proteus_index_t> newNumbersOfFileNodes(const MPI_Comm& comm, const std::vector<proteus_index_t>& nodeOffsets_old,
+                                                 const std::vector<proteus_index_t>& old2new_chunk, const std::set<proteus_index_t>& wanted);
 
   /* MPI: file number -> new number of the subdomain's entities (elements,
      faces, edges), the owned ones numbered from ownedBegin in ascending file
@@ -350,9 +350,9 @@ namespace proteus
      sorted by old. Collective. An entity of subdomain that no rank owns ends
      the run on every rank, naming `what` (element, face, edge), its number
      and the rank that asked. */
-  extern std::vector<std::pair<int,int> > subdomainNumbersByDirectory(const MPI_Comm& comm, int nGlobal, int ownedBegin,
-                                                                      const std::set<int>& owned,
-                                                                      const std::vector<int>& subdomain,
+  extern std::vector<std::pair<proteus_index_t,proteus_index_t> > subdomainNumbersByDirectory(const MPI_Comm& comm, proteus_index_t nGlobal, proteus_index_t ownedBegin,
+                                                                      const std::set<proteus_index_t>& owned,
+                                                                      const std::vector<proteus_index_t>& subdomain,
                                                                       const char* what = "entity");
 
   /* MPI: flag -1 the subdomain faces the partition cut (exterior to the
@@ -364,8 +364,8 @@ namespace proteus
   extern int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFile=true);
 
   extern int partitionNodesFromTriangleFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* filebase, int indexBase, Mesh& newMesh, int nNodes_overlap,
-                                             std::vector<int>* nodeNumbering_subdomain2input=nullptr,
-                                             std::vector<int>* elementNumbering_subdomain2input=nullptr);
+                                             std::vector<proteus_index_t>* nodeNumbering_subdomain2input=nullptr,
+                                             std::vector<proteus_index_t>* elementNumbering_subdomain2input=nullptr);
 
   extern int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nElements_overlap,
                                const int* elementOwners=NULL);
@@ -380,12 +380,12 @@ namespace proteus
 
   /* Rows begin..end-1 of the element graph (each element's neighbours across its
      boundaries, sorted) in CSR form. Plain C++. */
-  extern void elementGraphRows(const Mesh& mesh, int begin, int end, std::vector<int>& offsets, std::vector<int>& neighbors);
+  extern void elementGraphRows(const Mesh& mesh, proteus_index_t begin, proteus_index_t end, std::vector<proteus_index_t>& offsets, std::vector<proteus_index_t>& neighbors);
 
   /* MPI and PETSc: every element's owner from MatPartitioning, gathered on every
      rank. Collective. */
   extern std::vector<int> graphElementOwners(const MPI_Comm& PROTEUS_COMM_WORLD, const Mesh& mesh,
-                                             const std::valarray<int>& elementOffsets_old);
+                                             const std::valarray<proteus_index_t>& elementOffsets_old);
 
   /* The local part of partitionElements: rank's part of the partition given the
      owner of every element. No MPI. Renumbers the global mesh in place, as

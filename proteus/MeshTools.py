@@ -10,6 +10,7 @@ import numpy as np
 import array
 import inspect
 import h5py
+from proteus import cmeshTools
 import os
 from .Archiver import *
 from .LinearAlgebraTools import ParVec_petsc4py
@@ -796,13 +797,13 @@ class Mesh(object):
         self.nElementBoundaries_owned=self.nElementBoundaries_global
         self.nEdges_owned=self.nEdges_global
         self.elementOffsets_subdomain_owned=[0,self.nElements_global]
-        self.elementNumbering_subdomain2global=np.arange(self.nElements_global,dtype='i')
+        self.elementNumbering_subdomain2global=np.arange(self.nElements_global,dtype=cmeshTools.INDEX_DTYPE)
         self.nodeOffsets_subdomain_owned=[0,self.nNodes_global]
-        self.nodeNumbering_subdomain2global=np.arange(self.nNodes_global,dtype='i')
+        self.nodeNumbering_subdomain2global=np.arange(self.nNodes_global,dtype=cmeshTools.INDEX_DTYPE)
         self.elementBoundaryOffsets_subdomain_owned=[0,self.nElementBoundaries_global]
-        self.elementBoundaryNumbering_subdomain2global=np.arange(self.nElementBoundaries_global,dtype='i')
+        self.elementBoundaryNumbering_subdomain2global=np.arange(self.nElementBoundaries_global,dtype=cmeshTools.INDEX_DTYPE)
         self.edgeOffsets_subdomain_owned=[0,self.nEdges_global]
-        self.edgeNumbering_subdomain2global=np.arange(self.nEdges_global,dtype='i')
+        self.edgeNumbering_subdomain2global=np.arange(self.nEdges_global,dtype=cmeshTools.INDEX_DTYPE)
         self.subdomainMesh=self
         self.globalMesh = None
         self.arGridCollection=None
@@ -1444,11 +1445,11 @@ class Mesh(object):
                 for n1,n2 in itertools.permutations(self.elementNodesArray[i_ele],2):#: works for combination of triangle and quadrilateral 
                     #: if n1<self.nNodes_global: #: Saving only locally owned node is not enough; should include ghost node
                     self.nodeStarList[n1].add(n2) #: does not contain itself; use set() instead of list since each pair is visited 1 or 2 times for 2D mesh
-            self.nodeStarOffsets = np.zeros((self.nNodes_global+1,),'i')
+            self.nodeStarOffsets = np.zeros((self.nNodes_global+1,),cmeshTools.INDEX_DTYPE)
             lenNodeStarArray=0
             for nN in range(1,self.nNodes_global+1):
                 self.nodeStarOffsets[nN] = self.nodeStarOffsets[nN-1] + len(self.nodeStarList[nN-1])
-            self.nodeStarArray =np.fromiter(itertools.chain.from_iterable(self.nodeStarList),'i')
+            self.nodeStarArray =np.fromiter(itertools.chain.from_iterable(self.nodeStarList),cmeshTools.INDEX_DTYPE)
             del self.nodeStarList
     def buildArraysFromLists(self):
         #nodes
@@ -1478,17 +1479,17 @@ class Mesh(object):
                 else:
                     nodeElementsDict[nN] = [eN]
         self.max_nElements_node = max(len(nodeElementsDict[nN]) for  nN in range(self.nNodes_global))
-        self.nElements_node = np.zeros((self.nNodes_global),'i')
+        self.nElements_node = np.zeros((self.nNodes_global),cmeshTools.INDEX_DTYPE)
         #mwf make a 1d array now
-        #self.nodeElementsArrayOld = np.zeros((self.nNodes_global,self.max_nElements_node),'i')
-        self.nodeElementOffsets = np.zeros((self.nNodes_global+1,),'i')
+        #self.nodeElementsArrayOld = np.zeros((self.nNodes_global,self.max_nElements_node),cmeshTools.INDEX_DTYPE)
+        self.nodeElementOffsets = np.zeros((self.nNodes_global+1,),cmeshTools.INDEX_DTYPE)
         for nN in range(len(nodeElementsDict)):
             elementList = nodeElementsDict[nN]
             self.nElements_node[nN] = len(elementList)
             self.nodeElementOffsets[nN+1] = self.nodeElementOffsets[nN]+self.nElements_node[nN]
             #for eN_element,eN in enumerate(elementList):
             #    self.nodeElementsArrayOld[nN,eN_element]=eN
-        self.nodeElementsArray = np.zeros((self.nodeElementOffsets[self.nNodes_global],),'i')
+        self.nodeElementsArray = np.zeros((self.nodeElementOffsets[self.nNodes_global],),cmeshTools.INDEX_DTYPE)
         for nN,elementList in nodeElementsDict.items():
             for eN_element,eN in enumerate(elementList):
                 self.nodeElementsArray[self.nodeElementOffsets[nN]+eN_element]=eN
@@ -1509,7 +1510,7 @@ class Mesh(object):
         self.nElementBoundaries_global=len(elementBoundaryNumbers)
         #elementBoundaryElementsArray
         self.elementBoundaryElementsArray=np.ones(
-            (self.nElementBoundaries_global,2),'i')
+            (self.nElementBoundaries_global,2),cmeshTools.INDEX_DTYPE)
         self.elementBoundaryElementsArray*=-1
         self.elementBoundaryLocalElementBoundariesArray=np.zeros(
             (self.nElementBoundaries_global,2),'i')
@@ -1532,9 +1533,9 @@ class Mesh(object):
         self.nInteriorElementBoundaries_global= self.nElementBoundaries_global-\
                                                self.nExteriorElementBoundaries_global
         self.exteriorElementBoundariesArray=np.zeros(
-            (self.nExteriorElementBoundaries_global,),'i')
+            (self.nExteriorElementBoundaries_global,),cmeshTools.INDEX_DTYPE)
         self.interiorElementBoundariesArray=np.zeros(
-            (self.nInteriorElementBoundaries_global,),'i')
+            (self.nInteriorElementBoundaries_global,),cmeshTools.INDEX_DTYPE)
         interior=0
         exterior=0
         for ebN in range(self.nElementBoundaries_global):
@@ -1553,7 +1554,7 @@ class Mesh(object):
             for nN_element,n in enumerate(eb.nodes):
                 self.elementBoundaryNodesArray[ebN,nN_element]=n.N
         #element  neighbors
-        self.elementNeighborsArray = np.zeros((self.nElements_global,self.nElementBoundaries_element),'i')
+        self.elementNeighborsArray = np.zeros((self.nElements_global,self.nElementBoundaries_element),cmeshTools.INDEX_DTYPE)
         for eN in range(self.nElements_global):
             for ebN_element in range(self.nElementBoundaries_element):
                 ebN = self.elementBoundariesArray[eN,ebN_element]
@@ -1567,7 +1568,7 @@ class Mesh(object):
                     self.elementNeighborsArray[eN,ebN_element] = -1
         #edges
         self.edgeNodesArray = np.zeros(
-            (len(self.edgeList),2),'i')
+            (len(self.edgeList),2),cmeshTools.INDEX_DTYPE)
         for en,e in enumerate(self.edgeList):
             self.edgeNodesArray[en,0]=e.nodes[0].N
             self.edgeNodesArray[en,1]=e.nodes[1].N
@@ -2293,13 +2294,13 @@ class MultilevelMesh(Mesh):
                 parents = cpartitioning.cartesianSubdomainParents(c['kind'], c['triangleFlag'], c['counts'],
                                                                   c['rankGrid'], l+1, Comm.get().rank())
             else:
-                subdomainOfGlobal = -np.ones((self.meshList[l].nElements_global,),'i')
-                subdomainOfGlobal[globalOf[l]] = np.arange(nCoarseSd,dtype='i')
+                subdomainOfGlobal = -np.ones((self.meshList[l].nElements_global,),cmeshTools.INDEX_DTYPE)
+                subdomainOfGlobal[globalOf[l]] = np.arange(nCoarseSd,dtype=cmeshTools.INDEX_DTYPE)
                 parents = subdomainOfGlobal[np.asarray(self.elementParentsArrayList[l+1])[globalOf[l+1]]]
             hierarchy.elementParentsArrayList.append(parents.astype('i'))
             kids = np.nonzero(parents >= 0)[0]
             order = kids[np.argsort(parents[kids],kind='stable')].astype('i')
-            offsets = np.zeros((nCoarseSd+1,),'i')
+            offsets = np.zeros((nCoarseSd+1,),cmeshTools.INDEX_DTYPE)
             offsets[1:] = np.cumsum(np.bincount(parents[kids],minlength=nCoarseSd))
             hierarchy.elementChildrenArrayList.append(order)
             hierarchy.elementChildrenOffsetsList.append(offsets)
@@ -2389,8 +2390,8 @@ class MultilevelMesh(Mesh):
             len_children=0
             for children in list(self.elementChildren[l-1].values()):
                 len_children += len(children)
-            self.elementChildrenArrayList.append(np.zeros((len_children,),'i'))
-            self.elementChildrenOffsetsList.append(np.zeros((self.meshList[l-1].nElements_global+1,),'i'))
+            self.elementChildrenArrayList.append(np.zeros((len_children,),cmeshTools.INDEX_DTYPE))
+            self.elementChildrenOffsetsList.append(np.zeros((self.meshList[l-1].nElements_global+1,),cmeshTools.INDEX_DTYPE))
             index=0
             for eN_p,children in enumerate(self.elementChildren[l-1].values()):
                 self.elementChildrenOffsetsList[l-1][eN_p] = index
@@ -2453,13 +2454,13 @@ class MultilevelMesh(Mesh):
         self.elementParentsArrayList = [[]]
         self.elementChildrenArrayList = []
         self.elementChildrenOffsetsList = []
-        self.elementParents = {0: -np.ones((self.meshList[0].nElements_global,),'i')}
+        self.elementParents = {0: -np.ones((self.meshList[0].nElements_global,),cmeshTools.INDEX_DTYPE)}
         for l in range(nLevels-1):
             parents = self._structuredElementParents(self.meshList[l],self.meshList[l+1],
                                                      levelCounts[l],dim)
             nCoarse = self.meshList[l].nElements_global
             order = np.argsort(parents,kind='stable').astype('i')
-            offsets = np.zeros((nCoarse+1,),'i')
+            offsets = np.zeros((nCoarse+1,),cmeshTools.INDEX_DTYPE)
             offsets[1:] = np.cumsum(np.bincount(parents,minlength=nCoarse))
             self.elementParentsArrayList.append(parents)
             self.elementChildrenArrayList.append(order)
@@ -2501,7 +2502,7 @@ class MultilevelMesh(Mesh):
             nLevels = len(self.meshList)
             for l in range(nLevels):
                 nE   = self.meshList[l].nElements_global
-                self.elementParents[l] = np.ones((nE,),'i')
+                self.elementParents[l] = np.ones((nE,),cmeshTools.INDEX_DTYPE)
                 self.elementParents[l][:]=-1
             for l in range(0,nLevels-1):
                 nEc = self.meshList[l].nElements_global
@@ -2565,8 +2566,8 @@ class MultilevelMesh(Mesh):
                     "needs the geometric transfer operators."
                     % (l,l+1))
 
-            parents = np.zeros((nNodes_fine,2),'i')
-            inherited = np.arange(nNodes_coarse,dtype='i')
+            parents = np.zeros((nNodes_fine,2),cmeshTools.INDEX_DTYPE)
+            inherited = np.arange(nNodes_coarse,dtype=cmeshTools.INDEX_DTYPE)
             parents[:nNodes_coarse,0] = inherited
             parents[:nNodes_coarse,1] = inherited
 
@@ -2744,7 +2745,7 @@ class MultilevelMesh(Mesh):
         if np.abs(w.sum(axis=1)-1.0).max() > 1.0e-10:
             raise ValueError("a fine node lies outside its coarse cell")
         keep = w > 1.0e-14
-        rowptr = np.zeros((nFine+1,),'i')
+        rowptr = np.zeros((nFine+1,),cmeshTools.INDEX_DTYPE)
         rowptr[1:] = np.cumsum(keep.sum(axis=1))
         colind = ce[P][keep].astype('i')
         nzval = w[keep].astype('d')
@@ -2867,9 +2868,9 @@ class MultilevelMesh(Mesh):
         nNodes_fine = parents.shape[0]
         inherited = parents[:,0] == parents[:,1]
         nnz = int(np.where(inherited,1,2).sum())
-        rowptr = np.zeros((nNodes_fine+1,),'i')
+        rowptr = np.zeros((nNodes_fine+1,),cmeshTools.INDEX_DTYPE)
         rowptr[1:] = np.cumsum(np.where(inherited,1,2))
-        colind = np.zeros((nnz,),'i')
+        colind = np.zeros((nnz,),cmeshTools.INDEX_DTYPE)
         nzval = np.zeros((nnz,),'d')
         single = np.flatnonzero(inherited)
         double = np.flatnonzero(~inherited)
@@ -2889,7 +2890,7 @@ class PointMesh(Mesh):
     def __init__(self,points):
         self.nodeArray=points
         self.nNodes_global = points.shape[0]
-        self.elementNodesArray=np.arange(self.nNodes_global,dtype='i')
+        self.elementNodesArray=np.arange(self.nNodes_global,dtype=cmeshTools.INDEX_DTYPE)
         self.nElements_global = self.nNodes_global
 
 MX=0
@@ -2916,11 +2917,11 @@ class EdgeGrid(Mesh):
         for i in self.nRange_x:
             self.nodeGridArray[i,MX] = i*self.dx
         #edge node numbers
-        self.edgeNodesArray=np.zeros((self.ex,2),'i')
+        self.edgeNodesArray=np.zeros((self.ex,2),cmeshTools.INDEX_DTYPE)
         #try to do this like we'll do 2d and 3d
         #edge nodes
         en=2
-        edgeNodeNumbers = np.zeros((en,),'i')
+        edgeNodeNumbers = np.zeros((en,),cmeshTools.INDEX_DTYPE)
         #reference edge
         eI=1
         refEdge_nodeIndeces = [-eI,eI]
@@ -2988,16 +2989,16 @@ class QuadrilateralGrid(Mesh):
                 self.nodeGridArray[i,j,MY]=j*self.dy
         #edge node numbers
         en=2
-        edgeNodeNumbers = np.zeros((en,),'i')
-        self.edgeNodesArray=np.zeros((self.eXYxy,en),'i')
+        edgeNodeNumbers = np.zeros((en,),cmeshTools.INDEX_DTYPE)
+        self.edgeNodesArray=np.zeros((self.eXYxy,en),cmeshTools.INDEX_DTYPE)
         #quad node numbers
         qn=4
-        quadNodeNumbers = np.zeros((qn,),'i')
-        self.quadrilateralNodesArray=np.zeros((self.qxy,qn),'i')
+        quadNodeNumbers = np.zeros((qn,),cmeshTools.INDEX_DTYPE)
+        self.quadrilateralNodesArray=np.zeros((self.qxy,qn),cmeshTools.INDEX_DTYPE)
         #quad edge numbers
         qe=4
-        quadEdgeNumbers = np.zeros((qe,),'i')
-        self.quadrilateralEdgesArray=np.zeros((self.qxy,qe),'i')
+        quadEdgeNumbers = np.zeros((qe,),cmeshTools.INDEX_DTYPE)
+        self.quadrilateralEdgesArray=np.zeros((self.qxy,qe),cmeshTools.INDEX_DTYPE)
         #reference quad
         refQuad_NodeIndeces = [(-1,-1),
                                (-1, 1),
@@ -6268,8 +6269,8 @@ class MultilevelQuadrilateralMesh(MultilevelMesh):
         # The following four lines should be called elsewhere...Most of this is don in
         # the c-function calls that are not implemented yet for 2D quads
         self.meshList[-1].nElements_owned = self.meshList[-1].nElements_global
-        self.meshList[-1].nodeNumbering_subdomain2global = np.zeros((self.meshList[-1].nNodes_global,), 'i')
-        self.meshList[-1].elementNumbering_subdomain2global = np.zeros((self.meshList[-1].nElements_global,), 'i')
+        self.meshList[-1].nodeNumbering_subdomain2global = np.zeros((self.meshList[-1].nNodes_global,), cmeshTools.INDEX_DTYPE)
+        self.meshList[-1].elementNumbering_subdomain2global = np.zeros((self.meshList[-1].nElements_global,), cmeshTools.INDEX_DTYPE)
         self.meshList[-1].nodeOffsets_subdomain_owned[-1] = self.meshList[-1].nNodes_global
         self.meshList[-1].nNodes_owned = self.meshList[-1].nNodes_global
         self.meshList[-1].elementOffsets_subdomain_owned[-1] = self.meshList[-1].nElements_global
@@ -7215,7 +7216,7 @@ def readUniformElementTopologyFromXdmf(elementTopologyName,Topology,hdf5,topolog
     nElements_global = elementNodesArray.shape[0]
     logEvent("nElements_global,nNodes_element= (%d,%d) " % (nElements_global,nNodes_element),3)
 
-    elementNodes_offset = np.arange(nElements_global*nNodes_element+1,step=nNodes_element,dtype='i')
+    elementNodes_offset = np.arange(nElements_global*nNodes_element+1,step=nNodes_element,dtype=cmeshTools.INDEX_DTYPE)
 
     return nElements_global, nNodes_element, elementNodesArray, elementNodes_offset
 
@@ -7250,14 +7251,14 @@ def readMixedElementTopologyFromXdmf(elementTopologyName,Topology,hdf5,topologyi
         i += nNodes_local+1
     #
     logEvent("Mixed topology found %s elements " % nElements_global,3)
-    elementNodes_offset = np.zeros((nElements_global+1,),'i')
+    elementNodes_offset = np.zeros((nElements_global+1,),cmeshTools.INDEX_DTYPE)
 
     i = 0; eN = 0
     while i < len(xdmf_topology):
         nNodes_local = topology2nodes[topologyid2name[xdmf_topology[i]]]
         elementNodes_offset[eN+1] = elementNodes_offset[eN] + nNodes_local
         eN += 1; i += nNodes_local+1
-    elementNodesArray = np.zeros((elementNodes_offset[nElements_global],),'i')
+    elementNodesArray = np.zeros((elementNodes_offset[nElements_global],),cmeshTools.INDEX_DTYPE)
     i = 0; eN = 0
     #this read self.xdmf_topology, which does not exist in a module function
     while i < len(xdmf_topology):
@@ -7439,7 +7440,7 @@ def writeMeshYmf(prefix, nodeArray, elementNodesArray, nodeMaterialTypes=None,
     """
     from ymf import archive as ymf_archive
     nodeArray = np.ascontiguousarray(nodeArray, dtype='d')
-    elementNodesArray = np.ascontiguousarray(elementNodesArray, dtype='i')
+    elementNodesArray = np.ascontiguousarray(elementNodesArray, dtype=cmeshTools.INDEX_DTYPE)
     if nodeMaterialTypes is None:
         nodeMaterialTypes = np.zeros((nodeArray.shape[0],), 'i')
     if elementMaterialTypes is None:
@@ -7658,7 +7659,7 @@ def subdomainYmfGrid(globalMesh, rank=None, item=None):
     faces = np.asarray(sub.elementBoundaryNodesArray)[exterior]
     grid = ymf_archive.uniform_grid(
         ymf_archive.topology(topologyName, sub.nElements_global,
-                             item("elements", np.asarray(sub.elementNodesArray, dtype=np.int32))),
+                             item("elements", np.asarray(sub.elementNodesArray, dtype=cmeshTools.INDEX_DTYPE))),
         ymf_archive.geometry(item("nodes", np.asarray(sub.nodeArray, dtype='d'))),
         [attribute("NodeMapInput", nodeMapInput.astype(np.int64), "Node"),
          attribute("CellMapInput", cellMapInput.astype(np.int64), "Cell"),

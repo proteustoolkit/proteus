@@ -1506,7 +1506,7 @@ class ParametersModelNCLS(ParametersModelBase):
                 if 'ncls_DBC' in BC:
                     self.p.dirichletConditions = {0: BC['ncls_DBC']}
                 else:
-                    self.p.dirichletCondtions = {0: lambda x,t: None}
+                    self.p.dirichletConditions = {0: lambda x,t: None}
             else:
                 self.p.dirichletConditions = {0: lambda x, flag: domain.BCbyFlag[flag].phi_dirichlet.uOfXT}
             self.p.diffusiveFluxBoundaryConditions = {0: {}}

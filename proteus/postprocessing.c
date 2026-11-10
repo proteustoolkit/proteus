@@ -49,7 +49,7 @@ void invertLocal(int nSpace,double A[3][3], double AI[3][3])
 }
 
 
-void postProcessRT0velocityFromP1nc(int nElements_global,
+void postProcessRT0velocityFromP1nc(proteus_index_t nElements_global,
 				    int nQuadraturePoints_element,
 				    int nDOF_test_element,
 				    int nElementBoundaries_element,
@@ -164,7 +164,7 @@ void postProcessRT0velocityFromP1nc(int nElements_global,
        rt0vdofs[eN,:] = [\vec a_E,b_E]
 
    ***********************************************************************/
-  int eN,ebN,I,J,i,k,ebN_free,ebN_dir;
+  proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
   int nSpace2 = nSpace*nSpace;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
@@ -412,14 +412,14 @@ void postProcessRT0velocityFromP1nc(int nElements_global,
     }/*eN*/
 }
 
-void postProcessRT0velocityFromP1nc_sd(int nElements_global,
+void postProcessRT0velocityFromP1nc_sd(proteus_index_t nElements_global,
 				       int nQuadraturePoints_element,
 				       int nDOF_test_element,
 				       int nElementBoundaries_element,
 				       int nQuadraturePoints_elementBoundary,
 				       int nSpace,
-				       int* rowptr,
-				       int* colind,
+				       proteus_index_t* rowptr,
+				       proteus_index_t* colind,
 				       int * nFreeDOF_element,
 				       int * freeLocal_element,
 				       double * detJ,
@@ -529,8 +529,8 @@ void postProcessRT0velocityFromP1nc_sd(int nElements_global,
        rt0vdofs[eN,:] = [\vec a_E,b_E]
 
    ***********************************************************************/
-  int eN,ebN,I,J,i,k,ebN_free,ebN_dir;
-  int m,nnz=rowptr[nSpace];
+  proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
+  proteus_index_t m, nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -776,7 +776,7 @@ void postProcessRT0velocityFromP1nc_sd(int nElements_global,
     }/*eN*/
 }
 
-void postProcessRT0velocityFromP1ncNoMass(int nElements_global,
+void postProcessRT0velocityFromP1ncNoMass(proteus_index_t nElements_global,
 					    int nQuadraturePoints_element,
 					    int nDOF_test_element,
 					    int nElementBoundaries_element,
@@ -801,7 +801,7 @@ void postProcessRT0velocityFromP1ncNoMass(int nElements_global,
   /***********************************************************************
     version of postProcessRT0velocityFromP1nc without a mass variable
    ***********************************************************************/
-  int eN,ebN,I,J,i,k,ebN_free,ebN_dir;
+  proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
   int nSpace2 = nSpace*nSpace;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
@@ -1044,14 +1044,14 @@ void postProcessRT0velocityFromP1ncNoMass(int nElements_global,
     }/*eN*/
 }
 
-void postProcessRT0velocityFromP1ncNoMass_sd(int nElements_global,
+void postProcessRT0velocityFromP1ncNoMass_sd(proteus_index_t nElements_global,
 					     int nQuadraturePoints_element,
 					     int nDOF_test_element,
 					     int nElementBoundaries_element,
 					     int nQuadraturePoints_elementBoundary,
 					     int nSpace,
-					     int* rowptr,
-					     int* colind,
+					     proteus_index_t* rowptr,
+					     proteus_index_t* colind,
 					     int * nFreeDOF_element,
 					     int * freeLocal_element,
 					     double * detJ,
@@ -1071,8 +1071,8 @@ void postProcessRT0velocityFromP1ncNoMass_sd(int nElements_global,
   /***********************************************************************
     version of postProcessRT0velocityFromP1nc without a mass variable
    ***********************************************************************/
-  int eN,ebN,I,J,i,k,ebN_free,ebN_dir;
-  int m,nnz=rowptr[nSpace];
+  proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
+  proteus_index_t m, nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -1313,7 +1313,7 @@ void postProcessRT0velocityFromP1ncNoMass_sd(int nElements_global,
     }/*eN*/
 }
 
-void updateRT0velocityWithAveragedPotentialP1nc(int nElements_global,
+void updateRT0velocityWithAveragedPotentialP1nc(proteus_index_t nElements_global,
 						int nQuadraturePoints_element,
 						int nSpace,
 						double * detJ,
@@ -1335,7 +1335,7 @@ void updateRT0velocityWithAveragedPotentialP1nc(int nElements_global,
        rt0vdofs[eN,:] = [\vec a_E,b_E]
 
    ***********************************************************************/
-  int eN,I,J,k;
+  proteus_index_t eN; int I, J, k;
   int nSpace2 = nSpace*nSpace;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,volFact;
@@ -1407,11 +1407,11 @@ void updateRT0velocityWithAveragedPotentialP1nc(int nElements_global,
     }/*eN*/
 }
 
-void updateRT0velocityWithAveragedPotentialP1nc_sd(int nElements_global,
+void updateRT0velocityWithAveragedPotentialP1nc_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nSpace,
-						   int* rowptr,
-						   int* colind,
+						   proteus_index_t* rowptr,
+						   proteus_index_t* colind,
 						   double * detJ,
 						   double * quad_a,
 						   double * phi,
@@ -1431,8 +1431,8 @@ void updateRT0velocityWithAveragedPotentialP1nc_sd(int nElements_global,
        rt0vdofs[eN,:] = [\vec a_E,b_E]
 
    ***********************************************************************/
-  int eN,I,J,k;
-  int m,nnz=rowptr[nSpace];
+  proteus_index_t eN; int I, J, k;
+  proteus_index_t m, nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,volFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -1502,7 +1502,7 @@ void updateRT0velocityWithAveragedPotentialP1nc_sd(int nElements_global,
     }/*eN*/
 }
 
-void getElementRT0velocityValues(int nElements_global,
+void getElementRT0velocityValues(proteus_index_t nElements_global,
 				 int nPoints_element,
 				 int nSpace,
 				 double * x_element,
@@ -1522,7 +1522,7 @@ void getElementRT0velocityValues(int nElements_global,
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,I,k;
+  proteus_index_t eN; int I, k;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double b_T = 0.;
   for (eN = 0; eN < nElements_global; eN++)
@@ -1541,7 +1541,7 @@ void getElementRT0velocityValues(int nElements_global,
     }/*eN*/
 
 }
-void getElementBoundaryRT0velocityValues(int nElements_global,
+void getElementBoundaryRT0velocityValues(proteus_index_t nElements_global,
 					 int nElementBoundaries_element,
 					 int nPoints_elementBoundary,
 					 int nSpace,
@@ -1564,7 +1564,7 @@ void getElementBoundaryRT0velocityValues(int nElements_global,
                    \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,ebN,I,k;
+  proteus_index_t eN, ebN; int I, k;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double b_T = 0.;
   for (eN = 0; eN < nElements_global; eN++)
@@ -1591,10 +1591,10 @@ void getElementBoundaryRT0velocityValues(int nElements_global,
     }/*eN*/
 
 }
-void getGlobalElementBoundaryRT0velocityValues(int nElementBoundaries_global,
+void getGlobalElementBoundaryRT0velocityValues(proteus_index_t nElementBoundaries_global,
 					       int nPoints_elementBoundary,
 					       int nSpace,
-					       int * elementBoundaryElementsArray,
+					       proteus_index_t * elementBoundaryElementsArray,
 					       double * x_elementBoundary_global,
 					       double * rt0vdofs_element,
 					       double * v_elementBoundary_global)
@@ -1615,7 +1615,7 @@ void getGlobalElementBoundaryRT0velocityValues(int nElementBoundaries_global,
        v_elementBoundary_global  stored as nElementBoundaries_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int ebN,eN,I,k;
+  proteus_index_t ebN, eN; int I, k;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double b_T = 0.;
   for (ebN = 0; ebN < nElementBoundaries_global; ebN++)
@@ -1634,11 +1634,11 @@ void getGlobalElementBoundaryRT0velocityValues(int nElementBoundaries_global,
     }/*ebN*/
 
 }
-void getGlobalExteriorElementBoundaryRT0velocityValues(int nExteriorElementBoundaries_global,
+void getGlobalExteriorElementBoundaryRT0velocityValues(proteus_index_t nExteriorElementBoundaries_global,
 						       int nPoints_elementBoundary,
 						       int nSpace,
-						       int * elementBoundaryElementsArray,
-						       int * exteriorElementBoundariesArray,
+						       proteus_index_t * elementBoundaryElementsArray,
+						       proteus_index_t * exteriorElementBoundariesArray,
 						       double * x_elementBoundary_global,
 						       double * rt0vdofs_element,
 						       double * v_elementBoundary_global)
@@ -1659,7 +1659,7 @@ void getGlobalExteriorElementBoundaryRT0velocityValues(int nExteriorElementBound
        v_elementBoundary_global  stored as nElementBoundaries_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int ebNE,ebN,eN,I,k;
+  proteus_index_t ebN, eN; int ebNE, I, k;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double b_T = 0.;
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
@@ -1680,7 +1680,7 @@ void getGlobalExteriorElementBoundaryRT0velocityValues(int nExteriorElementBound
 
 }
 
-void postProcessRT0potentialFromP1nc(int nElements_global,
+void postProcessRT0potentialFromP1nc(proteus_index_t nElements_global,
 				     int nQuadraturePoints_element,
 				     int nElementBoundaries_element,
 				     int nQuadraturePoints_elementBoundary,
@@ -1726,7 +1726,7 @@ void postProcessRT0potentialFromP1nc(int nElements_global,
      linear on each edge, and midpoint rule for the "advection" term since it's linear
     
    ***********************************************************************/
-  int eN,ebN,I,J,k;
+  proteus_index_t eN, ebN; int I, J, k;
   int nSpace2 = nSpace*nSpace;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,vmass,bndsum,adot,ahqInvI,xdotn,gravsum;
@@ -1840,13 +1840,13 @@ void postProcessRT0potentialFromP1nc(int nElements_global,
     }/*eN*/
 }
 
-void postProcessRT0potentialFromP1nc_sd(int nElements_global,
+void postProcessRT0potentialFromP1nc_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nElementBoundaries_element,
 					int nQuadraturePoints_elementBoundary,
 					int nSpace,
-					int* rowptr,
-					int* colind,
+					proteus_index_t* rowptr,
+					proteus_index_t* colind,
 					double * uQuadratureWeights_element,
 					double * elementBarycenters,
 					double * aElementQuadratureWeights,
@@ -1888,8 +1888,8 @@ void postProcessRT0potentialFromP1nc_sd(int nElements_global,
      linear on each edge, and midpoint rule for the "advection" term since it's linear
     
    ***********************************************************************/
-  int eN,ebN,I,J,k;
-  int m,nnz=rowptr[nSpace];
+  proteus_index_t eN, ebN; int I, J, k;
+  proteus_index_t m, nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,vmass,bndsum,adot,ahqInvI,xdotn,gravsum;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -2001,7 +2001,7 @@ void postProcessRT0potentialFromP1nc_sd(int nElements_global,
     }/*eN*/
 }
 
-void projectElementBoundaryVelocityToRT0fluxRep(int nElements_global,
+void projectElementBoundaryVelocityToRT0fluxRep(proteus_index_t nElements_global,
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nSpace,
@@ -2031,7 +2031,7 @@ void projectElementBoundaryVelocityToRT0fluxRep(int nElements_global,
    Uses physical quadrature points on element boundary to calculate flux integral 
    ***********************************************************************/
   
-  int eN,ebN,I,k;
+  proteus_index_t eN, ebN; int I, k;
   double fluxsum,dotk;
   int nDOF_RT0V_element = nSpace+1;
   /*mwf debug*/
@@ -2082,12 +2082,12 @@ void projectElementBoundaryVelocityToRT0fluxRep(int nElements_global,
 	}/*ebN*/
     }/*eN*/
 }
-void projectElementBoundaryFluxToRT0fluxRep(int nElements_global,
+void projectElementBoundaryFluxToRT0fluxRep(proteus_index_t nElements_global,
                                             int nElementBoundaries_element,
                                             int nQuadraturePoints_elementBoundary,
                                             int nDOF_RT0V_element,
-                                            int* elementBoundaryElementsArray,
-                                            int* elementBoundariesArray,
+                                            proteus_index_t* elementBoundaryElementsArray,
+                                            proteus_index_t* elementBoundariesArray,
                                             double * elementBoundaryQuadratureWeights,
                                             double * flux_elementBoundary,
                                             double * rt0vdofs_element)
@@ -2113,7 +2113,7 @@ void projectElementBoundaryFluxToRT0fluxRep(int nElements_global,
    Uses physical quadrature points on element boundary to calculate flux integral 
    ***********************************************************************/
   
-  int eN,ebN,ebN_global,k;
+  proteus_index_t eN, ebN, ebN_global; int k;
   double fluxsum,sign;
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -2141,13 +2141,13 @@ void projectElementBoundaryFluxToRT0fluxRep(int nElements_global,
     }/*eN*/
 }
 
-void getElementRT0velocityValuesFluxRep(int nElements_global,
+void getElementRT0velocityValuesFluxRep(proteus_index_t nElements_global,
 					int nElementBoundaries_element,
 					int nPoints_element,
 					int nSpace,
 					int nDetVals_element,
 					double * nodeArray,
-					int * elementNodesArray,
+					proteus_index_t * elementNodesArray,
 					double * abs_det_J,
 					double * x_element,
 					double * rt0vdofs_element,
@@ -2169,7 +2169,7 @@ void getElementRT0velocityValuesFluxRep(int nElements_global,
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,I,k,j,jg;
+  proteus_index_t eN, jg; int I, k, j;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volFact,dvolInv;
   double ddim = nSpace;
@@ -2207,13 +2207,13 @@ void getElementRT0velocityValuesFluxRep(int nElements_global,
     }/*eN*/
 }
 
-void getElementBoundaryRT0velocityValuesFluxRep(int nElements_global,
+void getElementBoundaryRT0velocityValuesFluxRep(proteus_index_t nElements_global,
                                                 int nElementBoundaries_element,
                                                 int nPoints_elementBoundary,
                                                 int nSpace,
                                                 int nDetVals_element,
                                                 double * nodeArray,
-                                                int * elementNodesArray,
+                                                proteus_index_t * elementNodesArray,
                                                 double * abs_det_J,
                                                 double * x_elementBoundary,
                                                 double * rt0vdofs_element,
@@ -2235,7 +2235,7 @@ void getElementBoundaryRT0velocityValuesFluxRep(int nElements_global,
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,ebN,I,k,j,jg;
+  proteus_index_t eN, ebN, jg; int I, k, j;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volFact,dvolInv;
   double ddim = nSpace;
@@ -2275,13 +2275,13 @@ void getElementBoundaryRT0velocityValuesFluxRep(int nElements_global,
     }/*eN*/
 }
 
-void getGlobalElementBoundaryRT0velocityValuesFluxRep(int nElementBoundaries_global,
+void getGlobalElementBoundaryRT0velocityValuesFluxRep(proteus_index_t nElementBoundaries_global,
                                                       int nPoints_elementBoundary_global,
                                                       int nSpace,
                                                       int nDetVals_element,
                                                       double * nodeArray,
-                                                      int *elementNodesArray,
-                                                      int *elementBoundaryElementsArray,
+                                                      proteus_index_t *elementNodesArray,
+                                                      proteus_index_t *elementBoundaryElementsArray,
                                                       double * abs_det_J,
                                                       double * x_elementBoundary_global,
                                                       double * rt0vdofs_element,
@@ -2303,7 +2303,7 @@ void getGlobalElementBoundaryRT0velocityValuesFluxRep(int nElementBoundaries_glo
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,ebN,I,k,j,jg;
+  proteus_index_t eN, ebN, jg; int I, k, j;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volFact,dvolInv;
   double ddim = nSpace;
@@ -2338,14 +2338,14 @@ void getGlobalElementBoundaryRT0velocityValuesFluxRep(int nElementBoundaries_glo
         }/*k*/
     }/*ebN*/
 }
-void getGlobalExteriorElementBoundaryRT0velocityValuesFluxRep(int nExteriorElementBoundaries_global,
+void getGlobalExteriorElementBoundaryRT0velocityValuesFluxRep(proteus_index_t nExteriorElementBoundaries_global,
 							      int nPoints_elementBoundary_global,
 							      int nSpace,
 							      int nDetVals_element,
 							      double * nodeArray,
-							      int *elementNodesArray,
-							      int *elementBoundaryElementsArray,
-							      int* exteriorElementBoundariesArray,
+							      proteus_index_t *elementNodesArray,
+							      proteus_index_t *elementBoundaryElementsArray,
+							      proteus_index_t* exteriorElementBoundariesArray,
 							      double * abs_det_J,
 							      double * x_ebqe,
 							      double * rt0vdofs_element,
@@ -2367,7 +2367,7 @@ void getGlobalExteriorElementBoundaryRT0velocityValuesFluxRep(int nExteriorEleme
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,ebN,ebNE,I,k,j,jg;
+  proteus_index_t eN, ebN, jg; int ebNE, I, k, j;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volFact,dvolInv;
   double ddim = nSpace;
@@ -2403,13 +2403,13 @@ void getGlobalExteriorElementBoundaryRT0velocityValuesFluxRep(int nExteriorEleme
     }/*ebN*/
 }
 
-void getRT0velocityValuesFluxRep_arbitraryElementMembership(int nElements_global,
+void getRT0velocityValuesFluxRep_arbitraryElementMembership(proteus_index_t nElements_global,
 							    int nElementBoundaries_element,
 							    int nPoints,
 							    int nSpace,
 							    int nDetVals_element,
 							    const double * nodeArray,
-							    const int * elementNodesArray,
+							    const proteus_index_t * elementNodesArray,
 							    const double * abs_det_J,
 							    const double * x,
 							    const int * element_locations,
@@ -2432,7 +2432,7 @@ void getRT0velocityValuesFluxRep_arbitraryElementMembership(int nElements_global
        v_element stored as nElements_global \times nPoints \times nSpace
 
    ***********************************************************************/
-  int eN,I,k,j,jg;
+  proteus_index_t eN, jg; int I, k, j;
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volFact,dvolInv;
   double ddim = nSpace;
@@ -2467,7 +2467,7 @@ void getRT0velocityValuesFluxRep_arbitraryElementMembership(int nElements_global
     }/*k*/
 }
 
-void buildLocalBDM1projectionMatrices_orig(int nElements_global,
+void buildLocalBDM1projectionMatrices_orig(proteus_index_t nElements_global,
 					   int nElementBoundaries_element,
 					   int nQuadraturePoints_elementBoundary,
 					   int nSpace,
@@ -2503,7 +2503,7 @@ void buildLocalBDM1projectionMatrices_orig(int nElements_global,
      Assumes nodes \f$k\f$ is corresponds to face \f$k \f$across from it.
    ***********************************************************************/
 
-  int eN,ebN,s,j,k,l,kp,irow,ibq,nVDOFs_element2,nSimplex;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, j, k, l, kp, ibq, nVDOFs_element2, nSimplex;
   int TRANSPOSE_FOR_LAPACK=1;
   double pval;
   nSimplex = nSpace+1;
@@ -2569,7 +2569,7 @@ void buildLocalBDM1projectionMatrices_orig(int nElements_global,
 
 }
 
-void buildLocalBDM1projectionMatrices(int nElements_global,
+void buildLocalBDM1projectionMatrices(proteus_index_t nElements_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nSpace,
@@ -2625,7 +2625,7 @@ Input Variables
      Assumes nodes \f$k\f$ is corresponds to face \f$k \f$across from it.
    ***********************************************************************/
 
-  int eN,ebN,s,j,k,l,kp,irow,ibq,nVDOFs_element2,nSimplex;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, j, k, l, kp, ibq, nVDOFs_element2, nSimplex;
   int TRANSPOSE_FOR_LAPACK=1;
   double pval;
   nSimplex = nSpace+1;
@@ -2708,7 +2708,7 @@ Input Variables
 
 
 void buildLocalBDM2projectionMatrices(int degree,
-				      int nElements_global,
+				      proteus_index_t nElements_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nQuadraturePoints_elementInterior,
@@ -2733,7 +2733,7 @@ void buildLocalBDM2projectionMatrices(int degree,
    NOTE - this function has only been tested for TRANSPOSE_FOR_LAPACK=1.
    ***********************************************************************/
 
-  int eN,ebN,s,i,j,k,l,kp,irow,ibq,nSimplex;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, i, j, k, l, kp, ibq, nSimplex;
   int dof, dof_edge, boundary_dof;
   int num_div_free;
   int TRANSPOSE_FOR_LAPACK=1;
@@ -2904,13 +2904,13 @@ void buildLocalBDM2projectionMatrices(int degree,
 }
 
 
-void factorLocalBDM1projectionMatrices(int nElements_global,
+void factorLocalBDM1projectionMatrices(proteus_index_t nElements_global,
 				       int nVDOFs_element,
 				       double *BDMprojectionMat_element,
 				       int *BDMprojectionMatPivots_element)
 {
   PROTEUS_LAPACK_INTEGER INFO=0;
-  int eN,i,nVDOFs_element2;
+  proteus_index_t eN; int i, nVDOFs_element2;
   PROTEUS_LAPACK_INTEGER pivots_element[12]; /*maximum size for local space is 3*(3+1)*/
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
   nVDOFs_element2 = nVDOFs_element*nVDOFs_element;
@@ -2933,13 +2933,13 @@ void factorLocalBDM1projectionMatrices(int nElements_global,
 }
 
 
-void factorLocalBDM2projectionMatrices(int nElements_global,
+void factorLocalBDM2projectionMatrices(proteus_index_t nElements_global,
 				       int nVDOFs_element,
 				       double *BDMprojectionMat_element,
 				       int *BDMprojectionMatPivots_element)
 {
   PROTEUS_LAPACK_INTEGER INFO=0;
-  int eN,i,nVDOFs_element2;
+  proteus_index_t eN; int i, nVDOFs_element2;
   PROTEUS_LAPACK_INTEGER pivots_element[30]; /*maximum size for local space is 12*/
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
   nVDOFs_element2 = nVDOFs_element*nVDOFs_element;
@@ -2962,7 +2962,7 @@ void factorLocalBDM2projectionMatrices(int nElements_global,
 }
 
 
-void solveLocalBDM1projection(int nElements_global,
+void solveLocalBDM1projection(proteus_index_t nElements_global,
 			      int nElementBoundaries_element,
 			      int nQuadraturePoints_elementBoundary,
 			      int nSpace,
@@ -2994,7 +2994,7 @@ void solveLocalBDM1projection(int nElements_global,
 
   PROTEUS_LAPACK_INTEGER INFO=0,NRHS=1;
   char TRANS='N';
-  int eN,ebN,s,irow,kp,ibq,J,nSimplex,nVDOFs_element2;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, kp, ibq, J, nSimplex, nVDOFs_element2;
   double btmp;
   PROTEUS_LAPACK_INTEGER pivots_element[12]; /*maximum size for local space is 3*(3+1)*/
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
@@ -3052,7 +3052,7 @@ void solveLocalBDM1projection(int nElements_global,
     }/*eN*/
 }
 
-void buildBDM2rhs(int nElements_global,
+void buildBDM2rhs(proteus_index_t nElements_global,
                   int nElementBoundaries_element,
 	          int nQuadraturePoints_elementBoundary,
 		  int nQuadraturePoints_elementInterior,
@@ -3092,7 +3092,7 @@ void buildBDM2rhs(int nElements_global,
 
   PROTEUS_LAPACK_INTEGER INFO=0,NRHS=1;
   char TRANS='N';
-  int eN,ebN,s,irow,kp,ibq,j,dof_edge,num_div_free,boundary_dof,dof;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, kp, ibq, j, dof_edge, num_div_free, boundary_dof, dof;
   double btmp,pvalx,pvaly;
   PROTEUS_LAPACK_INTEGER pivots_element[30]; /*maximum size for local space is ???*/
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
@@ -3211,7 +3211,7 @@ void buildBDM2rhs(int nElements_global,
 
 }
 
-void solveLocalBDM2projection(int nElements_global,
+void solveLocalBDM2projection(proteus_index_t nElements_global,
 			      int nElementBoundaries_element,
 			      int nQuadraturePoints_elementBoundary,
 			      int nSpace,
@@ -3233,7 +3233,7 @@ void solveLocalBDM2projection(int nElements_global,
 
   PROTEUS_LAPACK_INTEGER INFO=0,NRHS=1;
   char TRANS='N';
-  int eN,ebN,s,irow,kp,ibq,J,nSimplex,nVDOFs_element2;
+  proteus_index_t eN, ebN; proteus_index_t irow; int s, kp, ibq, J, nSimplex, nVDOFs_element2;
   double btmp;
   PROTEUS_LAPACK_INTEGER pivots_element[30];
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
@@ -3259,15 +3259,15 @@ void solveLocalBDM2projection(int nElements_global,
 }
 
 
-void solveLocalBDM1projectionFromFlux(int nElements_global,
+void solveLocalBDM1projectionFromFlux(proteus_index_t nElements_global,
                                       int nElementBoundaries_element,
                                       int nQuadraturePoints_elementBoundary,
                                       int nDOFs_test_element,
                                       int nVDOFs_element,
                                       double * BDMprojectionMatFact_element,
                                       int* BDMprojectionMatPivots_element,
-                                      int* elementBoundaryElementsArray,
-                                      int* elementBoundariesArray,
+                                      proteus_index_t* elementBoundaryElementsArray,
+                                      proteus_index_t* elementBoundariesArray,
                                       double * w_dS_f,
                                       double * ebq_global_flux,
                                       double * p1_velocity_dofs)
@@ -3291,7 +3291,7 @@ void solveLocalBDM1projectionFromFlux(int nElements_global,
   
   PROTEUS_LAPACK_INTEGER INFO=0,NRHS=1;
   char TRANS='N';
-  int eN,ebN,ebN_global,nSpace,s,irow,kp,ibq,nSimplex,nVDOFs_element2;
+  proteus_index_t eN, ebN, ebN_global; proteus_index_t irow; int nSpace, s, kp, ibq, nSimplex, nVDOFs_element2;
   double btmp,sign;
   PROTEUS_LAPACK_INTEGER pivots_element[12]; /*maximum size for local space is 3*(3+1)*/
   PROTEUS_LAPACK_INTEGER nE_n = ((PROTEUS_LAPACK_INTEGER) nVDOFs_element);
@@ -3343,7 +3343,7 @@ void solveLocalBDM1projectionFromFlux(int nElements_global,
     }/*eN*/
 }
 
-void getElementBDM1velocityValuesLagrangeRep_orig(int nElements_global,
+void getElementBDM1velocityValuesLagrangeRep_orig(proteus_index_t nElements_global,
 						  int nQuadraturePoints_element,
 						  int nSpace,
 						  int nDOF_trial_element,
@@ -3361,7 +3361,7 @@ void getElementBDM1velocityValuesLagrangeRep_orig(int nElements_global,
        k = j % (nd+1), id = j/(nd+1)
 \f]
    **********************************************************************/
-  int eN,iq,id,k,j;
+  proteus_index_t eN; int iq, id, k, j;
 
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -3384,7 +3384,7 @@ void getElementBDM1velocityValuesLagrangeRep_orig(int nElements_global,
 
 }
 
-void getElementBDM1velocityValuesLagrangeRep(int nElements_global,
+void getElementBDM1velocityValuesLagrangeRep(proteus_index_t nElements_global,
 					     int nQuadraturePoints_element,
 					     int nSpace,
 					     int nDOF_trial_element,
@@ -3402,7 +3402,7 @@ void getElementBDM1velocityValuesLagrangeRep(int nElements_global,
        k = j / nd, id = j % nd
 \f]
    **********************************************************************/
-  int eN,iq,id,k,j;
+  proteus_index_t eN; int iq, id, k, j;
 
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -3425,7 +3425,7 @@ void getElementBDM1velocityValuesLagrangeRep(int nElements_global,
 
 }
 
-void getElementBDM2velocityValuesLagrangeRep(int nElements_global,
+void getElementBDM2velocityValuesLagrangeRep(proteus_index_t nElements_global,
 					     int nQuadraturePoints_element,
 					     int nSpace,
 					     int nDOF_trial_element,
@@ -3443,7 +3443,7 @@ void getElementBDM2velocityValuesLagrangeRep(int nElements_global,
        k = j / nd, id = j % nd
 \f]
    **********************************************************************/
-  int eN,iq,id,k,j;
+  proteus_index_t eN; int iq, id, k, j;
   for (eN = 0; eN < nElements_global; eN++)
     {
       for (iq = 0; iq < nQuadraturePoints_element; iq++)
@@ -3466,13 +3466,13 @@ void getElementBDM2velocityValuesLagrangeRep(int nElements_global,
 
 }
 
-void getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(int nExteriorElementBoundaries_global,
+void getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(proteus_index_t nExteriorElementBoundaries_global,
 								   int nQuadraturePoints_elementBoundary,
 								   int nSpace,
 								   int nDOF_trial_element,
 								   int nVDOF_element,
-								   int *elementBoundaryElementsArray,
-								   int *exteriorElementBoundariesArray,
+								   proteus_index_t *elementBoundaryElementsArray,
+								   proteus_index_t *exteriorElementBoundariesArray,
 								   double * ebqe_v, /*scalar P^1 shape fncts*/
 								   double * p1_velocity_dofs,
 								   double * ebqe_velocity)
@@ -3486,7 +3486,7 @@ void getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(int nExterior
        k = j / nd, id = j % nd
 \f]
    **********************************************************************/
-  int ebN,ebNE,eN,iq,id,k,j;
+  proteus_index_t ebN, eN; int ebNE, iq, id, k, j;
 
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
     {
@@ -3511,13 +3511,13 @@ void getGlobalExteriorElementBoundaryBDM1velocityValuesLagrangeRep(int nExterior
     }/*eN*/
 
 }
-void getGlobalElementBoundaryBDM1velocityValuesLagrangeRep(int nExteriorElementBoundaries_global,
+void getGlobalElementBoundaryBDM1velocityValuesLagrangeRep(proteus_index_t nExteriorElementBoundaries_global,
 								   int nQuadraturePoints_elementBoundary,
 								   int nSpace,
 								   int nDOF_trial_element,
 								   int nVDOF_element,
-								   int *elementBoundaryElementsArray,
-								   int *exteriorElementBoundariesArray,
+								   proteus_index_t *elementBoundaryElementsArray,
+								   proteus_index_t *exteriorElementBoundariesArray,
 								   double * ebqe_v, /*scalar P^1 shape fncts*/
 								   double * p1_velocity_dofs,
 								   double * ebq_global_velocity)
@@ -3531,7 +3531,7 @@ void getGlobalElementBoundaryBDM1velocityValuesLagrangeRep(int nExteriorElementB
        k = j / nd, id = j % nd
 \f]
    **********************************************************************/
-  int ebN,ebNE,eN,iq,id,k,j;
+  proteus_index_t ebN, eN; int ebNE, iq, id, k, j;
  
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
     {
@@ -3557,14 +3557,14 @@ void getGlobalElementBoundaryBDM1velocityValuesLagrangeRep(int nExteriorElementB
 
 }
 
-void getElementBoundaryBDM1velocityValuesLagrangeRep(int nElements_global,
+void getElementBoundaryBDM1velocityValuesLagrangeRep(proteus_index_t nElements_global,
 								   int nBoundaries_Element,
 								   int nQuadraturePoints_elementBoundary,
 								   int nSpace,
 								   int nDOF_trial_element,
 								   int nVDOF_element,
-						                   int *elementBoundaryElementsArray, /* not used */
-								   int *exteriorElementBoundariesArray, /*not used */
+						                   proteus_index_t *elementBoundaryElementsArray, /* not used */
+								   proteus_index_t *exteriorElementBoundariesArray, /*not used */
 								   double * ebq_v, /*scalar P^1 shape fncts*/
 								   double * p1_velocity_dofs,
 								   double * ebq_velocity)
@@ -3578,7 +3578,7 @@ void getElementBoundaryBDM1velocityValuesLagrangeRep(int nElements_global,
        k = j / nd, id = j % nd
 \f]
    **********************************************************************/
-  int ebN,eN,iq,id,k,j;
+  proteus_index_t ebN, eN; int iq, id, k, j;
 
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -3611,16 +3611,16 @@ void getElementBoundaryBDM1velocityValuesLagrangeRep(int nElements_global,
 /***********************************************************************
    try implementing Sun-Wheeler Gauss-Seidel velocity postprocessing
  ***********************************************************************/
-void calculateConservationResidualGlobalBoundaries(int nElements_global,
-						   int nInteriorElementBoundaries_global,
-						   int nExteriorElementBoundaries_global,
+void calculateConservationResidualGlobalBoundaries(proteus_index_t nElements_global,
+						   proteus_index_t nInteriorElementBoundaries_global,
+						   proteus_index_t nExteriorElementBoundaries_global,
 						   int nElementBoundaries_element,
 						   int nQuadraturePoints_elementBoundary,
 						   int nNodes_element,
 						   int nSpace,
-						   int* interiorElementBoundaries,
-						   int* exteriorElementBoundaries,
-						   int* elementBoundaryElements,
+						   proteus_index_t* interiorElementBoundaries,
+						   proteus_index_t* exteriorElementBoundaries,
+						   proteus_index_t* elementBoundaryElements,
 						   int* elementBoundaryLocalElementBoundaries,
 						   int* exteriorElementBoundariesToSkip,
 						   double* dS,
@@ -3629,7 +3629,7 @@ void calculateConservationResidualGlobalBoundaries(int nElements_global,
 						   double* velocity,
 						   double* conservationResidual)
 {
-  int ebNI,ebNE,ebN,eN,nN,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,k,I;
+  proteus_index_t ebN, eN, nN, left_eN, right_eN; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, k, I;
   register double flux,ds;
   /*mwf debug*/
 /*   register double signDebug = -1.0; */
@@ -3706,16 +3706,16 @@ void calculateConservationResidualGlobalBoundaries(int nElements_global,
     }/*ebNE*/
 }
 
-void sunWheelerGSsweep(int nElements_global,
-		       int nElementBoundaries_global,
-		       int nInteriorElementBoundaries_global,
-		       int nExteriorElementBoundaries_global,
+void sunWheelerGSsweep(proteus_index_t nElements_global,
+		       proteus_index_t nElementBoundaries_global,
+		       proteus_index_t nInteriorElementBoundaries_global,
+		       proteus_index_t nExteriorElementBoundaries_global,
 		       int nElementBoundaries_element,
 		       int nQuadraturePoints_elementBoundary,
 		       int nSpace,
-		       int* interiorElementBoundaries,
-		       int* exteriorElementBoundaries,
-		       int* elementBoundaryElements,
+		       proteus_index_t* interiorElementBoundaries,
+		       proteus_index_t* exteriorElementBoundaries,
+		       proteus_index_t* elementBoundaryElements,
 		       int* elementBoundaryLocalElementBoundaries,
 		       double* dS,
 		       double* normal,
@@ -3724,7 +3724,7 @@ void sunWheelerGSsweep(int nElements_global,
 		       double* fluxCorrection,
 		       double* conservationResidual)
 {
-  int ebNI,ebN,left_eN,right_eN,left_ebN_element,right_ebN_element;
+  proteus_index_t ebN, left_eN, right_eN; int ebNI, left_ebN_element, right_ebN_element;
   register double area,areaFact,F_ebN;
   areaFact = 1.0;
   if (nSpace == 3)
@@ -3755,16 +3755,16 @@ void sunWheelerGSsweep(int nElements_global,
 
 }
 
-void fluxCorrectionVelocityUpdate(int nElements_global,
-				  int nElementBoundaries_global,
-				  int nInteriorElementBoundaries_global,
-				  int nExteriorElementBoundaries_global,
+void fluxCorrectionVelocityUpdate(proteus_index_t nElements_global,
+				  proteus_index_t nElementBoundaries_global,
+				  proteus_index_t nInteriorElementBoundaries_global,
+				  proteus_index_t nExteriorElementBoundaries_global,
 				  int nElementBoundaries_element,
 				  int nQuadraturePoints_elementBoundary,
 				  int nSpace,
-				  int* interiorElementBoundaries,
-				  int* exteriorElementBoundaries,
-				  int* elementBoundaryElements,
+				  proteus_index_t* interiorElementBoundaries,
+				  proteus_index_t* exteriorElementBoundaries,
+				  proteus_index_t* elementBoundaryElements,
 				  int* elementBoundaryLocalElementBoundaries,
 				  double* dS,
 				  double* normal,
@@ -3772,7 +3772,7 @@ void fluxCorrectionVelocityUpdate(int nElements_global,
 				  double* vConservative,
 				  double* vConservative_element)
 {
-  int eN,ebN_element,ebNI,ebNE,ebN,left_eN,right_eN,left_ebN_element,right_ebN_element,k,I;
+  proteus_index_t eN, ebN, left_eN, right_eN; int ebN_element, ebNI, ebNE, left_ebN_element, right_ebN_element, k, I;
 
   for (ebN = 0; ebN < nElementBoundaries_global; ebN++)
     {
@@ -3837,12 +3837,12 @@ void fluxCorrectionVelocityUpdate(int nElements_global,
     }/*ebNE*/
 }
 
-void computeFluxCorrectionPWC(int nElementBoundaries_global,
-			      int nInteriorElementBoundaries_global,
-			      int nExteriorElementBoundaries_global,
-			      int* interiorElementBoundaries,
-			      int* exteriorElementBoundaries,
-			      int* elementBoundaryElements,
+void computeFluxCorrectionPWC(proteus_index_t nElementBoundaries_global,
+			      proteus_index_t nInteriorElementBoundaries_global,
+			      proteus_index_t nExteriorElementBoundaries_global,
+			      proteus_index_t* interiorElementBoundaries,
+			      proteus_index_t* exteriorElementBoundaries,
+			      proteus_index_t* elementBoundaryElements,
 			      double* pwcW,
 			      double* pwcV,
 			      double* fluxCorrection)
@@ -3853,7 +3853,7 @@ void computeFluxCorrectionPWC(int nElementBoundaries_global,
     \Delta_f = (V_l - V_r)/|\gamma_f|
   */
 
-  int ebNI,ebNE,ebN,eN_left,eN_right;
+  proteus_index_t ebN, eN_left, eN_right; int ebNI, ebNE;
   double V_left,V_right,w_left,w_right;
   for (ebNI = 0; ebNI < nInteriorElementBoundaries_global; ebNI++)
     {
@@ -3881,12 +3881,12 @@ void computeFluxCorrectionPWC(int nElementBoundaries_global,
  ***********************************************************************/
 
 
-int nodeStar_init(int nElements_global,
+int nodeStar_init(proteus_index_t nElements_global,
 		  int nNodes_element,
-		  int nNodes_global,
+		  proteus_index_t nNodes_global,
 		  int* nElements_node,
-		  int* nodeStarElementsArray,
-		  int* nodeStarElementNeighborsArray,
+		  proteus_index_t* nodeStarElementsArray,
+		  proteus_index_t* nodeStarElementNeighborsArray,
 		  int* N_p,
 		  int** subdomain_dim_p, 
 		  double *** subdomain_L_p,
@@ -3897,7 +3897,7 @@ int nodeStar_init(int nElements_global,
 {
   int I;
   
-  int N;
+  proteus_index_t N;
   int* subdomain_dim; 
   double** subdomain_R; 
   double** subdomain_U;
@@ -4014,7 +4014,7 @@ int nodeStar_copy(int other_N,
 		  PROTEUS_LAPACK_INTEGER*** subdomain_column_pivots_p)
 {
   /*assumes both sets of structure have been allocated*/
-  int I,i,N;
+  proteus_index_t N; int I, i;
   int* subdomain_dim; 
   double** subdomain_R; 
   double** subdomain_U;
@@ -4145,24 +4145,24 @@ int nodeStar_copy(int other_N,
     fluxElementBoundaries holds global exterior element boundary ids for flux bcs
     fluxElementBoundaryNodes holds global node numbers for flux bcs
  ***********************************************************************/
-void calculateConservationResidualPWL(int nElements_global,
-				      int nInteriorElementBoundaries_global,
-				      int nExteriorElementBoundaries_global,
+void calculateConservationResidualPWL(proteus_index_t nElements_global,
+				      proteus_index_t nInteriorElementBoundaries_global,
+				      proteus_index_t nExteriorElementBoundaries_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nNodes_element,
 				      int nDOF_element,
 				      int nSpace,
-				      int* interiorElementBoundaries,
-				      int* exteriorElementBoundaries,
-				      int* elementBoundaryElements,
+				      proteus_index_t* interiorElementBoundaries,
+				      proteus_index_t* exteriorElementBoundaries,
+				      proteus_index_t* elementBoundaryElements,
 				      int* elementBoundaryLocalElementBoundaries,
-				      int* elementNodes,
-				      int* dofMapl2g,
-				      int* nodeStarElements,
-				      int* nodeStarElementNeighbors,
+				      proteus_index_t* elementNodes,
+				      proteus_index_t* dofMapl2g,
+				      proteus_index_t* nodeStarElements,
+				      proteus_index_t* nodeStarElementNeighbors,
 				      int* nElements_node,
-				      int* fluxElementBoundaries,
+				      proteus_index_t* fluxElementBoundaries,
 				      double* elementResidual,
 				      double* vAverage,
 				      double* dX,
@@ -4173,7 +4173,7 @@ void calculateConservationResidualPWL(int nElements_global,
 				      double* vConservative,
 				      double* vConservative_element)
 {
-  int ebNI,ebNE,ebN,eN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,k,I;
+  proteus_index_t ebN, eN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, k, I;
   register double flux,fluxAverage,fluxCorrection,dx=0.0;
   /*mwf now access node star system using NodeStarFactorStruct*/
   double ** starR, ** starU;
@@ -4507,34 +4507,34 @@ void calculateConservationResidualPWL(int nElements_global,
   */
 }
 
-void calculateConservationJacobianPWL(int nDOF_global,
-				      int nNodes_internal,
-				      int nElements_global,
-				      int nInteriorElementBoundaries_global,
-				      int nExteriorElementBoundaries_global,
+void calculateConservationJacobianPWL(proteus_index_t nDOF_global,
+				      proteus_index_t nNodes_internal,
+				      proteus_index_t nElements_global,
+				      proteus_index_t nInteriorElementBoundaries_global,
+				      proteus_index_t nExteriorElementBoundaries_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nNodes_element,
 				      int nDOF_element,
 				      int nSpace,
-				      int* interiorElementBoundaries,
-				      int* exteriorElementBoundaries,
-				      int* elementBoundaryElements,
+				      proteus_index_t* interiorElementBoundaries,
+				      proteus_index_t* exteriorElementBoundaries,
+				      proteus_index_t* elementBoundaryElements,
 				      int* elementBoundaryLocalElementBoundaries,
-				      int* elementNodes,
-				      int* dofMapl2g,
-				      int* dofStarElements,
-				      int* dofStarElementNeighbors,
+				      proteus_index_t* elementNodes,
+				      proteus_index_t* dofMapl2g,
+				      proteus_index_t* dofStarElements,
+				      proteus_index_t* dofStarElementNeighbors,
 				      int* nElements_node,
-				      int* internalNodes,
-				      int* fluxElementBoundaries,
+				      proteus_index_t* internalNodes,
+				      proteus_index_t* fluxElementBoundaries,
 				      int* fluxBoundaryNodes,
 				      double* w,
 				      double* normal,
 				      NodeStarFactorStruct* nodeStarFactor)
 
 {
-  int eN,ebNI,ebNE,ebN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,nNI,k;
+  proteus_index_t eN, ebN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, nNI, k;
   PROTEUS_LAPACK_INTEGER INFO=0;
   register double wflux;
   /*mwf add for boundaries*/
@@ -4698,14 +4698,14 @@ void calculateConservationJacobianPWL(int nDOF_global,
 	/*assert(INFO == 0);*//*need to turn off if use dgetc2*/
     }
 }
-void calculateConservationFluxPWL(int nNodes_global,
-				  int nNodes_internal,
+void calculateConservationFluxPWL(proteus_index_t nNodes_global,
+				  proteus_index_t nNodes_internal,
 				  int* nElements_node,
-				  int* internalNodes,
+				  proteus_index_t* internalNodes,
 				  int* fluxBoundaryNodes,
 				  NodeStarFactorStruct* nodeStarFactor)
 {
-  int nN,nNI,eN;
+  proteus_index_t nN, eN; int nNI;
   PROTEUS_LAPACK_INTEGER NRHS=1,INFO=0;
   double ** starJ = nodeStarFactor->subdomain_L;
   double ** starR = nodeStarFactor->subdomain_R;
@@ -4761,11 +4761,11 @@ void calculateConservationFluxPWL(int nNodes_global,
     }
 }
 
-void calculateConservationFluxPWL_noNeumannFix(int nNodes_global,
+void calculateConservationFluxPWL_noNeumannFix(proteus_index_t nNodes_global,
 					       int* nElements_node,
 					       NodeStarFactorStruct* nodeStarFactor)
 {
-  int nN,nNI,eN;
+  proteus_index_t nN, eN; int nNI;
   PROTEUS_LAPACK_INTEGER NRHS=1,INFO=0;
   double ** starJ = nodeStarFactor->subdomain_L;
   double ** starR = nodeStarFactor->subdomain_R;
@@ -4794,23 +4794,23 @@ void calculateConservationFluxPWL_noNeumannFix(int nNodes_global,
     }
 }
 
-void calculateConservationResidualPWL_opt(int nNodes_owned,
-				      int nElements_global,
-				      int nInteriorElementBoundaries_global,
-				      int nExteriorElementBoundaries_global,
+void calculateConservationResidualPWL_opt(proteus_index_t nNodes_owned,
+				      proteus_index_t nElements_global,
+				      proteus_index_t nInteriorElementBoundaries_global,
+				      proteus_index_t nExteriorElementBoundaries_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nNodes_element,
 				      int nSpace,
-				      int* interiorElementBoundaries,
-				      int* exteriorElementBoundaries,
-				      int* elementBoundaryElements,
+				      proteus_index_t* interiorElementBoundaries,
+				      proteus_index_t* exteriorElementBoundaries,
+				      proteus_index_t* elementBoundaryElements,
 				      int* elementBoundaryLocalElementBoundaries,
-				      int* elementNodes,
-				      int* nodeStarElements,
-				      int* nodeStarElementNeighbors,
+				      proteus_index_t* elementNodes,
+				      proteus_index_t* nodeStarElements,
+				      proteus_index_t* nodeStarElementNeighbors,
 				      int* nElements_node,
-				      int* fluxElementBoundaries,
+				      proteus_index_t* fluxElementBoundaries,
 				      double* elementResidual,
 				      double* vAverage,
 				      double* dX,
@@ -4822,7 +4822,7 @@ void calculateConservationResidualPWL_opt(int nNodes_owned,
 				      double* vConservative_element)
 {
   int foundNonzeroR;
-  int ebNI,ebNE,ebN,eN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,k,I;
+  proteus_index_t ebN, eN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, k, I;
   register double flux,fluxAverage,fluxCorrection,dx=0.0;
   /*mwf now access node star system using NodeStarFactorStruct*/
   double ** starR, ** starU;
@@ -5039,16 +5039,16 @@ void calculateConservationResidualPWL_opt(int nNodes_owned,
     }
 }
 
-void calculateConservationResidualPWL_primative(int nElements_global,
-						int nInteriorElementBoundaries_global,
-						int nExteriorElementBoundaries_global,
+void calculateConservationResidualPWL_primative(proteus_index_t nElements_global,
+						proteus_index_t nInteriorElementBoundaries_global,
+						proteus_index_t nExteriorElementBoundaries_global,
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nNodes_element,
 						int nSpace,
-						int* interiorElementBoundaries,
-						int* exteriorElementBoundaries,
-						int* elementBoundaryElements,
+						proteus_index_t* interiorElementBoundaries,
+						proteus_index_t* exteriorElementBoundaries,
+						proteus_index_t* elementBoundaryElements,
 						int* elementBoundaryLocalElementBoundaries,
 						int* skipflag_elementBoundaries,
 						double* elementResidual,
@@ -5057,7 +5057,7 @@ void calculateConservationResidualPWL_primative(int nElements_global,
 						double* conservationResidual,
 						double* vConservative)
 {
-  int ebNI,ebNE,ebN,eN,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,nN,k,I;
+  proteus_index_t ebN, eN, left_eN, right_eN, nN; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, k, I;
   register double flux,divergence=0.0;
   memset(conservationResidual,0,sizeof(double)*nElements_global);
   /* /\*initialize residual with element residual and assume external flux terms are in the element residual*\/ */
@@ -5130,33 +5130,33 @@ void calculateConservationResidualPWL_primative(int nElements_global,
     }
 }
 
-void calculateConservationJacobianPWL_opt(int nNodes_owned,
-				      int nNodes_global,
-				      int nNodes_internal,
-				      int nElements_global,
-				      int nInteriorElementBoundaries_global,
-				      int nExteriorElementBoundaries_global,
+void calculateConservationJacobianPWL_opt(proteus_index_t nNodes_owned,
+				      proteus_index_t nNodes_global,
+				      proteus_index_t nNodes_internal,
+				      proteus_index_t nElements_global,
+				      proteus_index_t nInteriorElementBoundaries_global,
+				      proteus_index_t nExteriorElementBoundaries_global,
 				      int nElementBoundaries_element,
 				      int nQuadraturePoints_elementBoundary,
 				      int nNodes_element,
 				      int nSpace,
-				      int* interiorElementBoundaries,
-				      int* exteriorElementBoundaries,
-				      int* elementBoundaryElements,
+				      proteus_index_t* interiorElementBoundaries,
+				      proteus_index_t* exteriorElementBoundaries,
+				      proteus_index_t* elementBoundaryElements,
 				      int* elementBoundaryLocalElementBoundaries,
-				      int* elementNodes,
-				      int* nodeStarElements,
-				      int* nodeStarElementNeighbors,
+				      proteus_index_t* elementNodes,
+				      proteus_index_t* nodeStarElements,
+				      proteus_index_t* nodeStarElementNeighbors,
 				      int* nElements_node,
-				      int* internalNodes,
-				      int* fluxElementBoundaries,
+				      proteus_index_t* internalNodes,
+				      proteus_index_t* fluxElementBoundaries,
 				      int* fluxBoundaryNodes,
 				      double* w,
 				      double* normal,
 				      NodeStarFactorStruct* nodeStarFactor)
 
 {
-  int eN,ebNI,ebNE,ebN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,nNI,k;
+  proteus_index_t eN, ebN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, nNI, k;
   PROTEUS_LAPACK_INTEGER INFO=0;
   register double wflux;
   /*mwf add for boundaries*/
@@ -5321,15 +5321,15 @@ void calculateConservationJacobianPWL_opt(int nNodes_owned,
 	/*assert(INFO == 0);*//*need to turn off if use dgetc2*/
     }
 }
-void calculateConservationFluxPWL_opt(int nNodes_owned,
-				  int nNodes_global,
-				  int nNodes_internal,
+void calculateConservationFluxPWL_opt(proteus_index_t nNodes_owned,
+				  proteus_index_t nNodes_global,
+				  proteus_index_t nNodes_internal,
 				  int* nElements_node,
-				  int* internalNodes,
+				  proteus_index_t* internalNodes,
 				  int* fluxBoundaryNodes,
 				  NodeStarFactorStruct* nodeStarFactor)
 {
-  int nN,nNI,eN;
+  proteus_index_t nN, eN; int nNI;
   PROTEUS_LAPACK_INTEGER NRHS=1,INFO=0;
   double ** starJ = nodeStarFactor->subdomain_L;
   double ** starR = nodeStarFactor->subdomain_R;
@@ -5386,14 +5386,14 @@ void calculateConservationFluxPWL_opt(int nNodes_owned,
     }
 }
 void subdomain_U_copy_global2local(int max_nN_owned,
-                                   int nElements_global,
+                                   proteus_index_t nElements_global,
                                    int nNodes_element,
-                                   int* elementNodes,
-                                   int* nodeStarElements,
+                                   proteus_index_t* elementNodes,
+                                   proteus_index_t* nodeStarElements,
                                    NodeStarFactorStruct* nodeStarFactor,
 				   double* subdomain_U)
 {
-  int eN,nN,eN_star,nN_global;
+  proteus_index_t eN, nN, eN_star, nN_global;
   double ** starU = nodeStarFactor->subdomain_U;
   for (eN=0;eN<nElements_global;eN++)
     for (nN=0;nN<nNodes_element;nN++)
@@ -5410,14 +5410,14 @@ void subdomain_U_copy_global2local(int max_nN_owned,
 }
 
 void subdomain_U_copy_local2global(int max_nN_owned,
-                                   int nElements_global,
+                                   proteus_index_t nElements_global,
                                    int nNodes_element,
-                                   int* elementNodes,
-                                   int* nodeStarElements,
+                                   proteus_index_t* elementNodes,
+                                   proteus_index_t* nodeStarElements,
                                    NodeStarFactorStruct* nodeStarFactor,
 				   double* subdomain_U)
 {
-  int eN,nN,eN_star,nN_global;
+  proteus_index_t eN, nN, eN_star, nN_global;
   double ** starU = nodeStarFactor->subdomain_U;
   for (eN=0;eN<nElements_global;eN++)
     for (nN=0;nN<nNodes_element;nN++)
@@ -5442,19 +5442,19 @@ void subdomain_U_copy_local2global(int max_nN_owned,
 /**
    \brief Update the element boundary flux on exterior element boundaries
 */
-void updateSelectedExteriorElementBoundaryFlux(int nExteriorElementBoundaries_global,
+void updateSelectedExteriorElementBoundaryFlux(proteus_index_t nExteriorElementBoundaries_global,
 					       int nElementBoundaries_element,
 					       int nQuadraturePoints_elementBoundary,
 					       int nDOF_test_element,
-					       int* exteriorElementBoundaries,
-					       int* elementBoundaryElements,
+					       proteus_index_t* exteriorElementBoundaries,
+					       proteus_index_t* elementBoundaryElements,
 					       int* elementBoundaryLocalElementBoundaries,
 					       int* skipflag_elementBoundaries,
 					       double* flux,
 					       double* w_dS,
 					       double* residual)
 {
-  int ebNE,ebN,eN_global,ebN_element,i,k;
+  proteus_index_t ebN, eN_global; int ebNE, ebN_element, i, k;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
       ebN = exteriorElementBoundaries[ebNE];
@@ -5525,7 +5525,7 @@ void postprocessDiffusiveVelocityPointEval(int nPoints,
     q_a and or q_f may be null if not defined for system
     (only reason why calculateFlowVelocity wouldnt work)
   */
-  int eN,k,I,J;
+  proteus_index_t eN; int k, I, J;
   const int nSpace2 = nSpace*nSpace;
   for (k = 0; k < nPoints; k++)
     {
@@ -5546,8 +5546,8 @@ void postprocessDiffusiveVelocityPointEval(int nPoints,
 void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
 					      int nSpace,
 					      double updateCoef,
-					      int* rowptr,
-					      int* colind,
+					      proteus_index_t* rowptr,
+					      proteus_index_t* colind,
 					      const double* a,
 					      const double* grad_phi,
 					      double * velocity)
@@ -5558,8 +5558,8 @@ void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
     q_a and or q_f may be null if not defined for system
     (only reason why calculateFlowVelocity wouldnt work)
   */
-  int eN,k,I,m;
-  const int nnz=rowptr[nSpace];
+  proteus_index_t eN, m; int k, I;
+  const proteus_index_t nnz=rowptr[nSpace];
   for (k = 0; k < nPoints; k++)
     {
       for (I = 0; I < nSpace; I++)
@@ -5576,9 +5576,9 @@ void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
     }/*k*/
 }
 
-void calculateElementResidualPWL(int nElements, int nDOF_element_res, int nDOF_element_resPWL,double* alpha, double* elementResidual, double* elementResidualPWL)
+void calculateElementResidualPWL(proteus_index_t nElements, int nDOF_element_res, int nDOF_element_resPWL,double* alpha, double* elementResidual, double* elementResidualPWL)
 {
-  int eN,i,j;
+  proteus_index_t eN; int i, j;
   memset(elementResidualPWL,0,sizeof(double)*nElements*nDOF_element_resPWL);
   for(eN=0;eN<nElements;eN++)
     for(i=0;i<nDOF_element_resPWL;i++)
@@ -5609,22 +5609,22 @@ void calculateElementResidualPWL(int nElements, int nDOF_element_res, int nDOF_e
     fluxElementBoundaries holds global element boundary ids for flux bcs
 
  ***********************************************************************/
-void calculateConservationResidualPWL_interiorBoundaries(int nElements_global,
-							 int nInteriorElementBoundaries_global,
-							 int nExteriorElementBoundaries_global,
+void calculateConservationResidualPWL_interiorBoundaries(proteus_index_t nElements_global,
+							 proteus_index_t nInteriorElementBoundaries_global,
+							 proteus_index_t nExteriorElementBoundaries_global,
 							 int nElementBoundaries_element,
 							 int nQuadraturePoints_elementBoundary,
 							 int nNodes_element,
 							 int nSpace,
-							 int* interiorElementBoundaries,
-							 int* exteriorElementBoundaries,
-							 int* elementBoundaryElements,
+							 proteus_index_t* interiorElementBoundaries,
+							 proteus_index_t* exteriorElementBoundaries,
+							 proteus_index_t* elementBoundaryElements,
 							 int* elementBoundaryLocalElementBoundaries,
-							 int* elementNodes,
-							 int* nodeStarElements,
-							 int* nodeStarElementNeighbors,
+							 proteus_index_t* elementNodes,
+							 proteus_index_t* nodeStarElements,
+							 proteus_index_t* nodeStarElementNeighbors,
 							 int* nElements_node,
-							 int* fluxElementBoundaries,
+							 proteus_index_t* fluxElementBoundaries,
 							 double* elementResidual,
 							 double* vAverage,
 							 double* dX,
@@ -5635,7 +5635,7 @@ void calculateConservationResidualPWL_interiorBoundaries(int nElements_global,
 							 double* vConservative,
 							 double* vConservative_element)
 {
-  int ebNI,ebNE,ebN,eN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,k,I;
+  proteus_index_t ebN, eN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, k, I;
   register double flux,fluxAverage,fluxCorrection,dx=0.0;
   /*mwf now access node star system using NodeStarFactorStruct*/
   double ** starR, ** starU;
@@ -5965,29 +5965,29 @@ void calculateConservationResidualPWL_interiorBoundaries(int nElements_global,
   has internal boundaries and does not "fix" 
   node star systems for pure-neumann degeneracy
  **************************************************/
-void calculateConservationJacobianPWL_interiorBoundaries(int nNodes_global,
-							 int nElements_global,
-							 int nInteriorElementBoundaries_global,
-							 int nExteriorElementBoundaries_global,
+void calculateConservationJacobianPWL_interiorBoundaries(proteus_index_t nNodes_global,
+							 proteus_index_t nElements_global,
+							 proteus_index_t nInteriorElementBoundaries_global,
+							 proteus_index_t nExteriorElementBoundaries_global,
 							 int nElementBoundaries_element,
 							 int nQuadraturePoints_elementBoundary,
 							 int nNodes_element,
 							 int nSpace,
-							 int* interiorElementBoundaries,
-							 int* exteriorElementBoundaries,
-							 int* elementBoundaryElements,
+							 proteus_index_t* interiorElementBoundaries,
+							 proteus_index_t* exteriorElementBoundaries,
+							 proteus_index_t* elementBoundaryElements,
 							 int* elementBoundaryLocalElementBoundaries,
-							 int* elementNodes,
-							 int* nodeStarElements,
-							 int* nodeStarElementNeighbors,
+							 proteus_index_t* elementNodes,
+							 proteus_index_t* nodeStarElements,
+							 proteus_index_t* nodeStarElementNeighbors,
 							 int* nElements_node,
-							 int* fluxElementBoundaries,
+							 proteus_index_t* fluxElementBoundaries,
 							 double* w,
 							 double* normal,
 							 NodeStarFactorStruct* nodeStarFactor)
 
 {
-  int eN,ebNI,ebNE,ebN,eN_star,left_eN,right_eN,ebN_element,left_ebN_element,right_ebN_element,left_eN_star,right_eN_star,nN,nN_global,nNI,k;
+  proteus_index_t eN, ebN, eN_star, left_eN, right_eN, left_eN_star, right_eN_star, nN, nN_global; int ebNI, ebNE, ebN_element, left_ebN_element, right_ebN_element, nNI, k;
   PROTEUS_LAPACK_INTEGER INFO=0;
   register double wflux;
   /*mwf add for boundaries*/

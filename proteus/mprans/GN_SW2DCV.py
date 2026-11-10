@@ -2,6 +2,7 @@ import proteus
 from proteus import FemTools
 from proteus import LinearAlgebraTools as LAT
 from proteus.mprans.cGN_SW2DCV import *
+from proteus.mprans.SW2DCV import bathymetryAtNodes
 import numpy as np
 from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus.Transport import Quadrature, logEvent, memory, BackwardEuler
@@ -453,44 +454,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def initializeMesh(self, mesh):
         x = mesh.nodeArray[:, 0]
         y = mesh.nodeArray[:, 1]
-        comm=Comm.get()
-        if self.bathymetry is None:
-            self.b.dof = mesh.nodeArray[:, 2].copy()     
-        elif type(self.bathymetry) is np.ndarray:
-            #if mpi, use mapping old2new to rearrange b.dof vector globally
-            if self.bathymetry.ndim==1:
-                b_global = self.bathymetry.copy() 
-            elif self.bathymetry.shape[1]==1:
-                b_global = self.bathymetry[:,0].copy()
-            elif self.bathymetry.shape[1]==3:
-                b_global = self.bathymetry[:,2].copy()
-            if comm.size() > 1:
-                #the array is in the input mesh's node order: take each
-                #subdomain node's entry at its input number, which the
-                #partition records per rank (MeshTools._localInputNumbering:
-                #partitionNodes' permutation, or the parun -F partitioners'
-                #file numbers; mappings.h5 until 2026-11)
-                from proteus import MeshTools
-                g = mesh.globalMesh
-                if (getattr(g, 'nodeNumbering_global_old2new', None) is None
-                        and '_viewInputNumbering' not in g.__dict__):
-                    raise ValueError("a bathymetry array is in the input mesh's node order, and this partition "
-                                     "does not record its node numbering (element partitioning, or a mesh "
-                                     "generated per rank): give the bathymetry as a function")
-                nodes_input = MeshTools._localInputNumbering(g)[0]
-                if nodes_input is None:     #the partition kept the input numbering
-                    nodes_input = g.nodeNumbering_subdomain2global
-                nodes_input = np.asarray(nodes_input)
-                assert nodes_input.max() < len(b_global), "one bathymetry value per node of the input mesh"
-                self.b.dof = b_global[nodes_input]
-                mesh.nodeArray[:,2] = self.b.dof
-            else:
-                self.b.dof = self.bathymetry
-                mesh.nodeArray[:,2] = self.b.dof           
-        else:
-            self.b.dof = self.bathymetry([x, y])          
-            mesh.nodeArray[:,2] = self.b.dof                #if bathy is a function no need to pass subdomain info here
-        
+        self.b.dof = bathymetryAtNodes(self.bathymetry, mesh)
+        mesh.nodeArray[:, 2] = self.b.dof
         assert mesh.nodeArray.shape[1]==3
         def nodal(f, default):
             if f is None:

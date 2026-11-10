@@ -69,10 +69,10 @@ extern "C"
     mesh.nNodes_element = 2;
     mesh.nNodes_global = nx;
     mesh.nElements_global = nx-1;
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
-    for(int i=0,eN=0;i<nx-1;i++)
+    for(proteus_index_t i=0,eN=0;i<nx-1;i++)
       eN=newEdge(eN,mesh.elementNodesArray,i,i+1);
     return 0;
   }
@@ -97,16 +97,16 @@ extern "C"
     mesh.nNodes_element = 3;
     mesh.nElements_global = 2*(nx-1)*(ny-1);
     mesh.nNodes_global = nx*ny;
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
     //for local refinement
     mesh.newestNodeBases = new int[mesh.nElements_global];
 
-    for(int i=0,eN=0;i<ny-1;i++)
+    for(proteus_index_t i=0,eN=0;i<ny-1;i++)
       for(int j=0;j<nx-1;j++)
 	{
-	  int 
+	  proteus_index_t 
 	    n0 =(j+0) + (i+0)*nx,
 	    n1 =(j+1) + (i+0)*nx,
 	    n2 =(j+0) + (i+1)*nx,
@@ -145,9 +145,9 @@ extern "C"
   
   int regularRectangularToTriangularElementBoundaryMaterials(const double& Lx, const double& Ly, Mesh& mesh)
   {
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN,nN_0,nN_1;
+	proteus_index_t ebN,nN_0,nN_1;
 	double x_0,y_0,x_1,y_1,epsilon=1.0e-8;
 	ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	nN_0 = mesh.elementBoundaryNodesArray[ebN*2 + 0];
@@ -201,9 +201,9 @@ extern "C"
     return 0;
   }
   
-  inline void reorientNodes_tet(double* nodeArray, int* nodes)
+  inline void reorientNodes_tet(double* nodeArray, proteus_index_t* nodes)
   {
-    int &n0(nodes[0]),&n1(nodes[1]),&n2(nodes[2]),&n3(nodes[3]);
+    proteus_index_t &n0(nodes[0]),&n1(nodes[1]),&n2(nodes[2]),&n3(nodes[3]);
     double t[3][3];
     t[0][0] = nodeArray[n1*3+0] - nodeArray[n0*3+0];
     t[0][1] = nodeArray[n1*3+1] - nodeArray[n0*3+1];
@@ -223,7 +223,7 @@ extern "C"
     
     if (det < 0)
       {
-	int tmp = n2;
+	proteus_index_t tmp = n2;
 	n2 = n3;
 	n3 = tmp;
       }
@@ -231,7 +231,7 @@ extern "C"
   
   int reorientTetrahedralMesh(Mesh& mesh)
   {
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       reorientNodes_tet(mesh.nodeArray,&mesh.elementNodesArray[eN*mesh.nNodes_element]);
     return 0;
   }
@@ -246,14 +246,14 @@ extern "C"
     mesh.nElements_global = 6*(nx-1)*(ny-1)*(nz-1);
     int nxy=nx*ny;
     //std::cout<<"element nodes array"<<std::endl;
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
-    for(int i=0,eN=0;i<nz-1;i++)
+    for(proteus_index_t i=0,eN=0;i<nz-1;i++)
       for(int j=0;j<ny-1;j++)
         for(int k=0;k<nx-1;k++)
           {
-            int 
+            proteus_index_t 
               n0 = (k+0) + (j+0)*nx + (i+0)*nxy,
               n1 = (k+1) + (j+0)*nx + (i+0)*nxy,
               n2 = (k+0) + (j+1)*nx + (i+0)*nxy,
@@ -274,9 +274,9 @@ extern "C"
   
   int regularHexahedralToTetrahedralElementBoundaryMaterials(const double& Lx, const double& Ly, const double& Lz, Mesh& mesh)
   {
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN,nN_0,nN_1,nN_2;
+	proteus_index_t ebN,nN_0,nN_1,nN_2;
 	double x_0,y_0,z_0,
 	  x_1,y_1,z_1,
 	  x_2,y_2,z_2,
@@ -318,9 +318,9 @@ extern "C"
   
   int regularHexahedralMeshElementBoundaryMaterials(const double& Lx, const double& Ly, const double& Lz, Mesh& mesh)
   {
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN,nN_0,nN_1,nN_2, nN_3;
+	proteus_index_t ebN,nN_0,nN_1,nN_2, nN_3;
 	double x_0,y_0,z_0,
 	  x_1,y_1,z_1,
 	  x_2,y_2,z_2,
@@ -496,10 +496,10 @@ extern "C"
     //mesh.py=py;
     //mesh.pz=pz;
 
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
-    int eN=0;
+    proteus_index_t eN=0;
     for(int i=0;i<nz-1;i++)
       for(int j=0;j<ny-1;j++)
         for(int k=0;k<nx-1;k++)
@@ -529,10 +529,10 @@ extern "C"
     mesh.ny=ny;
     mesh.nz=1;
 
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
-    int eN=0;
+    proteus_index_t eN=0;
     for(int j=0;j<ny-1;j++)
       for(int k=0;k<nx-1;k++)
         {
@@ -566,7 +566,7 @@ extern "C"
     mesh.pz=pz;
     
     int nxy=nx*ny;
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
     //memset(mesh.elementMaterialTypes,DEFAULT_ELEMENT_MATERIAL,mesh.nElements_global*sizeof(int));
     mesh.elementIJK = new int[mesh.nElements_global*3];
@@ -620,7 +620,7 @@ extern "C"
 
     mesh.weights = new double[mesh.nNodes_global];
 
-    for(int i=0;i<mesh.nNodes_global;i++)
+    for(proteus_index_t i=0;i<mesh.nNodes_global;i++)
       mesh.weights[i] = 1.0;
     //std::cout<<"NURBS MESH BUILD"<<std::endl;             
     return 0;
@@ -636,10 +636,10 @@ extern "C"
     map<NodeTuple<1>,
       ElementNeighbors> elementBoundaryElements;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<2;ebN++)
         {
-          int nodes[1];
+          proteus_index_t nodes[1];
           nodes[0] = mesh.elementNodesArray[eN*2+(ebN+1)%2];
           NodeTuple<1> ebt(nodes);
           if(elementBoundaryElements.find(ebt) != elementBoundaryElements.end())
@@ -659,13 +659,13 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     //mwf added
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -697,55 +697,55 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     //edges are elements in 1D so we just copy over but could be slicker
     mesh.nEdges_global = mesh.nElements_global;
-    mesh.edgeNodesArray = new int[mesh.nElements_global*2];
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nElements_global*2];
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         mesh.edgeNodesArray[eN*2+0] = mesh.elementNodesArray[eN*2+0];
         mesh.edgeNodesArray[eN*2+1] = mesh.elementNodesArray[eN*2+1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         nodeStar[mesh.edgeNodesArray[eN*2+0]].insert(mesh.edgeNodesArray[eN*2+1]);
         nodeStar[mesh.edgeNodesArray[eN*2+1]].insert(mesh.edgeNodesArray[eN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     stop = CurrentTime();
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -756,24 +756,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -794,10 +794,10 @@ extern "C"
     map<NodeTuple<2>,
       ElementNeighbors> elementBoundaryElements;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<3;ebN++)
         {
-          int nodes[2];
+          proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*3+(ebN+1)%3];
           nodes[1] = mesh.elementNodesArray[eN*3+(ebN+2)%3];
           NodeTuple<2> ebt(nodes);
@@ -818,12 +818,12 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -855,18 +855,18 @@ extern "C"
 	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
             {
@@ -876,46 +876,46 @@ extern "C"
             }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     int edgeN=0;
     for (set<NodeTuple<2> >::iterator edgeTuple_p=edges.begin();edgeTuple_p != edges.end();edgeTuple_p++,edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edgeTuple_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edgeTuple_p->nodes[1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -927,24 +927,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -963,10 +963,10 @@ extern "C"
     map<NodeTuple<2>,
       ElementNeighbors> elementBoundaryElements;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<4;ebN++)
         {
-          int nodes[2];
+          proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*4+ebN];
           nodes[1] = mesh.elementNodesArray[eN*4+(ebN+1)%4];
           NodeTuple<2> ebt(nodes);
@@ -987,12 +987,12 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -1024,18 +1024,18 @@ extern "C"
 	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
             {
@@ -1045,46 +1045,46 @@ extern "C"
             }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     int edgeN=0;
     for (set<NodeTuple<2> >::iterator edgeTuple_p=edges.begin();edgeTuple_p != edges.end();edgeTuple_p++,edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edgeTuple_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edgeTuple_p->nodes[1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -1096,24 +1096,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -1134,10 +1134,10 @@ extern "C"
     ElementBoundaryElementsType elementBoundaryElements;
     start=CurrentTime();
     //std::cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-          int nodes[3];
+          proteus_index_t nodes[3];
           nodes[0] = mesh.elementNodesArray[eN*4+((ebN+1)%4)];
           nodes[1] = mesh.elementNodesArray[eN*4+((ebN+2)%4)];
           nodes[2] = mesh.elementNodesArray[eN*4+((ebN+3)%4)];
@@ -1159,13 +1159,13 @@ extern "C"
 
     //std::cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    typedef set<int> ElementBoundariesType;
+    typedef set<proteus_index_t> ElementBoundariesType;
     ElementBoundariesType interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     
     //std::cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
@@ -1199,13 +1199,13 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     }
     //elementBoundaryElements.~ElementBoundaryElementsType();
@@ -1215,9 +1215,9 @@ extern "C"
       typedef set<NodeTuple<2> > EdgesType;
     EdgesType edges;
     //std::cout<<"extracting edges"<<std::endl;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
             {
@@ -1227,9 +1227,9 @@ extern "C"
             }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     EdgesType::iterator edge_p=edges.begin();
-    for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
@@ -1238,43 +1238,43 @@ extern "C"
     }//edges.~EdgesType();
     {
       //std::cout<<"node star"<<std::endl;
-    typedef vector<set<int> > NodeStarType;
+    typedef vector<set<proteus_index_t> > NodeStarType;
     NodeStarType nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     }//nodeStar.~NodeStarType();
     {
       //std::cout<<"node elements star"<<std::endl;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
-    typedef vector<set<int> > NodeElementsStarType;
+    typedef vector<set<proteus_index_t> > NodeElementsStarType;
     NodeElementsStarType nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -1286,24 +1286,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -1330,10 +1330,10 @@ extern "C"
                        {4,5,6,7}};
     
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-          int nodes[4];
+          proteus_index_t nodes[4];
           nodes[0] = mesh.elementNodesArray[eN*8+lface[ebN][0]];
           nodes[1] = mesh.elementNodesArray[eN*8+lface[ebN][1]];
           nodes[2] = mesh.elementNodesArray[eN*8+lface[ebN][2]];      
@@ -1357,13 +1357,13 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     //mwf added
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -1399,13 +1399,13 @@ extern "C"
  	    }
       }    
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray  =  new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray  =  new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
      
@@ -1417,9 +1417,9 @@ extern "C"
     
     
     //std::cout<<"Extracting edges"<<std::endl;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-	int nodes[2];
+	proteus_index_t nodes[2];
 	for (int e=0;e<12;e++)
 	  {
     	
@@ -1432,9 +1432,9 @@ extern "C"
       
       
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
@@ -1442,44 +1442,44 @@ extern "C"
       }
 
     //std::cout<<"Extracting nodeStar"<<std::endl;      
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
 
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       {
         mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
       }  
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
 
     //std::cout<<"Extracting nodeElementsStar"<<std::endl;   
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {      	
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -1492,25 +1492,25 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
         
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -1555,10 +1555,10 @@ extern "C"
     
     
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-          int nodes[4];
+          proteus_index_t nodes[4];
           nodes[0] = mesh.elementNodesArray[eN*8+lface[ebN][0]];
           nodes[1] = mesh.elementNodesArray[eN*8+lface[ebN][1]];
           nodes[2] = mesh.elementNodesArray[eN*8+lface[ebN][2]];      
@@ -1582,13 +1582,13 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     //mwf added
-    mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -1624,13 +1624,13 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;    
     
@@ -1645,9 +1645,9 @@ extern "C"
     
     
     //std::cout<<"extracting edges"<<std::endl;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-	int nodes[2];
+	proteus_index_t nodes[2];
 	for (int e=0;e<12;e++)
 	  {
            	
@@ -1660,50 +1660,50 @@ extern "C"
       
       
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
         edge_p++;
       }
       
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
 
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
   
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {      	
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -1715,25 +1715,25 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
         
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -1775,11 +1775,11 @@ extern "C"
                        {n4,n5,n6,n7}};
     
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
-          int nodes[4];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
+          proteus_index_t nodes[4];
           nodes[0] = mesh.elementNodesArray[eN*8+lface[ebN][0]];
           nodes[1] = mesh.elementNodesArray[eN*8+lface[ebN][1]];
           nodes[2] = mesh.elementNodesArray[eN*8+lface[ebN][2]];      
@@ -1805,11 +1805,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -1844,20 +1844,20 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     //cek/ido todo figure out how to do this or if it's necessary
     //    assert(mesh.edgeNodesArray);
 
     //     set<NodeTuple<2> > edges;
     //     //std::cout<<"extracting edges"<<std::endl;
-    //     for (int eN=0;eN<mesh.nElements_global;eN++)
+    //     for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     //       {
     //         int nodes[2];
     //         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
@@ -1869,48 +1869,48 @@ extern "C"
     //             }
     //       }
     //     mesh.nEdges_global = edges.size();
-    //     mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    //     mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     //     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    //     for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    //     for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
     //       {
     //         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
     //         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
     //         edge_p++;
     //       }
 
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -1922,24 +1922,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -1961,11 +1961,11 @@ extern "C"
     map<NodeTuple<1>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<2;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*2+ebN];
-          int nodes[1];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*2+ebN];
+          proteus_index_t nodes[1];
           nodes[0] = mesh.elementNodesArray[eN*2+(ebN+1)%2];
           NodeTuple<1> ebt(nodes);
           if(elementBoundaryElements.find(ebt) != elementBoundaryElements.end())
@@ -1987,11 +1987,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2022,55 +2022,55 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     //edges are elements in 1D so we just copy over but could be slicker
     mesh.nEdges_global = mesh.nElements_global;
-    mesh.edgeNodesArray = new int[mesh.nElements_global*2];
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nElements_global*2];
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         mesh.edgeNodesArray[eN*2+0] = mesh.elementNodesArray[eN*2+0];
         mesh.edgeNodesArray[eN*2+1] = mesh.elementNodesArray[eN*2+1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         nodeStar[mesh.edgeNodesArray[eN*2+0]].insert(mesh.edgeNodesArray[eN*2+1]);
         nodeStar[mesh.edgeNodesArray[eN*2+1]].insert(mesh.edgeNodesArray[eN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     stop = CurrentTime();
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2081,24 +2081,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2122,11 +2122,11 @@ extern "C"
     map<NodeTuple<2>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<3;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*3+ebN];
-          int nodes[2];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*3+ebN];
+          proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*3+(ebN+1)%3];
           nodes[1] = mesh.elementNodesArray[eN*3+(ebN+2)%3];
           NodeTuple<2> ebt(nodes);
@@ -2149,11 +2149,11 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2185,18 +2185,18 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
             {
@@ -2206,46 +2206,46 @@ extern "C"
             }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     int edgeN=0;
     for (set<NodeTuple<2> >::iterator edgeTuple_p=edges.begin();edgeTuple_p != edges.end();edgeTuple_p++,edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edgeTuple_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edgeTuple_p->nodes[1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2257,24 +2257,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2296,11 +2296,11 @@ extern "C"
     map<NodeTuple<2>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<4;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*4+ebN];
-          int nodes[2];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*4+ebN];
+          proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*4+ebN];
           nodes[1] = mesh.elementNodesArray[eN*4+(ebN+1)%4];
           NodeTuple<2> ebt(nodes);
@@ -2323,11 +2323,11 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2359,18 +2359,18 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           {
             nodes[0] = mesh.elementNodesArray[eN*4+nN_L];
@@ -2379,46 +2379,46 @@ extern "C"
           }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     int edgeN=0;
     for (set<NodeTuple<2> >::iterator edgeTuple_p=edges.begin();edgeTuple_p != edges.end();edgeTuple_p++,edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edgeTuple_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edgeTuple_p->nodes[1];
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2430,24 +2430,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2469,11 +2469,11 @@ extern "C"
       int> elementBoundaryIds;
     start=CurrentTime();
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
-          int nodes[3];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
+          proteus_index_t nodes[3];
           nodes[0] = mesh.elementNodesArray[eN*4+((ebN+1)%4)];
           nodes[1] = mesh.elementNodesArray[eN*4+((ebN+2)%4)];
           nodes[2] = mesh.elementNodesArray[eN*4+((ebN+3)%4)];
@@ -2497,11 +2497,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2535,19 +2535,19 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     set<NodeTuple<2> > edges;
     //std::cout<<"extracting edges"<<std::endl;
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
-        int nodes[2];
+        proteus_index_t nodes[2];
         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
           for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
             {
@@ -2557,47 +2557,47 @@ extern "C"
             }
       }
     mesh.nEdges_global = edges.size();
-    mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
       {
         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
         edge_p++;
       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2608,24 +2608,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2649,11 +2649,11 @@ extern "C"
     map<NodeTuple<1>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<2;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*2+ebN];
-          int nodes[1];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*2+ebN];
+          proteus_index_t nodes[1];
           nodes[0] = mesh.elementNodesArray[eN*2+(ebN+1)%2];
           NodeTuple<1> ebt(nodes);
           if(elementBoundaryElements.find(ebt) != elementBoundaryElements.end())
@@ -2675,11 +2675,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2710,49 +2710,49 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
 
     assert(mesh.edgeNodesArray);
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         nodeStar[mesh.edgeNodesArray[eN*2+0]].insert(mesh.edgeNodesArray[eN*2+1]);
         nodeStar[mesh.edgeNodesArray[eN*2+1]].insert(mesh.edgeNodesArray[eN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     stop = CurrentTime();
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2763,24 +2763,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2804,11 +2804,11 @@ extern "C"
     map<NodeTuple<2>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<3;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*3+ebN];
-          int nodes[2];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*3+ebN];
+          proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*3+(ebN+1)%3];
           nodes[1] = mesh.elementNodesArray[eN*3+(ebN+2)%3];
           NodeTuple<2> ebt(nodes);
@@ -2831,11 +2831,11 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -2867,17 +2867,17 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     assert(mesh.edgeNodesArray);
     //    set<NodeTuple<2> > edges;
-    //     for (int eN=0;eN<mesh.nElements_global;eN++)
+    //     for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     //       {
     //         int nodes[2];
     //         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
@@ -2889,46 +2889,46 @@ extern "C"
     //             }
     //       }
     //     mesh.nEdges_global = edges.size();
-    //     mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    //     mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     //     int edgeN=0;
     //     for (set<NodeTuple<2> >::iterator edgeTuple_p=edges.begin();edgeTuple_p != edges.end();edgeTuple_p++,edgeN++)
     //       {
     //         mesh.edgeNodesArray[edgeN*2+0] = edgeTuple_p->nodes[0];
     //         mesh.edgeNodesArray[edgeN*2+1] = edgeTuple_p->nodes[1];
     //       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -2940,24 +2940,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -2979,11 +2979,11 @@ extern "C"
     map<NodeTuple<2>,
       int> elementBoundaryIds;
     start=CurrentTime();
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<4;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*4+ebN];
-	  int nodes[2];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*4+ebN];
+	  proteus_index_t nodes[2];
           nodes[0] = mesh.elementNodesArray[eN*4+ebN];
           nodes[1] = mesh.elementNodesArray[eN*4+(ebN+1)%4];
           NodeTuple<2> ebt(nodes);
@@ -3006,11 +3006,11 @@ extern "C"
     
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -3042,48 +3042,48 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     assert(mesh.edgeNodesArray);
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1]+nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -3095,24 +3095,24 @@ extern "C"
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
     //set actual values elsewhere
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -3141,11 +3141,11 @@ extern "C"
       int> elementBoundaryIds;
     start=CurrentTime();
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
-          int nodes[3];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
+          proteus_index_t nodes[3];
           nodes[0] = mesh.elementNodesArray[eN*4+((ebN+1)%4)];
           nodes[1] = mesh.elementNodesArray[eN*4+((ebN+2)%4)];
           nodes[2] = mesh.elementNodesArray[eN*4+((ebN+3)%4)];
@@ -3171,11 +3171,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -3210,18 +3210,18 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     assert(mesh.edgeNodesArray);
     //     set<NodeTuple<2> > edges;
     //     //std::cout<<"extracting edges"<<std::endl;
-    //     for (int eN=0;eN<mesh.nElements_global;eN++)
+    //     for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     //       {
     //         int nodes[2];
     //         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
@@ -3233,46 +3233,46 @@ extern "C"
     //             }
     //       }
     //     mesh.nEdges_global = edges.size();
-    //     mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    //     mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     //     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    //     for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    //     for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
     //       {
     //         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
     //         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
     //         edge_p++;
     //       }
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -3283,24 +3283,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -3330,11 +3330,11 @@ extern "C"
                        {4,5,6,7}};    
     
     //cout<<"Extracting boundary elements"<<endl;
-    for(int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
         {
-	  int ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
-          int nodes[4];
+	  proteus_index_t ebN_global = mesh.elementBoundariesArray[eN*mesh.nElementBoundaries_element+ebN];
+          proteus_index_t nodes[4];
           nodes[0] = mesh.elementNodesArray[eN*8+lface[ebN][0]];
           nodes[1] = mesh.elementNodesArray[eN*8+lface[ebN][1]];
           nodes[2] = mesh.elementNodesArray[eN*8+lface[ebN][2]];      
@@ -3358,11 +3358,11 @@ extern "C"
 
     //cout<<"Allocating Arrays"<<endl;
     start = CurrentTime();
-    set<int> interiorElementBoundaries,exteriorElementBoundaries;
-    mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-    mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+    set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+    mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+    mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
     mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-    mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+    mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
     stop = CurrentTime();
     //cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 
@@ -3397,18 +3397,18 @@ extern "C"
  	  }
       }
     mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-    mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+    mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
     mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-    mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+    mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
     int ebNI=0,ebNE=0;
-    for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+    for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-    for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+    for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
     assert(mesh.edgeNodesArray);
     //     set<NodeTuple<2> > edges;
     //     //std::cout<<"extracting edges"<<std::endl;
-    //     for (int eN=0;eN<mesh.nElements_global;eN++)
+    //     for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     //       {
     //         int nodes[2];
     //         for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
@@ -3420,48 +3420,48 @@ extern "C"
     //             }
     //       }
     //     mesh.nEdges_global = edges.size();
-    //     mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+    //     mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
     //     set<NodeTuple<2> >::iterator edge_p=edges.begin();
-    //     for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+    //     for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
     //       {
     //         mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
     //         mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
     //         edge_p++;
     //       }
 
-    vector<set<int> > nodeStar(mesh.nNodes_global);
-    for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+    vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+    for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
       {
         nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
         nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
       }
-    mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeStarOffsets[0] = 0;
-    for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+    for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
       mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-    mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-      for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+    mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+      for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
         mesh.nodeStarArray[offset] = *nN_star;
     stop = CurrentTime();
     mesh.max_nNodeNeighbors_node=0;
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
     //mwf repeat for node-->elements arrays
-    vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-    for (int eN = 0; eN < mesh.nElements_global; eN++)
+    vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+    for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
       {
 	for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	  nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
       }
-    mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+    mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
     mesh.nodeElementOffsets[0] = 0;
-    for (int nN = 0; nN < mesh.nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
       mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-    mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-    for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+    mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+    for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
       {
-	for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 	     eN_star++,offset++)
 	  {
 	    mesh.nodeElementsArray[offset] = *eN_star;
@@ -3472,24 +3472,24 @@ extern "C"
     //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
     //depending on which boundary node belongs to. 
     //If node on at least one exterior boundary then it's exterior
-    for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-    for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -3499,7 +3499,7 @@ extern "C"
   }
 
 
-  inline double edgeLength(int nL,int nR, const double* nodeArray)
+  inline double edgeLength(proteus_index_t nL,proteus_index_t nR, const double* nodeArray)
   {
     double dx,dy,dz;
     dx = nodeArray[nL*3+0] - nodeArray[nR*3+0];
@@ -3508,7 +3508,7 @@ extern "C"
     return sqrt(dx*dx+dy*dy+dz*dz);
   }
 
-  inline double triangleArea(int n0, int n1, int n2, const double* nodeArray)
+  inline double triangleArea(proteus_index_t n0, proteus_index_t n1, proteus_index_t n2, const double* nodeArray)
   {
     double va[3],vb[3];
     va[0] = nodeArray[n1*3+0] - nodeArray[n0*3+0];
@@ -3520,7 +3520,7 @@ extern "C"
     return 0.5*fabs(va[1]*vb[2] - vb[1]*va[2] - (va[0]*vb[2] - vb[0]*va[2]) + (va[0]*vb[1] - va[1]*vb[0]));
   }
 
-  inline double tetrahedronVolume(int n0, int n1, int n2, int n3, const double* nodeArray)
+  inline double tetrahedronVolume(proteus_index_t n0, proteus_index_t n1, proteus_index_t n2, proteus_index_t n3, const double* nodeArray)
   {
     double t[3][3];
     t[0][0] = nodeArray[n1*3+0] - nodeArray[n0*3+0];
@@ -3566,7 +3566,7 @@ extern "C"
                                                        mesh.nodeArray) : 0.0;
     const double nNperElemInv = 1.0/double(mesh.nNodes_element);
     const double nNperElemBInv= 1.0/double(mesh.nNodes_elementBoundary);
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       {
 	mesh.elementBoundaryBarycentersArray[ebN*3 + 0] = 0.0;
 	mesh.elementBoundaryBarycentersArray[ebN*3 + 1] = 0.0;
@@ -3591,7 +3591,7 @@ extern "C"
             }
 	  }
       } 
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         double volume, surfaceArea=0.0, hMin=0.0,hMax=0.0;
         volume = tetrahedronVolume(mesh.elementNodesArray[eN*4+0],
@@ -3637,7 +3637,7 @@ extern "C"
 	    mesh.nodeSupportArray[mesh.elementNodesArray[eN*mesh.nNodes_element + nN]] += volume;
 	  }
       }
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       {
 	mesh.nodeDiametersArray[nN] /= mesh.nodeSupportArray[nN];
       }
@@ -3647,7 +3647,7 @@ extern "C"
 //    printf("sigmaMax = %12.5e \n",mesh.sigmaMax);
     return 0;
   }
-  inline double hexahedronVolume(int n0, int n1, int n2, int n3, int n4, int n5, int n6, int n7, const double* nodeArray)
+  inline double hexahedronVolume(proteus_index_t n0, proteus_index_t n1, proteus_index_t n2, proteus_index_t n3, proteus_index_t n4, proteus_index_t n5, proteus_index_t n6, proteus_index_t n7, const double* nodeArray)
   {
     double t[3];
     t[0] = nodeArray[n0*3+0] - nodeArray[n1*3+0];
@@ -3682,7 +3682,7 @@ extern "C"
                                                        mesh.nodeArray) : 0.0;
     //const double nNperElemInv = 1.0/double(mesh.nNodes_element);
     //const double nNperElemBInv= 1.0/double(mesh.nNodes_elementBoundary);
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       {
 
 
@@ -3696,7 +3696,7 @@ extern "C"
 	    }
 	  	  
       } 
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         double volume, hMin=0.0,hMax=0.0;
         volume = hexahedronVolume(mesh.elementNodesArray[eN*8+0],
@@ -3737,7 +3737,7 @@ extern "C"
 	    mesh.nodeSupportArray[mesh.elementNodesArray[eN*mesh.nNodes_element + nN]] += volume;
 	  }
       }
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       {
 	mesh.nodeDiametersArray[nN] /= mesh.nodeSupportArray[nN];
       }
@@ -3787,14 +3787,14 @@ extern "C"
     mesh.hMin = mesh.nElements_global > 0 ? edgeLength(mesh.elementNodesArray[0],
                                                        mesh.elementNodesArray[1],
                                                        mesh.nodeArray) : 0.0;
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       mesh.elementBoundaryDiametersArray[ebN] = edgeLength(mesh.elementBoundaryNodesArray[ebN*2+0],
                                                            mesh.elementBoundaryNodesArray[ebN*2+1],
                                                            mesh.nodeArray);
     const double nNperElemInv = 1.0/double(mesh.nNodes_element);
     const double nNperElemBInv= 1.0/double(mesh.nNodes_elementBoundary);
 
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         double area=0.0, perimeter=0.0,h=0.0, hMin=0.0,hMax=0.0;
         area = triangleArea(mesh.elementNodesArray[eN*3 + 0],
@@ -3836,7 +3836,7 @@ extern "C"
 
       }
 
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       {
 	mesh.elementBoundaryBarycentersArray[ebN*3 + 0] = 0.0;
 	mesh.elementBoundaryBarycentersArray[ebN*3 + 1] = 0.0;
@@ -3852,7 +3852,7 @@ extern "C"
 	      nNperElemBInv*mesh.nodeArray[mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN]*3 + 2];
 	  }
       }
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       {
 	mesh.nodeDiametersArray[nN] /= mesh.nodeSupportArray[nN];
       }
@@ -3884,14 +3884,14 @@ extern "C"
     mesh.hMin = mesh.nElements_global > 0 ? edgeLength(mesh.elementNodesArray[0],
                                                        mesh.elementNodesArray[1],
                                                        mesh.nodeArray) : 0.0;
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       mesh.elementBoundaryDiametersArray[ebN] = edgeLength(mesh.elementBoundaryNodesArray[ebN*2+0],
                                                            mesh.elementBoundaryNodesArray[ebN*2+1],
                                                            mesh.nodeArray);
     const double nNperElemInv = 1.0/double(mesh.nNodes_element);
     const double nNperElemBInv= 1.0/double(mesh.nNodes_elementBoundary);
 
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         double area=0.0, perimeter=0.0,h=0.0, hMin=1.0e6,hMax=0.0;
         area = triangleArea(mesh.elementNodesArray[eN*4 + 0],
@@ -3927,7 +3927,7 @@ extern "C"
 	  }
       }
 
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       {
 	mesh.nodeDiametersArray[nN] /= mesh.nodeSupportArray[nN];
       }
@@ -3961,7 +3961,7 @@ extern "C"
                                                        mesh.nodeArray) : 0.0;
     const double nNperElemInv = 1.0/double(mesh.nNodes_element);
     const double nNperElemBInv= 1.0/double(mesh.nNodes_elementBoundary);
-    for (int eN=0;eN<mesh.nElements_global;eN++)
+    for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
       {
         mesh.elementDiametersArray[eN] = edgeLength(mesh.elementNodesArray[eN*2+0],
                                                     mesh.elementNodesArray[eN*2+1],
@@ -3986,7 +3986,7 @@ extern "C"
 	    mesh.nodeSupportArray[mesh.elementNodesArray[eN*mesh.nNodes_element + nN]] += mesh.elementDiametersArray[eN];
 	  }
       }
-    for (int ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
+    for(proteus_index_t ebN=0;ebN<mesh.nElementBoundaries_global;ebN++)
       {
 	mesh.elementBoundaryDiametersArray[ebN] = 1.0;
 
@@ -4004,7 +4004,7 @@ extern "C"
 	      nNperElemBInv*mesh.nodeArray[mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN]*3 + 2];
 	  }
       }    
-    for (int nN=0;nN<mesh.nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
       {
 	mesh.nodeDiametersArray[nN] /= mesh.nodeSupportArray[nN];
       }
@@ -4016,7 +4016,7 @@ extern "C"
     return 0;
   }
   //allocate node and element-node connectivity tables so they can be filled in externally
-  int allocateNodeAndElementNodeDataStructures(Mesh& mesh, int nElements_global, int nNodes_global, int nNodes_element)
+  int allocateNodeAndElementNodeDataStructures(Mesh& mesh, proteus_index_t nElements_global, proteus_index_t nNodes_global, int nNodes_element)
   {
     assert(!mesh.nodeArray);
     assert(!mesh.elementNodesArray);
@@ -4029,7 +4029,7 @@ extern "C"
 
     mesh.nodeArray         = new double[mesh.nNodes_global*3];
     mesh.nodeMaterialTypes = new int[mesh.nNodes_global];
-    mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+    mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
     mesh.elementMaterialTypes = new int[mesh.nElements_global];
 
     return 0;
@@ -4043,9 +4043,9 @@ extern "C"
     multilevelMesh.meshArray = new Mesh[nLevels];
     for(int i=0;i<nLevels;i++)
       initializeMesh(multilevelMesh.meshArray[i]);
-    multilevelMesh.elementChildrenArray = new int*[nLevels];
-    multilevelMesh.elementChildrenOffsets = new int*[nLevels];
-    multilevelMesh.elementParentsArray = new int*[nLevels];
+    multilevelMesh.elementChildrenArray = new proteus_index_t*[nLevels];
+    multilevelMesh.elementChildrenOffsets = new proteus_index_t*[nLevels];
+    multilevelMesh.elementParentsArray = new proteus_index_t*[nLevels];
     multilevelMesh.meshArray[0] = mesh; //shallow copy
     for(int i=1;i<nLevels;i++)
       {
@@ -4056,14 +4056,14 @@ extern "C"
         multilevelMesh.meshArray[i].nNodes_element=2;
         //2 children per parent
         multilevelMesh.meshArray[i].nElements_global  = 2*multilevelMesh.meshArray[i-1].nElements_global;
-        multilevelMesh.meshArray[i].elementNodesArray = new int[multilevelMesh.meshArray[i].nElements_global*2];
-        multilevelMesh.elementChildrenArray[i-1]      = new int[multilevelMesh.meshArray[i-1].nElements_global*2];
-        multilevelMesh.elementChildrenOffsets[i-1]  = new int[multilevelMesh.meshArray[i-1].nElements_global+1];
-        multilevelMesh.elementParentsArray[i]         = new int[multilevelMesh.meshArray[i].nElements_global];
+        multilevelMesh.meshArray[i].elementNodesArray = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global*2];
+        multilevelMesh.elementChildrenArray[i-1]      = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global*2];
+        multilevelMesh.elementChildrenOffsets[i-1]  = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global+1];
+        multilevelMesh.elementParentsArray[i]         = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global];
         multilevelMesh.meshArray[i].elementMaterialTypes = new int[multilevelMesh.meshArray[i].nElements_global];
-        int nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
+        proteus_index_t nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
         multilevelMesh.elementChildrenOffsets[i-1][0] = 0;
-        for(int eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
+        for(proteus_index_t eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
           {
             multilevelMesh.elementChildrenOffsets[i-1][eN_parent+1] = multilevelMesh.elementChildrenOffsets[i-1][eN_parent]+2;
             multilevelMesh.elementChildrenArray[i-1][2*eN_parent + 0 ] = eN + 0;
@@ -4100,7 +4100,7 @@ extern "C"
         assert(unsigned(nN_new) == (newNodeSet.size()+multilevelMesh.meshArray[i-1].nNodes_global));
         multilevelMesh.meshArray[i].nNodes_global = nN_new;
         multilevelMesh.meshArray[i].nodeArray = new double[multilevelMesh.meshArray[i].nNodes_global*3];
-        for(int nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
+        for(proteus_index_t nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
           {
             multilevelMesh.meshArray[i].nodeArray[nN*3+0] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+0];
             multilevelMesh.meshArray[i].nodeArray[nN*3+1] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+1];
@@ -4138,9 +4138,9 @@ extern "C"
     multilevelMesh.meshArray = new Mesh[nLevels];
     for(int i=0;i<nLevels;i++)
       initializeMesh(multilevelMesh.meshArray[i]);
-    multilevelMesh.elementChildrenArray = new int*[nLevels];
-    multilevelMesh.elementChildrenOffsets = new int*[nLevels];
-    multilevelMesh.elementParentsArray = new int*[nLevels];
+    multilevelMesh.elementChildrenArray = new proteus_index_t*[nLevels];
+    multilevelMesh.elementChildrenOffsets = new proteus_index_t*[nLevels];
+    multilevelMesh.elementParentsArray = new proteus_index_t*[nLevels];
     multilevelMesh.meshArray[0] = mesh; //shallow copy
     for(int i=1;i<nLevels;i++)
       {
@@ -4151,14 +4151,14 @@ extern "C"
         multilevelMesh.meshArray[i].nNodes_element=3;
         //4 children per parent
         multilevelMesh.meshArray[i].nElements_global  = 4*multilevelMesh.meshArray[i-1].nElements_global;
-        multilevelMesh.meshArray[i].elementNodesArray = new int[multilevelMesh.meshArray[i].nElements_global*3];
-        multilevelMesh.elementChildrenArray[i-1]      = new int[multilevelMesh.meshArray[i-1].nElements_global*4];
-        multilevelMesh.elementChildrenOffsets[i-1]  = new int[multilevelMesh.meshArray[i-1].nElements_global+1];
-        multilevelMesh.elementParentsArray[i]         = new int[multilevelMesh.meshArray[i].nElements_global];
+        multilevelMesh.meshArray[i].elementNodesArray = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global*3];
+        multilevelMesh.elementChildrenArray[i-1]      = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global*4];
+        multilevelMesh.elementChildrenOffsets[i-1]  = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global+1];
+        multilevelMesh.elementParentsArray[i]         = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global];
         multilevelMesh.meshArray[i].elementMaterialTypes = new int[multilevelMesh.meshArray[i].nElements_global];
         multilevelMesh.elementChildrenOffsets[i-1][0] = 0;
-        int nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
-        for(int eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
+        proteus_index_t nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
+        for(proteus_index_t eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
           {
             multilevelMesh.elementChildrenOffsets[i-1][eN_parent+1] = multilevelMesh.elementChildrenOffsets[i-1][eN_parent] + 4;
             multilevelMesh.elementChildrenArray[i-1][4*eN_parent + 0 ] = eN + 0;
@@ -4221,7 +4221,7 @@ extern "C"
         assert(unsigned(nN_new) == (newNodeSet.size()+multilevelMesh.meshArray[i-1].nNodes_global));
         multilevelMesh.meshArray[i].nNodes_global = nN_new;
         multilevelMesh.meshArray[i].nodeArray = new double[multilevelMesh.meshArray[i].nNodes_global*3];
-        for(int nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
+        for(proteus_index_t nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
           {
             multilevelMesh.meshArray[i].nodeArray[nN*3+0] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+0];
             multilevelMesh.meshArray[i].nodeArray[nN*3+1] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+1];
@@ -4263,9 +4263,9 @@ extern "C"
     multilevelMesh.meshArray = new Mesh[nLevels];
     for(int i=0;i<nLevels;i++)
       initializeMesh(multilevelMesh.meshArray[i]);
-    multilevelMesh.elementChildrenArray = new int*[nLevels];
-    multilevelMesh.elementChildrenOffsets = new int*[nLevels];
-    multilevelMesh.elementParentsArray = new int*[nLevels];
+    multilevelMesh.elementChildrenArray = new proteus_index_t*[nLevels];
+    multilevelMesh.elementChildrenOffsets = new proteus_index_t*[nLevels];
+    multilevelMesh.elementParentsArray = new proteus_index_t*[nLevels];
     multilevelMesh.meshArray[0] = mesh; //shallow copy
     for(int i=1;i<nLevels;i++)
       {
@@ -4282,9 +4282,9 @@ extern "C"
     multilevelMesh.meshArray = new Mesh[nLevels];
     for(int i=0;i<nLevels;i++)
       initializeMesh(multilevelMesh.meshArray[i]);
-    multilevelMesh.elementChildrenArray = new int*[nLevels];
-    multilevelMesh.elementChildrenOffsets = new int*[nLevels];
-    multilevelMesh.elementParentsArray = new int*[nLevels];
+    multilevelMesh.elementChildrenArray = new proteus_index_t*[nLevels];
+    multilevelMesh.elementChildrenOffsets = new proteus_index_t*[nLevels];
+    multilevelMesh.elementParentsArray = new proteus_index_t*[nLevels];
     multilevelMesh.meshArray[0] = mesh; //shallow copy
     for(int i=1;i<nLevels;i++)
       {
@@ -4295,14 +4295,14 @@ extern "C"
         multilevelMesh.meshArray[i].nNodes_element=4;
         //8 children per parent
         multilevelMesh.meshArray[i].nElements_global  = 8*multilevelMesh.meshArray[i-1].nElements_global;
-        multilevelMesh.meshArray[i].elementNodesArray = new int[multilevelMesh.meshArray[i].nElements_global*4];
-        multilevelMesh.elementChildrenArray[i-1]      = new int[multilevelMesh.meshArray[i-1].nElements_global*8];
-        multilevelMesh.elementChildrenOffsets[i-1]  = new int[multilevelMesh.meshArray[i-1].nElements_global+1];
-        multilevelMesh.elementParentsArray[i]         = new int[multilevelMesh.meshArray[i].nElements_global];
+        multilevelMesh.meshArray[i].elementNodesArray = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global*4];
+        multilevelMesh.elementChildrenArray[i-1]      = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global*8];
+        multilevelMesh.elementChildrenOffsets[i-1]  = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global+1];
+        multilevelMesh.elementParentsArray[i]         = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global];
         multilevelMesh.meshArray[i].elementMaterialTypes = new int[multilevelMesh.meshArray[i].nElements_global];
         multilevelMesh.elementChildrenOffsets[i-1][0] = 0;
-        int nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
-        for(int eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
+        proteus_index_t nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
+        for(proteus_index_t eN_parent=0,eN=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
           {
             multilevelMesh.elementChildrenOffsets[i-1][eN_parent+1] = multilevelMesh.elementChildrenOffsets[i-1][eN_parent]+8;
             multilevelMesh.elementChildrenArray[i-1][8*eN_parent + 0 ] = eN + 0;
@@ -4472,7 +4472,7 @@ extern "C"
         assert(unsigned(nN_new) == (newNodeSet.size()+multilevelMesh.meshArray[i-1].nNodes_global));
         multilevelMesh.meshArray[i].nNodes_global = nN_new;
         multilevelMesh.meshArray[i].nodeArray = new double[multilevelMesh.meshArray[i].nNodes_global*3];
-        for(int nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
+        for(proteus_index_t nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
           {
             multilevelMesh.meshArray[i].nodeArray[nN*3+0] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+0];
             multilevelMesh.meshArray[i].nodeArray[nN*3+1] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+1];
@@ -4486,7 +4486,7 @@ extern "C"
           }
         /** \todo Add option to re-order mesh nodes on elements to make determinant positive? */
 	//         //cout<<"re-ordeing nodes llllllllllllllllllll"<<endl;
-	//         for (int eN=0;eN<multilevelMesh.meshArray[i].nElements_global;eN++)
+	//         for(proteus_index_t eN=0;eN<multilevelMesh.meshArray[i].nElements_global;eN++)
 	//           {
 	//             int n0,n1,n2,n3;
 	//             double t[3][3],det;
@@ -4567,9 +4567,9 @@ extern "C"
     multilevelMesh.meshArray = new Mesh[nLevels];
     for(int i=0;i<nLevels;i++)
       initializeMesh(multilevelMesh.meshArray[i]);
-    multilevelMesh.elementChildrenArray = new int*[nLevels];
-    multilevelMesh.elementChildrenOffsets = new int*[nLevels];
-    multilevelMesh.elementParentsArray = new int*[nLevels];
+    multilevelMesh.elementChildrenArray = new proteus_index_t*[nLevels];
+    multilevelMesh.elementChildrenOffsets = new proteus_index_t*[nLevels];
+    multilevelMesh.elementParentsArray = new proteus_index_t*[nLevels];
     multilevelMesh.meshArray[0] = mesh; //shallow copy
     for(int i=1;i<nLevels;i++)
       {
@@ -4579,17 +4579,17 @@ extern "C"
     return 0;
   }
 
-  int assignElementBoundaryMaterialTypesFromParent(Mesh& parentMesh, Mesh& childMesh, const int* levelElementParentsArray,
+  int assignElementBoundaryMaterialTypesFromParent(Mesh& parentMesh, Mesh& childMesh, const proteus_index_t* levelElementParentsArray,
 						   const int& nSpace_global)
   {
     int failed = 0;
-    for (int ebNI = 0; ebNI < childMesh.nInteriorElementBoundaries_global; ebNI++)
+    for(proteus_index_t ebNI = 0; ebNI < childMesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = childMesh.interiorElementBoundariesArray[ebNI];
-	int eN_left  = childMesh.elementBoundaryElementsArray[ebN*2+0];
-	int eN_right = childMesh.elementBoundaryElementsArray[ebN*2+1];
-	int eN_left_parent = levelElementParentsArray[eN_left];
-	int eN_right_parent= levelElementParentsArray[eN_right];
+	proteus_index_t ebN = childMesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t eN_left  = childMesh.elementBoundaryElementsArray[ebN*2+0];
+	proteus_index_t eN_right = childMesh.elementBoundaryElementsArray[ebN*2+1];
+	proteus_index_t eN_left_parent = levelElementParentsArray[eN_left];
+	proteus_index_t eN_right_parent= levelElementParentsArray[eN_right];
 	if (eN_left_parent == eN_right_parent) //interior to element on coarser level
 	  childMesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	else
@@ -4608,16 +4608,16 @@ extern "C"
 		  }
 	      }
 	    assert(0 <= left_parent_ebN && left_parent_ebN < parentMesh.nElementBoundaries_element);
-	    int ebN_parent = parentMesh.elementBoundariesArray[eN_left_parent*parentMesh.nElementBoundaries_element + 
+	    proteus_index_t ebN_parent = parentMesh.elementBoundariesArray[eN_left_parent*parentMesh.nElementBoundaries_element + 
 							       left_parent_ebN];       
 	    childMesh.elementBoundaryMaterialTypes[ebN] = parentMesh.elementBoundaryMaterialTypes[ebN_parent];
 	  }
       }//interior element boundaries
-    for (int ebNE = 0; ebNE < childMesh.nExteriorElementBoundaries_global; ebNE++)
+    for(proteus_index_t ebNE = 0; ebNE < childMesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = childMesh.exteriorElementBoundariesArray[ebNE];
-	int eN  = childMesh.elementBoundaryElementsArray[ebN*2+0];
-	int eN_parent = levelElementParentsArray[eN];
+	proteus_index_t ebN = childMesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t eN  = childMesh.elementBoundaryElementsArray[ebN*2+0];
+	proteus_index_t eN_parent = levelElementParentsArray[eN];
 	int lastExteriorElementBoundaryOnParent=-1;
 	int nExteriorElementBoundariesOnParent =0;
 	for (int ebN_element = 0; ebN_element < parentMesh.nElementBoundaries_element; ebN_element++)
@@ -4637,20 +4637,20 @@ extern "C"
 	      {
 		const int ebN_element_child = childMesh.elementBoundaryLocalElementBoundariesArray[ebN*2+0];
 		//across from ebN
-		const int nN_child0         = childMesh.elementNodesArray[eN*childMesh.nNodes_element+ebN_element_child];
+		const proteus_index_t nN_child0         = childMesh.elementNodesArray[eN*childMesh.nNodes_element+ebN_element_child];
 		//on ebN
-		const int nN_child1         = childMesh.elementNodesArray[eN*childMesh.nNodes_element+((ebN_element_child+1)%2)];     
+		const proteus_index_t nN_child1         = childMesh.elementNodesArray[eN*childMesh.nNodes_element+((ebN_element_child+1)%2)];     
 	        const double n_child  = (childMesh.nodeArray[nN_child1*3+0]-childMesh.nodeArray[nN_child0*3+0])/
 		  fabs(childMesh.nodeArray[nN_child1*3+0]-childMesh.nodeArray[nN_child0*3+0]);
 
-		const int nN_parent0 = parentMesh.elementNodesArray[eN_parent*childMesh.nNodes_element + 0];
-		const int nN_parent1 = parentMesh.elementNodesArray[eN_parent*childMesh.nNodes_element + 1];
+		const proteus_index_t nN_parent0 = parentMesh.elementNodesArray[eN_parent*childMesh.nNodes_element + 0];
+		const proteus_index_t nN_parent1 = parentMesh.elementNodesArray[eN_parent*childMesh.nNodes_element + 1];
 	        const double n_parent0  = (parentMesh.nodeArray[nN_parent1*3+0]-parentMesh.nodeArray[nN_parent0*3+0])/
 		  fabs(parentMesh.nodeArray[nN_parent1*3+0]-parentMesh.nodeArray[nN_parent0*3+0]);
 	        const double n_parent1  = (parentMesh.nodeArray[nN_parent0*3+0]-parentMesh.nodeArray[nN_parent1*3+0])/
 		  fabs(parentMesh.nodeArray[nN_parent0*3+0]-parentMesh.nodeArray[nN_parent1*3+0]);
 		
-		int ebN_parent = -1;
+		proteus_index_t ebN_parent = -1;
 		if (fabs(n_child-n_parent1) < 1.0e-8)
 		  ebN_parent = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + 1];
 		else if (fabs(n_child-n_parent0) < 1.0e-8)
@@ -4661,18 +4661,18 @@ extern "C"
 	    else if (nSpace_global == 2)
 	      {
 		//mwftodo assumes relavant coordinates are first two
-		const int nN_ebN_child[2] = {childMesh.elementBoundaryNodesArray[2*ebN+0],childMesh.elementBoundaryNodesArray[2*ebN+1]};
+		const proteus_index_t nN_ebN_child[2] = {childMesh.elementBoundaryNodesArray[2*ebN+0],childMesh.elementBoundaryNodesArray[2*ebN+1]};
 		double n_child[2]   = {childMesh.nodeArray[nN_ebN_child[1]*3+1]-childMesh.nodeArray[nN_ebN_child[0]*3+1],
 				       childMesh.nodeArray[nN_ebN_child[0]*3+0]-childMesh.nodeArray[nN_ebN_child[1]*3+0]};
 		double tmp = sqrt(n_child[0]*n_child[0] + n_child[1]*n_child[1]);
 		assert(tmp > 0.0);
 		n_child[0] /= tmp; n_child[1] /= tmp;
 
-		int ebN_parent = -1;
+		proteus_index_t ebN_parent = -1;
 		for (int ebN_element_parent = 0; ebN_element_parent < parentMesh.nElementBoundaries_element; ebN_element_parent++)
 		  {
-		    int ebN_cur = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + ebN_element_parent];
-		    const int nN_ebN_parent[2] = {parentMesh.elementBoundaryNodesArray[2*ebN_cur+0],
+		    proteus_index_t ebN_cur = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + ebN_element_parent];
+		    const proteus_index_t nN_ebN_parent[2] = {parentMesh.elementBoundaryNodesArray[2*ebN_cur+0],
 						  parentMesh.elementBoundaryNodesArray[2*ebN_cur+1]};
 		    
 		    double n_parent[2]   = {parentMesh.nodeArray[nN_ebN_parent[1]*3+1]-parentMesh.nodeArray[nN_ebN_parent[0]*3+1],
@@ -4713,11 +4713,11 @@ extern "C"
 		assert(tmp > 0.0);
 		n_child[0] /= tmp; n_child[1] /= tmp; n_child[2] /= tmp;
 
-		int ebN_parent = -1;
+		proteus_index_t ebN_parent = -1;
 		double n_parent[3] = {0.,0.,0.};
 		for (int ebN_element_parent = 0; ebN_element_parent < parentMesh.nElementBoundaries_element; ebN_element_parent++)
 		  {
-		    int ebN_cur = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + ebN_element_parent];
+		    proteus_index_t ebN_cur = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + ebN_element_parent];
 
 		    const double * nN_ebN_parent_0_x = parentMesh.nodeArray + 3*parentMesh.elementBoundaryNodesArray[3*ebN_cur+0];
 		    const double * nN_ebN_parent_1_x = parentMesh.nodeArray + 3*parentMesh.elementBoundaryNodesArray[3*ebN_cur+1];
@@ -4754,7 +4754,7 @@ extern "C"
 	else 
 	  {
 	    //only 1 exterior boundary on parent so must be same as child's face
-	    int ebN_parent = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + 
+	    proteus_index_t ebN_parent = parentMesh.elementBoundariesArray[eN_parent*parentMesh.nElementBoundaries_element + 
 							       lastExteriorElementBoundaryOnParent];
 	    childMesh.elementBoundaryMaterialTypes[ebN] = parentMesh.elementBoundaryMaterialTypes[ebN_parent];
 	    
@@ -4818,9 +4818,9 @@ int readElements(std::istream& meshFile, Mesh& mesh)
     }
   //cout<<"Number of  elements = "<<elementNodesVector.size()<<endl;
   mesh.nElements_global = elementNodesVector.size();
-  mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+  mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
   mesh.elementMaterialTypes = new int[mesh.nElements_global];
-  for (int eN=0;eN<mesh.nElements_global;eN++)
+  for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     {
       mesh.elementMaterialTypes[eN] = materialTypes[eN];
       for (int nN=0;nN<mesh.nNodes_element;nN++)
@@ -4832,7 +4832,7 @@ int readElements(std::istream& meshFile, Mesh& mesh)
 int writeNodes(std::ostream& meshFile, const Mesh& mesh)
 {
   using namespace std;
-  for(int nN=0;nN<mesh.nNodes_global;nN++)
+  for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
     meshFile<<"ND"<<setw(7)<<nN+1
             <<scientific<<setprecision(8)<<setw(16)<<mesh.nodeArray[3*nN+0]
             <<scientific<<setprecision(8)<<setw(16)<<mesh.nodeArray[3*nN+1]
@@ -4871,7 +4871,7 @@ int writeElements(std::ostream& meshFile, const Mesh& mesh)
       cerr<<"Unknown element type"<<endl;
       return 1;
     }
-  for (int eN=0;eN<mesh.nElements_global;eN++)
+  for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     {
       meshFile<<elementType;
       meshFile<<setw(width)<<eN+1;
@@ -4932,7 +4932,7 @@ int readTriangleMesh(Mesh& mesh, const char* filebase, int triangleIndexBase)
 
   mesh.nElements_global = nElements_file;
   assert(!mesh.elementNodesArray);
-  mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+  mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
   assert(!mesh.elementMaterialTypes);
   mesh.elementMaterialTypes = new int[mesh.nElements_global];
 
@@ -5014,15 +5014,15 @@ int readTriangleElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, i
   //brute force
   for (int ebN = 0; ebN < nElementBoundaries_file; ebN++)
     {
-      int nodes[2];
+      proteus_index_t nodes[2];
       nodes[0] = elementBoundaryNodesArray_file[ebN*2+0];
       nodes[1] = elementBoundaryNodesArray_file[ebN*2+1];
       NodeTuple<2> ttuple(nodes);
       triangleElementBoundaryMaterialTypes[ttuple] = elementBoundaryMaterialTypes_file[ebN];
     }
-  for (int ebN = 0; ebN < mesh.nElementBoundaries_global; ebN++)
+  for(proteus_index_t ebN = 0; ebN < mesh.nElementBoundaries_global; ebN++)
     {
-      int nodes[2];
+      proteus_index_t nodes[2];
       nodes[0] = mesh.elementBoundaryNodesArray[ebN*2+0];
       nodes[1] = mesh.elementBoundaryNodesArray[ebN*2+1];
       NodeTuple<2> ttuple(nodes);
@@ -5080,7 +5080,7 @@ int readTetgenMesh(Mesh& mesh, const char* filebase, int tetgenIndexBase)
   
   mesh.nElements_global = nElements_file;
   assert(!mesh.elementNodesArray);
-  mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+  mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
   assert(!mesh.elementMaterialTypes);
   mesh.elementMaterialTypes = new int[mesh.nElements_global];
 
@@ -5134,10 +5134,10 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
 	    ElementNeighbors> elementBoundaryElements;
 	start=CurrentTime();
 	//cout<<"Extracting boundary elements"<<endl;
-	for(int eN=0;eN<mesh.nElements_global;eN++)
+	for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
 	  for(int ebN=0;ebN<mesh.nElementBoundaries_element;ebN++)
 	    {
-	      int nodes[3];
+	      proteus_index_t nodes[3];
 	      nodes[0] = mesh.elementNodesArray[eN*4+((ebN+1)%4)];
 	      nodes[1] = mesh.elementNodesArray[eN*4+((ebN+2)%4)];
 	      nodes[2] = mesh.elementNodesArray[eN*4+((ebN+3)%4)];
@@ -5159,13 +5159,13 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
 	
 	//cout<<"Allocating Arrays"<<endl;
 	start = CurrentTime();
-	//set<int> interiorElementBoundaries,exteriorElementBoundaries;
-	//mesh.elementBoundaryNodesArray =  new int[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
-	//mesh.elementBoundaryElementsArray = new int[mesh.nElementBoundaries_global*2];
+	//set<proteus_index_t> interiorElementBoundaries,exteriorElementBoundaries;
+	//mesh.elementBoundaryNodesArray =  new proteus_index_t[mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary];
+	//mesh.elementBoundaryElementsArray = new proteus_index_t[mesh.nElementBoundaries_global*2];
 	//mesh.elementBoundaryLocalElementBoundariesArray = new int[mesh.nElementBoundaries_global*2];
-      //mesh.elementNeighborsArray = new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+      //mesh.elementNeighborsArray = new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
       //mwf added
-	mesh.elementBoundariesArray= new int[mesh.nElements_global*mesh.nElementBoundaries_element];
+	mesh.elementBoundariesArray= new proteus_index_t[mesh.nElements_global*mesh.nElementBoundaries_element];
 	stop = CurrentTime();
 	//cout<<"Elapsed time for allocating arrays = "<<(stop-start)<<"s"<<endl;
 	
@@ -5202,20 +5202,20 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
        
     }
       //mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-      //mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+      //mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
       //mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-      //mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+      //mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
       //int ebNI=0,ebNE=0;
-      //for (set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
+      //for (set<proteus_index_t>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
       //  mesh.interiorElementBoundariesArray[ebNI] = *ebN;
-      //for (set<int>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
+      //for (set<proteus_index_t>::iterator ebN=exteriorElementBoundaries.begin();ebN != exteriorElementBoundaries.end(); ebN++,ebNE++)
       //  mesh.exteriorElementBoundariesArray[ebNE] = *ebN;
       {
 	set<NodeTuple<2> > edges;
 	//std::cout<<"extracting edges"<<std::endl;
-	for (int eN=0;eN<mesh.nElements_global;eN++)
+	for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
 	  {
-	    int nodes[2];
+	    proteus_index_t nodes[2];
 	    for (int nN_L=0;nN_L<mesh.nNodes_element;nN_L++)
 	      for (int nN_R=nN_L+1;nN_R<mesh.nNodes_element;nN_R++)
 		{
@@ -5225,49 +5225,49 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
 		}
 	  }
 	mesh.nEdges_global = edges.size();
-	mesh.edgeNodesArray = new int[mesh.nEdges_global*2];
+	mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global*2];
 	set<NodeTuple<2> >::iterator edge_p=edges.begin();
-	for (int edgeN=0;edgeN<int(edges.size());edgeN++)
+	for (proteus_index_t edgeN=0;edgeN<proteus_index_t(edges.size());edgeN++)
 	  {
 	    mesh.edgeNodesArray[edgeN*2+0] = edge_p->nodes[0];
 	    mesh.edgeNodesArray[edgeN*2+1] = edge_p->nodes[1];
 	    edge_p++;
 	  }
       }
-      vector<set<int> > nodeStar(mesh.nNodes_global);
-      for (int edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
+      vector<set<proteus_index_t> > nodeStar(mesh.nNodes_global);
+      for(proteus_index_t edgeN=0;edgeN<mesh.nEdges_global;edgeN++)
 	{
 	  nodeStar[mesh.edgeNodesArray[edgeN*2+0]].insert(mesh.edgeNodesArray[edgeN*2+1]);
 	  nodeStar[mesh.edgeNodesArray[edgeN*2+1]].insert(mesh.edgeNodesArray[edgeN*2+0]);
 	}
-      mesh.nodeStarOffsets = new int[mesh.nNodes_global+1];
+      mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global+1];
       mesh.nodeStarOffsets[0] = 0;
-      for (int nN=1;nN<mesh.nNodes_global+1;nN++)
+      for(proteus_index_t nN=1;nN<mesh.nNodes_global+1;nN++)
 	mesh.nodeStarOffsets[nN] = mesh.nodeStarOffsets[nN-1] + nodeStar[nN-1].size();
-      mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
-      for (int nN=0,offset=0;nN<mesh.nNodes_global;nN++)
-	for (set<int>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
+      mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
+      for(proteus_index_t nN=0,offset=0;nN<mesh.nNodes_global;nN++)
+	for (set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();nN_star!=nodeStar[nN].end();nN_star++,offset++)
 	  mesh.nodeStarArray[offset] = *nN_star;
       stop = CurrentTime();
       mesh.max_nNodeNeighbors_node=0;
-      for (int nN=0;nN<mesh.nNodes_global;nN++)
+      for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++)
 	mesh.max_nNodeNeighbors_node=max(mesh.max_nNodeNeighbors_node,mesh.nodeStarOffsets[nN+1]-mesh.nodeStarOffsets[nN]);
       //mwf repeat for node-->elements arrays
       {
-	vector<set<int> > nodeElementsStar(mesh.nNodes_global);
-	for (int eN = 0; eN < mesh.nElements_global; eN++)
+	vector<set<proteus_index_t> > nodeElementsStar(mesh.nNodes_global);
+	for(proteus_index_t eN = 0; eN < mesh.nElements_global; eN++)
 	  {
 	    for (int nN = 0; nN < mesh.nNodes_element; nN++)
 	      nodeElementsStar[mesh.elementNodesArray[eN*mesh.nNodes_element+nN]].insert(eN);
 	  }
-	mesh.nodeElementOffsets = new int[mesh.nNodes_global+1];
+	mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global+1];
 	mesh.nodeElementOffsets[0] = 0;
-	for (int nN = 0; nN < mesh.nNodes_global; nN++)
+	for(proteus_index_t nN = 0; nN < mesh.nNodes_global; nN++)
 	  mesh.nodeElementOffsets[nN+1] = mesh.nodeElementOffsets[nN]+nodeElementsStar[nN].size();
-	mesh.nodeElementsArray  = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
-	for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
+	mesh.nodeElementsArray  = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
+	for(proteus_index_t nN=0,offset=0; nN < mesh.nNodes_global; nN++)
 	  {
-	    for (set<int>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
+	    for (set<proteus_index_t>::iterator eN_star = nodeElementsStar[nN].begin(); eN_star != nodeElementsStar[nN].end();
 		 eN_star++,offset++)
 	      {
 		mesh.nodeElementsArray[offset] = *eN_star;
@@ -5279,24 +5279,24 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
       //if nodeMaterial is DEFAULT, go ahead and set to interior or exterior
       //depending on which boundary node belongs to. 
       //If node on at least one exterior boundary then it's exterior
-      for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+      for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
       {
-	int ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
 	mesh.elementBoundaryMaterialTypes[ebN] = EXTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = EXTERIOR_NODE_MATERIAL;
 	  }
       }
-      for (int ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
+      for(proteus_index_t ebNI = 0; ebNI < mesh.nInteriorElementBoundaries_global; ebNI++)
       {
-	int ebN = mesh.interiorElementBoundariesArray[ebNI];
+	proteus_index_t ebN = mesh.interiorElementBoundariesArray[ebNI];
 	mesh.elementBoundaryMaterialTypes[ebN] = INTERIOR_ELEMENT_BOUNDARY_MATERIAL;
 	for (int nN_local = 0; nN_local < mesh.nNodes_elementBoundary; nN_local++)
 	  {
-	    int nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
+	    proteus_index_t nN = mesh.elementBoundaryNodesArray[ebN*mesh.nNodes_elementBoundary+nN_local];
 	    if (mesh.nodeMaterialTypes[nN] == DEFAULT_NODE_MATERIAL)
 	      mesh.nodeMaterialTypes[nN] = INTERIOR_NODE_MATERIAL;
 	  }
@@ -5319,16 +5319,16 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
       //brute force
       for (int ebN = 0; ebN < nElementBoundaries_file; ebN++)
 	{
-	  int nodes[3];
+	  proteus_index_t nodes[3];
 	  nodes[0] = elementBoundaryNodesArray_file[ebN*3+0];
 	  nodes[1] = elementBoundaryNodesArray_file[ebN*3+1];
 	  nodes[2] = elementBoundaryNodesArray_file[ebN*3+2];
 	  NodeTuple<3> ttuple(nodes);
 	  tetgenElementBoundaryMaterialTypes[ttuple] = elementBoundaryMaterialTypes_file[ebN];
 	}
-      for (int ebN = 0; ebN < mesh.nElementBoundaries_global; ebN++)
+      for(proteus_index_t ebN = 0; ebN < mesh.nElementBoundaries_global; ebN++)
 	{
-	  int nodes[3];
+	  proteus_index_t nodes[3];
 	  nodes[0] = mesh.elementBoundaryNodesArray[ebN*3+0];
 	  nodes[1] = mesh.elementBoundaryNodesArray[ebN*3+1];
 	  nodes[2] = mesh.elementBoundaryNodesArray[ebN*3+2];
@@ -5345,17 +5345,17 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
       //brute force
       for (int ebNE = 0; ebNE < nElementBoundaries_file; ebNE++)
 	{
-	  int nodes[3];
+	  proteus_index_t nodes[3];
 	  nodes[0] = elementBoundaryNodesArray_file[ebNE*3+0];
 	  nodes[1] = elementBoundaryNodesArray_file[ebNE*3+1];
 	  nodes[2] = elementBoundaryNodesArray_file[ebNE*3+2];
 	  NodeTuple<3> ttuple(nodes);
 	  tetgenElementBoundaryMaterialTypes[ttuple] = elementBoundaryMaterialTypes_file[ebNE];
 	}
-      for (int ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
+      for(proteus_index_t ebNE = 0; ebNE < mesh.nExteriorElementBoundaries_global; ebNE++)
 	{
-	  int ebN = mesh.exteriorElementBoundariesArray[ebNE];
-	  int nodes[3];
+	  proteus_index_t ebN = mesh.exteriorElementBoundariesArray[ebNE];
+	  proteus_index_t nodes[3];
 	  nodes[0] = mesh.elementBoundaryNodesArray[ebN*3+0];
 	  nodes[1] = mesh.elementBoundaryNodesArray[ebN*3+1];
 	  nodes[2] = mesh.elementBoundaryNodesArray[ebN*3+2];
@@ -5369,7 +5369,7 @@ int readTetgenElementBoundaryMaterialTypes(Mesh& mesh, const char* filebase, int
       assert(0);//shouldnt be here
     }
   // std::cout << "elementBoundaryNodesArray:" << std::endl;
-  // for (int ebN = 0; ebN < mesh.nElementBoundaries_global; ++ebN) {
+  // for(proteus_index_t ebN = 0; ebN < mesh.nElementBoundaries_global; ++ebN) {
   //     std::cout << "Boundary " << ebN << ":";
   //     for (int nN = 0; nN < mesh.nNodes_elementBoundary; ++nN) {
   //         std::cout << " " << mesh.elementBoundaryNodesArray[ebN * mesh.nNodes_elementBoundary + nN];
@@ -5412,10 +5412,10 @@ int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base)
   edgeFile >> eatcomments >> nEdges_file >> hasMarkers >> eatline;
   if (hasMarkers <= 0)
     return 0;
-  unordered_map<long long, int> edgeOfNodes;
+  unordered_map<long long, proteus_index_t> edgeOfNodes;
   edgeOfNodes.reserve(mesh.nEdges_global);
   const long long nNodes = mesh.nNodes_global;
-  for (int edN = 0; edN < mesh.nEdges_global; edN++)
+  for(proteus_index_t edN = 0; edN < mesh.nEdges_global; edN++)
     {
       long long n0 = mesh.edgeNodesArray[2*edN], n1 = mesh.edgeNodesArray[2*edN+1];
       if (n1 < n0)
@@ -5434,7 +5434,7 @@ int readEdgeMaterialTypes(Mesh& mesh, const char* filebase, int base)
       n1 -= base;
       if (n1 < n0)
         swap(n0, n1);
-      unordered_map<long long, int>::const_iterator edge = edgeOfNodes.find(n0*nNodes + n1);
+      unordered_map<long long, proteus_index_t>::const_iterator edge = edgeOfNodes.find(n0*nNodes + n1);
       if (edge != edgeOfNodes.end())
         mesh.edgeMaterialTypes[edge->second] = (marker == -1) ? 0 : marker;
     }
@@ -5465,7 +5465,7 @@ int writeTetgenMesh(Mesh& mesh, const char* filebase, int tetgenIndexBase)
   //mesh tools may not be the same
   //by default write just exterior element boundaries ...
   bool writeExteriorElementBoundariesOnly = true;
-  int nElementBoundariesToWrite = mesh.nExteriorElementBoundaries_global;
+  proteus_index_t nElementBoundariesToWrite = mesh.nExteriorElementBoundaries_global;
   failed = writeTetgenElementBoundaryNodes(filebase,
 					   tetgenIndexBase,
 					   nElementBoundariesToWrite,
@@ -5516,7 +5516,7 @@ int readHex(Mesh& mesh, const char* filebase, int indexBase)
   //read nodes
   mesh.nodeArray         = new double[mesh.nNodes_global*3];
   mesh.nodeMaterialTypes = new int   [mesh.nNodes_global];
-  for (int nN=0;nN<mesh.nNodes_global;nN++) 
+  for(proteus_index_t nN=0;nN<mesh.nNodes_global;nN++) 
     {
         meshFile>>mesh.nodeArray[nN*3+0]>>
                   mesh.nodeArray[nN*3+1]>>
@@ -5527,13 +5527,13 @@ int readHex(Mesh& mesh, const char* filebase, int indexBase)
 
   //read elements 
   mesh.nNodes_element = 8;
-  mesh.elementNodesArray    = new int[mesh.nElements_global*mesh.nNodes_element];
+  mesh.elementNodesArray    = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
   mesh.elementMaterialTypes = new int[mesh.nElements_global];
 
   int n0,n1,n2,n3,n4,n5,n6,n7,emt;
-  for (int eN=0;eN<mesh.nElements_global;eN++) 
+  for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++) 
     {
-       int eNne = eN*mesh.nNodes_element;
+       proteus_index_t eNne = eN*mesh.nNodes_element;
        meshFile>>n0>>n1>>n2>>n3>>n4>>n5>>n6>>n7>>emt;
 
        mesh.elementNodesArray[eNne+0] = n0-indexBase;
@@ -5601,9 +5601,9 @@ extern "C"
     //and make shallow copies
     int nLevelsNew = multilevelMesh.nLevels+nLevels2add;
     Mesh * meshArrayTmp                 = new Mesh[nLevelsNew];
-    int** elementChildrenArrayTmp   = new int*[nLevelsNew];
-    int** elementChildrenOffsetsTmp = new int*[nLevelsNew];
-    int** elementParentsArrayTmp    = new int*[nLevelsNew];
+    proteus_index_t** elementChildrenArrayTmp   = new proteus_index_t*[nLevelsNew];
+    proteus_index_t** elementChildrenOffsetsTmp = new proteus_index_t*[nLevelsNew];
+    proteus_index_t** elementParentsArrayTmp    = new proteus_index_t*[nLevelsNew];
     
     //hope shallow copies are allright
     for (int i=0; i < multilevelMesh.nLevels; i++)
@@ -5649,26 +5649,26 @@ extern "C"
     assert(multilevelMesh.nLevels == nLevelsPrev+1);
     //start by initializing children offsets on previous finest mesh
     multilevelMesh.elementChildrenOffsets[nLevelsPrev-1] = 
-      new int [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
+      new proteus_index_t [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
     //figure out how many elments and nodes to add
     int nElements_tagged = 0;
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
       {
 	if (elementTagArray[eN] > 0)
 	  nElements_tagged++;
       }
     //2 children per parent, lose the parent 
-    int nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+nElements_tagged;
+    proteus_index_t nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+nElements_tagged;
     //1 new node per parent
-    int nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global+nElements_tagged;
+    proteus_index_t nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global+nElements_tagged;
     //allocate multilevel arrays for new level
     //childrenArray <-- old level
     //  choice 1 size nElementsNew only keep track of actual children
     //  choice 2 size nElements_global (on new mesh) an element considers itself to be
     //      a child on the new mesh
-    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new int[nElements_new];
+    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new proteus_index_t[nElements_new];
     //parent array : nElementsNew --> new level
-    multilevelMesh.elementParentsArray[nLevelsPrev]    = new int[nElements_new];
+    multilevelMesh.elementParentsArray[nLevelsPrev]    = new proteus_index_t[nElements_new];
     
 
     //allocate mesh data structures on new level
@@ -5677,7 +5677,7 @@ extern "C"
     multilevelMesh.meshArray[nLevelsPrev].nNodes_global    = nNodes_new;
     //elementNodesArray
     multilevelMesh.meshArray[nLevelsPrev].elementNodesArray= 
-      new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global*2];
+      new proteus_index_t[multilevelMesh.meshArray[nLevelsPrev].nElements_global*2];
     //elementMaterialTypes
     multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes = 
       new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global];
@@ -5689,7 +5689,7 @@ extern "C"
       new int[multilevelMesh.meshArray[nLevelsPrev].nNodes_global];
 
     //first copy over nodes from old mesh since nested
-    for (int nN = 0; nN < multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global; nN++)
+    for(proteus_index_t nN = 0; nN < multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global; nN++)
       {
 	multilevelMesh.meshArray[nLevelsPrev].nodeArray[3*nN+0] = 
 	  multilevelMesh.meshArray[nLevelsPrev-1].nodeArray[3*nN+0];
@@ -5702,8 +5702,8 @@ extern "C"
 	  multilevelMesh.meshArray[nLevelsPrev-1].nodeMaterialTypes[nN];
       }
     //where to start with new node numbers        
-    int nN_new = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
-    int eN_new = 0; //where to start with new element numbers
+    proteus_index_t nN_new = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
+    proteus_index_t eN_new = 0; //where to start with new element numbers
     memset(multilevelMesh.elementChildrenOffsets[nLevelsPrev-1],0,
 	   (multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1)*sizeof(int));
 
@@ -5711,7 +5711,7 @@ extern "C"
     set<Node> newNodeSet;
     set<Node>::iterator nodeItr;
 
-    for (int eN_parent = 0; eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; 
+    for(proteus_index_t eN_parent = 0; eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; 
 	 eN_parent++)
       {
 	if (elementTagArray[eN_parent] == 0)
@@ -5722,7 +5722,7 @@ extern "C"
 	    multilevelMesh.meshArray[nLevelsPrev].elementNodesArray[eN_new*2+1] = 
 	      multilevelMesh.meshArray[nLevelsPrev-1].elementNodesArray[eN_parent*2+1];
 	    //should element be its own child?
-	    int offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent];
+	    proteus_index_t offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent];
 	    multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent+1] = offset+1;
 	    multilevelMesh.elementChildrenArray[nLevelsPrev-1][offset+0] = eN_new;
 	    multilevelMesh.elementParentsArray[nLevelsPrev][eN_new]       = eN_parent;
@@ -5732,7 +5732,7 @@ extern "C"
 	  {
 	    //2 children per parent
 	    //add middle node
-	    int offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent];
+	    proteus_index_t offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent];
 	    multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN_parent+1] = offset+2;
 	    multilevelMesh.elementChildrenArray[nLevelsPrev-1][offset+0] = eN_new;
 	    multilevelMesh.elementChildrenArray[nLevelsPrev-1][offset+1] = eN_new+1;
@@ -5770,9 +5770,9 @@ extern "C"
 	multilevelMesh.meshArray[nLevelsPrev].nodeArray[nodeItr->nN*3+2] = nodeItr->z;
       }
     //copy element material types from parents
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
       {
-	int eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
+	proteus_index_t eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
 	multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes[eN] = 
 	  multilevelMesh.meshArray[nLevelsPrev-1].elementMaterialTypes[eN_parent];
       }
@@ -5800,7 +5800,7 @@ extern "C"
     growMultilevelMesh(1,multilevelMesh);
     assert(multilevelMesh.nLevels == nLevelsPrev+1);
     int nElements_tagged = 0;
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
       {
 	if (elementTagArray[eN] > 0)
 	  nElements_tagged++;
@@ -5808,11 +5808,12 @@ extern "C"
 
     //to get things working, use temporaries for mesh that can be resized "easily"
     // and copy back to c interface
-    vector<int> elementNodesArray_tmp,elementNeighborsArray_tmp,bases_tmp,
+    vector<proteus_index_t> elementNodesArray_tmp,elementNeighborsArray_tmp,
       elementParentsArray_tmp;
+    vector<int> bases_tmp;
     vector<double>  nodeArray_tmp;
     //live on previous mesh
-    vector<list<int> > elementChildrenList(multilevelMesh.meshArray[nLevelsPrev-1].nElements_global);
+    vector<list<proteus_index_t> > elementChildrenList(multilevelMesh.meshArray[nLevelsPrev-1].nElements_global);
     vector<bool>  refined(multilevelMesh.meshArray[nLevelsPrev-1].nElements_global,
 			  false);
     //try to use upper bound on new elements and grab memory up front?
@@ -5854,14 +5855,14 @@ extern "C"
 			 3*multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global);
 
     //new mesh starts off as parent mesh
-    int nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
-    int nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
+    proteus_index_t nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
+    proteus_index_t nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
       {
 	//every element is its own parent to start off with
 	elementParentsArray_tmp.push_back(eN); 
       }
-    for (int eN_parent = 0; 
+    for(proteus_index_t eN_parent = 0; 
 	 eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN_parent++)
       {
 	//use loop through elements on parent mesh but these numbers will get
@@ -5884,24 +5885,24 @@ extern "C"
     //now have to allocate c interface data and copy over
     assert(elementParentsArray_tmp.size() == unsigned(nElements_new));
     //parent array : nElementsNew --> new level
-    multilevelMesh.elementParentsArray[nLevelsPrev]    = new int[nElements_new];
+    multilevelMesh.elementParentsArray[nLevelsPrev]    = new proteus_index_t[nElements_new];
     copy(elementParentsArray_tmp.begin(),elementParentsArray_tmp.end(),
 	 multilevelMesh.elementParentsArray[nLevelsPrev]);
 
     //initialize children offsets on previous finest mesh
     multilevelMesh.elementChildrenOffsets[nLevelsPrev-1] = 
-      new int [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
-    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new int[nElements_new];
+      new proteus_index_t [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
+    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new proteus_index_t[nElements_new];
     multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][0] = 0;
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
       {
-	int offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN];
+	proteus_index_t offset = multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN];
 	if (elementChildrenList[eN].size() > 0) //eN was refined
 	  {
 	    multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][eN+1] = 
 	      offset + elementChildrenList[eN].size();
 	    int i = 0;
-	    for (std::list<int>::iterator it = elementChildrenList[eN].begin(); 
+	    for (std::list<proteus_index_t>::iterator it = elementChildrenList[eN].begin(); 
 		 it != elementChildrenList[eN].end(); it++)
 	      {
 		multilevelMesh.elementChildrenArray[nLevelsPrev-1][offset+i] = *it;
@@ -5922,7 +5923,7 @@ extern "C"
     
     //elementNodesArray
     multilevelMesh.meshArray[nLevelsPrev].elementNodesArray= 
-      new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global*3];
+      new proteus_index_t[multilevelMesh.meshArray[nLevelsPrev].nElements_global*3];
     //elementMaterialTypes
     multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes = 
       new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global];
@@ -5945,9 +5946,9 @@ extern "C"
 	 multilevelMesh.meshArray[nLevelsPrev].newestNodeBases);
 
     //copy element material types from parents
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
       {
-	int eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
+	proteus_index_t eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
 	multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes[eN] = 
 	  multilevelMesh.meshArray[nLevelsPrev-1].elementMaterialTypes[eN_parent];
       }
@@ -5982,7 +5983,7 @@ extern "C"
     
     multilevelMesh.meshArray[nLevels-1].newestNodeBases = 
       new int[multilevelMesh.meshArray[nLevels-1].nElements_global];
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevels-1].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevels-1].nElements_global; eN++)
       {
 	int ebN_longest_local = findLocalLongestEdge2d(eN,
 						       multilevelMesh.meshArray[nLevels-1].elementNodesArray,
@@ -6006,19 +6007,19 @@ extern "C"
     set<Node> newNodeSet;
     set<Node>::iterator nodeItr;
     //build the elementChildren and elementParent maps as maps so we can accumulate on the fly
-    map<int, vector<int> > elementChildren;
-    map<int, int> elementParents;
+    map<proteus_index_t, vector<proteus_index_t> > elementChildren;
+    map<proteus_index_t, proteus_index_t> elementParents;
     //collect the set of parent elements slated for bisection or uniform refinement
-    map<int,int> elementsForBisection;
-    map<int,vector<int> > elementsForTrisection,newElementsForTrisection,nextElementsForTrisection;
-    set<int> elementsForUniform,newElementsForUniform,nextElementsForUniform;
+    map<proteus_index_t,int> elementsForBisection;
+    map<proteus_index_t,vector<int> > elementsForTrisection,newElementsForTrisection,nextElementsForTrisection;
+    set<proteus_index_t> elementsForUniform,newElementsForUniform,nextElementsForUniform;
     //keep track of the new elements as a vector of 4 ints (eN,n0,n1,n2)
-    vector<valarray<int> > newElements;
+    vector<valarray<proteus_index_t> > newElements;
     //keep track of what old elements  survive on the new mesh
-    set<int> oldElements;
+    set<proteus_index_t> oldElements;
     int i = nLevelsPrev;
     //initialize old elements to all elements and tag some for uniform refinement
-    for(int eN_parent=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
+    for(proteus_index_t eN_parent=0;eN_parent<multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
       {
         oldElements.insert(eN_parent);
         if (elementTagArray[eN_parent] > 0)
@@ -6027,14 +6028,14 @@ extern "C"
             elementsForUniform.insert(eN_parent);
           }
       }
-    int nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
-    int eN_new = multilevelMesh.meshArray[i-1].nElements_global;
+    proteus_index_t nN_new = multilevelMesh.meshArray[i-1].nNodes_global;
+    proteus_index_t eN_new = multilevelMesh.meshArray[i-1].nElements_global;
     while (!newElementsForUniform.empty() || !newElementsForTrisection.empty())
       {
         //std::cout<<"new uniform"<<std::endl;
-        for(set<int>::iterator eN_uniform_itr = newElementsForUniform.begin(); eN_uniform_itr != newElementsForUniform.end(); eN_uniform_itr++)
+        for(set<proteus_index_t>::iterator eN_uniform_itr = newElementsForUniform.begin(); eN_uniform_itr != newElementsForUniform.end(); eN_uniform_itr++)
           {
-            int eN_parent = *eN_uniform_itr;
+            proteus_index_t eN_parent = *eN_uniform_itr;
             oldElements.erase(eN_parent);
             elementChildren[eN_parent].push_back(eN_new+0);
             elementChildren[eN_parent].push_back(eN_new+1);
@@ -6062,7 +6063,7 @@ extern "C"
                     midpoints[nN_midpoint].nN = nodeItr->nN;
                 }
             //the triangles formed by chopping the points off the parent
-            valarray<int> newElement(4);
+            valarray<proteus_index_t> newElement(4);
             newElement[0] = eN_new;
             newElement[1] = multilevelMesh.meshArray[i-1].elementNodesArray[3*eN_parent+0];
             newElement[2] = midpoints[0].nN;
@@ -6089,11 +6090,11 @@ extern "C"
             //put neighbors in correct refinement class to make conforming
             for (int ebN = 0; ebN < multilevelMesh.meshArray[i-1].nElementBoundaries_element; ebN++)
               {
-                int eN_neighbor = multilevelMesh.meshArray[i-1].elementNeighborsArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element +
+                proteus_index_t eN_neighbor = multilevelMesh.meshArray[i-1].elementNeighborsArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element +
                                                                                       ebN],
                   ebN_global =  multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element+
-                                                                                     ebN],
-                  ebN_neighbor_element=0;
+                                                                                     ebN];
+                int ebN_neighbor_element=0;
                 if(eN_neighbor == multilevelMesh.meshArray[i-1].elementBoundaryElementsArray[ebN_global*2+0])
                   ebN_neighbor_element = multilevelMesh.meshArray[i-1].elementBoundaryLocalElementBoundariesArray[ebN_global*2 + 0];
                 else
@@ -6105,10 +6106,11 @@ extern "C"
                         if(elementsForBisection.find(eN_neighbor) == elementsForBisection.end()) // if not in bisection
                           {
                             //find longest edge to see whether to bisect or trisect 
-                            int leftNode,rightNode,
+                            proteus_index_t leftNode,rightNode,
                               leftNode1,rightNode1,
-                              ebN_neighbor_element1,ebN_global1,
-                              longestEdge,longestEdge_element;
+                              ebN_global1,
+                              longestEdge;
+                            int ebN_neighbor_element1,longestEdge_element;
                             double edgeLength,edgeLength1;
                             leftNode = multilevelMesh.meshArray[i-1].edgeNodesArray[ebN_global*2 + 0];
                             rightNode = multilevelMesh.meshArray[i-1].edgeNodesArray[ebN_global*2 + 1];
@@ -6170,12 +6172,12 @@ extern "C"
         newElementsForUniform = nextElementsForUniform;
         nextElementsForUniform.clear();
         //std::cout<<"new trisection"<<std::endl;
-        for(map<int,vector<int> >::iterator eN_trisection_itr = newElementsForTrisection.begin(); eN_trisection_itr != newElementsForTrisection.end(); eN_trisection_itr++)
+        for(map<proteus_index_t,vector<int> >::iterator eN_trisection_itr = newElementsForTrisection.begin(); eN_trisection_itr != newElementsForTrisection.end(); eN_trisection_itr++)
           {
-            int eN_parent = eN_trisection_itr->first,
-              longestEdge_element =  eN_trisection_itr->second[0],
+            proteus_index_t eN_parent = eN_trisection_itr->first;
+            int longestEdge_element =  eN_trisection_itr->second[0],
               otherEdge_element = eN_trisection_itr->second[1];
-            int longestEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + longestEdge_element],
+            proteus_index_t longestEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + longestEdge_element],
               otherEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + otherEdge_element];
             //add the new node if  necessary, it can only be the longest  edge
             Node midpoint_new;
@@ -6190,10 +6192,10 @@ extern "C"
                 nN_new++;
                 //since the node is new the neighbor will be non-conforming
                 //put neighbor in right refinement class
-                int eN_neighbor = multilevelMesh.meshArray[i-1].elementNeighborsArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element + longestEdge_element],
+                proteus_index_t eN_neighbor = multilevelMesh.meshArray[i-1].elementNeighborsArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element + longestEdge_element],
                   ebN_global =  multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*multilevelMesh.meshArray[i-1].nElementBoundaries_element+
-                                                                                     longestEdge_element],
-                  ebN_neighbor_element=0;
+                                                                                     longestEdge_element];
+                int ebN_neighbor_element=0;
                 if(eN_neighbor == multilevelMesh.meshArray[i-1].elementBoundaryElementsArray[ebN_global*2+0])
                   ebN_neighbor_element = multilevelMesh.meshArray[i-1].elementBoundaryLocalElementBoundariesArray[ebN_global*2 + 0];
                 else
@@ -6205,10 +6207,11 @@ extern "C"
                         if(elementsForBisection.find(eN_neighbor) == elementsForBisection.end()) // if not in bisection
                           {
                             //find longest edge to see whether to bisect or trisect 
-                            int leftNode,rightNode,
+                            proteus_index_t leftNode,rightNode,
                               leftNode1,rightNode1,
-                              ebN_neighbor_element1,ebN_global1,
-                              longestEdge,longestEdge_element;
+                              ebN_global1,
+                              longestEdge;
+                            int ebN_neighbor_element1,longestEdge_element;
                             double edgeLength,edgeLength1;
                             leftNode = multilevelMesh.meshArray[i-1].edgeNodesArray[ebN_global*2 + 0];
                             rightNode = multilevelMesh.meshArray[i-1].edgeNodesArray[ebN_global*2 + 1];
@@ -6276,14 +6279,14 @@ extern "C"
         nextElementsForTrisection.clear();
       }
     //std::cout<<"building trisected elements"<<std::endl;
-    for(map<int,vector<int> >::iterator eN_trisection_itr = elementsForTrisection.begin(); eN_trisection_itr != elementsForTrisection.end(); eN_trisection_itr++)
+    for(map<proteus_index_t,vector<int> >::iterator eN_trisection_itr = elementsForTrisection.begin(); eN_trisection_itr != elementsForTrisection.end(); eN_trisection_itr++)
       {
-        int eN_parent = eN_trisection_itr->first,
-          longestEdge_element =  eN_trisection_itr->second[0],
+        proteus_index_t eN_parent = eN_trisection_itr->first;
+        int longestEdge_element =  eN_trisection_itr->second[0],
           otherEdge_element = eN_trisection_itr->second[1];
-        int longestEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + longestEdge_element],
+        proteus_index_t longestEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + longestEdge_element],
           otherEdge = multilevelMesh.meshArray[i-1].elementBoundariesArray[eN_parent*3 + otherEdge_element];
-        int longestEdge_leftNode = multilevelMesh.meshArray[i-1].edgeNodesArray[longestEdge*2 + 0],
+        proteus_index_t longestEdge_leftNode = multilevelMesh.meshArray[i-1].edgeNodesArray[longestEdge*2 + 0],
           longestEdge_rightNode = multilevelMesh.meshArray[i-1].edgeNodesArray[longestEdge*2 + 1],
           otherEdge_leftNode = multilevelMesh.meshArray[i-1].edgeNodesArray[otherEdge*2 + 0],
           otherEdge_rightNode = multilevelMesh.meshArray[i-1].edgeNodesArray[otherEdge*2 + 1],
@@ -6335,7 +6338,7 @@ extern "C"
         assert(nodeItr != newNodeSet.end());
         midpoint_other.nN = nodeItr->nN;
         //not worrying about orientation for now
-        valarray<int> newElement(4);
+        valarray<proteus_index_t> newElement(4);
         newElement[0] = eN_new;
         newElement[1] = n0;
         newElement[2] = midpoint_new.nN;
@@ -6357,9 +6360,9 @@ extern "C"
 
     //std::cout<<"building bisected elements"<<std::endl;
     //now we just have to bisect remaining elements
-    for(map<int,int>::iterator eN_bisect_itr = elementsForBisection.begin(); eN_bisect_itr != elementsForBisection.end(); eN_bisect_itr++)
+    for(map<proteus_index_t,int>::iterator eN_bisect_itr = elementsForBisection.begin(); eN_bisect_itr != elementsForBisection.end(); eN_bisect_itr++)
       {
-        int eN_parent = eN_bisect_itr->first;
+        proteus_index_t eN_parent = eN_bisect_itr->first;
         //longestEdge_element = eN_bisect_itr->second;
         //fix  later to use the longest edge info instead of searching again
 	//         int longestEdge = multilevelMesh.meshArray[i-1].elementBoundaryElementsArray[eN_parent*3 + longestEdge_element],
@@ -6413,7 +6416,7 @@ extern "C"
             if(nodeItr != newNodeSet.end())
               {
                 //the triangles formed by bisecting
-                valarray<int> newElement(4);
+                valarray<proteus_index_t> newElement(4);
                 newElement[0] = eN_new;
                 newElement[1] = multilevelMesh.meshArray[i-1].elementNodesArray[3*eN_parent+nN_element_0];
                 newElement[2] = multilevelMesh.meshArray[i-1].elementNodesArray[3*eN_parent+nN_element_1];
@@ -6436,23 +6439,23 @@ extern "C"
     //now the mesh should be conforming so build the mesh arrays
     multilevelMesh.meshArray[i].nNodes_element=3;
     multilevelMesh.meshArray[i].nElements_global  = eN_new;
-    multilevelMesh.meshArray[i].elementNodesArray = new int[multilevelMesh.meshArray[i].nElements_global*3];
-    multilevelMesh.elementChildrenArray[i-1]      = new int[multilevelMesh.meshArray[i].nElements_global];
-    multilevelMesh.elementChildrenOffsets[i-1]  = new int[multilevelMesh.meshArray[i-1].nElements_global+1];
-    multilevelMesh.elementParentsArray[i]         = new int[multilevelMesh.meshArray[i].nElements_global];
+    multilevelMesh.meshArray[i].elementNodesArray = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global*3];
+    multilevelMesh.elementChildrenArray[i-1]      = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global];
+    multilevelMesh.elementChildrenOffsets[i-1]  = new proteus_index_t[multilevelMesh.meshArray[i-1].nElements_global+1];
+    multilevelMesh.elementParentsArray[i]         = new proteus_index_t[multilevelMesh.meshArray[i].nElements_global];
     multilevelMesh.meshArray[i].elementMaterialTypes = new int[multilevelMesh.meshArray[i].nElements_global];
     //write the old elements
-    for(set<int>::iterator eN_itr=oldElements.begin();eN_itr != oldElements.end();eN_itr++)
+    for(set<proteus_index_t>::iterator eN_itr=oldElements.begin();eN_itr != oldElements.end();eN_itr++)
       {
-        int eN = *eN_itr;
+        proteus_index_t eN = *eN_itr;
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+0] = multilevelMesh.meshArray[i-1].elementNodesArray[eN*3+0];
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+1] = multilevelMesh.meshArray[i-1].elementNodesArray[eN*3+1];
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+2] = multilevelMesh.meshArray[i-1].elementNodesArray[eN*3+2];
       }
     //write the new elements
-    for(vector<valarray<int> >::iterator element_itr=newElements.begin();element_itr != newElements.end();element_itr++)
+    for(vector<valarray<proteus_index_t> >::iterator element_itr=newElements.begin();element_itr != newElements.end();element_itr++)
       {
-        int eN = (*element_itr)[0];
+        proteus_index_t eN = (*element_itr)[0];
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+0] = (*element_itr)[1];
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+1] = (*element_itr)[2];
         multilevelMesh.meshArray[i].elementNodesArray[eN*3+2] = (*element_itr)[3];
@@ -6461,7 +6464,7 @@ extern "C"
     assert(unsigned(nN_new) == (newNodeSet.size()+multilevelMesh.meshArray[i-1].nNodes_global));
     multilevelMesh.meshArray[i].nNodes_global = nN_new;
     multilevelMesh.meshArray[i].nodeArray = new double[multilevelMesh.meshArray[i].nNodes_global*3];
-    for(int nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
+    for(proteus_index_t nN=0;nN<multilevelMesh.meshArray[i-1].nNodes_global;nN++)
       {
         multilevelMesh.meshArray[i].nodeArray[nN*3+0] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+0];
         multilevelMesh.meshArray[i].nodeArray[nN*3+1] = multilevelMesh.meshArray[i-1].nodeArray[nN*3+1];
@@ -6474,7 +6477,7 @@ extern "C"
         multilevelMesh.meshArray[i].nodeArray[nodeItr->nN*3+2] = nodeItr->z;
       }
     //element parents and material types
-    for(int eN = 0; eN < multilevelMesh.meshArray[i].nElements_global;eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[i].nElements_global;eN++)
       {
         multilevelMesh.elementParentsArray[i][eN] = elementParents[eN];
         multilevelMesh.meshArray[i].elementMaterialTypes[eN] = multilevelMesh.meshArray[i-1].elementMaterialTypes[elementParents[eN]];
@@ -6482,7 +6485,7 @@ extern "C"
     //element children
     multilevelMesh.elementChildrenOffsets[i-1][0] = 0;
     int offset=0;
-    for(int eN_parent = 0; eN_parent < multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
+    for(proteus_index_t eN_parent = 0; eN_parent < multilevelMesh.meshArray[i-1].nElements_global;eN_parent++)
       {
         for(unsigned int childE=0;childE<elementChildren[eN_parent].size();childE++)
           {
@@ -6516,21 +6519,21 @@ extern "C"
     growMultilevelMesh(1,multilevelMesh);
     assert(multilevelMesh.nLevels == nLevelsPrev+1);
     int nElements_tagged = 0;
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN++)
       {
 	if (elementTagArray[eN] > 0)
 	  nElements_tagged++;
       }
 
     vector<bool> refined(multilevelMesh.meshArray[nLevelsPrev-1].nElements_global,false);
-    vector<int> edgeMidNodesArray(multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_global,-1);
+    vector<proteus_index_t> edgeMidNodesArray(multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_global,-1);
     //new mesh starts off as parent mesh
-    int nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
-    int nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
+    proteus_index_t nElements_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
+    proteus_index_t nNodes_new    = multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global;
 
     //loop through tagged elements, subdivied all their edges and fix up
     //neighbors for conformity by subdividing their (necessary) edges
-    for (int eN_parent = 0; 
+    for(proteus_index_t eN_parent = 0; 
 	 eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN_parent++)
       {
 	//algorithm knows for now if it's refined an element or not
@@ -6560,7 +6563,7 @@ extern "C"
          3). 1 element boundary has been bisected(2T)
            
     ***********************************************************************/
-    for (int eN_parent = 0; 
+    for(proteus_index_t eN_parent = 0; 
 	 eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN_parent++)
       {
 	int nBisectedEdges = 0;
@@ -6569,7 +6572,7 @@ extern "C"
 	    for (int ebN_local = 0; 
 		 ebN_local < multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_element; ebN_local++)
 	      {
-		const int ebN = 
+		const proteus_index_t ebN = 
 		  multilevelMesh.meshArray[nLevelsPrev-1].elementBoundariesArray[eN_parent*
 										 multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_element+
 										 ebN_local];
@@ -6591,11 +6594,11 @@ extern "C"
 
     //multilevel genealogy
     //parent array : nElementsNew --> new level
-    multilevelMesh.elementParentsArray[nLevelsPrev]    = new int[nElements_new];
+    multilevelMesh.elementParentsArray[nLevelsPrev]    = new proteus_index_t[nElements_new];
     //initialize children offsets on previous finest mesh
     multilevelMesh.elementChildrenOffsets[nLevelsPrev-1] = 
-      new int [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
-    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new int[nElements_new];
+      new proteus_index_t [multilevelMesh.meshArray[nLevelsPrev-1].nElements_global+1];
+    multilevelMesh.elementChildrenArray[nLevelsPrev-1] = new proteus_index_t[nElements_new];
     multilevelMesh.elementChildrenOffsets[nLevelsPrev-1][0] = 0;
 
     //child mesh
@@ -6606,7 +6609,7 @@ extern "C"
     
     //elementNodesArray
     multilevelMesh.meshArray[nLevelsPrev].elementNodesArray= 
-      new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global*3];
+      new proteus_index_t[multilevelMesh.meshArray[nLevelsPrev].nElements_global*3];
     //elementMaterialTypes
     multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes = 
       new int[multilevelMesh.meshArray[nLevelsPrev].nElements_global];
@@ -6624,14 +6627,14 @@ extern "C"
 	 multilevelMesh.meshArray[nLevelsPrev].nodeArray);
 
     //now go through and create nodes
-    for (int ebN_parent = 0; ebN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_global; ebN_parent++)
+    for(proteus_index_t ebN_parent = 0; ebN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElementBoundaries_global; ebN_parent++)
       {
 	if (edgeMidNodesArray[ebN_parent] >= 0)
 	  {
 	    assert(edgeMidNodesArray[ebN_parent] >= multilevelMesh.meshArray[nLevelsPrev-1].nNodes_global);
 	    Node midpoints[1];
-	    const int nN0 = multilevelMesh.meshArray[nLevelsPrev-1].elementBoundaryNodesArray[ebN_parent*2+0];
-	    const int nN1 = multilevelMesh.meshArray[nLevelsPrev-1].elementBoundaryNodesArray[ebN_parent*2+1];
+	    const proteus_index_t nN0 = multilevelMesh.meshArray[nLevelsPrev-1].elementBoundaryNodesArray[ebN_parent*2+0];
+	    const proteus_index_t nN1 = multilevelMesh.meshArray[nLevelsPrev-1].elementBoundaryNodesArray[ebN_parent*2+1];
 	    midpoints[0].nN = edgeMidNodesArray[ebN_parent];
 	    midpoint(multilevelMesh.meshArray[nLevelsPrev-1].nodeArray + nN0*3,
 		     multilevelMesh.meshArray[nLevelsPrev-1].nodeArray + nN1*3,
@@ -6643,9 +6646,9 @@ extern "C"
       }
     //now take care of refining (or not) elements
     //put this in subdivide element routine
-    int eN_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
+    proteus_index_t eN_new = multilevelMesh.meshArray[nLevelsPrev-1].nElements_global;
     bool subdivideFailed = false;
-    for (int eN_parent = 0; 
+    for(proteus_index_t eN_parent = 0; 
 	 eN_parent < multilevelMesh.meshArray[nLevelsPrev-1].nElements_global; eN_parent++)
       {
 	subdivideFailed = subdivideTriangle4T(eN_parent,
@@ -6663,9 +6666,9 @@ extern "C"
 	  return 1;
       }//parents
     //copy element material types from parents
-    for (int eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
+    for(proteus_index_t eN = 0; eN < multilevelMesh.meshArray[nLevelsPrev].nElements_global; eN++)
       {
-	int eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
+	proteus_index_t eN_parent = multilevelMesh.elementParentsArray[nLevelsPrev][eN];
 	multilevelMesh.meshArray[nLevelsPrev].elementMaterialTypes[eN] = 
 	  multilevelMesh.meshArray[nLevelsPrev-1].elementMaterialTypes[eN_parent];
       }
@@ -6681,14 +6684,14 @@ extern "C"
   }
 }//extern "C"
 
-bool newestNodeBisect(int eN,
-		      int& nElements_global,
-		      int& nNodes_global,
+bool newestNodeBisect(proteus_index_t eN,
+		      proteus_index_t& nElements_global,
+		      proteus_index_t& nNodes_global,
 		      std::vector<double>& nodeArray,
-		      std::vector<int>& elementNodesArray,
-		      std::vector<int>& elementNeighborsArray,
-		      std::vector<std::list<int> >& childrenList,
-		      std::vector<int>& elementParentsArray,
+		      std::vector<proteus_index_t>& elementNodesArray,
+		      std::vector<proteus_index_t>& elementNeighborsArray,
+		      std::vector<std::list<proteus_index_t> >& childrenList,
+		      std::vector<proteus_index_t>& elementParentsArray,
 		      std::vector<int>& bases,
 		      std::vector<bool>& refined)
 
@@ -6705,18 +6708,18 @@ bool newestNodeBisect(int eN,
   double x[3] = {0.0,0.0,0.0}; //node coordinates
   int ib[3];   //local node numbers starting with base
   int ibn[3];  //local node numbers starting with base for neigbhor
-  int IB[3];   //global node numbers starting with base
-  int E1[3],E2[3]; //global nodes of new triangles
-  int N1[3],N2[3]; //global element neighbors of new triangles
-  int E1n[3],E2n[3]; //global nodes of new triangles for neig
-  int N1n[3],N2n[3]; //global element neighbors of new triangles for neig
+  proteus_index_t IB[3];   //global node numbers starting with base
+  proteus_index_t E1[3],E2[3]; //global nodes of new triangles
+  proteus_index_t N1[3],N2[3]; //global element neighbors of new triangles
+  proteus_index_t E1n[3],E2n[3]; //global nodes of new triangles for neig
+  proteus_index_t N1n[3],N2n[3]; //global element neighbors of new triangles for neig
   int ebN_base  = bases[eN]; //local base (edge number and node across from it)
   ib[0] = ebN_base; ib[1] = (ebN_base+1)%nElementBoundaries_element; ib[2]=(ebN_base+2)%nElementBoundaries_element;
   for (int i=0; i < nElementBoundaries_element; i++)
     IB[i] = elementNodesArray[nElementBoundaries_element*eN + ib[i]];
 
   //neighbor of base
-  int eN_neig = elementNeighborsArray[nElementBoundaries_element*eN + ib[0]];
+  proteus_index_t eN_neig = elementNeighborsArray[nElementBoundaries_element*eN + ib[0]];
   assert(eN_neig < nElements_global);
   if (eN_neig < 0)
     {
@@ -6725,7 +6728,7 @@ bool newestNodeBisect(int eN,
        so just refine it by bisecting edge
       **************************************************/
       //create new node at center of base
-      int newNodeNumber = nNodes_global;
+      proteus_index_t newNodeNumber = nNodes_global;
       x[0] = 0.0; x[1] = 0.0; x[2] = 0.0;
       for (int nN = 0; nN < nSpace; nN++)//loop through nodes on base
 	for (int I = 0; I < 3; I++)
@@ -6749,7 +6752,7 @@ bool newestNodeBisect(int eN,
          replace eN with E1
          Have to update interior neighbors' own neighbor info
       **************************************************/
-      int newElementNumber = nElements_global;
+      proteus_index_t newElementNumber = nElements_global;
       E1[0] = elementNodesArray[nElementBoundaries_element*eN + ib[0]]; 
       E1[1] = elementNodesArray[nElementBoundaries_element*eN + ib[1]];
       E1[2] = newNodeNumber;
@@ -6823,7 +6826,7 @@ bool newestNodeBisect(int eN,
 	  //E1 remains unchanged, just get's element eN's parent
 	  elementParentsArray.push_back(elementParentsArray[eN]);
 	  //climb back up until find an element on the original mesh
-	  int eN_tmp = eN;
+	  proteus_index_t eN_tmp = eN;
 	  while (unsigned(eN_tmp) >= refined.size())
 	    eN_tmp = elementParentsArray[eN_tmp];
 	  assert(unsigned(elementParentsArray[eN_tmp]) < childrenList.size());
@@ -6847,7 +6850,7 @@ bool newestNodeBisect(int eN,
       **************************************************/
 
       //create new node at center of base
-      int newNodeNumber = nNodes_global;
+      proteus_index_t newNodeNumber = nNodes_global;
       x[0] = 0.0; x[1] = 0.0; x[2] = 0.0;
       for (int nN = 0; nN < nSpace; nN++)//loop through nodes on base
 	for (int I = 0; I < 3;  I++)
@@ -6879,8 +6882,8 @@ bool newestNodeBisect(int eN,
       ibn[0]=ebN_base_neig; ibn[1]=(ebN_base_neig+1)%nElementBoundaries_element; 
       ibn[2]=(ebN_base_neig+2)%nElementBoundaries_element;
 
-      int newElementNumber = nElements_global;
-      int newElementNumberNeig = nElements_global+1;
+      proteus_index_t newElementNumber = nElements_global;
+      proteus_index_t newElementNumberNeig = nElements_global+1;
       E1[0] = elementNodesArray[nElementBoundaries_element*eN + ib[0]]; 
       E1[1] = elementNodesArray[nElementBoundaries_element*eN + ib[1]];
       E1[2] = newNodeNumber;//bm
@@ -6990,7 +6993,7 @@ bool newestNodeBisect(int eN,
 	  //E1 remains unchanged, just get's element eN's parent
 	  elementParentsArray.push_back(elementParentsArray[eN]);
 	  //climb back up until find an element on the original mesh
-	  int eN_tmp = eN;
+	  proteus_index_t eN_tmp = eN;
 	  while (unsigned(eN_tmp) >= refined.size())
 	    eN_tmp = elementParentsArray[eN_tmp];
 	  assert(unsigned(elementParentsArray[eN_tmp]) < childrenList.size());
@@ -7013,7 +7016,7 @@ bool newestNodeBisect(int eN,
 	  //E1' remains unchanged, just get's element eN_neig's parent for E2'
 	  elementParentsArray.push_back(elementParentsArray[eN_neig]);
 	  //climb back up until find an element on the original mesh
-	  int eN_tmp = eN_neig;
+	  proteus_index_t eN_tmp = eN_neig;
 	  while (unsigned(eN_tmp) >= refined.size())
 	    eN_tmp = elementParentsArray[eN_tmp];
 	  assert(unsigned(elementParentsArray[eN_tmp]) < childrenList.size());
@@ -7059,13 +7062,13 @@ bool newestNodeBisect(int eN,
   return failed;
 }
 
-bool add4TnodesForRefinement2d(int eN,//element to be refined
-			       int& nNodes_global,//number of nodes in mesh, will grow as refine
+bool add4TnodesForRefinement2d(proteus_index_t eN,//element to be refined
+			       proteus_index_t& nNodes_global,//number of nodes in mesh, will grow as refine
 			       std::vector<bool>& refined,  //is an element to be refined or not?
-			       std::vector<int>& edgeMidNodesArray,//edge--> new node from bisection (-1 = none)
-			       const int* elementNodesArray,    //parent mesh representation
-			       const int* elementBoundariesArray,
-			       const int* elementNeighborsArray,
+			       std::vector<proteus_index_t>& edgeMidNodesArray,//edge--> new node from bisection (-1 = none)
+			       const proteus_index_t* elementNodesArray,    //parent mesh representation
+			       const proteus_index_t* elementBoundariesArray,
+			       const proteus_index_t* elementNeighborsArray,
 			       const double * nodeArray)
 {
   bool failed = false;
@@ -7078,11 +7081,11 @@ bool add4TnodesForRefinement2d(int eN,//element to be refined
   int eN_longest_local = findLocalLongestEdge2d(eN,
 						elementNodesArray,
 						nodeArray);
-  int eN_longest;
+  proteus_index_t eN_longest;
   eN_longest = elementBoundariesArray[eN*nElementBoundaries_element+eN_longest_local];
   for (int ebN_local = 0; ebN_local < nElementBoundaries_element; ebN_local++)
     {
-      const int ebN = elementBoundariesArray[eN*nElementBoundaries_element+ebN_local];
+      const proteus_index_t ebN = elementBoundariesArray[eN*nElementBoundaries_element+ebN_local];
 #ifdef DEBUG_REFINE
       if (edgeMidNodesArray[ebN] >= 0 && !refinedAlready)
 	{
@@ -7097,7 +7100,7 @@ bool add4TnodesForRefinement2d(int eN,//element to be refined
 	  edgeMidNodesArray[ebN] = nNodes_global;
 	  nNodes_global++;
 
-	  int eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN_local];
+	  proteus_index_t eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN_local];
 	  if (eN_neig >= 0) //not physical boundary
 	    {
 	      //orig, used eN_longest for original call, but what if start with ebN
@@ -7117,14 +7120,14 @@ bool add4TnodesForRefinement2d(int eN,//element to be refined
   return failed;
 }
 
-bool add4TnodesForConformity2d(int eN, int ebN_longest, 
-			       int ebN_neig,int eN_neig,
-			       int& nNodes_global,
+bool add4TnodesForConformity2d(proteus_index_t eN, proteus_index_t ebN_longest, 
+			       proteus_index_t ebN_neig,proteus_index_t eN_neig,
+			       proteus_index_t& nNodes_global,
 			       std::vector<bool>& refined,
-			       std::vector<int>& edgeMidNodesArray,
-			       const int* elementNodesArray,    //parent mesh representation
-			       const int* elementBoundariesArray,
-			       const int* elementNeighborsArray,
+			       std::vector<proteus_index_t>& edgeMidNodesArray,
+			       const proteus_index_t* elementNodesArray,    //parent mesh representation
+			       const proteus_index_t* elementBoundariesArray,
+			       const proteus_index_t* elementNeighborsArray,
 			       const double * nodeArray)
 {
   /***********************************************************************
@@ -7161,7 +7164,7 @@ bool add4TnodesForConformity2d(int eN, int ebN_longest,
   int eN_neig_longest_local = findLocalLongestEdge2d(eN_neig,
 						     elementNodesArray,
 						     nodeArray);
-  int ebN_neig_longest       = elementBoundariesArray[eN_neig*nElementBoundaries_element+eN_neig_longest_local];
+  proteus_index_t ebN_neig_longest       = elementBoundariesArray[eN_neig*nElementBoundaries_element+eN_neig_longest_local];
   //going to have to refine neighbor regardless
   refined[eN_neig] = true;
   if (edgeMidNodesArray[ebN_neig_longest] < 0)
@@ -7176,7 +7179,7 @@ bool add4TnodesForConformity2d(int eN, int ebN_longest,
       return failed; //done
     }
 
-  int eN_neig_neig = elementNeighborsArray[eN_neig*nElementBoundaries_element+eN_neig_longest_local];
+  proteus_index_t eN_neig_neig = elementNeighborsArray[eN_neig*nElementBoundaries_element+eN_neig_longest_local];
   failed = add4TnodesForConformity2d(eN_neig,ebN_neig_longest,
 				     ebN_neig_longest,eN_neig_neig,
 				     nNodes_global,
@@ -7188,15 +7191,15 @@ bool add4TnodesForConformity2d(int eN, int ebN_longest,
 				     nodeArray);
   return failed;
 }
-int findLocalLongestEdge2d(int eN,
-			   const int* elementNodesArray,
+int findLocalLongestEdge2d(proteus_index_t eN,
+			   const proteus_index_t* elementNodesArray,
 			   const double * nodeArray)
 {
   const int nElementBoundaries_element = 3;
   int longest = 0; double h_longest=0.0;
   int ebN = 0;
-  int nN0 = elementNodesArray[eN*nElementBoundaries_element+((ebN+1)%nElementBoundaries_element)];
-  int nN1 = elementNodesArray[eN*nElementBoundaries_element+((ebN+2)%nElementBoundaries_element)];
+  proteus_index_t nN0 = elementNodesArray[eN*nElementBoundaries_element+((ebN+1)%nElementBoundaries_element)];
+  proteus_index_t nN1 = elementNodesArray[eN*nElementBoundaries_element+((ebN+2)%nElementBoundaries_element)];
   double len = fabs((nodeArray[3*nN1+0]-nodeArray[3*nN0+0])*(nodeArray[3*nN1+0]-nodeArray[3*nN0+0])+
 		    (nodeArray[3*nN1+1]-nodeArray[3*nN0+1])*(nodeArray[3*nN1+1]-nodeArray[3*nN0+1])+
 		    (nodeArray[3*nN1+2]-nodeArray[3*nN0+2])*(nodeArray[3*nN1+2]-nodeArray[3*nN0+2]));
@@ -7216,22 +7219,22 @@ int findLocalLongestEdge2d(int eN,
   return longest;
 }
 
-bool subdivideTriangle4T(int eN_parent,
-			 int& eN_new,
-			 int* elementParentsArray,
-			 int* elementChildrenOffsets,
-			 int* elementChildrenArray,
-			 int* elementNodesArray_child,
-			 const std::vector<int>& edgeMidNodesArray,
+bool subdivideTriangle4T(proteus_index_t eN_parent,
+			 proteus_index_t& eN_new,
+			 proteus_index_t* elementParentsArray,
+			 proteus_index_t* elementChildrenOffsets,
+			 proteus_index_t* elementChildrenArray,
+			 proteus_index_t* elementNodesArray_child,
+			 const std::vector<proteus_index_t>& edgeMidNodesArray,
 			 const std::vector<bool>& refined,
-			 const int* elementNodesArray_parent,
-			 const int* elementBoundariesArray_parent,
+			 const proteus_index_t* elementNodesArray_parent,
+			 const proteus_index_t* elementBoundariesArray_parent,
 			 const double* nodeArray_parent)
 {
   bool failed = false,u4T=false;//cek added u4T to test as alternative to rivara 4T
   //hardwire for 2d
   const int simplexDim = 3;
-  const int childOffset = elementChildrenOffsets[eN_parent];
+  const proteus_index_t childOffset = elementChildrenOffsets[eN_parent];
   if (!refined[eN_parent])
     {
       //copy over parent info
@@ -7249,10 +7252,10 @@ bool subdivideTriangle4T(int eN_parent,
     {
       //count number of refined edges
       int nBisectedEdges = 0;
-      int midnodes[3],vnodes[3];
+      proteus_index_t midnodes[3],vnodes[3];
       for (int ebN_local = 0; ebN_local < simplexDim; ebN_local++)
 	{
-	  const int ebN = elementBoundariesArray_parent[eN_parent*simplexDim+ebN_local];
+	  const proteus_index_t ebN = elementBoundariesArray_parent[eN_parent*simplexDim+ebN_local];
 	  vnodes[ebN_local]   = elementNodesArray_parent[eN_parent*simplexDim+ebN_local];
 	  midnodes[ebN_local] = edgeMidNodesArray[ebN];
 	  if (edgeMidNodesArray[ebN] >= 0)
@@ -7505,8 +7508,8 @@ bool subdivideTriangle4T(int eN_parent,
 	}//2T
 #ifdef DEBUG_REFINE
       //std::cout<<"subdivide4T eN_parent = "<<eN_parent<<" case= "<<refCase<<std::endl;
-      int child_start = elementChildrenOffsets[eN_parent]; 
-      int child_end   = elementChildrenOffsets[eN_parent+1];
+      proteus_index_t child_start = elementChildrenOffsets[eN_parent]; 
+      proteus_index_t child_end   = elementChildrenOffsets[eN_parent+1];
       //std::cout<<"child elements --- "<<std::endl;
       // for (int i = child_start; i < child_end; i++)
       // 	{
@@ -7539,76 +7542,76 @@ int readDMPlexMesh(PyObject* dmplexMesh, Mesh& mesh)
     logEvent("DMPlex mesh is available in MeshTools.", 1);
     logEvent("Reading DMPlex mesh from MeshTools", 1);
     mesh.usePlex = true;
-    mesh.nNodes_global = plexMesh.attr("nNodes_global").cast<int>();
-    mesh.nElements_global = plexMesh.attr("nElements_global").cast<int>();    
-    mesh.nElementBoundaries_global = plexMesh.attr("nElementBoundaries_global").cast<int>();
-    mesh.nEdges_global = plexMesh.attr("nEdges_global").cast<int>();
+    mesh.nNodes_global = plexMesh.attr("nNodes_global").cast<proteus_index_t>();
+    mesh.nElements_global = plexMesh.attr("nElements_global").cast<proteus_index_t>();    
+    mesh.nElementBoundaries_global = plexMesh.attr("nElementBoundaries_global").cast<proteus_index_t>();
+    mesh.nEdges_global = plexMesh.attr("nEdges_global").cast<proteus_index_t>();
     mesh.nNodes_element = plexMesh.attr("nNodes_element").cast<int>();
     mesh.nNodes_elementBoundary = plexMesh.attr("nNodes_elementBoundary").cast<int>();
     mesh.nElementBoundaries_element = plexMesh.attr("nElementBoundaries_element").cast<int>();
-    mesh.nInteriorElementBoundaries_global = plexMesh.attr("nInteriorElementBoundaries_global").cast<int>();
-    mesh.nExteriorElementBoundaries_global = plexMesh.attr("nExteriorElementBoundaries_global").cast<int>();
+    mesh.nInteriorElementBoundaries_global = plexMesh.attr("nInteriorElementBoundaries_global").cast<proteus_index_t>();
+    mesh.nExteriorElementBoundaries_global = plexMesh.attr("nExteriorElementBoundaries_global").cast<proteus_index_t>();
     
-    mesh.max_nNodeNeighbors_node = plexMesh.attr("max_nNodeNeighbors_node").cast<int>();
+    mesh.max_nNodeNeighbors_node = plexMesh.attr("max_nNodeNeighbors_node").cast<proteus_index_t>();
     
-    py::array_t<int> nodeElementsArray = plexMesh.attr("nodeElementsArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> nodeElementsArray = plexMesh.attr("nodeElementsArray").cast<py::array_t<proteus_index_t>>();
     auto nodeElementsArrayBuf = nodeElementsArray.request();
-    mesh.nodeElementsArray = static_cast<int*>(nodeElementsArrayBuf.ptr);
+    mesh.nodeElementsArray = static_cast<proteus_index_t*>(nodeElementsArrayBuf.ptr);
     
-    py::array_t<int> elementNodesArray = plexMesh.attr("elementNodesArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> elementNodesArray = plexMesh.attr("elementNodesArray").cast<py::array_t<proteus_index_t>>();
     auto elementNodesArrayBuf = elementNodesArray.request();
-    mesh.elementNodesArray = static_cast<int*>(elementNodesArrayBuf.ptr);    
+    mesh.elementNodesArray = static_cast<proteus_index_t*>(elementNodesArrayBuf.ptr);    
     
-    py::array_t<int> nodeElementOffsets = plexMesh.attr("nodeElementOffsets").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> nodeElementOffsets = plexMesh.attr("nodeElementOffsets").cast<py::array_t<proteus_index_t>>();
     auto nodeElementOffsetsBuf = nodeElementOffsets.request();
-    mesh.nodeElementOffsets = static_cast<int*>(nodeElementOffsetsBuf.ptr);
+    mesh.nodeElementOffsets = static_cast<proteus_index_t*>(nodeElementOffsetsBuf.ptr);
     
-    // py::array_t<int> elementNeighborsArray = plexMesh.attr("elementNeighborsArray").cast<py::array_t<int>>();
+    // py::array_t<proteus_index_t> elementNeighborsArray = plexMesh.attr("elementNeighborsArray").cast<py::array_t<proteus_index_t>>();
     // auto elementNeighborsArrayBuf = elementNeighborsArray.request();
-    // mesh.elementNeighborsArray = static_cast<int*>(elementNeighborsArrayBuf.ptr);
+    // mesh.elementNeighborsArray = static_cast<proteus_index_t*>(elementNeighborsArrayBuf.ptr);
     
-    py::array_t<int> elementBoundariesArray = plexMesh.attr("elementBoundariesArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> elementBoundariesArray = plexMesh.attr("elementBoundariesArray").cast<py::array_t<proteus_index_t>>();
     auto elementBoundariesArrayBuf = elementBoundariesArray.request();
-    mesh.elementBoundariesArray = static_cast<int*>(elementBoundariesArrayBuf.ptr);
+    mesh.elementBoundariesArray = static_cast<proteus_index_t*>(elementBoundariesArrayBuf.ptr);
     
-    // py::array_t<int> elementBoundaryNodesArray = plexMesh.attr("elementBoundaryNodesArray").cast<py::array_t<int>>();
+    // py::array_t<proteus_index_t> elementBoundaryNodesArray = plexMesh.attr("elementBoundaryNodesArray").cast<py::array_t<proteus_index_t>>();
     // auto elementBoundaryNodesArrayBuf = elementBoundaryNodesArray.request();
-    // mesh.elementBoundaryNodesArray = static_cast<int*>(elementBoundaryNodesArrayBuf.ptr);
+    // mesh.elementBoundaryNodesArray = static_cast<proteus_index_t*>(elementBoundaryNodesArrayBuf.ptr);
   //   std::cout << "elementBoundaryNodesArray:" << std::endl;
-  // for (int ebN = 0; ebN < mesh.nElementBoundaries_global; ++ebN) {
+  // for(proteus_index_t ebN = 0; ebN < mesh.nElementBoundaries_global; ++ebN) {
   //     std::cout << "Boundary " << ebN << ":";
   //     for (int nN = 0; nN < mesh.nNodes_elementBoundary; ++nN) {
   //         std::cout << " " << mesh.elementBoundaryNodesArray[ebN * mesh.nNodes_elementBoundary + nN];
   //     }
   //     std::cout << std::endl;
   // }
-  py::array_t<int> elementBoundaryElementsArray = plexMesh.attr("elementBoundaryElementsArray").cast<py::array_t<int>>();
+  py::array_t<proteus_index_t> elementBoundaryElementsArray = plexMesh.attr("elementBoundaryElementsArray").cast<py::array_t<proteus_index_t>>();
     auto elementBoundaryElementsArrayBuf = elementBoundaryElementsArray.request();
-    mesh.elementBoundaryElementsArray = static_cast<int*>(elementBoundaryElementsArrayBuf.ptr);
+    mesh.elementBoundaryElementsArray = static_cast<proteus_index_t*>(elementBoundaryElementsArrayBuf.ptr);
     
     // py::array_t<int> elementBoundaryLocalElementBoundariesArray = plexMesh.attr("elementBoundaryLocalElementBoundariesArray").cast<py::array_t<int>>();
     // auto elementBoundaryLocalElementBoundariesArrayBuf = elementBoundaryLocalElementBoundariesArray.request();
     // mesh.elementBoundaryLocalElementBoundariesArray = static_cast<int*>(elementBoundaryLocalElementBoundariesArrayBuf.ptr);
     
-    py::array_t<int> interiorElementBoundariesArray = plexMesh.attr("interiorElementBoundariesArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> interiorElementBoundariesArray = plexMesh.attr("interiorElementBoundariesArray").cast<py::array_t<proteus_index_t>>();
     auto interiorElementBoundariesArrayBuf = interiorElementBoundariesArray.request();
-    mesh.interiorElementBoundariesArray = static_cast<int*>(interiorElementBoundariesArrayBuf.ptr);
+    mesh.interiorElementBoundariesArray = static_cast<proteus_index_t*>(interiorElementBoundariesArrayBuf.ptr);
     
-    py::array_t<int> exteriorElementBoundariesArray = plexMesh.attr("exteriorElementBoundariesArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> exteriorElementBoundariesArray = plexMesh.attr("exteriorElementBoundariesArray").cast<py::array_t<proteus_index_t>>();
     auto exteriorElementBoundariesArrayBuf = exteriorElementBoundariesArray.request();
-    mesh.exteriorElementBoundariesArray = static_cast<int*>(exteriorElementBoundariesArrayBuf.ptr);
+    mesh.exteriorElementBoundariesArray = static_cast<proteus_index_t*>(exteriorElementBoundariesArrayBuf.ptr);
     
-    py::array_t<int> edgeNodesArray = plexMesh.attr("edgeNodesArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> edgeNodesArray = plexMesh.attr("edgeNodesArray").cast<py::array_t<proteus_index_t>>();
     auto edgeNodesArrayBuf = edgeNodesArray.request();
-    mesh.edgeNodesArray = static_cast<int*>(edgeNodesArrayBuf.ptr);
+    mesh.edgeNodesArray = static_cast<proteus_index_t*>(edgeNodesArrayBuf.ptr);
     
-    py::array_t<int> nodeStarArray = plexMesh.attr("nodeStarArray").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> nodeStarArray = plexMesh.attr("nodeStarArray").cast<py::array_t<proteus_index_t>>();
     auto nodeStarArrayBuf = nodeStarArray.request();
-    mesh.nodeStarArray = static_cast<int*>(nodeStarArrayBuf.ptr);
+    mesh.nodeStarArray = static_cast<proteus_index_t*>(nodeStarArrayBuf.ptr);
     
-    py::array_t<int> nodeStarOffsets = plexMesh.attr("nodeStarOffsets").cast<py::array_t<int>>();
+    py::array_t<proteus_index_t> nodeStarOffsets = plexMesh.attr("nodeStarOffsets").cast<py::array_t<proteus_index_t>>();
     auto nodeStarOffsetsBuf = nodeStarOffsets.request();
-    mesh.nodeStarOffsets = static_cast<int*>(nodeStarOffsetsBuf.ptr);
+    mesh.nodeStarOffsets = static_cast<proteus_index_t*>(nodeStarOffsetsBuf.ptr);
     
     py::array_t<int> elementMaterialTypes = plexMesh.attr("elementMaterialTypes").cast<py::array_t<int>>();
     auto elementMaterialTypesBuf = elementMaterialTypes.request();
@@ -7667,9 +7670,9 @@ int readDMPlexMesh(PyObject* dmplexMesh, Mesh& mesh)
 }
 
 #ifdef MWF_HACK_2D_COARSE
-int findGlueNeighbor2d(int eN,
-		       std::vector<int>& elementNeighborsArray,
-		       std::vector<int>& elementParentsArray)
+int findGlueNeighbor2d(proteus_index_t eN,
+		       std::vector<proteus_index_t>& elementNeighborsArray,
+		       std::vector<proteus_index_t>& elementParentsArray)
 {
   /*****************************************
      glue neighbor is neighbor that has same parent
@@ -7678,7 +7681,7 @@ int findGlueNeighbor2d(int eN,
   int eN_glue = -1;
   for (int ebN = 0; ebN < nElementBoundaries_element; ebN++)
     {
-      const int eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN];
+      const proteus_index_t eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN];
       if (eN_neig >= 0 && elementParentsArray[eN_neig] == elementParentsArray[eN])
 	{
 	  //neighbor has same parent
@@ -7687,9 +7690,9 @@ int findGlueNeighbor2d(int eN,
     }
   return eN_glue;
 }
-int findT2Neighbor(int eN, int eN_base,
-		   std::vector<int>& elementNeighborsArray,
-		   std::vector<int>& elementParentsArray)
+int findT2Neighbor(proteus_index_t eN, int eN_base,
+		   std::vector<proteus_index_t>& elementNeighborsArray,
+		   std::vector<proteus_index_t>& elementParentsArray)
 {
   /*****************************************
      "other neighbor" t2, is the neighbor of eN that contains
@@ -7700,7 +7703,7 @@ int findT2Neighbor(int eN, int eN_base,
   int eN_t2 = -1;
   for (int ebN = 0; ebN < nElementBoundaries_element; ebN++)
     {
-      const int eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN];
+      const proteus_index_t eN_neig = elementNeighborsArray[eN*nElementBoundaries_element+ebN];
       if (ebN != eN_base && eN_neig >= 0 && 
 	  elementParentsArray[eN_neig] != elementParentsArray[eN])
 	{
@@ -7710,14 +7713,14 @@ int findT2Neighbor(int eN, int eN_base,
   return eN_t2;
 }
 //try to implement glue unrefinement (Algorithm 3) from Kossaczky 94
-bool newestNodeGlue(int eN,
+bool newestNodeGlue(proteus_index_t eN,
 		    std::vector<bool>& mayCoarsen, //tag for current level
-		    int& nElements_global,
-		    int& nNodes_global,
+		    proteus_index_t& nElements_global,
+		    proteus_index_t& nNodes_global,
 		    std::vector<double>& nodeArray,
-		    std::vector<int>& elementNodesArray,
-		    std::vector<int>& elementNeighborsArray,
-		    std::vector<int>& elementParentsArray,
+		    std::vector<proteus_index_t>& elementNodesArray,
+		    std::vector<proteus_index_t>& elementNeighborsArray,
+		    std::vector<proteus_index_t>& elementParentsArray,
 		    std::vector<int>& bases,
 		    std::vector<bool>& coarsened)
 {
@@ -7838,14 +7841,14 @@ bool newestNodeGlue(int eN,
   return failed;
 }
 
-bool glueElements(int eN, int eN_glue,
+bool glueElements(proteus_index_t eN, proteus_index_t eN_glue,
 		  std::vector<bool>& mayCoarsen, //tag for current level
-		  int& nElements_global,
-		  int& nNodes_global,
+		  proteus_index_t& nElements_global,
+		  proteus_index_t& nNodes_global,
 		  std::vector<double>& nodeArray,
-		  std::vector<int>& elementNodesArray,
-		  std::vector<int>& elementNeighborsArray,
-		  std::vector<int>& elementParentsArray,
+		  std::vector<proteus_index_t>& elementNodesArray,
+		  std::vector<proteus_index_t>& elementNeighborsArray,
+		  std::vector<proteus_index_t>& elementParentsArray,
 		  std::vector<int>& bases,
 		  std::vector<bool>& coarsened)
 {

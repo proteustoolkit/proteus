@@ -101,6 +101,8 @@ cdef extern from "ProtChBody.h":
         void setTimestepperType(string tstype, bool verbose)
         void setCollisionEnvelopeMargin(double envelope, double margin)
         void addMesh(shared_ptr[ch.ChMesh] mesh)
+        vector[double] stateGather() except +
+        void stateScatter(vector[double] y) except +
     cppSystem * newSystem()
     cdef cppclass cppRigidBody:
         shared_ptr[ch.ChBody] body
