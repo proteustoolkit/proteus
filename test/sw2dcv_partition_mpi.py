@@ -2,8 +2,8 @@
 """SW2DCV circular_damBreak (SWEs, lumped mass matrix) to t=0.5, for the partition-independence test.
 
 Unstructured mesh (he=0.4) with a pinned slanted cut. Run under mpiexec by test_sw2dcv_partition_independence.py in an empty directory; leaves u.csv there (owned nodes,
-sorted by x, y: x, y, h, hu, hv). NOSCAT=1 turns off the owner-to-ghost scatters of the second differences, the
-limiter coefficients and the limited solution; OLDVOL=1 sets the domain size of the bound relaxation to the sum over
+sorted by x, y: x, y, h, hu, hv). NOSCAT=1 replaces the owner-to-ghost scatters of the second differences, the
+limiter coefficients and the limited solution by poisoning the ghost entries; OLDVOL=1 sets the domain size of the bound relaxation to the sum over
 the ranks of the subdomain volumes, which counts the overlap twice. Both are controls.
 CONSISTENT=1 uses the consistent mass matrix (a KSP solve per stage); TIGHT=1 converges those solves and LOOSE=1
 puts back the loose parallel tolerances sw_n.py had before 7e79a746 (l_atol_res 1e-7, linTolFac 1e-3), see the test.
@@ -20,8 +20,15 @@ rank_staging.write("circular_damBreak.py", open(os.path.join(os.path.dirname(os.
 rank_staging.write("__init__.py", "")
 
 from proteus.mprans import SW2DCV
+_SCATTER_CALLS = [0]
 if os.environ.get("NOSCAT"):
-    SW2DCV.LevelModel.scatterDOFArray = lambda self, a: None
+    def _no_scatter(self, a):
+        # not a no-op: the ghost entries are poisoned, so that a code path that reads them at an owned dof cannot
+        # pass for the want of a difference (on a fleet mesh the partial ghost values happened to equal the
+        # owners', and the plain no-op control matched the serial run to 5e-15)
+        _SCATTER_CALLS[0] += 1
+        a[self.mesh.nNodes_owned:] = 1.0e3
+    SW2DCV.LevelModel.scatterDOFArray = _no_scatter
 if os.environ.get("OLDVOL"):
     _update = SW2DCV.LevelModel.updateSecondDifferences
     def update(self):
@@ -85,7 +92,11 @@ def calc(self, *a, **k):
     comm = Comm.get().comm.tompi4py()
     cols = [m.mesh.nodeArray[:nOwned, :2]] + [m.u[i].dof[:nOwned, None] for i in range(3)]
     gathered = comm.gather(np.hstack(cols), root=0)
+    sizes = comm.gather((comm.rank, nOwned, m.mesh.nNodes_global - nOwned, _SCATTER_CALLS[0]), root=0)
     if comm.rank == 0:
+        # (rank, owned nodes, ghost nodes, calls of the disabled scatter): what the test prints if a control does not differ
+        with open("info.txt", "w") as f:
+            f.write(repr(sizes))
         a = np.vstack(gathered)
         np.savetxt("u.csv", a[np.lexsort((a[:, 1], a[:, 0]))], delimiter=",", header="x,y,h,hu,hv")
     return r

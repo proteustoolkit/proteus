@@ -102,8 +102,8 @@ adrh_test(proto_mcorr_test adrh_proto mcorr_test.py)
 # MCorr on the cut-cell path (a solid: moment-fit H_s, the ghost penalty on cut faces, the inactive-row masking) against
 # proteus's MCorr with a solid (mcorr_cut_damBreak_he0.05.npz, vof_capture.py model=mcorr solid=1.0,0.45,0.4)
 adrh_test(proto_mcorr_solid_test adrh_proto mcorr_solid_test.py)
-# RANS2P's element integrals (the first vector model: p, u, v; VMS, lagged shock capturing) against proteus's RANS2P2D kernel
-# with the exterior faces off (rans2p_damBreak_he0.05.npz, vof_capture.py model=rans2p)
+# RANS2P (the first vector model: p, u, v; VMS, lagged shock capturing, weak boundary conditions on the exterior faces)
+# against proteus's RANS2P2D kernel, and one Newton step (rans2p_damBreak_he0.05.npz, vof_capture.py model=rans2p)
 adrh_test(proto_rans2p_test adrh_proto rans2p_test.py)
 if(tests_kokkos)
   # the Kokkos kernels reproduce the host kernels' bits (golden.py's inputs are fixed)

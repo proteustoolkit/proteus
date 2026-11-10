@@ -9,8 +9,10 @@ representations using PETSc.
    :parts: 1
 """
 import numpy
+from proteus import cmeshTools
 import math
 import sys
+from mpi4py import MPI
 from . import superluWrappers
 from . import Comm
 from .Comm import globalSum, globalMax
@@ -443,6 +445,7 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
             A numpy array that serves as a map from the petsc uknown
             ordering to the proteus unknown ordering
     """
+    dirichlet_nonauthority = None  # local dofs dropped before the reverse add, see strongDirichletNonAuthorityDofs
     def __init__(self,array=None,bs=None,n=None,N=None,nghosts=None,subdomain2global=None,blockVecType="simple",ghosts=None,
                                                  proteus2petsc_subdomain=None,
                                                  petsc2proteus_subdomain=None):
@@ -485,7 +488,7 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
                         ghosts[j::blockSize]=subdomain2global[n:]*blockSize+j
                 self.createGhostWithArray(ghosts,array,size=(blockSize*n,blockSize*N),bsize=1)
                 if blockSize > 1: #have to build in block dofs
-                    subdomain2globalTotal = numpy.zeros((blockSize*subdomain2global.shape[0],),'i')
+                    subdomain2globalTotal = numpy.zeros((blockSize*subdomain2global.shape[0],),cmeshTools.INDEX_DTYPE)
                     for j in range(blockSize):
                         subdomain2globalTotal[j::blockSize]=subdomain2global*blockSize+j
                     self.subdomain2global=subdomain2globalTotal
@@ -529,6 +532,10 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
         if self.proteus2petsc_subdomain is not None:
             self.proteus_array[:] = self.proteus_array[self.proteus2petsc_subdomain]
     def scatter_reverse_add(self):
+        if self.dirichlet_nonauthority is not None:
+            # strong Dirichlet dofs: this rank's copy of the row is not the authority's (see
+            # strongDirichletNonAuthorityDofs); drop it so the sum over the copies is one u - g
+            self.proteus_array.reshape(-1)[self.dirichlet_nonauthority] = 0.0
         if self.proteus2petsc_subdomain is not None:
             self.proteus_array[:] = self.proteus_array[self.petsc2proteus_subdomain]
         self.ghostUpdateBegin(p4pyPETSc.InsertMode.ADD_VALUES,p4pyPETSc.ScatterMode.REVERSE)
@@ -934,7 +941,7 @@ class ParMat_petsc4py(p4pyPETSc.Mat):
             self.setType('aij')
             self.setSizes([[par_n*self.blockSize,par_N*self.blockSize],[par_nc*self.blockSize,par_Nc*self.blockSize]],bsize=1)
             if self.blockSize > 1: #have to build in block dofs
-                subdomain2globalTotal = numpy.zeros((self.blockSize*subdomain2global.shape[0],),'i')
+                subdomain2globalTotal = numpy.zeros((self.blockSize*subdomain2global.shape[0],),cmeshTools.INDEX_DTYPE)
                 for j in range(self.blockSize):
                     subdomain2globalTotal[j::self.blockSize]=subdomain2global*self.blockSize+j
                 self.subdomain2global=subdomain2globalTotal
@@ -2413,3 +2420,110 @@ if not HAVE_PETSC4PY:
     #the classes the rest of proteus constructs by these names
     ParVec_petsc4py = ParVec_mpi4py
     ParMat_petsc4py = ParMat_mpi4py
+
+
+def strongDirichletNonAuthorityDofs(model, par_r):
+    """The local dofs whose strong-Dirichlet row this rank must not contribute.
+
+    With ``forceStrongConditions`` every rank replaces the rows of the dofs in its own
+    ``dirichletConditionsForceDOF`` by ``u - g`` (residual) and an identity row
+    (Jacobian), and the reverse add then sums the copies of a shared dof. Whether a
+    dof is in a rank's dictionary depends on the boundary faces of that rank's own
+    elements, so a node on the rank cut can be Dirichlet on one rank and free on
+    another: the assembled row was an identity plus a partial PDE row, and where
+    both ranks held it the diagonal was 2 and the residual 2 (u - g).
+
+    One rank is made the authority for each shared dof that is Dirichlet anywhere:
+    the owner if its dictionary holds the dof, otherwise the lowest rank that does.
+    Every other copy (held or not) is dropped, so the assembled row is one identity
+    and one ``u - g`` whatever the partition. No Dirichlet value is exchanged, so
+    values that depend on x or t work. Collective, once per level model.
+
+    Returns the local dof indices to zero (an int array, maybe empty).
+    """
+    mpi = Comm.get().comm.tompi4py()
+    size, rank = mpi.Get_size(), mpi.Get_rank()
+    if size == 1:
+        return numpy.zeros(0, dtype=cmeshTools.INDEX_DTYPE)
+    nproc = par_r.dim_proc
+    s2g = numpy.asarray(par_r.subdomain2global)
+    nloc = s2g.shape[0]
+    hold = numpy.zeros(nloc, dtype=bool)
+    outside = 0
+    dbcs = model.dirichletConditionsForceDOF
+    if hasattr(dbcs, 'DOFBoundaryConditionsDict'):  # one object, not one per component (a single-component model)
+        dbcs = {0: dbcs}
+    for cj, dbc in dbcs.items():
+        for dofN in dbc.DOFBoundaryConditionsDict:
+            d = model.offset[cj] + model.stride[cj] * dofN
+            if d < nloc:
+                hold[d] = True
+            else:
+                outside += 1
+    # a layout whose Dirichlet dofs are not subdomain dofs (a serial-periodic numbering) is left as it was;
+    # every rank must agree, so the decision is collective
+    # (and likewise where two local dofs share a global number, as merged periodic dofs do)
+    shared_numbers = int(numpy.unique(s2g).shape[0] != nloc)
+    if mpi.allreduce(outside + shared_numbers, op=MPI.SUM) > 0:
+        return numpy.zeros(0, dtype=cmeshTools.INDEX_DTYPE)
+    ranges = numpy.asarray(par_r.getOwnershipRanges())
+    ghosts = numpy.arange(nproc, nloc)
+    gown = numpy.searchsorted(ranges, s2g[ghosts], side='right') - 1
+    send = [None] * size
+    for r in numpy.unique(gown):
+        sel = gown == r
+        send[r] = (s2g[ghosts[sel]], hold[ghosts[sel]])
+    recv = mpi.alltoall(send)
+    owned_order = numpy.argsort(s2g[:nproc])
+    owned_sorted = s2g[:nproc][owned_order]
+    # owner: per shared dof, who holds it
+    any_holder = {}
+    for src, item in enumerate(recv):
+        if item is None:
+            continue
+        for g, h in zip(*item):
+            rec = any_holder.setdefault(int(g), [None, None])  # [lowest holder rank among ghosts, owner holds]
+            if h and (rec[0] is None or src < rec[0]):
+                rec[0] = src
+    zero_owned = []
+    for g, rec in any_holder.items():
+        d = int(owned_order[numpy.searchsorted(owned_sorted, g)])
+        owner_holds = bool(hold[d])
+        rec[1] = owner_holds
+        if rec[0] is None and not owner_holds:
+            continue  # nobody holds it
+        authority = rank if owner_holds else rec[0]
+        rec.append(authority)
+        if authority != rank:
+            zero_owned.append(d)
+    reply = [None] * size
+    for src, item in enumerate(recv):
+        if item is None:
+            continue
+        flags = numpy.zeros(len(item[0]), dtype=bool)
+        for k, g in enumerate(item[0]):
+            rec = any_holder[int(g)]
+            if len(rec) == 3 and rec[2] != src:
+                flags[k] = True
+        reply[src] = flags
+    back = mpi.alltoall(reply)
+    zero_ghost = []
+    for r in numpy.unique(gown):
+        sel = numpy.where(gown == r)[0]
+        zero_ghost.extend(ghosts[sel][back[r]].tolist())
+    # an owned dof that no other rank sees is never shared: nothing to do for it
+    return numpy.array(sorted(zero_owned + zero_ghost), dtype=cmeshTools.INDEX_DTYPE)
+
+
+def attachStrongDirichletAuthority(model, par_r, par_jacobian):
+    """Install strongDirichletNonAuthorityDofs on the parallel residual vector and matrix."""
+    if par_r is None or not getattr(model, 'forceStrongConditions', False):
+        return
+    if not (hasattr(model.dirichletConditionsForceDOF, 'items') or model.nc == 1):
+        return
+    if getattr(par_r, 'proteus2petsc_subdomain', None) is not None or par_r.getBlockSize() != 1:
+        return  # permuted or block layouts are not handled
+    idx = strongDirichletNonAuthorityDofs(model, par_r)
+    par_r.dirichlet_nonauthority = idx
+    par_jacobian.dirichlet_nonauthority = idx
+    logEvent("Strong Dirichlet authority on rank %i: %i local dofs not contributed" % (Comm.get().rank(), idx.shape[0]), level=4)

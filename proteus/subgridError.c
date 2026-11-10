@@ -9,7 +9,7 @@
 /**
    \brief Calculate the ASGS subgrid error given tau and the strong residual
 */
-void calculateSubgridError_tauRes(int nElements_global,
+void calculateSubgridError_tauRes(proteus_index_t nElements_global,
                                   int nQuadraturePoints_element,
                                   int nDOF_trial_element,
                                   double* tau,
@@ -46,7 +46,7 @@ void calculateSubgridError_tauRes(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the peclet  number formula
 */
-void calculateSubgridError_ADR_tau_p(int nElements_global,
+void calculateSubgridError_ADR_tau_p(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nSpace,
                                      double* elementDiameter,
@@ -61,7 +61,7 @@ void calculateSubgridError_ADR_tau_p(int nElements_global,
                                      double* cfl,
                                      double* tau)
 {
-  int eN,k,I,J,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],alpha,beta;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -129,11 +129,11 @@ void calculateSubgridError_ADR_tau_p(int nElements_global,
     }
 }
 
-void calculateSubgridError_ADR_tau_p_sd(int nElements_global,
+void calculateSubgridError_ADR_tau_p_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					int* rowptr,
-					int* colind,
+					proteus_index_t* rowptr,
+					proteus_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -146,7 +146,7 @@ void calculateSubgridError_ADR_tau_p_sd(int nElements_global,
 					double* cfl,
 					double* tau)
 {
-  int eN,k,I,J,m,nnz=rowptr[nSpace];
+  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I, J;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],alpha,beta;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -221,7 +221,7 @@ void calculateSubgridError_ADR_tau_p_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridError_ADR_tau_1(int nElements_global,
+void calculateSubgridError_ADR_tau_1(proteus_index_t nElements_global,
 				     int nQuadraturePoints_element,
 				     int nSpace,
                                       double* elementDiameter,
@@ -236,7 +236,7 @@ void calculateSubgridError_ADR_tau_1(int nElements_global,
                                       double* cfl,
                                       double* tau)
 {
-  int eN,k,I,J,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],tauMax;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -301,11 +301,11 @@ void calculateSubgridError_ADR_tau_1(int nElements_global,
 /*         tau[eN*nQuadraturePoints_element + k]=tauMax; */
     }
 }
-void calculateSubgridError_ADR_tau_1_sd(int nElements_global,
+void calculateSubgridError_ADR_tau_1_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					int* rowptr,
-					int* colind,
+					proteus_index_t* rowptr,
+					proteus_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -318,7 +318,7 @@ void calculateSubgridError_ADR_tau_1_sd(int nElements_global,
 					double* cfl,
 					double* tau)
 {
-  int eN,k,I,m,nnz=rowptr[nSpace];
+  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],tauMax;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -391,7 +391,7 @@ void calculateSubgridError_ADR_tau_1_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_2 norm" formula
 */
-void calculateSubgridError_ADR_tau_2(int nElements_global,
+void calculateSubgridError_ADR_tau_2(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nSpace,
                                      double* elementDiameter,
@@ -406,7 +406,7 @@ void calculateSubgridError_ADR_tau_2(int nElements_global,
                                      double* cfl,
                                      double* tau)
 {
-  int eN,k,I,J,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3];
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -481,11 +481,11 @@ void calculateSubgridError_ADR_tau_2(int nElements_global,
     }
 }
 
-void calculateSubgridError_ADR_tau_2_sd(int nElements_global,
+void calculateSubgridError_ADR_tau_2_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					int* rowptr,
-					int* colind,
+					proteus_index_t* rowptr,
+					proteus_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -498,7 +498,7 @@ void calculateSubgridError_ADR_tau_2_sd(int nElements_global,
 					double* cfl,
 					double* tau)
 {
-  int eN,k,I,m,nnz=rowptr[nSpace];
+  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3];
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -577,7 +577,7 @@ void calculateSubgridError_ADR_tau_2_sd(int nElements_global,
     }
 }
 
-void calculateSubgridError_ADR_generic_tau(int nElements_global,
+void calculateSubgridError_ADR_generic_tau(proteus_index_t nElements_global,
                                            int nQuadraturePoints_element,
                                            int nSpace,
                                            double* inverseJ,
@@ -592,7 +592,7 @@ void calculateSubgridError_ADR_generic_tau(int nElements_global,
                                            double* cfl,
                                            double* tau)
 {
-  int eN,k,I,J,K,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -696,11 +696,11 @@ void calculateSubgridError_ADR_generic_tau(int nElements_global,
     }
 }
 
-void calculateSubgridError_ADR_generic_tau_sd(int nElements_global,
+void calculateSubgridError_ADR_generic_tau_sd(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nSpace,
-					      int* rowptr,
-					      int* colind,
+					      proteus_index_t* rowptr,
+					      proteus_index_t* colind,
 					      double* inverseJ,
 					      double* dmt,
 					      double* df,
@@ -713,7 +713,7 @@ void calculateSubgridError_ADR_generic_tau_sd(int nElements_global,
 					      double* cfl,
 					      double* tau)
 {
-  int eN,k,I,J,K,m,nnz=rowptr[nSpace],nSpace2=nSpace*nSpace;
+  proteus_index_t m, nnz=rowptr[nSpace], nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -823,7 +823,7 @@ void calculateSubgridError_ADR_generic_tau_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation
 */
-void calculateSubgridError_ADR_tau(int nElements_global,
+void calculateSubgridError_ADR_tau(proteus_index_t nElements_global,
                                    int nQuadraturePoints_element,
                                    int nSpace,
                                    char stabilization,
@@ -848,11 +848,11 @@ void calculateSubgridError_ADR_tau(int nElements_global,
 	
 }
 
-void calculateSubgridError_ADR_tau_sd(int nElements_global,
+void calculateSubgridError_ADR_tau_sd(proteus_index_t nElements_global,
 				      int nQuadraturePoints_element,
 				      int nSpace,
-				      int* rowptr,
-				      int* colind,
+				      proteus_index_t* rowptr,
+				      proteus_index_t* colind,
 				      char stabilization,
 				      double* elementDiameter,
 				      double* dmt,
@@ -877,7 +877,7 @@ void calculateSubgridError_ADR_tau_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_2 norm" formula
 */
-void calculateSubgridError_A_tau_1(int nElements_global,
+void calculateSubgridError_A_tau_1(proteus_index_t nElements_global,
                                    int nQuadraturePoints_element,
                                    int nSpace,
                                    double* elementDiameter,
@@ -920,7 +920,7 @@ void calculateSubgridError_A_tau_1(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_2 norm" formula
 */
-void calculateSubgridError_A_tau_2(int nElements_global,
+void calculateSubgridError_A_tau_2(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nSpace,
                                      double* elementDiameter,
@@ -968,7 +968,7 @@ void calculateSubgridError_A_tau_2(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation
 */
-void calculateSubgridError_A_tau(int nElements_global,
+void calculateSubgridError_A_tau(proteus_index_t nElements_global,
                                   int nQuadraturePoints_element,
                                   int nSpace,
                                   char stabilization,
@@ -987,7 +987,7 @@ void calculateSubgridError_A_tau(int nElements_global,
 /**
    \brief Calculate the subgrid error for velocity in 2D Stokes equation with a GLS-like formula
 */
-void calculateSubgridErrorStokes2D_GLS_velocity(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nDOF_trial_element,
                                                 int nSpace,
@@ -1006,7 +1006,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity(int nElements_global,
                                                 double* dsubgridErrorV_dp,
                                                 double* dsubgridErrorV_dv)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1069,7 +1069,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity(int nElements_global,
     }
 }
 
-void calculateSubgridErrorStokes2D_GLS_velocity_sd(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nDOF_trial_element,
 						   int nSpace,
@@ -1088,7 +1088,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_sd(int nElements_global,
 						   double* dsubgridErrorV_dp,
 						   double* dsubgridErrorV_dv)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1154,7 +1154,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_sd(int nElements_global,
 /**
    \brief Calculate the subgrid error for velocity in 3D Stokes equation with a GLS-like formula
 */
-void calculateSubgridErrorStokes3D_GLS_velocity(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity(proteus_index_t nElements_global,
                                                 int nQuadraturePoints_element,
                                                 int nDOF_trial_element,
                                                 int nSpace,
@@ -1179,7 +1179,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity(int nElements_global,
                                                 double* dsubgridErrorW_dp,
                                                 double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1265,7 +1265,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity(int nElements_global,
     }
 }
 
-void calculateSubgridErrorStokes3D_GLS_velocity_sd(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nDOF_trial_element,
 						   int nSpace,
@@ -1290,7 +1290,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_sd(int nElements_global,
 						   double* dsubgridErrorW_dp,
 						   double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1379,7 +1379,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorStokes2D_GLS_velocity_pressure(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity_pressure(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -1404,7 +1404,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_pressure(int nElements_global,
                                                          double* dsubgridErrorV_dp,
                                                          double* dsubgridErrorV_dv)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1,tau2;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1495,7 +1495,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_pressure(int nElements_global,
     }
 }
 
-void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -1520,7 +1520,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(int nElements_global
                                                          double* dsubgridErrorV_dp,
                                                          double* dsubgridErrorV_dv)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1,tau2;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1614,7 +1614,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(int nElements_global
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorStokes3D_GLS_velocity_pressure(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity_pressure(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -1647,7 +1647,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_pressure(int nElements_global,
                                                          double* dsubgridErrorW_dp,
                                                          double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1,tau2;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1760,7 +1760,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_pressure(int nElements_global,
         }
     }
 }
-void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -1793,7 +1793,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(int nElements_global
                                                          double* dsubgridErrorW_dp,
                                                          double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1,tau2;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -1911,7 +1911,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(int nElements_global
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorNavierStokes2D_GLS_tau(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_GLS_tau(proteus_index_t nElements_global,
                                                  int nQuadraturePoints_element,
                                                  int nSpace,
                                                  double  hFactor,
@@ -1924,7 +1924,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tau(int nElements_global,
                                                  double* tau1,
                                                  double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I;
   double h,oneByAbsdt,density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2017,7 +2017,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tau(int nElements_global,
       printf("Element CFL = %12.5e \n",CFL_max);*/
 }
 
-void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(proteus_index_t nElements_global,
                                                  int nQuadraturePoints_element,
                                                  int nSpace,
                                                  double  hFactor,
@@ -2030,7 +2030,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(int nElements_global,
                                                  double* tau1,
                                                  double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I;
   double h,oneByAbsdt,density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2122,7 +2122,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(int nElements_global,
       printf("Element CFL = %12.5e \n",CFL_max);*/
 }
 
-void calculateSubgridErrorNavierStokes2D_generic_tau(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_generic_tau(proteus_index_t nElements_global,
                                                      int nQuadraturePoints_element,
                                                      int nSpace,
                                                      double* inverseJ,
@@ -2134,7 +2134,7 @@ void calculateSubgridErrorNavierStokes2D_generic_tau(int nElements_global,
                                                      double* tau1,
                                                      double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I,J,K;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v,G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g,den;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2212,7 +2212,7 @@ void calculateSubgridErrorNavierStokes2D_generic_tau(int nElements_global,
 /*   printf("Element Re = %12.5e \n",Re_max); */
 /*   printf("Element CFL = %12.5e \n",CFL_max); */
 }
-void calculateSubgridErrorNavierStokes2D_generic_tau_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_generic_tau_sd(proteus_index_t nElements_global,
                                                      int nQuadraturePoints_element,
                                                      int nSpace,
                                                      double* inverseJ,
@@ -2224,7 +2224,7 @@ void calculateSubgridErrorNavierStokes2D_generic_tau_sd(int nElements_global,
                                                      double* tau1,
                                                      double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I,J,K;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v,G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g,den;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2301,7 +2301,7 @@ void calculateSubgridErrorNavierStokes2D_generic_tau_sd(int nElements_global,
 /*   printf("Element Re = %12.5e \n",Re_max); */
 /*   printf("Element CFL = %12.5e \n",CFL_max); */
 }
-void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(proteus_index_t nElements_global,
 								   int nQuadraturePoints_element,
 								   int nSpace,
 								   double* inverseJ,
@@ -2314,7 +2314,7 @@ void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(int nElements
 								   double* tau1,
 								   double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I,J,K;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double h,density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v,G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0,g_I,g_dot_g,den;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2397,7 +2397,7 @@ void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(int nElements
 /*   printf("Element CFL = %12.5e \n",CFL_max); */
 }
 
-void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(proteus_index_t nElements_global,
 								   int nQuadraturePoints_element,
 								   int nSpace,
 								   double* inverseJ,
@@ -2410,7 +2410,7 @@ void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(int nEleme
 								   double* tau1,
 								   double* cfl)
 {
-  int eN,k,nSpace2=nSpace*nSpace,I,J,K;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double h,density,viscosity,Re_max=0.0,CFL_max=0.0,nrm_v,G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0,g_I,g_dot_g,den;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2496,7 +2496,7 @@ void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(int nEleme
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorNavierStokes2D_GLS_tauRes(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_GLS_tauRes(proteus_index_t nElements_global,
                                                     int nQuadraturePoints_element,
                                                     int nDOF_trial_element,
                                                     int nSpace,
@@ -2629,7 +2629,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tauRes(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorStokes_GLS_tau(int nElements_global,
+void calculateSubgridErrorStokes_GLS_tau(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          int nSpace,
                                          double* elementDiameter,
@@ -2638,7 +2638,7 @@ void calculateSubgridErrorStokes_GLS_tau(int nElements_global,
                                          double* tau0,
                                          double* tau1)
 {
-  int eN,k,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k;
   double h,viscosity,density;//caller should scale if kinematic viscosity
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -2654,7 +2654,7 @@ void calculateSubgridErrorStokes_GLS_tau(int nElements_global,
     }
 }
 
-void calculateSubgridErrorStokes_GLS_tau_sd(int nElements_global,
+void calculateSubgridErrorStokes_GLS_tau_sd(proteus_index_t nElements_global,
                                             int nQuadraturePoints_element,
                                             int nSpace,
                                             double* elementDiameter,
@@ -2682,7 +2682,7 @@ void calculateSubgridErrorStokes_GLS_tau_sd(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorStokes2D_GLS_tauRes(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_tauRes(proteus_index_t nElements_global,
                                               int nQuadraturePoints_element,
                                               int nDOF_trial_element,
                                               int nSpace,
@@ -2794,7 +2794,7 @@ void calculateSubgridErrorStokes2D_GLS_tauRes(int nElements_global,
 /**
    \brief 3D version of Stokes GLS tau 
 */
-void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_tauRes(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nDOF_trial_element,
 					      int nSpace,
@@ -2947,7 +2947,7 @@ void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorNavierStokes3D_GLS_tauRes(int nElements_global,
+void calculateSubgridErrorNavierStokes3D_GLS_tauRes(proteus_index_t nElements_global,
                                                     int nQuadraturePoints_element,
                                                     int nDOF_trial_element,
                                                     int nSpace,
@@ -2992,7 +2992,7 @@ void calculateSubgridErrorNavierStokes3D_GLS_tauRes(int nElements_global,
                                                     double* dsubgridErrorW_dv,
                                                     double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   for(eN=0;eN<nElements_global;eN++)
     {
       for (k=0;k<nQuadraturePoints_element;k++)
@@ -3160,7 +3160,7 @@ void calculateSubgridErrorNavierStokes3D_GLS_tauRes(int nElements_global,
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(int nElements_global,
+void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(proteus_index_t nElements_global,
                                                                int nQuadraturePoints_element,
                                                                int nDOF_trial_element,
                                                                int nSpace,
@@ -3195,7 +3195,7 @@ void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(int nElements_glo
                                                                double* dsubgridErrorW_dp,
                                                                double* dsubgridErrorW_dw)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,viscosity,tau1,tau2;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -3309,7 +3309,7 @@ void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(int nElements_glo
     }
 }
 
-void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                                int nQuadraturePoints_element,
                                                                int nDOF_trial_element,
                                                                int nSpace,
@@ -3461,7 +3461,7 @@ void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(int nElements_
 /**
    \brief Calculate the stabilization parameter for the scalar advection-diffusion-reaction equation using the "l_1 norm formula"
 */
-void calculateSubgridErrorStokes2D_1(int nElements_global,
+void calculateSubgridErrorStokes2D_1(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nDOF_trial_element,
                                      int nSpace,
@@ -3491,7 +3491,7 @@ void calculateSubgridErrorStokes2D_1(int nElements_global,
                                      double* dsubgridErrorV_du,
                                      double* dsubgridErrorV_dv)
 {
-  int eN,k,nSpace2=nSpace*nSpace,j;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, j;
   double h,velocity_norm,viscosity,tau1,tau2,U,V;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -3712,7 +3712,7 @@ void calculateSubgridErrorStokes2D_1(int nElements_global,
     }
 }
 
-void calculateSubgridErrorStokes2D_1_sd(int nElements_global,
+void calculateSubgridErrorStokes2D_1_sd(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nDOF_trial_element,
                                      int nSpace,
@@ -3963,7 +3963,7 @@ void calculateSubgridErrorStokes2D_1_sd(int nElements_global,
     }
 }
 
-void calculateSubgridErrorShallowWater1D(int nElements_global,
+void calculateSubgridErrorShallowWater1D(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          double g,
                                          double* elementDiameter,
@@ -3985,7 +3985,7 @@ void calculateSubgridErrorShallowWater1D(int nElements_global,
         }
     }
 }
-void calculateSubgridErrorShallowWater2D(int nElements_global,
+void calculateSubgridErrorShallowWater2D(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          double g,
                                          double* elementDiameter,
@@ -4014,17 +4014,17 @@ void calculateSubgridErrorShallowWater2D(int nElements_global,
 }
 
 /*this should reduce to harari's tau * dt in the linear case*/
-void calculateSubgridError_Harari_tau_sd(int nElements_global,
+void calculateSubgridError_Harari_tau_sd(proteus_index_t nElements_global,
 					 int nQuadraturePoints_element,
 					 int nSpace,
 					 double dt,
-					 int* rowptr,
-					 int* colind,
+					 proteus_index_t* rowptr,
+					 proteus_index_t* colind,
 					 double* elementDiameter,
 					 double* a,
 					 double* tau)
 {
-  int eN,k,I,m,nnz=rowptr[nSpace];
+  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
   double h,A_max,A_II,tauMax,heps;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -4061,7 +4061,7 @@ void calculateSubgridError_Harari_tau_sd(int nElements_global,
 /**
    \brief Calculate the ASGS subgrid error given tau and the strong residual
 */
-void calculateSubgridErrorGradient_tauRes(int nElements_global,
+void calculateSubgridErrorGradient_tauRes(proteus_index_t nElements_global,
 					  int nQuadraturePoints_element,
 					  int nSpace,
 					  double* tau_gradient,
@@ -4088,7 +4088,7 @@ void calculateSubgridErrorGradient_tauRes(int nElements_global,
 
 
 
-void calculateSubgridError_ADR_Sangalli_tau(int nElements_global,
+void calculateSubgridError_ADR_Sangalli_tau(proteus_index_t nElements_global,
 					    int nQuadraturePoints_element,
 					    int nSpace,
 					    double* inverseJ,
@@ -4104,7 +4104,7 @@ void calculateSubgridError_ADR_Sangalli_tau(int nElements_global,
 					    double* tau,
 					    double* tau_gradient)
 {
-  int eN,k,I,J,K,nSpace2=nSpace*nSpace;
+  proteus_index_t nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,Pe,Da,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   double h_e,tau_00,tau_11,t_00,t_11,coshGamma;
   for(eN=0;eN<nElements_global;eN++)
@@ -4241,11 +4241,11 @@ void calculateSubgridError_ADR_Sangalli_tau(int nElements_global,
     }
 }
 /*note computes cfl as always advection cfl*/
-void calculateSubgridError_ADR_Sangalli_tau_sd(int nElements_global,
+void calculateSubgridError_ADR_Sangalli_tau_sd(proteus_index_t nElements_global,
 					       int nQuadraturePoints_element,
 					       int nSpace,
-					       int* rowptr,
-					       int* colind,
+					       proteus_index_t* rowptr,
+					       proteus_index_t* colind,
 					       double* inverseJ,
 					       double* dmt,
 					       double* df,
@@ -4259,7 +4259,7 @@ void calculateSubgridError_ADR_Sangalli_tau_sd(int nElements_global,
 					       double* tau,
 					       double* tau_gradient)
 {
-  int eN,k,I,J,K,m,nnz=rowptr[nSpace],nSpace2=nSpace*nSpace;
+  proteus_index_t m, nnz=rowptr[nSpace], nSpace2=nSpace*nSpace; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   double Da,h_e,tau_00,tau_11,t_00,t_11,coshGamma,Pe,sinhAlpha,coshAlpha,PeEval,gamma2,gam2Eval,DaEval;
   for(eN=0;eN<nElements_global;eN++)

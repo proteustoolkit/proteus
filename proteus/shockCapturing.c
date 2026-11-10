@@ -5,7 +5,7 @@
     \ingroup shockCapturing
     @{
 */
-void calculateNumericalDiffusionResGrad(int nElements_global,
+void calculateNumericalDiffusionResGrad(proteus_index_t nElements_global,
                                         int nQuadraturePoints_element,
                                         int nSpace,
                                         double shockCapturingDiffusion,
@@ -57,7 +57,7 @@ void calculateNumericalDiffusionResGrad(int nElements_global,
     }
 }
 
-void calculateNumericalDiffusionResGradQuad(int nElements_global,
+void calculateNumericalDiffusionResGradQuad(proteus_index_t nElements_global,
                                             int nQuadraturePoints_element,
                                             int nSpace,
                                             double shockCapturingDiffusion,
@@ -88,7 +88,7 @@ void calculateNumericalDiffusionResGradQuad(int nElements_global,
     }
 }
 
-void calculateNumericalDiffusionEikonal(int nElements_global,
+void calculateNumericalDiffusionEikonal(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					double shockCapturingDiffusion,
 					double* elementDiameter,
@@ -111,7 +111,7 @@ void calculateNumericalDiffusionEikonal(int nElements_global,
 /**
    \brief Calculate the shock capturing diffusion for a Hamilton-Jacobi equation at the quadrature  points
 */
-void calculateNumericalDiffusionHJ(int nElements_global,
+void calculateNumericalDiffusionHJ(proteus_index_t nElements_global,
 				   int nQuadraturePoints_element,
 				   char shockCapturing,
 				   double shockCapturingDiffusion,
@@ -163,7 +163,7 @@ void calculateNumericalDiffusionHJ(int nElements_global,
    \brief Calculate the shock capturing diffusion for a Hamilton-Jacobi equation at the quadrature  points
  mwf try this with \f$H(\nabla u)\f$ in denominator
 */
-void calculateNumericalDiffusionHJV2(int nElements_global,
+void calculateNumericalDiffusionHJV2(proteus_index_t nElements_global,
 				     int nQuadraturePoints_element,
 				     char shockCapturing,
 				     double shockCapturingDiffusion,
@@ -204,7 +204,7 @@ void calculateNumericalDiffusionHJV2(int nElements_global,
     }
 }
  
-void calculateNumericalDiffusion_A_1(int nElements_global,
+void calculateNumericalDiffusion_A_1(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nSpace,
                                      double shockCapturingFactor,
@@ -246,7 +246,7 @@ void calculateNumericalDiffusion_A_1(int nElements_global,
 }
 /*mwf try Juanes'  formula ...
   D_{sc,g} = C_{sc}h|R|/|u/h| */
-void calculateNumericalDiffusionResGradJuanes(int nElements_global,
+void calculateNumericalDiffusionResGradJuanes(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nSpace,
 					      double shockCapturingDiffusion,
@@ -296,7 +296,7 @@ void calculateNumericalDiffusionResGradJuanes(int nElements_global,
      supposed to be nu_i = nu_c h^{2-beta}|R_i|
  ***/
 
-void calculateNumericalDiffusionJaffre(int nElements_global,
+void calculateNumericalDiffusionJaffre(proteus_index_t nElements_global,
 				       int nQuadraturePoints_element,
 				       int nSpace,
 				       double shockCapturingDiffusion,

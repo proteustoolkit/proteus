@@ -29,6 +29,7 @@ from .Profiling import logEvent
 from .petsc_optional import PETSc as p4pyPETSc, HAVE_PETSC4PY
 from . import superluWrappers
 import numpy as np
+from proteus import cmeshTools
 
 class StorageSet(set):
     def __init__(self,initializer=[],shape=(0,),storageType='d'):
@@ -1576,7 +1577,7 @@ class OneLevelTransport(NonlinearEquation):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=numpy.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=numpy.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
         #
@@ -4401,7 +4402,7 @@ class OneLevelTransport(NonlinearEquation):
         """
         self.l2g=[{'nFreeDOF':numpy.zeros((self.mesh.nElements_global,),'i'),
                    'freeLocal':numpy.zeros((self.mesh.nElements_global,self.nDOF_trial_element[cj]),'i'),
-                   'freeGlobal':numpy.zeros((self.mesh.nElements_global,self.nDOF_trial_element[cj]),'i')} for cj in range(self.nc)]
+                   'freeGlobal':numpy.zeros((self.mesh.nElements_global,self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)} for cj in range(self.nc)]
         for cj in range(self.nc):
             for eN in range(self.mesh.nElements_global):
                 nFreeDOF=0
@@ -4621,7 +4622,7 @@ class OneLevelTransport(NonlinearEquation):
             (self.rowptr,self.colind,self.nnz,self.nzval)  = self.sparsityInfo.getCSR()
         else:
             self.nnz = 0
-            self.rowptr = numpy.zeros(self.nFreeVDOF_global+1,'i')
+            self.rowptr = numpy.zeros(self.nFreeVDOF_global+1,cmeshTools.INDEX_DTYPE)
             lastIndex=0
             columnOffsetDict={}
             for I in range(self.nFreeVDOF_global):
@@ -4631,7 +4632,7 @@ class OneLevelTransport(NonlinearEquation):
                 lastIndex += len(columnIndeces)
             self.rowptr[self.nFreeVDOF_global]=lastIndex
             self.nnz = lastIndex
-            self.colind = numpy.zeros((self.nnz,),'i')
+            self.colind = numpy.zeros((self.nnz,),cmeshTools.INDEX_DTYPE)
             self.connectionList = [list(columnIndecesDict[I]-set([I])) for I in range(self.nFreeVDOF_global)]
             for I in range(self.nFreeVDOF_global):
                 columnIndeces=list(columnIndecesDict[I])
@@ -4661,24 +4662,24 @@ class OneLevelTransport(NonlinearEquation):
                 needsOutflowJacobian_int = int(needOutflowJacobian == True)
                 memory()
                 self.csrRowIndeces[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,
-                                                             self.nDOF_test_element[ci]),'i')
+                                                             self.nDOF_test_element[ci]),cmeshTools.INDEX_DTYPE)
                 logEvent(memory("csrRowIndeces","OneLevelTransport"),level=4)
                 self.csrColumnOffsets[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,
-                                                                self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),'i')
+                                                                self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets","OneLevelTransport"),level=4)
                 if hasDiffusionInMixedForm:
                     self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,self.mesh.nElementBoundaries_element,
-                                                                        self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),'i')
+                                                                        self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
                 else:
-                    self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((0,),'i')
+                    self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((0,),cmeshTools.INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eNebN","OneLevelTransport"),level=4)
-                self.csrColumnOffsets_eb[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),'i')
+                self.csrColumnOffsets_eb[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eb","OneLevelTransport"),level=4)
                 if hasDiffusionInMixedForm:
                     self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.mesh.nElementBoundaries_element,
-                                                                           self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),'i')
+                                                                           self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
                 else:
-                    self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((0,),'i')
+                    self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((0,),cmeshTools.INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eb_eNebN","OneLevelTransport"),level=4)
                 if useC:
                     self.sparsityInfo.getOffsets_CSR(self.mesh.nElements_global,
@@ -6621,7 +6622,7 @@ class MultilevelTransport(object):
                     nN_free_global = periodicConditions_global.global2freeGlobal[nN_global]
                     subdomain_global2freeGlobal[nN_subdomain] = dofList.index(nN_free_global)
                 #build the new mapping of free subdomain dof to global dof
-                trialSpaceDict[0].dofMap.subdomain2global = numpy.zeros((trialSpaceDict[0].dofMap.nDOF_subdomain,),'i')
+                trialSpaceDict[0].dofMap.subdomain2global = numpy.zeros((trialSpaceDict[0].dofMap.nDOF_subdomain,),cmeshTools.INDEX_DTYPE)
                 for nN_subdomain in range(trialSpaceDict[0].dofMap.nDOF_subdomain):
                     trialSpaceDict[0].dofMap.subdomain2global[nN_subdomain] = dofList[nN_subdomain]#maps free dof on subdomain to global free dof
                 #build arrays exactly as in FemTools but using subdomain_globa2freeGlobal we built above
@@ -7040,7 +7041,7 @@ class MultilevelTransport(object):
                 if mixed:
                     if serialPeriodic:
                         par_N = par_n = sum(transport.nFreeDOF_global)
-                        subdomain2global = numpy.arange(par_n, dtype='i')
+                        subdomain2global = numpy.arange(par_n, dtype=cmeshTools.INDEX_DTYPE)
                     else:
                         par_N = par_n = sum([ts.dofMap.nDOF_all_processes for ts in list(trialSpaceDict.values())])
                         subdomain2global = numpy.hstack([offset+ts.dofMap.subdomain2global for
@@ -7089,6 +7090,9 @@ class MultilevelTransport(object):
                 par_du = None
                 par_jacobian = None
             
+            # parallel periodic numbering renumbers the subdomain dofs (merged pairs): left as it was
+            if par_r is not None and not (options.periodicDirichletConditions and getattr(options, 'parallelPeriodic', False)):
+                attachStrongDirichletAuthority(transport, par_r, par_jacobian)
             self.par_uList.append(par_u)
             self.par_duList.append(par_du)
             self.par_rList.append(par_r)

@@ -287,7 +287,7 @@ extern "C"
   {
     int nLevels;
     Mesh* meshArray;
-    int **elementParentsArray, //nLevels  x nElements_global_level
+    proteus_index_t **elementParentsArray, //nLevels  x nElements_global_level
       **elementChildrenArray,
       **elementChildrenOffsets; //nLevels x nElements_global_level x nElementChildren_element
   };
@@ -399,9 +399,9 @@ extern "C"
   int computeGeometricInfo_quadrilateral(Mesh& mesh);
   int computeGeometricInfo_NURBS(Mesh& mesh);
 
-  int assignElementBoundaryMaterialTypesFromParent(Mesh& parentMesh, Mesh& childMesh, const int* levelElementParentsArray,
+  int assignElementBoundaryMaterialTypesFromParent(Mesh& parentMesh, Mesh& childMesh, const proteus_index_t* levelElementParentsArray,
 						   const int& nSpace_global);
-  int allocateNodeAndElementNodeDataStructures(Mesh& mesh, int nElements_global, int nNodes_global, int nNodes_element);
+  int allocateNodeAndElementNodeDataStructures(Mesh& mesh, proteus_index_t nElements_global, proteus_index_t nNodes_global, int nNodes_element);
   //mwf added for converting from triangle data structure
   struct triangulateio;
 
@@ -433,7 +433,7 @@ template<int nNodes>
 class NodeTuple
 {
 public:
-  inline NodeTuple(const int* nodesIn)
+  inline NodeTuple(const proteus_index_t* nodesIn)
   {
     //sort
     int position;
@@ -459,8 +459,8 @@ public:
         nodes_unsorted[i]=nt.nodes_unsorted[i];
       }
   }
-  int nodes[nNodes];
-  int nodes_unsorted[nNodes];
+  proteus_index_t nodes[nNodes];
+  proteus_index_t nodes_unsorted[nNodes];
 };
 
 template<int nNodes>
@@ -479,7 +479,7 @@ inline bool operator<(const NodeTuple<nNodes>& left, const NodeTuple<nNodes>& ri
 class Node
 {
 public:
-  int nN;
+  proteus_index_t nN;
   double  x,y,z;
   int flag;
 };
@@ -498,7 +498,7 @@ inline double edgeLength(const Node& left, const Node& right)
                (right.z - left.z)*(right.z - left.z) );
 }
 
-inline double edgeLengthFromNodeNumbers(double* nodeArray,const int& left, const int& right)
+inline double edgeLengthFromNodeNumbers(double* nodeArray,const proteus_index_t& left, const proteus_index_t& right)
 {
   return sqrt( (nodeArray[right*3+0] - nodeArray[left*3+0])*(nodeArray[right*3+0] - nodeArray[left*3+0]) +
                (nodeArray[right*3+1] - nodeArray[left*3+1])*(nodeArray[right*3+1] - nodeArray[left*3+1]) +
@@ -525,19 +525,20 @@ inline bool operator<(const Node& left, const Node& right)
 class ElementNeighbors
 {
 public:
-  inline ElementNeighbors(int leftIn,int left_ebN_elementIn){left=leftIn;left_ebN_element=left_ebN_elementIn;right=-1;right_ebN_element=-1;}
+  inline ElementNeighbors(proteus_index_t leftIn,int left_ebN_elementIn){left=leftIn;left_ebN_element=left_ebN_elementIn;right=-1;right_ebN_element=-1;}
   inline ElementNeighbors(){left=-1;left_ebN_element=-1;right=-1;right_ebN_element=-1;}
-  int left,left_ebN_element,right,right_ebN_element;
+  proteus_index_t left,right; //element numbers
+  int left_ebN_element,right_ebN_element; //local boundary numbers
 };
 
-inline int newEdge(int eN,int* nodes,int n0,int n1)
+inline proteus_index_t newEdge(proteus_index_t eN,proteus_index_t* nodes,proteus_index_t n0,proteus_index_t n1)
 {
   nodes[eN*2+0] = n0;
   nodes[eN*2+1] = n1;
   eN++;
   return eN;
 }
-inline int newTriangle(int eN,int* nodes,int n0,int n1,int n2)
+inline proteus_index_t newTriangle(proteus_index_t eN,proteus_index_t* nodes,proteus_index_t n0,proteus_index_t n1,proteus_index_t n2)
 {
   nodes[eN*3+0] = n0;
   nodes[eN*3+1] = n1;
@@ -546,7 +547,7 @@ inline int newTriangle(int eN,int* nodes,int n0,int n1,int n2)
   return eN;
 }
 
-inline int newTetrahedron(int eN,int* nodes,int n0,int n1,int n2,int n3)
+inline proteus_index_t newTetrahedron(proteus_index_t eN,proteus_index_t* nodes,proteus_index_t n0,proteus_index_t n1,proteus_index_t n2,proteus_index_t n3)
 {
   nodes[eN*4+0] = n0;
   nodes[eN*4+1] = n1;
@@ -556,7 +557,7 @@ inline int newTetrahedron(int eN,int* nodes,int n0,int n1,int n2,int n3)
   return eN;
 }
 
-inline int newQuadrilateral(int eN,int* nodes,int n0,int n1,int n2,int n3)
+inline proteus_index_t newQuadrilateral(proteus_index_t eN,proteus_index_t* nodes,proteus_index_t n0,proteus_index_t n1,proteus_index_t n2,proteus_index_t n3)
 {
   nodes[eN*4+0] = n0;
   nodes[eN*4+1] = n1;
@@ -566,7 +567,7 @@ inline int newQuadrilateral(int eN,int* nodes,int n0,int n1,int n2,int n3)
   return eN;
 }
 
-inline int newHexahedron(int eN,int* nodes,int n0,int n1,int n2,int n3,int n4,int n5,int n6,int n7)
+inline proteus_index_t newHexahedron(proteus_index_t eN,proteus_index_t* nodes,proteus_index_t n0,proteus_index_t n1,proteus_index_t n2,proteus_index_t n3,proteus_index_t n4,proteus_index_t n5,proteus_index_t n6,proteus_index_t n7)
 {
   nodes[eN*8+0] = n0;
   nodes[eN*8+1] = n1;
@@ -581,51 +582,51 @@ inline int newHexahedron(int eN,int* nodes,int n0,int n1,int n2,int n3,int n4,in
 }
 
  
-bool newestNodeBisect(int eN,
-		      int& nElements_global,
-		      int& nNodes_global,
+bool newestNodeBisect(proteus_index_t eN,
+		      proteus_index_t& nElements_global,
+		      proteus_index_t& nNodes_global,
 		      std::vector<double>& nodeArray,
-		      std::vector<int>& elementNodesArray,
-		      std::vector<int>& elementNeighborsArray,
-		      std::vector<std::list<int> >& childrenList,
-		      std::vector<int>& elementParentsArray,
+		      std::vector<proteus_index_t>& elementNodesArray,
+		      std::vector<proteus_index_t>& elementNeighborsArray,
+		      std::vector<std::list<proteus_index_t> >& childrenList,
+		      std::vector<proteus_index_t>& elementParentsArray,
 		      std::vector<int>& bases,
 		      std::vector<bool>& refined);
 
 
-bool add4TnodesForRefinement2d(int eN,//element to be refined
-			       int& nNodes_global,//number of nodes in mesh, will grow as refine
+bool add4TnodesForRefinement2d(proteus_index_t eN,//element to be refined
+			       proteus_index_t& nNodes_global,//number of nodes in mesh, will grow as refine
 			       std::vector<bool>& refined,  //is an element to be refined or not?
-			       std::vector<int>& edgeMidNodesArray,//edge--> new node from bisection (-1 = none)
-			       const int* elementNodesArray,    //parent mesh representation
-			       const int* elementBoundariesArray,
-			       const int* elementNeighborsArray,
+			       std::vector<proteus_index_t>& edgeMidNodesArray,//edge--> new node from bisection (-1 = none)
+			       const proteus_index_t* elementNodesArray,    //parent mesh representation
+			       const proteus_index_t* elementBoundariesArray,
+			       const proteus_index_t* elementNeighborsArray,
 			       const double * nodeArray);
 
-bool add4TnodesForConformity2d(int eN, int ebN_longest, 
-			     int ebN_neig,int eN_neig,
-			       int& nNodes_global,
+bool add4TnodesForConformity2d(proteus_index_t eN, proteus_index_t ebN_longest, 
+			     proteus_index_t ebN_neig,proteus_index_t eN_neig,
+			       proteus_index_t& nNodes_global,
 			       std::vector<bool>& refined,
-			       std::vector<int>& edgeMidNodesArray,
-			       const int* elementNodesArray,    //parent mesh representation
-			       const int* elementBoundariesArray,
-			       const int* elementNeighborsArray,
+			       std::vector<proteus_index_t>& edgeMidNodesArray,
+			       const proteus_index_t* elementNodesArray,    //parent mesh representation
+			       const proteus_index_t* elementBoundariesArray,
+			       const proteus_index_t* elementNeighborsArray,
 			       const double * nodeArray);
 
-int findLocalLongestEdge2d(int eN,
-			   const int* elementNodesArray,
+int findLocalLongestEdge2d(proteus_index_t eN,
+			   const proteus_index_t* elementNodesArray,
 			   const double * nodeArray);
 
-bool subdivideTriangle4T(int eN_parent,
-			 int& eN_new,
-			 int* elementParentsArray,
-			 int* elementChildrenOffsets,
-			 int* elementChildrenArray,
-			 int* elementNodesArray_child,
-			 const std::vector<int>& edgeMidNodesArray,
+bool subdivideTriangle4T(proteus_index_t eN_parent,
+			 proteus_index_t& eN_new,
+			 proteus_index_t* elementParentsArray,
+			 proteus_index_t* elementChildrenOffsets,
+			 proteus_index_t* elementChildrenArray,
+			 proteus_index_t* elementNodesArray_child,
+			 const std::vector<proteus_index_t>& edgeMidNodesArray,
 			 const std::vector<bool>& refined,
-			 const int* elementNodesArray_parent,
-			 const int* elementBoundariesArray_parent,
+			 const proteus_index_t* elementNodesArray_parent,
+			 const proteus_index_t* elementBoundariesArray_parent,
 			 const double* nodeArray_parent);
 
 

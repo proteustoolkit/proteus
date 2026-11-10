@@ -1,5 +1,6 @@
 #ifndef SUBGRIDERROR_H
 #define SUBGRIDERROR_H
+#include "index_type.h"
 #include <math.h>
 #include <stdio.h> /*mwf for debugging*/
 #include <assert.h>
@@ -15,7 +16,7 @@
 */
 
 extern void calculateSubgridError_tauRes(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   double *tau,
@@ -24,7 +25,7 @@ extern void calculateSubgridError_tauRes(
   double *subgridError,
   double *dsubgridError
 );
-extern void calculateSubgridError_ADR_generic_tau(int nElements_global,
+extern void calculateSubgridError_ADR_generic_tau(proteus_index_t nElements_global,
                                            int nQuadraturePoints_element,
                                            int nSpace,
                                            double* inverseJ,
@@ -38,11 +39,11 @@ extern void calculateSubgridError_ADR_generic_tau(int nElements_global,
                                            double* pe,
                                            double* cfl,
                                            double* tau);
-void calculateSubgridError_ADR_generic_tau_sd(int nElements_global,
+void calculateSubgridError_ADR_generic_tau_sd(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nSpace,
-					      int* rowptr,
-					      int* colind,
+					      proteus_index_t* rowptr,
+					      proteus_index_t* colind,
 					      double* inverseJ,
 					      double* dmt,
 					      double* df,
@@ -54,7 +55,7 @@ void calculateSubgridError_ADR_generic_tau_sd(int nElements_global,
 					      double* pe,
 					      double* cfl,
 					      double* tau);
-extern void calculateSubgridErrorNavierStokes2D_generic_tau(int nElements_global,
+extern void calculateSubgridErrorNavierStokes2D_generic_tau(proteus_index_t nElements_global,
                                                      int nQuadraturePoints_element,
                                                      int nSpace,
                                                      double* inverseJ,
@@ -65,7 +66,7 @@ extern void calculateSubgridErrorNavierStokes2D_generic_tau(int nElements_global
                                                      double* tau0,
                                                      double* tau1,
                                                      double* cfl);
-void calculateSubgridErrorNavierStokes2D_generic_tau_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_generic_tau_sd(proteus_index_t nElements_global,
                                                      int nQuadraturePoints_element,
                                                      int nSpace,
                                                      double* inverseJ,
@@ -76,7 +77,7 @@ void calculateSubgridErrorNavierStokes2D_generic_tau_sd(int nElements_global,
                                                      double* tau0,
                                                      double* tau1,
 							double* cfl);
-void calculateSubgridErrorStokes2D_GLS_velocity_sd(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nDOF_trial_element,
 						   int nSpace,
@@ -95,7 +96,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_sd(int nElements_global,
 						   double* dsubgridErrorV_dp,
 						   double* dsubgridErrorV_dv);
 extern void calculateSubgridError_ADR_tau_p(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -111,7 +112,7 @@ extern void calculateSubgridError_ADR_tau_p(
   double *tau
 );
 extern void calculateSubgridError_ADR_tau_1(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -127,7 +128,7 @@ extern void calculateSubgridError_ADR_tau_1(
   double *tau
 );
 extern void calculateSubgridError_ADR_tau_2(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -143,7 +144,7 @@ extern void calculateSubgridError_ADR_tau_2(
   double *tau
 );
 extern void calculateSubgridError_ADR_tau(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   char stabilization,
@@ -160,7 +161,7 @@ extern void calculateSubgridError_ADR_tau(
   double *tau
 );
 extern void calculateSubgridError_A_tau_1(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -170,7 +171,7 @@ extern void calculateSubgridError_A_tau_1(
   double *tau
 );
 extern void calculateSubgridError_A_tau_2(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -180,7 +181,7 @@ extern void calculateSubgridError_A_tau_2(
   double *tau
 );
 extern void calculateSubgridError_A_tau(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   char stabilization,
@@ -191,7 +192,7 @@ extern void calculateSubgridError_A_tau(
   double *tau
 );
 extern void calculateSubgridErrorStokes2D_GLS_velocity(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -211,7 +212,7 @@ extern void calculateSubgridErrorStokes2D_GLS_velocity(
   double *dsubgridErrorV_dv
 );
 extern void calculateSubgridErrorStokes3D_GLS_velocity(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -236,7 +237,7 @@ extern void calculateSubgridErrorStokes3D_GLS_velocity(
   double *dsubgridErrorW_dp,
   double *dsubgridErrorW_dw
 );
-void calculateSubgridErrorStokes3D_GLS_velocity_sd(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nDOF_trial_element,
 						   int nSpace,
@@ -261,7 +262,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_sd(int nElements_global,
 						   double* dsubgridErrorW_dp,
 						   double* dsubgridErrorW_dw);
 extern void calculateSubgridErrorStokes2D_GLS_velocity_pressure(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -286,7 +287,7 @@ extern void calculateSubgridErrorStokes2D_GLS_velocity_pressure(
   double *dsubgridErrorV_dp,
   double *dsubgridErrorV_dv
 );
-void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(int nElements_global,
+void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -311,7 +312,7 @@ void calculateSubgridErrorStokes2D_GLS_velocity_pressure_sd(int nElements_global
                                                          double* dsubgridErrorV_dp,
 							    double* dsubgridErrorV_dv);
 extern void calculateSubgridErrorStokes3D_GLS_velocity_pressure(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -344,7 +345,7 @@ extern void calculateSubgridErrorStokes3D_GLS_velocity_pressure(
   double *dsubgridErrorW_dp,
   double *dsubgridErrorW_dw
 );
-void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(int nElements_global,
+void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          int nDOF_trial_element,
                                                          int nSpace,
@@ -377,7 +378,7 @@ void calculateSubgridErrorStokes3D_GLS_velocity_pressure_sd(int nElements_global
                                                          double* dsubgridErrorW_dp,
 							    double* dsubgridErrorW_dw);
 extern void calculateSubgridErrorNavierStokes2D_GLS_tau(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double hFactor,
@@ -390,7 +391,7 @@ extern void calculateSubgridErrorNavierStokes2D_GLS_tau(
   double *tau1,
   double *cfl
 );
-void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(int nElements_global,
+void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(proteus_index_t nElements_global,
                                                  int nQuadraturePoints_element,
                                                  int nSpace,
                                                  double  hFactor,
@@ -403,7 +404,7 @@ void calculateSubgridErrorNavierStokes2D_GLS_tau_sd(int nElements_global,
                                                  double* tau1,
 						    double* cfl);
 extern void calculateSubgridErrorStokes_GLS_tau(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -413,7 +414,7 @@ extern void calculateSubgridErrorStokes_GLS_tau(
   double *tau1
 );
 extern void calculateSubgridErrorStokes_GLS_tau_sd(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nSpace,
   double *elementDiameter,
@@ -423,7 +424,7 @@ extern void calculateSubgridErrorStokes_GLS_tau_sd(
   double *tau1
 );
 extern void calculateSubgridErrorStokes2D_GLS_tauRes(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -449,7 +450,7 @@ extern void calculateSubgridErrorStokes2D_GLS_tauRes(
   double *dsubgridErrorV_dv
 );
 
-extern void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
+extern void calculateSubgridErrorStokes3D_GLS_tauRes(proteus_index_t nElements_global,
 						     int nQuadraturePoints_element,
 						     int nDOF_trial_element,
 						     int nSpace,
@@ -484,7 +485,7 @@ extern void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
 
 
 extern void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -520,7 +521,7 @@ extern void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure(
   double *dsubgridErrorW_dw
 );
 extern void calculateSubgridErrorStokes2D_1(
-  int nElements_global,
+  proteus_index_t nElements_global,
   int nQuadraturePoints_element,
   int nDOF_trial_element,
   int nSpace,
@@ -550,16 +551,16 @@ extern void calculateSubgridErrorStokes2D_1(
   double *dsubgridErrorV_du,
   double *dsubgridErrorV_dv
 );
-extern void calculateSubgridError_Harari_tau_sd(int nElements_global,
+extern void calculateSubgridError_Harari_tau_sd(proteus_index_t nElements_global,
 					 int nQuadraturePoints_element,
 					 int nSpace,
 					 double dt,
-					 int* rowptr,
-					 int* colind,
+					 proteus_index_t* rowptr,
+					 proteus_index_t* colind,
 					 double* elementDiameter,
 					 double* a,
 					 double* tau);
-extern void calculateSubgridErrorShallowWater1D(int nElements_global,
+extern void calculateSubgridErrorShallowWater1D(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          double g,
                                          double* elementDiameter,
@@ -567,7 +568,7 @@ extern void calculateSubgridErrorShallowWater1D(int nElements_global,
                                          double* hu,
                                          double* cfl_1,
                                          double* cfl_2);
-extern void calculateSubgridErrorShallowWater2D(int nElements_global,
+extern void calculateSubgridErrorShallowWater2D(proteus_index_t nElements_global,
                                          int nQuadraturePoints_element,
                                          double g,
                                          double* elementDiameter,
@@ -577,7 +578,7 @@ extern void calculateSubgridErrorShallowWater2D(int nElements_global,
                                          double* cfl_1,
                                          double* cfl_2,
                                          double* cfl_3);
-extern void calculateSubgridErrorStokes2D_1(int nElements_global,
+extern void calculateSubgridErrorStokes2D_1(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nDOF_trial_element,
                                      int nSpace,
@@ -606,17 +607,17 @@ extern void calculateSubgridErrorStokes2D_1(int nElements_global,
                                      double* dsubgridErrorV_dp,
                                      double* dsubgridErrorV_du,
                                      double* dsubgridErrorV_dv);
-extern void calculateSubgridErrorGradient_tauRes(int nElements_global,
+extern void calculateSubgridErrorGradient_tauRes(proteus_index_t nElements_global,
 					  int nQuadraturePoints_element,
 					  int nSpace,
 					  double* tau_gradient,
 					  double* grad_pdeResidual,
 					  double* grad_subgridError);
-extern void calculateSubgridError_ADR_Sangalli_tau_sd(int nElements_global,
+extern void calculateSubgridError_ADR_Sangalli_tau_sd(proteus_index_t nElements_global,
 					       int nQuadraturePoints_element,
 					       int nSpace,
-					       int* rowptr,
-					       int* colind,
+					       proteus_index_t* rowptr,
+					       proteus_index_t* colind,
 					       double* inverseJ,
 					       double* dmt,
 					       double* df,
@@ -629,11 +630,11 @@ extern void calculateSubgridError_ADR_Sangalli_tau_sd(int nElements_global,
 					       double* cfl,
 					       double* tau,
 					       double* tau_gradient);
-extern void calculateSubgridError_ADR_tau_sd(int nElements_global,
+extern void calculateSubgridError_ADR_tau_sd(proteus_index_t nElements_global,
 				      int nQuadraturePoints_element,
 				      int nSpace,
-				      int* rowptr,
-				      int* colind,
+				      proteus_index_t* rowptr,
+				      proteus_index_t* colind,
 				      char stabilization,
 				      double* elementDiameter,
 				      double* dmt,
@@ -646,7 +647,7 @@ extern void calculateSubgridError_ADR_tau_sd(int nElements_global,
 				      double* pe,
 				      double* cfl,
 				      double* tau);
-extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(int nElements_global,
+extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(proteus_index_t nElements_global,
 								   int nQuadraturePoints_element,
 								   int nSpace,
 								   double* inverseJ,
@@ -658,7 +659,7 @@ extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau(int nE
 								   double* tau0,
 								   double* tau1,
 								   double* cfl);
-extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(int nElements_global,
+extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(proteus_index_t nElements_global,
 								   int nQuadraturePoints_element,
 								   int nSpace,
 								   double* inverseJ,
@@ -670,7 +671,7 @@ extern void calculateSubgridErrorNavierStokes2D_generic_withBodyForce_tau_sd(int
 								   double* tau0,
 								   double* tau1,
 								      double* cfl);
-extern void calculateSubgridErrorNavierStokes2D_GLS_tauRes(int nElements_global,
+extern void calculateSubgridErrorNavierStokes2D_GLS_tauRes(proteus_index_t nElements_global,
                                                     int nQuadraturePoints_element,
                                                     int nDOF_trial_element,
                                                     int nSpace,
@@ -698,7 +699,7 @@ extern void calculateSubgridErrorNavierStokes2D_GLS_tauRes(int nElements_global,
                                                     double* dsubgridErrorV_dp,
                                                     double* dsubgridErrorV_du,
                                                     double* dsubgridErrorV_dv);
-extern void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
+extern void calculateSubgridErrorStokes3D_GLS_tauRes(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nDOF_trial_element,
 					      int nSpace,
@@ -730,7 +731,7 @@ extern void calculateSubgridErrorStokes3D_GLS_tauRes(int nElements_global,
 					      double* subgridErrorW,
 					      double* dsubgridErrorW_dp,
 					      double* dsubgridErrorW_dw);
-extern void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(int nElements_global,
+extern void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(proteus_index_t nElements_global,
                                                                int nQuadraturePoints_element,
                                                                int nDOF_trial_element,
                                                                int nSpace,
@@ -764,7 +765,7 @@ extern void calculateSubgridErrorNavierStokes3D_GLS_velocity_pressure_sd(int nEl
                                                                double* subgridErrorW,
                                                                double* dsubgridErrorW_dp,
 								  double* dsubgridErrorW_dw);
-extern void calculateSubgridErrorStokes2D_1_sd(int nElements_global,
+extern void calculateSubgridErrorStokes2D_1_sd(proteus_index_t nElements_global,
                                      int nQuadraturePoints_element,
                                      int nDOF_trial_element,
                                      int nSpace,
@@ -793,7 +794,7 @@ extern void calculateSubgridErrorStokes2D_1_sd(int nElements_global,
                                      double* dsubgridErrorV_dp,
                                      double* dsubgridErrorV_du,
 					double* dsubgridErrorV_dv);
-extern void calculateSubgridErrorNavierStokes3D_GLS_tauRes(int nElements_global,
+extern void calculateSubgridErrorNavierStokes3D_GLS_tauRes(proteus_index_t nElements_global,
                                                     int nQuadraturePoints_element,
                                                     int nDOF_trial_element,
                                                     int nSpace,

@@ -69,6 +69,9 @@ def petscPartitioners():
     'current', which keeps the initial partition."""
     return c_petscPartitioners().decode().split()
 
+#the dtype of every mesh index array, read from proteus_index_t as in cmeshTools
+INDEX_DTYPE = np.dtype('i%d' % sizeof(mesh.proteus_index_t))
+
 cdef object _indexArray(mesh.proteus_index_t* p, mesh.proteus_index_t n):
     """A numpy view of n mesh indices at p; a rank that owns nothing has empty
     arrays, which a typed memoryview cannot describe."""
@@ -211,26 +214,26 @@ def partitionElementsLocal(int rank, int size, int nLayersOfOverlap, cmeshTools.
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
 
-def nodeGraphRows(cmeshTools.CMesh cmesh, int begin, int end):
+def nodeGraphRows(cmeshTools.CMesh cmesh, mesh.proteus_index_t begin, mesh.proteus_index_t end):
     """Rows begin..end-1 of the node graph partitionNodes hands the graph
     partitioner, in CSR form (offsets, neighbors): each node's star, sorted."""
     _requireGlobalMesh(cmesh, "nodeGraphRows")
     assert 0 <= begin <= end <= cmesh.mesh.nNodes_global, (begin, end)
-    cdef vector[int] offsets
-    cdef vector[int] neighbors
+    cdef vector[mesh.proteus_index_t] offsets
+    cdef vector[mesh.proteus_index_t] neighbors
     c_nodeGraphRows(cmesh.mesh, begin, end, offsets, neighbors)
-    return np.array(offsets, dtype=np.intc), np.array(neighbors, dtype=np.intc)
+    return np.array(offsets, dtype=INDEX_DTYPE), np.array(neighbors, dtype=INDEX_DTYPE)
 
-def elementGraphRows(cmeshTools.CMesh cmesh, int begin, int end):
+def elementGraphRows(cmeshTools.CMesh cmesh, mesh.proteus_index_t begin, mesh.proteus_index_t end):
     """Rows begin..end-1 of the element graph partitionElements hands the graph
     partitioner, in CSR form (offsets, neighbors): each element's neighbours
     across its element boundaries, sorted."""
     _requireGlobalMesh(cmesh, "elementGraphRows")
     assert 0 <= begin <= end <= cmesh.mesh.nElements_global, (begin, end)
-    cdef vector[int] offsets
-    cdef vector[int] neighbors
+    cdef vector[mesh.proteus_index_t] offsets
+    cdef vector[mesh.proteus_index_t] neighbors
     c_elementGraphRows(cmesh.mesh, begin, end, offsets, neighbors)
-    return np.array(offsets, dtype=np.intc), np.array(neighbors, dtype=np.intc)
+    return np.array(offsets, dtype=INDEX_DTYPE), np.array(neighbors, dtype=INDEX_DTYPE)
 
 def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):
     """partitionNodes' ownership rules on cmesh, given the owner of every node:
@@ -242,9 +245,9 @@ def ownersFromNodeOwners(cmeshTools.CMesh cmesh, object nodeOwners, int size):
     assert owners.shape[0] == cmesh.mesh.nNodes_global, (owners.shape[0], cmesh.mesh.nNodes_global)
     cdef vector[int] cowners = owners
     #each rank's owned nodes contiguous, in their old order (numberByOwner)
-    old2new = np.empty(owners.shape[0], dtype=np.intc)
-    old2new[np.argsort(owners, kind='stable')] = np.arange(owners.shape[0], dtype=np.intc)
-    cdef vector[int] cold2new = old2new
+    old2new = np.empty(owners.shape[0], dtype=INDEX_DTYPE)
+    old2new[np.argsort(owners, kind='stable')] = np.arange(owners.shape[0], dtype=INDEX_DTYPE)
+    cdef vector[mesh.proteus_index_t] cold2new = old2new
     return (np.array(c_elementOwnersFromNodeOwners(cmesh.mesh, cowners, size), dtype=np.intc),
             np.array(c_elementBoundaryOwnersFromNodeOwners(cmesh.mesh, cowners, size), dtype=np.intc),
             np.array(c_edgeOwnersFromNodeOwners(cmesh.mesh, cowners, cold2new), dtype=np.intc),
@@ -403,10 +406,10 @@ def convertPUMIPartitionToPython(Comm comm, cmeshTools.CMesh cmesh, cmeshTools.C
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global)
     )
 
-cdef object _intVectorArray(vector[int]& v):
-    """A numpy int32 copy of v."""
-    a = np.empty(v.size(), dtype=np.int32)
-    cdef int[::1] view = a
+cdef object _indexVectorArray(vector[mesh.proteus_index_t]& v):
+    """A numpy INDEX_DTYPE copy of v."""
+    a = np.empty(v.size(), dtype=INDEX_DTYPE)
+    cdef mesh.proteus_index_t[::1] view = a
     cdef size_t i
     for i in range(v.size()):
         view[i] = v[i]
@@ -418,7 +421,7 @@ def partitionNodesFromTetgenFiles(Comm comm, object filebase, int indexBase, int
     cmesh.mesh.subdomainp = &subdomain_cmesh.mesh
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
-    cdef vector[int] nodesInput, elementsInput
+    cdef vector[mesh.proteus_index_t] nodesInput, elementsInput
     c_partitionNodesFromTetgenFiles(comm.ob_mpi,
                                     <const char*>(<char*>filebase),
                                     indexBase,
@@ -438,11 +441,11 @@ def partitionNodesFromTetgenFiles(Comm comm, object filebase, int indexBase, int
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global),
         #the file number (0-based) of each subdomain node and element, owned
         #and overlap: the partition's input numbering on this rank
-        _intVectorArray(nodesInput),
-        _intVectorArray(elementsInput)
+        _indexVectorArray(nodesInput),
+        _indexVectorArray(elementsInput)
     )
 
-def readNodeStars(object filebase, int simplexDim, int indexBase, int nNodes_global, int begin, int end):
+def readNodeStars(object filebase, int simplexDim, int indexBase, mesh.proteus_index_t nNodes_global, mesh.proteus_index_t begin, mesh.proteus_index_t end):
     """What the parun -F partitioners (partitionNodesFromTriangleFiles,
     simplexDim 3; partitionNodesFromTetgenFiles, 4) first read from
     filebase.ele for a rank whose default chunk is nodes [begin,end):
@@ -450,13 +453,13 @@ def readNodeStars(object filebase, int simplexDim, int indexBase, int nNodes_glo
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
     cdef string name = filebase + b'.ele'
-    cdef int nElements_global = 0
-    cdef vector[cppset[int]] stars
+    cdef mesh.proteus_index_t nElements_global = 0
+    cdef vector[cppset[mesh.proteus_index_t]] stars
     if not c_readSimplexNodeStars(name, b"simplex", simplexDim, indexBase, nNodes_global, begin, end, nElements_global, stars):
         raise IOError("cannot open element file %s" % name.decode())
-    return nElements_global, [np.array(sorted(star), dtype=np.intc) for star in stars]
+    return nElements_global, [np.array(sorted(star), dtype=INDEX_DTYPE) for star in stars]
 
-def readSimplexElementsTouching(object filebase, int simplexDim, int indexBase, int nNodes_global, object nodes):
+def readSimplexElementsTouching(object filebase, int simplexDim, int indexBase, mesh.proteus_index_t nNodes_global, object nodes):
     """The second read of the parun -F partitioners: the elements of
     filebase.ele with a node in `nodes` (0-based file numbers), in file order.
     Returns (nElements_global, hasElementMarkers, elements, elementNodes
@@ -465,17 +468,18 @@ def readSimplexElementsTouching(object filebase, int simplexDim, int indexBase, 
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
     cdef string name = filebase + b'.ele'
-    cdef cppmap[int,int] nodeMap
+    cdef cppmap[mesh.proteus_index_t,mesh.proteus_index_t] nodeMap
     for k in nodes:
         nodeMap[k] = 0
-    cdef int nElements_global = 0, hasElementMarkers = 0
-    cdef vector[int] elements, elementNodes
+    cdef mesh.proteus_index_t nElements_global = 0
+    cdef int hasElementMarkers = 0
+    cdef vector[mesh.proteus_index_t] elements, elementNodes
     cdef vector[double] elementIds
     if not c_readSimplexElementsTouching(name, b"simplex", simplexDim, indexBase, nNodes_global, nodeMap,
                                          nElements_global, hasElementMarkers, elements, elementNodes, elementIds):
         raise IOError("cannot open element file %s" % name.decode())
-    return (nElements_global, hasElementMarkers, np.array(elements, dtype=np.intc),
-            np.array(elementNodes, dtype=np.intc).reshape(-1, simplexDim), np.array(elementIds, dtype=np.double))
+    return (nElements_global, hasElementMarkers, np.array(elements, dtype=INDEX_DTYPE),
+            np.array(elementNodes, dtype=INDEX_DTYPE).reshape(-1, simplexDim), np.array(elementIds, dtype=np.double))
 
 def readSimplexSubentitiesTouching(object filename, int nNodesPerEntity, int indexBase, bint headerHasMarkers, object nodes):
     """The .face/.edge reads of the parun -F partitioners: the entities of
@@ -485,16 +489,18 @@ def readSimplexSubentitiesTouching(object filename, int nNodesPerEntity, int ind
     if not isinstance(filename, bytes):
         filename = filename.encode()
     cdef string name = filename
-    cdef cppmap[int,int] nodeMap
+    cdef cppmap[mesh.proteus_index_t,mesh.proteus_index_t] nodeMap
     for k in nodes:
         nodeMap[k] = 0
-    cdef int nEntities_global = 0, hasMarkers = 0
-    cdef vector[int] numbers, entityNodes, ids
+    cdef mesh.proteus_index_t nEntities_global = 0
+    cdef int hasMarkers = 0
+    cdef vector[mesh.proteus_index_t] numbers, entityNodes
+    cdef vector[int] ids
     if not c_readSimplexSubentitiesTouching(name, b"simplex", b"face/edge", nNodesPerEntity, indexBase, headerHasMarkers,
                                             nodeMap, nEntities_global, hasMarkers, numbers, entityNodes, ids):
         raise IOError("cannot open %s" % name.decode())
-    return (nEntities_global, hasMarkers, np.array(numbers, dtype=np.intc),
-            np.array(entityNodes, dtype=np.intc).reshape(-1, nNodesPerEntity), np.array(ids, dtype=np.intc))
+    return (nEntities_global, hasMarkers, np.array(numbers, dtype=INDEX_DTYPE),
+            np.array(entityNodes, dtype=INDEX_DTYPE).reshape(-1, nNodesPerEntity), np.array(ids, dtype=np.intc))
 
 def fileNodeNumbers(Comm comm, object nodeOffsets_old, object nodeOffsets_new, object old2new_chunk, object wanted):
     """The two exchanges of the parun -F partitioners' second element read.
@@ -502,28 +508,28 @@ def fileNodeNumbers(Comm comm, object nodeOffsets_old, object nodeOffsets_new, o
     [nodeOffsets_old[rank], nodeOffsets_old[rank+1]). Returns (owned, answered):
     file -> new number of the nodes whose new number is in this rank's range of
     nodeOffsets_new, and of the file nodes `wanted`. Collective."""
-    cdef vector[int] off_old = list(nodeOffsets_old), off_new = list(nodeOffsets_new), chunk = list(old2new_chunk)
-    cdef cppset[int] want
+    cdef vector[mesh.proteus_index_t] off_old = list(nodeOffsets_old), off_new = list(nodeOffsets_new), chunk = list(old2new_chunk)
+    cdef cppset[mesh.proteus_index_t] want
     for k in wanted:
         want.insert(k)
     owned = c_ownedNodesByFileNumber(comm.ob_mpi, off_old, off_new, chunk)
     answered = c_newNumbersOfFileNodes(comm.ob_mpi, off_old, chunk, want)
     return dict(owned), dict(answered)
 
-def subdomainNumbers(Comm comm, int nGlobal, int ownedBegin, object owned, object subdomain):
+def subdomainNumbers(Comm comm, mesh.proteus_index_t nGlobal, mesh.proteus_index_t ownedBegin, object owned, object subdomain):
     """The directory exchange of the parun -F partitioners' element, face and
     edge numberings: file -> new number of the entities in subdomain, the
     owned ones (a subset) numbered ownedBegin, ownedBegin+1, ... in ascending
     file order, the others asked of the rank whose default chunk of
     [0,nGlobal) holds them. Collective."""
-    cdef cppset[int] own
+    cdef cppset[mesh.proteus_index_t] own
     for k in owned:
         own.insert(k)
-    cdef vector[int] sub = sorted(set(subdomain))
+    cdef vector[mesh.proteus_index_t] sub = sorted(set(subdomain))
     return dict(c_subdomainNumbersByDirectory(comm.ob_mpi, nGlobal, ownedBegin, own, sub))
 
 def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVertexMarkers,
-                          object nodes_old2new, int ownedBegin, int ownedEnd, object overlap):
+                          object nodes_old2new, mesh.proteus_index_t ownedBegin, mesh.proteus_index_t ownedEnd, object overlap):
     """The last read of the parun -F partitioners: filebase.node's vertices for
     one subdomain, owned new global numbers [ownedBegin,ownedEnd) then the
     sorted new numbers in overlap. nodes_old2new is a dict from 0-based file
@@ -533,19 +539,19 @@ def readSubdomainVertices(object filebase, int nSpace, int indexBase, int hasVer
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
     cdef string name = filebase + b'.node'
-    cdef cppmap[int,int] old2new, overlapMap, global2subdomain
+    cdef cppmap[mesh.proteus_index_t,mesh.proteus_index_t] old2new, overlapMap, global2subdomain
     for k, v in nodes_old2new.items():
         old2new[k] = v
-    cdef int n = ownedEnd - ownedBegin
+    cdef mesh.proteus_index_t n = ownedEnd - ownedBegin
     for g in sorted(overlap):
         overlapMap[g] = n
         n += 1
-    cdef np.ndarray[int, ndim=1] subdomain2global = np.full(n, -1, dtype=np.intc)
+    cdef np.ndarray[mesh.proteus_index_t, ndim=1] subdomain2global = np.full(n, -1, dtype=INDEX_DTYPE)
     cdef np.ndarray[double, ndim=2] nodeArray = np.zeros((n, 3), dtype=np.double)
     cdef np.ndarray[int, ndim=1] nodeMaterialTypes = np.zeros(n, dtype=np.intc)
     if not c_readSubdomainVertices(name, b"simplex", nSpace, indexBase, hasVertexMarkers, old2new,
                                    ownedBegin, ownedEnd, overlapMap,
-                                   <int*>(subdomain2global.data) if n else NULL, global2subdomain,
+                                   <mesh.proteus_index_t*>(subdomain2global.data) if n else NULL, global2subdomain,
                                    <double*>(nodeArray.data) if n else NULL,
                                    <int*>(nodeMaterialTypes.data) if n else NULL):
         raise IOError("cannot open node file %s" % name.decode())
@@ -557,7 +563,7 @@ def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, i
     cmesh.mesh.subdomainp = &subdomain_cmesh.mesh
     if not isinstance(filebase, bytes):
         filebase = filebase.encode()
-    cdef vector[int] nodesInput, elementsInput
+    cdef vector[mesh.proteus_index_t] nodesInput, elementsInput
     c_partitionNodesFromTriangleFiles(comm.ob_mpi,
                                     <const char*>(<char*>filebase),
                                     indexBase,
@@ -576,8 +582,8 @@ def partitionNodesFromTriangleFiles(Comm comm, object filebase, int indexBase, i
         _indexArray(cmesh.mesh.edgeNumbering_subdomain2global, cmesh.mesh.subdomainp.nEdges_global),
         #the file number (0-based) of each subdomain node and element, owned
         #and overlap: the partition's input numbering on this rank
-        _intVectorArray(nodesInput),
-        _intVectorArray(elementsInput)
+        _indexVectorArray(nodesInput),
+        _indexVectorArray(elementsInput)
     )
 
 def buildQuadraticLocal2GlobalMappings(Comm comm,
@@ -602,10 +608,10 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
     if nSpace == 1:
         buildQuadraticSubdomain2GlobalMappings_1d(comm.ob_mpi,
                                                   cmesh.mesh,
-                                                  <int*>(elementOffsets_subdomain_owned.data),
-                                                  <int*>(nodeOffsets_subdomain_owned.data),
-                                                  <int*>(elementNumbering_subdomain2global.data),
-                                                  <int*>(nodeNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(elementOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(nodeOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(elementNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(nodeNumbering_subdomain2global.data),
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
@@ -616,10 +622,10 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
     elif nSpace == 2:
         buildQuadraticSubdomain2GlobalMappings_2d(comm.ob_mpi,
                                                   cmesh.mesh,
-                                                  <int*>(elementBoundaryOffsets_subdomain_owned.data),
-                                                  <int*>(nodeOffsets_subdomain_owned.data),
-                                                  <int*>(elementBoundaryNumbering_subdomain2global.data),
-                                                  <int*>(nodeNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(elementBoundaryOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(nodeOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(elementBoundaryNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(nodeNumbering_subdomain2global.data),
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
@@ -630,10 +636,10 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
     else:
         buildQuadraticSubdomain2GlobalMappings_3d(comm.ob_mpi,
                                                   cmesh.mesh,
-                                                  <int*>(edgeOffsets_subdomain_owned.data),
-                                                  <int*>(nodeOffsets_subdomain_owned.data),
-                                                  <int*>(edgeNumbering_subdomain2global.data),
-                                                  <int*>(nodeNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(edgeOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(nodeOffsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(edgeNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(nodeNumbering_subdomain2global.data),
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
@@ -671,10 +677,10 @@ def buildQuadraticCubeLocal2GlobalMappings(Comm comm,
     else:
         buildQuadraticCubeSubdomain2GlobalMappings_3d(comm.ob_mpi,
                                                       cmesh.mesh,
-                                                      <int*>(edgeOffsets_subdomain_owned.data),
-                                                      <int*>(nodeOffsets_subdomain_owned.data),
-                                                      <int*>(edgeNumbering_subdomain2global.data),
-                                                      <int*>(nodeNumbering_subdomain2global.data),
+                                                      <mesh.proteus_index_t*>(edgeOffsets_subdomain_owned.data),
+                                                      <mesh.proteus_index_t*>(nodeOffsets_subdomain_owned.data),
+                                                      <mesh.proteus_index_t*>(edgeNumbering_subdomain2global.data),
+                                                      <mesh.proteus_index_t*>(nodeNumbering_subdomain2global.data),
                                                       nDOF_all_processes,
                                                       nDOF_subdomain,
                                                       max_dof_neighbors,
@@ -700,8 +706,8 @@ def buildDiscontinuousGalerkinLocal2GlobalMappings(Comm comm,
     cdef int max_dof_neighbors=0
     buildDiscontinuousGalerkinSubdomain2GlobalMappings(comm.ob_mpi,
                                                        cmesh.mesh,
-                                                       <int*>(elementOffsets_subdomain_owned.data),
-                                                       <int*>(elementNumbering_subdomain2global.data),
+                                                       <mesh.proteus_index_t*>(elementOffsets_subdomain_owned.data),
+                                                       <mesh.proteus_index_t*>(elementNumbering_subdomain2global.data),
                                                        nDOF_element,
                                                        nDOF_all_processes,
                                                        nDOF_subdomain,

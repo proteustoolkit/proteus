@@ -25,7 +25,20 @@
 // q_eddy_viscosity_last = 0), Darcy-Forchheimer drag (q_dragAlpha = q_dragBeta = 0), particles (nParticles = 0, H_s = 1),
 // the moving mesh (MOVING_DOMAIN = 0), RBLES (useRBLES = 0), the pressure projection (PRESSURE_PROJECTION_STABILIZATION
 // = 0), mass sources and point forces (0), the regularized phase field (useVF = 1 multiplies it by 0). The test
-// (rans2p_test.py) checks those inputs on the fixture. Exterior faces (the Nitsche/SIPG boundary terms) are not reproduced yet.
+// (rans2p_test.py) checks those inputs on the fixture.
+//
+// The exterior faces (navierStokesExteriorFace, RANS2P2D.h's exterior loops) with the flow's normal speed
+// s = rho porosity u . n (dH/d grad u . n):
+//   continuity     F_p = porosity u . n, or the prescribed mass flux (isAdvectiveFluxBoundary_p)
+//   momentum c     F_c = (g_c - u_c) s on inflow (s < 0), g_c the Dirichlet value or 0 where u_c has none, 0 on outflow
+//                        (the non-conservative form has no advective flux), + n_c (p_bc - p) where p has a Dirichlet value;
+//                        the prescribed flux where isAdvectiveFluxBoundary_c
+//                  + the diffusive flux of each (c, d) entry of the stress: -(a grad u_d) . n + max(a) penalty (u_d - g_d)
+//                    where u_d has a Dirichlet value, the prescribed flux where isDiffusiveFluxBoundary_d (0 for d != c),
+//                    with penalty = C_b / h_n, h_n = (n . G n)^(-1/2) (useMetrics = 1)
+//                  + the adjoint (symmetric Nitsche) term sigma (u_d - g_d) (a n) . grad w where u_d has a Dirichlet value
+//                    and the row's own component c is not a diffusive-flux point (proteus tests c's flag, not d's)
+// all times w dS. The Jacobian is exact: the inflow upwinding differentiates s too (d s/d u_d = rho porosity n_d).
 //
 // fields (nE, nQ, nFields): vf, porosity, dV_last, beta_c (nS), numDiff_last_c (nS), v_sge (nS), all as proteus hands
 // them to the kernel. Outputs per point: the velocity (q_velocity), the next shock-capturing viscosity (q_numDiff_u)
@@ -282,5 +295,212 @@ namespace adrh
     }
     for (int k = 0; k < nc * nD; ++k) R[k] = (&Rl[0][0])[k];
     for (int k = 0; k < nc * nD * nc * nD; ++k) J[k] = (&Jl[0][0][0][0])[k];
+  }
+
+  // Per exterior face point, as RANS2P2D.h's kernel gets them (ebqe_*): the volume fraction and porosity, the boundary
+  // condition flags and values. Flags are stored as doubles (0 or 1).
+  template <int nS>
+  struct NavierStokesFaceFields
+  {
+    static constexpr int nFields = 9 + 6 * nS;
+    static constexpr int vf = 0, porosity = 1, penalty = 2,   // penalty: ebqe_penalty_ext (used when useMetrics < 1)
+        isDOF_p = 3, isAdvFlux_p = 4, bc_p = 5, bc_flux_mass = 6, C_b = 7, adjoint_sigma = 8,
+        isDOF = 9, isAdvFlux = 9 + nS, isDiffFlux = 9 + 2 * nS, bc = 9 + 3 * nS, bc_flux_adv = 9 + 4 * nS,
+        bc_flux_diff = 9 + 5 * nS;
+  };
+
+  // One exterior face of an element: X (nD, 3), ue (nc, nD) as in navierStokesVMSElement, k the element's local face,
+  // xi (nQf, nS) the face's points in the element's reference coordinates, qwf (nQf) the reference face weights, ff
+  // (nQf, nFields). R (nc, nD) and J (nc, nD, nc, nD) are written (not added to); flux (nQf) the mass flux and vel (nQf, nS)
+  // the boundary velocity (ebqe_velocity) out. Summation orders follow RANS2P2D.h's, so the result agrees to round-off.
+  template <class Space>
+  ADRH_FN void navierStokesExteriorFace(const NavierStokesParams &P, const double *X, const double *ue, int k, int nQf,
+                                        const double *xi, const double *qwf, const double *ff, double *R, double *J,
+                                        double *flux, double *vel)
+  {
+    constexpr int nS = Space::nS, nD = Space::nDOF, nc = 1 + nS;
+    using F = NavierStokesFaceFields<nS>;
+    constexpr double inertial_term = 1.0;
+    double Rl[nc][nD] = {}, Jl[nc][nD][nc][nD] = {};
+    for (int q = 0; q < nQf; ++q)
+    {
+      const double *f = ff + q * F::nFields;
+      PointGeometry<Space> G;
+      G.compute(X, xi + q * nS);
+      double n[3], vn;
+      G.faceNormal(k, n, vn);
+      const double dS = qwf[q] * vn;
+      // the metric tensor and the penalty's length scale (CompKernel calculateG, calculateGScale)
+      double Gm[nS][nS];
+      for (int I = 0; I < nS; ++I)
+        for (int K = 0; K < nS; ++K)
+        {
+          Gm[I][K] = 0.0;
+          for (int L = 0; L < nS; ++L) Gm[I][K] += G.Jinv[L][I] * G.Jinv[L][K];
+        }
+      double hn = 0.0;
+      for (int I = 0; I < nS; ++I)
+        for (int K = 0; K < nS; ++K) hn += n[I] * Gm[I][K] * n[K];
+      hn = 1.0 / std::sqrt(hn + 1.0e-16);
+      const double penalty = P.useMetrics * f[F::C_b] / hn + (1.0 - P.useMetrics) * f[F::penalty];
+      // the trace and its gradients
+      double p = 0.0, u[nS] = {}, gu[nS][nS] = {};
+      for (int b = 0; b < nD; ++b)
+      {
+        p += ue[b] * G.w[b];
+        for (int c = 0; c < nS; ++c) u[c] += ue[(1 + c) * nD + b] * G.w[b];
+      }
+      for (int b = 0; b < nD; ++b)
+        for (int I = 0; I < nS; ++I)
+          for (int c = 0; c < nS; ++c) gu[c][I] += ue[(1 + c) * nD + b] * G.gw[b][I];
+      // coefficients at the point (evaluateCoefficients, non-conservative form)
+      const double porosity = f[F::porosity];
+      const double Hc = std::fmin(1.0, std::fmax(0.0, f[F::vf]));
+      const double H = P.useVF * Hc, ImH = P.useVF * (1.0 - Hc);
+      const double rho = P.rho_0 * ImH + P.rho_1 * H, nu = P.nu_0 * ImH + P.nu_1 * H;
+      const double mu = rho * nu;
+      const double dm = rho * porosity;
+      const double diag2 = 2.0 * porosity * mu, pm = porosity * mu;
+      auto isDOF = [&](int c) { return f[F::isDOF + c] == 1.0; };
+      auto isDiffFlux = [&](int c) { return f[F::isDiffFlux + c] == 1.0; };
+      auto bcu = [&](int c) { return isDOF(c) ? f[F::bc + c] : u[c]; };   // bc_u_ext (MOVING_DOMAIN = 0)
+      const double bc_p = f[F::isDOF_p] == 1.0 ? f[F::bc_p] : p;
+      // the advective fluxes (exteriorNumericalAdvectiveFlux) and their derivatives
+      double s = 0.0;
+      for (int I = 0; I < nS; ++I) s += n[I] * (inertial_term * rho * porosity * u[I]);
+      double flux_mass = 0.0, flux_mom[nS] = {}, v[nS];
+      double dmass[nS], dmom[nS][nS] = {}, dmom_p[nS] = {};
+      for (int c = 0; c < nS; ++c)
+      {
+        flux_mass += n[c] * (porosity * u[c]);
+        v[c] = porosity * u[c];
+        dmass[c] = n[c] * porosity;
+        if (s < 0.0)   // inflow: upwind the momentum to the Dirichlet value (0 where u_c has none)
+        {
+          const double g = isDOF(c) ? bcu(c) : 0.0;
+          flux_mom[c] += (g - u[c]) * s;
+          for (int d = 0; d < nS; ++d) dmom[c][d] += dm * n[d] * (g - u[c]) - (d == c ? s : 0.0);
+        }
+      }
+      if (f[F::isDOF_p] == 1.0)
+        for (int c = 0; c < nS; ++c)
+        {
+          flux_mom[c] += n[c] * (bc_p - p);
+          dmom_p[c] = -n[c];
+        }
+      if (f[F::isAdvFlux_p] == 1.0)
+      {
+        for (int c = 0; c < nS; ++c)
+        {
+          v[c] += (f[F::bc_flux_mass] - flux_mass) * n[c];
+          dmass[c] = 0.0;
+        }
+        flux_mass = f[F::bc_flux_mass];
+      }
+      for (int c = 0; c < nS; ++c)
+        if (f[F::isAdvFlux + c] == 1.0)
+        {
+          flux_mom[c] = f[F::bc_flux_adv + c];
+          dmom_p[c] = 0.0;
+          for (int d = 0; d < nS; ++d) dmom[c][d] = 0.0;
+        }
+      flux[q] = flux_mass;
+      for (int c = 0; c < nS; ++c) vel[q * nS + c] = v[c] / porosity;
+      // the diffusive fluxes of the stress entries (c, d) (exteriorNumericalDiffusiveFlux on the sdInfo sparsity):
+      // (c, c) has a_I = 2 porosity mu (I == c) or porosity mu on the diagonal, (c, d != c) one entry porosity mu at row d,
+      // column c
+      double flux_diff[nS][nS], max_a[nS][nS];
+      for (int c = 0; c < nS; ++c)
+        for (int d = 0; d < nS; ++d)
+        {
+          double fl = 0.0, ma = 0.0;
+          const double bcflux = d == c ? f[F::bc_flux_diff + c] : 0.0;
+          if (d == c)
+          {
+            for (int I = 0; I < nS; ++I)
+            {
+              const double a = I == c ? diag2 : pm;
+              fl += (-a * gu[c][I]) * n[I];
+              ma = std::fmax(ma, a);
+            }
+          }
+          else
+          {
+            fl += (-pm * gu[d][c]) * n[d];
+            ma = std::fmax(ma, pm);
+          }
+          max_a[c][d] = ma;
+          if (isDiffFlux(d))
+            flux_diff[c][d] = bcflux;
+          else if (isDOF(d))
+            flux_diff[c][d] = fl + ma * penalty * (u[d] - bcu(d));
+          else
+            flux_diff[c][d] = 0.0;   // proteus warns: no boundary condition for the diffusion
+        }
+      double w_dS[nD], gw_dS[nD][nS];
+      for (int a = 0; a < nD; ++a)
+      {
+        w_dS[a] = G.w[a] * dS;
+        for (int I = 0; I < nS; ++I) gw_dS[a][I] = G.gw[a][I] * dS;
+      }
+      // residual (ExteriorElementBoundaryDiffusionAdjoint: per entry, (1 - flux_c) dof_d sigma (u_d - g_d) a n . grad w dS)
+      const double sigma = f[F::adjoint_sigma];
+      for (int a = 0; a < nD; ++a)
+      {
+        Rl[0][a] += flux_mass * w_dS[a];
+        for (int c = 0; c < nS; ++c)
+        {
+          double r = flux_mom[c] * w_dS[a];
+          for (int d = 0; d < nS; ++d) r += flux_diff[c][d] * w_dS[a];
+          for (int d = 0; d < nS; ++d)
+          {
+            const double on = (1.0 - f[F::isDiffFlux + c]) * f[F::isDOF + d] * sigma;
+            if (d == c)
+            {
+              double t = 0.0;
+              for (int I = 0; I < nS; ++I) t += on * (u[d] - bcu(d)) * (I == c ? diag2 : pm) * n[I] * gw_dS[a][I];
+              r += t;
+            }
+            else
+              r += on * (u[d] - bcu(d)) * pm * n[c] * gw_dS[a][d];
+          }
+          Rl[1 + c][a] += r;
+        }
+      }
+      // Jacobian
+      for (int a = 0; a < nD; ++a)
+        for (int b = 0; b < nD; ++b)
+        {
+          const double wb = G.w[b];
+          for (int c = 0; c < nS; ++c)
+          {
+            Jl[0][a][1 + c][b] += dmass[c] * wb * w_dS[a];
+            Jl[1 + c][a][0][b] += dmom_p[c] * wb * w_dS[a];
+            for (int d = 0; d < nS; ++d)
+            {
+              // ExteriorNumericalDiffusiveFluxJacobian
+              double dj = 0.0;
+              if (!isDiffFlux(d) && isDOF(d))
+              {
+                if (d == c)
+                  for (int I = 0; I < nS; ++I) dj += (-(I == c ? diag2 : pm) * G.gw[b][I]) * n[I];
+                else
+                  dj += (-pm * G.gw[b][c]) * n[d];
+                dj += max_a[c][d] * penalty * wb;
+              }
+              const double fj = dmom[c][d] * wb + dj;
+              const double on = (1.0 - f[F::isDiffFlux + c]) * f[F::isDOF + d] * sigma;
+              double adj = 0.0;
+              if (d == c)
+                for (int I = 0; I < nS; ++I) adj += on * wb * (I == c ? diag2 : pm) * n[I] * gw_dS[a][I];
+              else
+                adj += on * wb * pm * n[c] * gw_dS[a][d];
+              Jl[1 + c][a][1 + d][b] += fj * w_dS[a] + adj;
+            }
+          }
+        }
+    }
+    for (int i = 0; i < nc * nD; ++i) R[i] = (&Rl[0][0])[i];
+    for (int i = 0; i < nc * nD * nc * nD; ++i) J[i] = (&Jl[0][0][0][0])[i];
   }
 } // namespace adrh

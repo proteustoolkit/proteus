@@ -290,6 +290,47 @@ class RKEV(proteus.TimeIntegration.SSP):
                 if flag == 'timeOrder':
                     self.resetOrder(self.timeOrder)
 
+def bathymetryAtNodes(bathymetry, mesh):
+    """The bathymetry at each of this rank's mesh nodes (overlap included), as a new float array.
+
+    ``bathymetry`` is None (keep ``mesh.nodeArray[:, 2]``), a function of ``[x, y]``, or an array in the input
+    mesh's node order: shape (N,), or (N, k) with k = 1, 2, 3 whose last column is the bathymetry (the columns
+    before it the node's coordinates, as an xyz file reads). One rule on any number of ranks: each node takes the
+    entry at its input number, which the partition records (MeshTools._localInputNumbering: partitionNodes'
+    permutation, or the parun -F partitioners' file numbers). SW2DCV and GN_SW2DCV share it.
+    """
+    if bathymetry is None:
+        return np.array(mesh.nodeArray[:, 2], 'd')
+    if not isinstance(bathymetry, np.ndarray):
+        return np.asarray(bathymetry([mesh.nodeArray[:, 0], mesh.nodeArray[:, 1]]), 'd') * np.ones(len(mesh.nodeArray))
+    if bathymetry.ndim == 2 and 1 <= bathymetry.shape[1] <= 3:
+        b_input = bathymetry[:, -1]
+    elif bathymetry.ndim == 1:
+        b_input = bathymetry
+    else:
+        raise ValueError("a bathymetry array has shape (N,) or (N, k) with k = 1, 2, 3 and the bathymetry in the "
+                         "last column; got shape %s" % (bathymetry.shape,))
+    b_input = np.asarray(b_input, 'd')
+    g = getattr(mesh, 'globalMesh', None)
+    if g is None:       #the mesh was not partitioned: it is the input mesh
+        nodes_input = np.arange(len(mesh.nodeArray))
+    else:
+        from proteus import MeshTools
+        if (getattr(g, 'nodeNumbering_global_old2new', None) is None
+                and '_viewInputNumbering' not in g.__dict__):
+            raise ValueError("a bathymetry array is in the input mesh's node order, and this partition "
+                             "does not record its node numbering (element partitioning, or a mesh "
+                             "generated per rank): give the bathymetry as a function")
+        nodes_input = MeshTools._localInputNumbering(g)[0]
+        if nodes_input is None:     #the partition kept the input numbering
+            nodes_input = g.nodeNumbering_subdomain2global
+        nodes_input = np.asarray(nodes_input)
+    if len(nodes_input) and nodes_input.max() >= len(b_input):
+        raise ValueError("a bathymetry array has %d values and the input mesh more nodes: one value per node"
+                         % len(b_input))
+    return b_input[nodes_input]
+
+
 class Coefficients(proteus.TransportCoefficients.TC_base):
     """
     The coefficients for the shallow water equations
@@ -447,43 +488,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def initializeMesh(self, mesh):
         x = mesh.nodeArray[:, 0]
         y = mesh.nodeArray[:, 1]
-        comm=Comm.get()        
-        if self.bathymetry is None:
-            self.b.dof = mesh.nodeArray[:, 2].copy()     
-        elif type(self.bathymetry) is np.ndarray:
-            #if mpi, use mapping old2new to rearrange b.dof vector globally
-            if self.bathymetry.ndim==1:
-                b_global = self.bathymetry.copy() 
-            elif self.bathymetry.shape[1]==1:
-                b_global = self.bathymetry[:,0].copy()
-            elif self.bathymetry.shape[1]==3:
-                b_global = self.bathymetry[:,2].copy()
-            if comm.size() > 1:
-                #the array is in the input mesh's node order: take each
-                #subdomain node's entry at its input number, which the
-                #partition records per rank (MeshTools._localInputNumbering:
-                #partitionNodes' permutation, or the parun -F partitioners'
-                #file numbers; mappings.h5 until 2026-11)
-                from proteus import MeshTools
-                g = mesh.globalMesh
-                if (getattr(g, 'nodeNumbering_global_old2new', None) is None
-                        and '_viewInputNumbering' not in g.__dict__):
-                    raise ValueError("a bathymetry array is in the input mesh's node order, and this partition "
-                                     "does not record its node numbering (element partitioning, or a mesh "
-                                     "generated per rank): give the bathymetry as a function")
-                nodes_input = MeshTools._localInputNumbering(g)[0]
-                if nodes_input is None:     #the partition kept the input numbering
-                    nodes_input = g.nodeNumbering_subdomain2global
-                nodes_input = np.asarray(nodes_input)
-                assert nodes_input.max() < len(b_global), "one bathymetry value per node of the input mesh"
-                self.b.dof = b_global[nodes_input]
-                mesh.nodeArray[:,2] = self.b.dof
-            else:
-                self.b.dof = self.bathymetry
-                mesh.nodeArray[:,2] = self.b.dof           
-        else:
-            self.b.dof = self.bathymetry([x, y])
-            mesh.nodeArray[:,2] = self.b.dof     #if bathy is a function no need to pass subdomain info here
+        self.b.dof = bathymetryAtNodes(self.bathymetry, mesh)
+        mesh.nodeArray[:, 2] = self.b.dof
         assert mesh.nodeArray.shape[1]==3
         def nodal(f, default):
             if f is None:
