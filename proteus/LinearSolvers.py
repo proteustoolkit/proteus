@@ -536,6 +536,7 @@ class KSP_petsc4py(LinearSolver):
         self.pc = None
         self.solverName  = "PETSc"
         self.par_fullOverlap = True
+        self._dirichlet_zero_positions = None
         self.par_firstAssembly=True
         self.par_L   = par_L
         self.petsc_L = par_L
@@ -587,6 +588,15 @@ class KSP_petsc4py(LinearSolver):
         assert self.petsc_L.getBlockSize() == 1, "petsc4py wrappers currently require 'simple' blockVec (blockSize=1) approach"
         if self.petsc_L.proteus_jacobian is not None:
             self.csr_rep[2][self.petsc_L.nzval_proteus2petsc] = self.petsc_L.proteus_csr_rep[2][:]
+        if not self.par_fullOverlap and getattr(self.petsc_L, 'dirichlet_nonauthority', None) is not None:
+            # strong Dirichlet dofs this rank is not the authority for: drop its copy of the row
+            # (see LinearAlgebraTools.strongDirichletNonAuthorityDofs), the positions are built once
+            if self._dirichlet_zero_positions is None:
+                rowptr = self.csr_rep[0]
+                self._dirichlet_zero_positions = numpy.concatenate(
+                    [numpy.arange(rowptr[i], rowptr[i + 1]) for i in self.petsc_L.dirichlet_nonauthority]
+                    + [numpy.zeros(0, dtype='i')]).astype('i')
+            self.csr_rep[2][self._dirichlet_zero_positions] = 0.0
         if self.par_fullOverlap == True:
             self.petsc_L.setValuesLocalCSR(self.csr_rep_local[0],self.csr_rep_local[1],self.csr_rep_local[2],p4pyPETSc.InsertMode.INSERT_VALUES)
         else:
