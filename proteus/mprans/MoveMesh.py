@@ -125,6 +125,28 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def initializeMesh(self, mesh):
         self.mesh = mesh
 
+    def state(self):
+        """What postStep moves forward that the model's dofs do not hold: the mesh nodes (postStep adds the
+        displacement to them and clears the dofs), their velocity, and the step sizes postStep keeps. A retried
+        system step restores it, or the retry adds the displacement a second time."""
+        mesh = getattr(self, "mesh", None)
+        if mesh is None:
+            return None
+        st = {"nodeArray": mesh.nodeArray.copy()}
+        if getattr(mesh, "nodeVelocityArray", None) is not None:
+            st["nodeVelocityArray"] = mesh.nodeVelocityArray.copy()
+        for name in ("dt_last", "dt_last_last"):
+            if getattr(self, name) is not None:
+                st[name] = float(getattr(self, name))
+        return st
+
+    def set_state(self, state):
+        self.mesh.nodeArray[:] = state["nodeArray"]
+        if "nodeVelocityArray" in state:
+            self.mesh.nodeVelocityArray[:] = state["nodeVelocityArray"]
+        for name in ("dt_last", "dt_last_last"):
+            setattr(self, name, float(state[name]) if name in state else None)
+
     def postStep(self, t, firstStep=False):
         self.model.postStep()
         self.mesh.nodeArray[:, 0] += self.model.u[0].dof

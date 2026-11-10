@@ -8,6 +8,8 @@
 #include "chrono/physics/ChLinkTSDA.h"
 #include "chrono/geometry/ChTriangleMeshConnected.h"
 #include <iostream>
+#include <vector>
+#include <stdexcept>
 #include <fstream>
 
 using namespace chrono;
@@ -25,6 +27,10 @@ public:
   void setTimestepperType(std::string tstype, bool verbose);
   void setCollisionEnvelopeMargin(double envelope, double margin);
   void addMesh(std::shared_ptr<ChMesh> mesh);
+  // the integrable state of the Chrono system, [T, nx, nv, x(nx), v(nv), a(nv)]: ChSystem::StateGather and
+  // StateGatherAcceleration, and StateScatter back (a step retry puts the system back where it was)
+  std::vector<double> stateGather();
+  void stateScatter(const std::vector<double>& y);
 };
 
 
@@ -160,6 +166,45 @@ void cppSystem::step(double proteus_dt, int n_substeps=1)
 
 void cppSystem::addMesh(std::shared_ptr<ChMesh> mesh) {
   system->Add(mesh);
+}
+
+std::vector<double> cppSystem::stateGather()
+{
+  system->Setup();
+  unsigned int nx = system->GetNumCoordsPosLevel();
+  unsigned int nv = system->GetNumCoordsVelLevel();
+  ChState x(nx, system.get());
+  ChStateDelta v(nv, system.get());
+  ChStateDelta a(nv, system.get());
+  double T = 0.;
+  system->StateGather(x, v, T);
+  system->StateGatherAcceleration(a);
+  std::vector<double> y;
+  y.reserve(3 + nx + 2*nv);
+  y.push_back(T);
+  y.push_back((double)nx);
+  y.push_back((double)nv);
+  for (unsigned int i = 0; i < nx; ++i) y.push_back(x(i));
+  for (unsigned int i = 0; i < nv; ++i) y.push_back(v(i));
+  for (unsigned int i = 0; i < nv; ++i) y.push_back(a(i));
+  return y;
+}
+
+void cppSystem::stateScatter(const std::vector<double>& y)
+{
+  system->Setup();
+  unsigned int nx = system->GetNumCoordsPosLevel();
+  unsigned int nv = system->GetNumCoordsVelLevel();
+  if (y.size() != 3 + nx + 2*nv || (unsigned int)y[1] != nx || (unsigned int)y[2] != nv)
+    throw std::runtime_error("cppSystem::stateScatter: the state does not match the Chrono system (a body or link was added or removed since it was gathered)");
+  ChState x(nx, system.get());
+  ChStateDelta v(nv, system.get());
+  ChStateDelta a(nv, system.get());
+  for (unsigned int i = 0; i < nx; ++i) x(i) = y[3 + i];
+  for (unsigned int i = 0; i < nv; ++i) v(i) = y[3 + nx + i];
+  for (unsigned int i = 0; i < nv; ++i) a(i) = y[3 + nx + nv + i];
+  system->StateScatter(x, v, y[0], UpdateFlags::UPDATE_ALL);
+  system->StateScatterAcceleration(a);
 }
 
 cppRigidBody::cppRigidBody(cppSystem* system):
