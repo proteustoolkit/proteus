@@ -5,7 +5,7 @@
 # proteus 1.9.1
 
 Patch release on the `1.9.x` line (155 commits and 244 files changed since 1.9.0). It carries the code behind the
-Torino flume, Hybrid CutFEM-IFEM, Richards (JNMA) and variable-density flow/transport (WRR) manuscripts, build fixes
+Torino flume results, Hybrid CutFEM-IFEM results, Richards results, and variable-density flow/transport results, build fixes
 for newer PETSc/pybind11/Cython/pytest, HPC configurations, and parallel-correctness fixes for `parun`.
 No 2.0-only redesign work is included.
 
@@ -33,7 +33,7 @@ No 2.0-only redesign work is included.
   and #223): `Coefficients` options `EDGE_VELOCITY`, `diagnostics`, `FCT_BND_RESET`, `FCT_DU_MAX`, plus new `VELOCITY_COUPLING` and
   `CONSERVATIVE_FORM`; the `comp_geoscience_reproduce` bundle with a smoke test is added.
   **Breaking on 1.9.x:** the environment variables `RICHARDS_EDGE_VELOCITY`, `TADR_*_DBG` and `RICHARDS_*` no longer work; use the options above.
-- **Richards**: implicit FCT, theta-scheme, L-scheme and increment tests, Hornung-Messing example (cekees/proteus#123, JNMA);
+- **Richards**: implicit FCT, theta-scheme, L-scheme and increment tests, Hornung-Messing example (cekees/proteus#123);
   air-entry van Genuchten closure `VG_AIR_ENTRY` and levee Case B/C on the compatible transport (cekees/proteus#170).
 - **HPC**: Cray EX configurations for Carpenter, Barfoot, Blueback and Narwhal (cekees/proteus#26).
 - `Context.Options` splits `-C` on any whitespace, commas and semicolons; `gatherTimes` takes the frame count from the `.h5`,
