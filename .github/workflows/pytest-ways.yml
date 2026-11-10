@@ -57,7 +57,24 @@ jobs:
           cp environment-openmpi-dev.yml environment-ci.yml
           sed -i "s/^name: .*/name: proteus-dev/" environment-ci.yml
 
+      # the first org canary (run 42472801337) lost 5 of 6 ways to HTTP 503/504 while setup-miniconda downloaded
+      # Miniforge; a second attempt after a pause costs nothing when the first works
       - name: Set up conda environment with PETSc/MPI/HDF5
+        id: conda1
+        continue-on-error: true
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          environment-file: environment-ci.yml
+          activate-environment: proteus-dev
+
+      - name: Wait before the second attempt
+        if: steps.conda1.outcome == 'failure'
+        shell: bash
+        run: sleep 120
+
+      - name: Set up conda environment with PETSc/MPI/HDF5 (second attempt)
+        if: steps.conda1.outcome == 'failure'
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
