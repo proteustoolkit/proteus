@@ -77,7 +77,7 @@ def test_solver_state_is_one_section_and_a_hot_start_from_another_step_restarts(
     with h5py.File(tmp_path / "hot" / "hs_be1.h5", "r") as f:
         models = list(f["solver_state"].keys())
         assert models and not any(k.isdigit() for k in models), models
-        steps = {int(f["solver_state/%s/step_p0" % m][...][0]) for m in models}
+        steps = {int(f["solver_state/%s/step" % m][...][0]) for m in models}
     assert steps == {n}
     #hot start from step 4 while the archive holds the state of step 6
     _vortex(tmp_path / "hot", "be", 1, "hot", 4, endn=8)

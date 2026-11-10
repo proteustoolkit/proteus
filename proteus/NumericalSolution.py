@@ -210,6 +210,8 @@ class NS_base(object):  # (HasTraits):
         # a driver that predates the option (an installed parun is a copy made at install time) gets the default
         self.hotStartMode = getattr(opts, 'hotStartMode', 'continue')
         self._solverStateRefused = []
+        #what _solverStateUsable read, by model name, for _applySolverState
+        self._solverStateRead = {}
         if self.hotStartMode not in ('continue', 'restart'):
             raise ValueError("hotStartMode must be 'continue' or 'restart', not %r" % (self.hotStartMode,))
         from . import Comm
@@ -1441,12 +1443,14 @@ class NS_base(object):  # (HasTraits):
         last: a hot start from any other step, or from a file whose last write
         was interrupted, finds a stamp that does not match and restarts instead.
 
-        Every rank writes its own copy under its own name,
-        ``<owner>/<s|a>.<key>_p<rank>``: the scalars are the same on every rank,
-        the arrays are the rank's own (at its elements' quadrature points) and are
-        only read back by the same partition, which a fingerprint next to them
-        checks. Collective, like the rest of the archive: all ranks call it in the
-        same order.
+        Every rank writes its own copy of each item, keyed ``<owner>/<s|a>.<key>``:
+        the scalars are the same on every rank, the arrays are the rank's own (at
+        its elements' quadrature points) and are only read back by the same
+        partition, which a fingerprint next to them checks. The ranks' items go
+        into one set of records (``Archiver.create_rank_records``), three datasets
+        whatever the number of ranks and items, and the stamp, ``<model>/step``,
+        is one more. Collective, like the rest of the archive: all ranks call it
+        in the same order.
         """
         ar = self.ar[index]
         if ar.inline or ar.dataItemFormat != "HDF":
@@ -1457,29 +1461,75 @@ class NS_base(object):  # (HasTraits):
             st = obj.state()
             if st is None:
                 continue
-            path = self._solver_state_group_path(model, owner)
             for key, value in st.items():
                 if isinstance(value, numpy.ndarray):
-                    items.append(("%s/a.%s" % (path, key), value))
+                    items.append(("%s/a.%s" % (owner, key), value))
                 else:
-                    items.append(("%s/s.%s" % (path, key), numpy.atleast_1d(numpy.asarray(value))))
+                    items.append(("%s/s.%s" % (owner, key), numpy.atleast_1d(numpy.asarray(value))))
         #one order on every rank: a state's keys follow its dicts' insertion order, which can differ between
         #ranks (RANS2P's numericalFlux.ebqe gets ('u', 0)..('u', 3) in an order set by the process's string
-        #hash seed), and the names must match rank for rank below
-        items = [("%s/fingerprint" % base, self._solver_state_fingerprint(model, index))] + sorted(items, key=lambda i: i[0])
+        #hash seed), and the keys must match rank for rank below
+        items = [("fingerprint", self._solver_state_fingerprint(model, index))] + sorted(items, key=lambda i: i[0])
         import json
-        items.append(("%s/policy" % base, numpy.frombuffer(
+        items.append(("policy", numpy.frombuffer(
             json.dumps(self._hot_start_policy(model, index), sort_keys=True, default=str).encode(), dtype='uint8')))
-        items.append(("%s/step" % base, numpy.array([tCount], dtype='int64')))
-        #the creates are collective under mpio: a rank that wrote a different list would hang the others
-        names = [name for name, _ in items]
-        everyone = ar.comm.comm.tompi4py().allgather(names)
-        if any(n != everyone[0] for n in everyone):
+        #the stamp goes first, as "no step": a write interrupted from here on leaves a section no hot start reads
+        stamp = "%s/%s" % (base, self.SOLVER_STATE_STAMP)
+        self._writeSolverStateStamp(ar, stamp, -1)
+        if not ar.create_rank_records("%s/%s" % (base, self.SOLVER_STATE_RECORDS), items):
             logEvent("Archive: the ranks have different solver state to write at step %d of model %s; "
                      "none is written and a hot start from this step rebuilds it" % (tCount, model.name), level=0)
             return
-        for name, value in items:
-            ar.create_dataset_async("%s_p%d" % (name, ar.rank), value)
+        self._writeSolverStateStamp(ar, stamp, tCount)
+
+    #: the datasets of a model's solver state section: the ranks' records and the step they belong to
+    SOLVER_STATE_RECORDS = "records"
+    SOLVER_STATE_STAMP = "step"
+
+    @staticmethod
+    def _writeSolverStateStamp(ar, name, tCount):
+        """The step a solver state section belongs to (-1: none), the same on every rank: one dataset in the
+        file (one per rank file with per-rank files), written by master (collective)."""
+        value = numpy.array([tCount], dtype='int64')
+        if ar.driver == "mpio":
+            dataset = ar._dataset(name, value.shape, value.dtype)
+            if ar.rank == 0:
+                dataset[...] = value
+        elif ar.hdfFile is not None:
+            ar._store(name, value)
+
+    def _readSolverState(self, model, index):
+        """This rank's archived solver state of ``model``: ``(step, {key: array})``, keyed as
+        ``archiveSolverState`` writes them (``fingerprint``, ``policy``, ``<owner>/<s|a>.<key>``), or
+        ``(None, {})`` when the archive holds none for this rank. Reads the layout of the archives written
+        before the records too, one dataset per rank and item (``<key>_p<rank>``). Not collective."""
+        ar = self.ar[index]
+        hdf = ar.hdfFile
+        base = self._solver_state_group_path(model)
+        records = "%s/%s" % (base, self.SOLVER_STATE_RECORDS)
+        if ar.has_rank_records(records):
+            stamp = "%s/%s" % (base, self.SOLVER_STATE_STAMP)
+            mine = ar.read_rank_records(records)
+            if mine is None or stamp not in hdf:
+                return None, {}
+            step = int(hdf[stamp][...][0])
+            return (step, dict(mine)) if step >= 0 else (None, {})
+        suffix = "_p%d" % ar.rank
+        if "%s/step%s" % (base, suffix) not in hdf:
+            return None, {}
+        step = int(hdf["%s/step%s" % (base, suffix)][...][0])
+        state = {"fingerprint": hdf["%s/fingerprint%s" % (base, suffix)][...]}
+        if "%s/policy%s" % (base, suffix) in hdf:
+            state["policy"] = hdf["%s/policy%s" % (base, suffix)][...]
+        import h5py
+        for owner in hdf[base]:
+            group = hdf[base][owner]
+            if not isinstance(group, h5py.Group):
+                continue
+            for name in group:
+                if name.endswith(suffix):
+                    state["%s/%s" % (owner, name[:-len(suffix)])] = group[name][...]
+        return step, state
 
     def saveSystemStepState(self):
         """Keep what each model starts this system step with, for a retry: the dofs of every level model, the
@@ -1680,8 +1730,10 @@ class NS_base(object):  # (HasTraits):
         all were rebuilt. Returns whether the state was restored.
         """
         self._solverStateRefused = []
+        self._solverStateRead = {}
         usable = [self._solverStateUsable(m, index, tCount) for index, m in enumerate(self.modelList)]
         if not all(usable):
+            self._solverStateRead = {}
             if self.hotStartMode == "continue":
                 self._warnSolverStateRefused()
             return False
@@ -1703,15 +1755,14 @@ class NS_base(object):  # (HasTraits):
             logEvent("Hot start (restart): the history of model %s is rebuilt from the restart state" % model.name,
                      level=0)
             return False
-        base = self._solver_state_group_path(model)
-        suffix = "_p%d" % ar.rank
         from mpi4py import MPI
         comm = ar.comm.comm.tompi4py()
+        found, state = self._readSolverState(model, index)
         #a changed step policy cannot continue the archived numerical state: stop, naming what differs
         differs = []
-        if "%s/policy%s" % (base, suffix) in hdf:
+        if "policy" in state:
             import json
-            then = json.loads(bytes(hdf["%s/policy%s" % (base, suffix)][...]).decode())
+            then = json.loads(bytes(state["policy"]).decode())
             now = json.loads(json.dumps(self._hot_start_policy(model, index), default=str))
             differs = ["%s: archived %s, now %s" % (k, then.get(k), now.get(k))
                        for k in sorted(set(then) | set(now)) if then.get(k) != now.get(k)]
@@ -1721,10 +1772,9 @@ class NS_base(object):  # (HasTraits):
                                "run's (%s); use hotStartMode='restart' (--hot-start-mode restart) to continue "
                                "the solution with a new policy and rebuild the history from it"
                                % (model.name, "; ".join(everyone[0])))
-        found, mine, ranks = None, 0, 1
-        if "%s/step%s" % (base, suffix) in hdf:
-            found = int(hdf["%s/step%s" % (base, suffix)][...][0])
-            archived = hdf["%s/fingerprint%s" % (base, suffix)][...]
+        mine, ranks = 0, 1
+        if found is not None:
+            archived = state["fingerprint"]
             fingerprint = self._solver_state_fingerprint(model, index)
             mine = int(found == tCount and numpy.array_equal(archived, fingerprint))
             ranks = int(archived[0] == fingerprint[0])
@@ -1741,28 +1791,28 @@ class NS_base(object):  # (HasTraits):
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
             self._solverStateRefused.append((model.name, why))
             return False
+        self._solverStateRead[model.name] = state
         return True
 
     def _applySolverState(self, model, index):
         """Put back the owners' archived state of ``model`` (checked usable by ``_solverStateUsable``)."""
-        ar = self.ar[index]
-        hdf = ar.hdfFile
-        suffix = "_p%d" % ar.rank
+        state = self._solverStateRead.pop(model.name, None)
+        if state is None:
+            state = self._readSolverState(model, index)[1]
         for owner, obj in self._solver_state_owners(model):
             if obj.state() is None or not hasattr(obj, "set_state"):
                 continue
-            path = self._solver_state_group_path(model, owner)
-            if path not in hdf:
+            prefix = owner + "/"
+            st = {}
+            for name, value in state.items():
+                if not name.startswith(prefix):
+                    continue
+                kind, key = name[len(prefix):].split(".", 1)
+                st[key] = value if kind == "a" else value.reshape(-1)[0].item()
+            if not st:
                 logEvent("Hot start: no lag state archived for %s of model %s; "
                          "restarting its history from the restart state" % (owner, model.name), level=0)
                 continue
-            st = {}
-            for name in hdf[path]:
-                if not name.endswith(suffix):
-                    continue
-                kind, key = name[:-len(suffix)].split(".", 1)
-                value = hdf[path][name][...]
-                st[key] = value if kind == "a" else value.reshape(-1)[0].item()
             obj.set_state(st)
 
     ##save model's solution values to archive

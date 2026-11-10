@@ -1081,6 +1081,151 @@ class AR_base(object):
             for r, piece in enumerate(pieces):
                 full[int(offsets[r]):int(offsets[r+1])] = piece
             self._store(name, full)
+    #: the companions of a records dataset ``<name>`` (:meth:`create_rank_records`)
+    RECORDS_INDEX_SUFFIX = ".index"
+    RECORDS_KEYS_SUFFIX = ".keys"
+
+    def create_rank_records(self, name, records):
+        """Write each rank's own named arrays, of any shapes, in three datasets.
+
+        ``records`` is a list of ``(key, array)``; every rank passes the same
+        keys in the same order, and the arrays can differ from rank to rank in
+        shape (and in numeric type, which is promoted to one type per key).
+        Whatever the number of ranks and of keys, the file gets three
+        datasets: ``<name>``, the ranks' arrays as bytes, one rank after the
+        other; ``<name>.index``, one row per rank (its rank, where its bytes
+        start and how many there are, and where each key's array starts and
+        its shape); and ``<name>.keys``, the keys and their types.
+        :meth:`read_rank_records` gives a rank its own records back.
+
+        Writing one dataset per rank and key instead (``create_dataset_async``
+        once per key) makes ranks x keys datasets, all created by every rank
+        under the mpio driver: at 1,536 ranks and dozens of keys that broke
+        HDF5's collective metadata cache on the first write.
+
+        Collective. Returns False, and writes nothing, when the ranks do not
+        pass the same keys or a key's types cannot be promoted to one.
+        """
+        import hashlib, json, zlib
+        from mpi4py import MPI
+        comm_world = self.comm.comm.tompi4py()
+        keys = [str(k) for k, _ in records]
+        arrays = [numpy.ascontiguousarray(a) for _, a in records]
+        #what every rank must agree on is checked with reductions of a few
+        #numbers: an allgather of every rank's keys, types and shapes is
+        #ranks x keys strings to every rank (~10 MB each at 4,096 ranks)
+        digest = hashlib.sha256(json.dumps(keys).encode()).hexdigest()
+        if not comm_world.allreduce(int(comm_world.bcast(digest, root=0) == digest), op=MPI.MIN):
+            return False
+        codes = numpy.array([zlib.crc32(a.dtype.str.encode()) for a in arrays], dtype='int64')
+        lo, hi = codes.copy(), codes.copy()
+        comm_world.Allreduce(MPI.IN_PLACE, lo, op=MPI.MIN)
+        comm_world.Allreduce(MPI.IN_PLACE, hi, op=MPI.MAX)
+        dtypes = [a.dtype for a in arrays]
+        mixed = [j for j in range(len(keys)) if lo[j] != hi[j]]
+        if mixed:
+            #rare: a key whose type differs between ranks (an int here, a
+            #float there) is promoted to one type
+            everyone = comm_world.allgather([arrays[j].dtype.str for j in mixed])
+            for i, j in enumerate(mixed):
+                kinds = {numpy.dtype(e[i]) for e in everyone}
+                if not all(d.kind in "biuf" for d in kinds):
+                    return False
+                dtypes[j] = numpy.result_type(*kinds)
+        maxndim = comm_world.allreduce(max([a.ndim for a in arrays], default=0), op=MPI.MAX)
+        #this rank's row of the index: rank, start, nbytes, then for each key
+        #its offset in the rank's bytes, ndim and shape (zeros past ndim)
+        width = 3 + len(keys) * (2 + maxndim)
+        row = numpy.zeros((1, width), dtype='int64')
+        offset = 0
+        for j, (a, d) in enumerate(zip(arrays, dtypes)):
+            c = 3 + j * (2 + maxndim)
+            row[0, c] = offset
+            row[0, c + 1] = a.ndim
+            row[0, c + 2:c + 2 + a.ndim] = a.shape
+            offset += a.size * d.itemsize
+        start = comm_world.exscan(offset) if self.size > 1 else 0
+        start = 0 if start is None else start
+        total = comm_world.allreduce(offset, op=MPI.SUM)
+        row[0, :3] = (self.rank, start, offset)
+        #master assembles the index (fixed-width rows: one Gather)
+        index = numpy.zeros((self.size, width), dtype='int64') if self.rank == 0 else None
+        if self.driver != "per-rank":
+            comm_world.Gather(row, index, root=0)
+        mine = b"".join(a.astype(d, copy=False).tobytes() for a, d in zip(arrays, dtypes))
+        mine = numpy.frombuffer(mine, dtype='uint8')
+        meta = numpy.frombuffer(json.dumps({"keys": keys, "dtypes": [d.str for d in dtypes]}).encode(),
+                                dtype='uint8')
+        index_name = name + self.RECORDS_INDEX_SUFFIX
+        keys_name = name + self.RECORDS_KEYS_SUFFIX
+        if self.driver == "per-rank":
+            row[0, 1] = 0
+            self._store(name, mine)
+            self._store(index_name, row)
+            self._store(keys_name, meta)
+            return True
+        if self.driver == "mpio" and not self.inline:
+            #every rank creates the same three datasets; each writes its bytes
+            data = self._dataset(name, (total,), 'uint8')
+            if offset:
+                data[start:start + offset] = mine
+            dataset = self._dataset(index_name, (self.size, width), 'int64')
+            if self.rank == 0:
+                dataset[...] = index
+            dataset = self._dataset(keys_name, meta.shape, meta.dtype)
+            if self.rank == 0 and meta.size:
+                dataset[...] = meta
+            return True
+        pieces = comm_world.gather(mine)
+        if self.comm.isMaster():
+            self._store(name, numpy.concatenate(pieces) if pieces else mine)
+            self._store(index_name, index)
+            self._store(keys_name, meta)
+        return True
+
+    def has_rank_records(self, name):
+        """Whether the file holds records written by :meth:`create_rank_records` under ``name``."""
+        return self.hdfFile is not None and name + self.RECORDS_KEYS_SUFFIX in self.hdfFile
+
+    def read_rank_records(self, name):
+        """This rank's ``(key, array)`` list written by :meth:`create_rank_records`, or None.
+
+        None when the file holds no records under ``name`` or none for this
+        rank. Not collective: each rank reads its own row and bytes.
+        """
+        import json
+        if not self.has_rank_records(name):
+            return None
+        hdf = self.hdfFile
+        meta = json.loads(bytes(hdf[name + self.RECORDS_KEYS_SUFFIX][...]).decode())
+        index = hdf[name + self.RECORDS_INDEX_SUFFIX]
+        row = None
+        if self.rank < index.shape[0]:
+            row = index[self.rank]
+            if row[0] != self.rank:
+                row = None
+        if row is None and index.shape[0]:
+            hits = numpy.flatnonzero(index[:, 0] == self.rank)
+            row = index[int(hits[0])] if hits.size else None
+        if row is None:
+            return None
+        lo, n = int(row[1]), int(row[2])
+        mine = hdf[name][lo:lo + n] if n else numpy.empty(0, dtype='uint8')
+        keys, dtypes = meta["keys"], [numpy.dtype(d) for d in meta["dtypes"]]
+        maxndim = (index.shape[1] - 3) // len(keys) - 2 if keys else 0
+        out = []
+        for j, (key, dtype) in enumerate(zip(keys, dtypes)):
+            c = 3 + j * (2 + maxndim)
+            offset, ndim = int(row[c]), int(row[c + 1])
+            shape = tuple(int(s) for s in row[c + 2:c + 2 + ndim])
+            count = int(numpy.prod(shape, dtype='int64'))
+            if count:
+                value = numpy.frombuffer(mine, dtype=dtype, count=count, offset=offset).reshape(shape).copy()
+            else:
+                value = numpy.empty(shape, dtype=dtype)
+            out.append((key, value))
+        return out
+
     def _store(self, name, array):
         """Master keeps an assembled array: in the file, or for the inline document."""
         if self.inline:

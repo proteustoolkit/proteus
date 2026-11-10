@@ -226,7 +226,7 @@ class TI_base(object):
         restart would rebuild differently: the value from the last evaluation inside the previous
         step, a state machine's counters, a multistep history. None when there is nothing to carry.
         ``set_state(state)`` puts it back after the spin-up. NumericalSolution archives it per rank
-        (``solver_state/<model>/<owner>``) and only the same partition reads it back.
+        (keyed ``<owner>/...`` in the records of ``solver_state/<model>``) and only the same partition reads it back.
 
         This default carries nothing; whether that is right for a class is recorded in
         test/state_contract_inventory.txt, which test/test_state_contract.py keeps complete.
