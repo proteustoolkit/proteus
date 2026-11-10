@@ -475,12 +475,32 @@ class Coefficients(TC_base):
                  # the velocity Richards rebuilds from its realized edge fluxes (Richards.computeEdgeVelocity) and
                  # assemble the edge fluxes from it at the quadrature points, instead of copying the edge fluxes
                  EDGE_VELOCITY=False,
+                 # the velocity-based coupling of the coupling ablation (paper Table tab:uhd_coupling). Edge-flux
+                 # mode is switched off, so the cancelled form is advected with the flow model's Galerkin Darcy
+                 # velocity (velocity_couple), and the storage M is
+                 #   "lagged": Richards' mn = theta(psi^n) rho(c^{n-1}), the density of the preceding flow solve
+                 #   "eos":    theta(psi^n) rho(c^n), re-evaluated with the updated density every step
+                 # None (default): the compatible coupling, advected with the edge fluxes.
+                 VELOCITY_COUPLING=None,
+                 # with VELOCITY_COUPLING: solve the conservative solute row instead of the cancelled one. The
+                 # cancelled row is the conservative one minus c_i times the fluid row, so the conservative row is
+                 # the cancelled row plus c_i*delta_i, delta_i = ML_i (M^{n+1}_i - M^n_i)/dt + fluidResidual_i, the
+                 # continuity defect _reportContinuityDefect integrates. With the compatible coupling delta_i = 0
+                 # and the two forms coincide, so the option is only defined for the velocity-based one. Low
+                 # order only (FCT=False), serial only, k_d = 0.
+                 CONSERVATIVE_FORM=False,
                  # run-time diagnostics, logged once per step or call; each costs MPI reductions, so all are off
                  # by default. Names in DIAGNOSTICS.
                  diagnostics=()):
         self.variableNames = ['u']
         self.mms_source = mms_source
         self.EDGE_VELOCITY = bool(EDGE_VELOCITY)
+        assert VELOCITY_COUPLING in (None, "lagged", "eos"), \
+            "VELOCITY_COUPLING must be None, 'lagged' or 'eos', not %r" % (VELOCITY_COUPLING,)
+        self.VELOCITY_COUPLING = VELOCITY_COUPLING
+        assert not CONSERVATIVE_FORM or VELOCITY_COUPLING, \
+            "CONSERVATIVE_FORM=True needs VELOCITY_COUPLING (with edge fluxes the forms coincide)"
+        self.CONSERVATIVE_FORM = bool(CONSERVATIVE_FORM)
         self.diagnostics = _diagnostics(diagnostics)
         self.LS_modelIndex = LS_model
         self.V_model = V_model
@@ -1673,7 +1693,8 @@ class LevelModel(OneLevelTransport):
             # every edge-based branch: ImplicitEV and the explicit 2/3/4
             # Richards allocates edgeFluxInterior, mn and thetaW_dof for every type, but only its edge-based
             # (entropy-viscosity) kernel fills them: a Galerkin Richards (type 0) exports nothing
-            if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
+            if (not self.coefficients.VELOCITY_COUPLING
+                    and self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
                     and getattr(getattr(vModel, 'coefficients', None), 'STABILIZATION_TYPE', 0) != 0
                     and np.shape(getattr(vModel, 'edgeFluxInterior', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
@@ -1696,7 +1717,10 @@ class LevelModel(OneLevelTransport):
                 logEvent("TADR STABILIZATION_TYPE %d: advecting with the flow model's edge fluxes: %s"
                          % (self.coefficients.STABILIZATION_TYPE,
                             "YES" if self._use_edge_flux else
-                            "no (no export, or CSR pattern differs)"))
+                            ("no (VELOCITY_COUPLING=%s: Galerkin velocity_couple)"
+                             % self.coefficients.VELOCITY_COUPLING
+                             if self.coefficients.VELOCITY_COUPLING else
+                             "no (no export, or CSR pattern differs)")))
                 if self.coefficients.EDGE_VELOCITY:
                     logEvent("TADR STABILIZATION_TYPE %d: edge fluxes assembled from Richards' edge velocity: %s"
                              % (self.coefficients.STABILIZATION_TYPE,
@@ -1770,6 +1794,12 @@ class LevelModel(OneLevelTransport):
                 self.theta_nodal[:] = theta_flow
             else:
                 self.theta_nodal[:] = 0.0
+            if self.coefficients.VELOCITY_COUPLING == "eos":
+                assert theta_flow is not None, "VELOCITY_COUPLING='eos' needs the flow model's nodal theta"
+                # storage re-evaluated with the updated density, theta(psi^n) rho(c^n);
+                # u_dof_old is c^n (set in Coefficients.preStep)
+                eps_rho = (self.coefficients.rho_s - self.coefficients.rho_f)/self.coefficients.rho_f
+                self.M_dof[:] = self.theta_nodal*self.coefficients.rho_f*(1.0 + eps_rho*self.u_dof_old)
             if not self._M_dof_initialized:
                 logEvent("TADR SCHEME B (option C): fluid mass M read from "
                          "Richards mn every step (min=%.6e max=%.6e); no fluid "
@@ -2629,6 +2659,19 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
         self.adr.calculateResidual(argsDict)
+        if self.coefficients.CONSERVATIVE_FORM:
+            # conservative solute row = cancelled row + c_i*delta_i; delta does not
+            # depend on c^{n+1} (rho is frozen at rho(c^n) in the fluxes, M^{n+1} is
+            # the flow model's), so getJacobian adds delta_i on the diagonal
+            assert not self.coefficients.FCT, "CONSERVATIVE_FORM=True is low order: set FCT=False"
+            assert Comm.get().size() == 1, "CONSERVATIVE_FORM=True is serial only"
+            # the kinetic dissolution term enters the two rows differently, so the
+            # identity above holds only without it
+            assert float(self.coefficients.k_d) == 0.0, "CONSERVATIVE_FORM=True needs k_d = 0"
+            M_new = _accepted_mass(self.coefficients.vModel)
+            self._conservativeDelta = (self.ML*(np.asarray(M_new) - self.M_dof)/self.timeIntegration.dt
+                                       + self.fluidResidual)
+            r += self.u[0].dof*self._conservativeDelta
         self._logBoundarySoluteFlux()
         # OPTION C: no second residual pass here.  Under the sub-cycled fluid
         # solve this call was needed because the kernel assembled the fluid
@@ -2887,6 +2930,13 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
 
         self.adr.calculateJacobian(argsDict)
+        if self.coefficients.CONSERVATIVE_FORM:
+            # d(c_i*delta_i)/dc_i = delta_i (see getResidual)
+            rowptr_j, colind_j, nzval_j = jacobian.getCSRrepresentation()
+            if getattr(self, '_diag_csr', None) is None:
+                rows = np.repeat(np.arange(len(rowptr_j) - 1), np.diff(rowptr_j))
+                self._diag_csr = np.nonzero(np.asarray(colind_j) == rows)[0]
+            nzval_j[self._diag_csr] += self._conservativeDelta[:len(self._diag_csr)]
 
         # Load the Dirichlet conditions directly into residual
         if self.forceStrongConditions:
