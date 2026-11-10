@@ -62,6 +62,8 @@ elif correctionType == 'global':
     levelNonlinearSolver = MCorr.GlobalConstantNewton
 elif correctionType == 'none':
     levelNonlinearSolver = MCorr.DummyNewton
+elif correctionType == 'bisect':
+    levelNonlinearSolver = MCorr.GlobalConstantBisection
 else:
     levelNonlinearSolver = Newton
     nonlinearSolverNorm = MCorr.conservationNorm
