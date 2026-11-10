@@ -1,4 +1,4 @@
-"""Smoke runs of the manuscript decks in comp_geoscience_reproduce/.
+"""Smoke runs of the manuscript decks in vdft_reproduce/.
 
 CI does not collect that directory (it holds parun decks and plotting scripts, not tests), so this
 module runs each figure's deck for its first output time: copied into a temporary directory as its
@@ -26,7 +26,7 @@ def opts():
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BUNDLE = os.path.join(HERE, 'comp_geoscience_reproduce')
+BUNDLE = os.path.join(HERE, 'vdft_reproduce')
 
 # simmons_uhd/run_level0.sh: UHD on the level-0 mesh
 SIMMONS_L0 = dict(SIMMONS_CASE='UHD', SIMMONS_LEVEL='0', SIMMONS_LEVEL_Z='0', SIMMONS_THETA='4',
@@ -110,7 +110,7 @@ def test_coupled_deck(case, tmp_path, monkeypatch, opts, request):
     if case == 'levee_non_density':
         # 1.9.x only: run serially (as here), the passive-tracer levee's flow Newton iteration diverges at
         # t = 0.043 and the step is not recovered; on 4 ranks (the manuscript's configuration) the same deck runs
-        # through t = 0.054 and beyond, and cekees/main recovers the step. See HANDOFF_2026-11-10_wrr-submission.md.
+        # through t = 0.054 and beyond, and cekees/main recovers the step. See the bundle README (On 1.9.x).
         request.applymarker(pytest.mark.xfail(
             reason='1.9.x: serial flow Newton divergence at t = 0.043 in the passive-tracer levee deck', strict=False))
     monkeypatch.chdir(tmp_path)

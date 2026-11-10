@@ -1,4 +1,4 @@
-# Computational Geosciences runs
+# Reproduction bundle: variable-density flow and transport runs
 
 Decks and scripts for the figures and tables of the VDFT manuscript. Richards
 (flow) STABILIZATION_TYPE 2 + FCT, TADR (transport) STABILIZATION_TYPE 5 + FCT,
@@ -138,7 +138,7 @@ the code it needs: run-time switches as `Coefficients` options (`EDGE_VELOCITY`,
   and compare a figure with serial runs when it matters at plotting accuracy.
 - **Serial passive-tracer levee.** Run serially, `levee_density/non_density` diverges in the flow Newton iteration at
   t = 0.043 d on 1.9.x (main recovers that step); on 4 ranks, the manuscript's configuration, it runs through.
-  `test_comp_geoscience_smoke.py` marks that case `xfail`.
+  `test_vdft_reproduce_smoke.py` marks that case `xfail`.
 
 ## Transport used by each figure (cekees, 2026-11-04: both transports stay, each figure labelled)
 
