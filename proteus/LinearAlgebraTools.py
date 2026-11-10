@@ -2449,7 +2449,10 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     nloc = s2g.shape[0]
     hold = numpy.zeros(nloc, dtype=bool)
     outside = 0
-    for cj, dbc in model.dirichletConditionsForceDOF.items():
+    dbcs = model.dirichletConditionsForceDOF
+    if hasattr(dbcs, 'DOFBoundaryConditionsDict'):  # one object, not one per component (a single-component model)
+        dbcs = {0: dbcs}
+    for cj, dbc in dbcs.items():
         for dofN in dbc.DOFBoundaryConditionsDict:
             d = model.offset[cj] + model.stride[cj] * dofN
             if d < nloc:
@@ -2514,6 +2517,8 @@ def strongDirichletNonAuthorityDofs(model, par_r):
 def attachStrongDirichletAuthority(model, par_r, par_jacobian):
     """Install strongDirichletNonAuthorityDofs on the parallel residual vector and matrix."""
     if par_r is None or not getattr(model, 'forceStrongConditions', False):
+        return
+    if not (hasattr(model.dirichletConditionsForceDOF, 'items') or model.nc == 1):
         return
     if getattr(par_r, 'proteus2petsc_subdomain', None) is not None or par_r.getBlockSize() != 1:
         return  # permuted or block layouts are not handled
