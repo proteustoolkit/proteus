@@ -21,56 +21,14 @@ from proteus import Context, MeshTools, NumericalSolution, default_s, defaults, 
 
 MODULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "solver_tests", "import_modules")
 sys.path.insert(0, MODULES)
-
-
-def trap_owners(mesh, nranks):
-    """Rank 1 gets the outflow-side element of a corner, rank 0 the element with the wall face.
-
-    The step2d corners (5, 1) and (5, -1) are tagged as outflow nodes (p = 0 by the node tag) and v = 0 comes
-    from the wall face only. Where a corner has two elements, one with the outflow face and one with the wall
-    face, putting them on different ranks makes the corner a strong-Dirichlet dof for v on the rank with the
-    wall face and a free one on the other. The other elements are dealt out in contiguous blocks to the ranks
-    except 1 (rank 1 has nothing else, so it is a ghost-only copy of the corner).
-    """
-    others = [r for r in range(nranks) if r != 1] or [0]
-    owners = np.array([others[min(len(others) - 1, e * len(others) // mesh.nElements_global)]
-                       for e in range(mesh.nElements_global)], dtype=np.intc)
-    exterior = set(mesh.exteriorElementBoundariesArray.tolist())
-    found = 0
-    for corner in ([5.0, -1.0], [5.0, 1.0]):
-        i = np.where(np.abs(mesh.nodeArray[:, :2] - corner).max(1) < 1e-9)[0]
-        if len(i) == 0:
-            continue
-        i = int(i[0])
-        wall_el, out_el = None, None
-        for e in range(mesh.nElements_global):
-            if i not in mesh.elementNodesArray[e]:
-                continue
-            for f in mesh.elementBoundariesArray[e]:
-                if f in exterior and i in mesh.elementBoundaryNodesArray[f]:
-                    if abs(mesh.elementBoundaryBarycentersArray[f][1]) > 0.999:   # top or bottom wall face
-                        wall_el = e
-                    else:
-                        out_el = e
-        if wall_el is not None and out_el is not None and wall_el != out_el:
-            owners[wall_el] = 0
-            owners[out_el] = 1
-            found += 1
-    if os.environ.get("PROBE"):
-        print("PROBE trapped corners", found, flush=True)
-    return owners
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 if os.environ.get("TRAP"):
-    _part = MeshTools.Mesh.partitionMesh
-
-    def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MeshTools.MeshParallelPartitioningTypes.node,
-                      nodeOwners=None, elementOwners=None, nodeWeights=None):
-        if elementOwners is None and Comm.get().size() > 1:
-            elementOwners = trap_owners(self, Comm.get().size())
-        return _part(self, nLayersOfOverlap=nLayersOfOverlap, parallelPartitioningType=parallelPartitioningType,
-                     nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
-    MeshTools.Mesh.partitionMesh = partitionMesh
+    # step2d: v = 0 on the bottom (3) and top (4) wall faces; the corners (5, +-1) are tagged as outflow nodes
+    from strong_dirichlet_trap import install
+    install((3, 4), ([5.0, -1.0], [5.0, 1.0]),
+            report=lambda n: print("PROBE trapped corners", n, flush=True))
 
 Context.contextOptionsString = "he=%s schur_solver='petsc_ASM'" % os.environ.get("HE", "0.2")
 so = defaults.load_system("step2d_so", MODULES)

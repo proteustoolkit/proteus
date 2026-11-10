@@ -19,6 +19,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, "strong_dirichlet_partition_mpi.py")
+POISSON = os.path.join(HERE, "strong_dirichlet_poisson_mpi.py")
 
 
 def _mpiexec():
@@ -33,13 +34,13 @@ def _mpiexec():
 MPIEXEC = _mpiexec()
 
 
-def _run(ranks, cwd, **env_extra):
+def _run(ranks, cwd, helper=None, **env_extra):
     env = dict(os.environ, OMP_NUM_THREADS="1", **{k: str(v) for k, v in env_extra.items()})
     env.setdefault("FI_PROVIDER", "tcp")
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
-    argv = [sys.executable, HELPER]
+    argv = [sys.executable, helper or HELPER]
     if MPIEXEC:
         argv = [MPIEXEC, "-n", str(ranks)] + argv
     out = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env, cwd=str(cwd))
@@ -65,3 +66,15 @@ def test_rans2p_step_with_the_cut_through_a_dirichlet_corner_gives_the_serial_an
     for key in ("p2", "ps", "u2", "us", "v2", "vs"):
         numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
     assert parallel["newton"] == serial["newton"] < 20
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("trap", [0, 1])
+def test_poisson_with_flag_selected_strong_dirichlet_dofs_gives_the_serial_answer(trap, tmp_path):
+    """The same defect in a scalar model of the base Transport class (kept-DOF strong Dirichlet on the left face
+    only, chosen by flag): before the fix the trapped corner gave s = -3.476 on 2 ranks against -2 on one."""
+    _need_superlu_dist()
+    serial = _run(1, tmp_path, POISSON)
+    parallel = _run(2, tmp_path, POISSON, **({"TRAP": 1} if trap else {}))
+    for key in ("s", "s2"):
+        numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
