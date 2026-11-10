@@ -2444,7 +2444,7 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     mpi = Comm.get().comm.tompi4py()
     size, rank = mpi.Get_size(), mpi.Get_rank()
     if size == 1:
-        return numpy.zeros(0, dtype='i')
+        return numpy.zeros(0, dtype=cmeshTools.INDEX_DTYPE)
     nproc = par_r.dim_proc
     s2g = numpy.asarray(par_r.subdomain2global)
     nloc = s2g.shape[0]
@@ -2465,7 +2465,7 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     # (and likewise where two local dofs share a global number, as merged periodic dofs do)
     shared_numbers = int(numpy.unique(s2g).shape[0] != nloc)
     if mpi.allreduce(outside + shared_numbers, op=MPI.SUM) > 0:
-        return numpy.zeros(0, dtype='i')
+        return numpy.zeros(0, dtype=cmeshTools.INDEX_DTYPE)
     ranges = numpy.asarray(par_r.getOwnershipRanges())
     ghosts = numpy.arange(nproc, nloc)
     gown = numpy.searchsorted(ranges, s2g[ghosts], side='right') - 1
@@ -2512,7 +2512,7 @@ def strongDirichletNonAuthorityDofs(model, par_r):
         sel = numpy.where(gown == r)[0]
         zero_ghost.extend(ghosts[sel][back[r]].tolist())
     # an owned dof that no other rank sees is never shared: nothing to do for it
-    return numpy.array(sorted(zero_owned + zero_ghost), dtype='i')
+    return numpy.array(sorted(zero_owned + zero_ghost), dtype=cmeshTools.INDEX_DTYPE)
 
 
 def attachStrongDirichletAuthority(model, par_r, par_jacobian):
