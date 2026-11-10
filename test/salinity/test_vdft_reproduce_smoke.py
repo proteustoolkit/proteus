@@ -1,4 +1,4 @@
-"""Smoke runs of the manuscript decks in comp_geoscience_reproduce/.
+"""Smoke runs of the manuscript decks in vdft_reproduce/.
 
 CI does not collect that directory (it holds parun decks and plotting scripts, not tests), so this
 module runs each figure's deck for its first output time: copied into a temporary directory as its
@@ -17,7 +17,7 @@ import pytest
 from proteus import Context, LinearSolvers, NumericalSolution, default_s, default_so
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BUNDLE = os.path.join(HERE, 'comp_geoscience_reproduce')
+BUNDLE = os.path.join(HERE, 'vdft_reproduce')
 
 # simmons_uhd/run_level0.sh: UHD on the level-0 mesh
 SIMMONS_L0 = dict(SIMMONS_CASE='UHD', SIMMONS_LEVEL='0', SIMMONS_LEVEL_Z='0', SIMMONS_THETA='4',
