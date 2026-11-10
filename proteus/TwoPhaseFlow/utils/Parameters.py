@@ -149,18 +149,20 @@ def petsc_has_hypre():
 
 
 def rans2p_preconditioner(choice):
-    """The RANS2P preconditioner a choice resolves to: 'auto' is 'schur_boomeramg' when PETSc has hypre, 'asm' when not."""
-    if choice not in ('auto', 'asm', 'schur_boomeramg'):
-        raise ValueError("rans2p.preconditioner must be 'auto', 'asm' or 'schur_boomeramg', not %r" % (choice,))
+    """The RANS2P preconditioner a choice resolves to: 'auto' is 'schur_boomeramg' when PETSc has hypre and 'schur_gamg'
+    (the same Schur fieldsplit with PETSc's own GAMG in both blocks) when not."""
+    if choice not in ('auto', 'asm', 'schur_boomeramg', 'schur_gamg'):
+        raise ValueError("rans2p.preconditioner must be 'auto', 'asm', 'schur_boomeramg' or 'schur_gamg', not %r" % (choice,))
     if choice == 'auto':
         if petsc_has_hypre():
             return 'schur_boomeramg'
-        logEvent("TwoPhaseFlow: this PETSc has no hypre, so RANS2P's preconditioner is 'asm' (GMRES + ASM/LU) instead of "
-                 "the default 'schur_boomeramg'. Build PETSc with hypre (--download-hypre) for the faster default.", level=1)
-        return 'asm'
+        logEvent("TwoPhaseFlow: this PETSc has no hypre, so RANS2P's preconditioner is 'schur_gamg' (Schur fieldsplit with "
+                 "GAMG blocks) instead of the default 'schur_boomeramg'. Build PETSc with hypre (--download-hypre) for the "
+                 "faster default.", level=1)
+        return 'schur_gamg'
     if choice == 'schur_boomeramg' and not petsc_has_hypre():
         raise ValueError("rans2p.preconditioner = 'schur_boomeramg' needs a PETSc built with hypre "
-                         "(BoomerAMG); this PETSc has no hypre. Use 'auto' or 'asm', or rebuild PETSc with hypre.")
+                         "(BoomerAMG); this PETSc has no hypre. Use 'auto', 'schur_gamg' or 'asm', or rebuild PETSc with hypre.")
     return choice
 
 
@@ -379,9 +381,10 @@ class ParametersModelRANS2P(ParametersModelBase):
         self.n.maxNonlinearIts = 100
         self.n.maxLineSearches = 0
         # The preconditioner of the iterative RANS2P solve (useSuperlu off, the default linear smoother):
-        #   'auto'            (the default) 'schur_boomeramg' when PETSc has hypre, 'asm' when it does not;
+        #   'auto'            (the default) 'schur_boomeramg' when PETSc has hypre, 'schur_gamg' when it does not;
         #   'schur_boomeramg' GMRES + an upper Schur complement fieldsplit with BoomerAMG blocks (needs hypre;
         #                     refused at setup without it);
+        #   'schur_gamg'      the same fieldsplit with GAMG in both blocks, velocity block's aggressive coarsening off;
         #   'asm'             GMRES + ASM with an LU per subdomain.
         # See _initializePETScOptions for the numbers.
         self.preconditioner = 'auto'
@@ -545,8 +548,17 @@ class ParametersModelRANS2P(ParametersModelBase):
                 self.OptDB.setValue(prefix+'pc_fieldsplit_schur_precondition', 'selfp')
                 for block in ('velocity', 'pressure'):
                     self.OptDB.setValue(prefix+'fieldsplit_'+block+'_ksp_type', 'preonly')
-                    self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_type', 'hypre')
-                    self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_hypre_type', 'boomeramg')
+                    if preconditioner == 'schur_gamg':
+                        # The choice without hypre (C19 round 5, ON_NODE_PERFORMANCE_BASELINE §9.5). GAMG's default
+                        # aggressive coarsening on the velocity block's finest level gives a poor coarse space for the
+                        # convection-dominated momentum block (Newton failed in 2D); with it off, Newton and KSP
+                        # iteration counts are those of BoomerAMG's within a factor of 2.
+                        self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_type', 'gamg')
+                    else:
+                        self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_type', 'hypre')
+                        self.OptDB.setValue(prefix+'fieldsplit_'+block+'_pc_hypre_type', 'boomeramg')
+                if preconditioner == 'schur_gamg':
+                    self.OptDB.setValue(prefix+'fieldsplit_velocity_pc_gamg_aggressive_coarsening', 0)
             if self.n.linearSolverConvergenceTest == 'r-true':
                 self.n.linearSolverConvergenceTest = 'r'
         elif self.n.linearSmoother == LinearSolvers.NavierStokes_TwoPhasePCD:
