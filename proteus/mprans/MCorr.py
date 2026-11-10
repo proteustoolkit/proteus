@@ -39,7 +39,13 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  edgeBasedStabilizationMethods=False,
                  nullSpace='NoNullSpace',
                  useExact=False,
-                 initialize=True):
+                 initialize=True,
+                 exactJacobian='auto'):
+        # exactJacobian (sharp Heaviside, useExact=True only): 'analytic' = D/|grad phi| (needs a quadrature of degree >= nP + 2 = 4, else ValueError),
+        # 'fd' = finite difference of the equivalent-polynomial weights (any quadrature order, more expensive), 'auto' = analytic when the quadrature
+        # allows it, else fd (with a warning).  The smoothed Heaviside's Jacobian is always analytic and exact.
+        assert exactJacobian in ('auto', 'analytic', 'fd'), exactJacobian
+        self.exactJacobian = exactJacobian
         self.useExact=useExact
         self.useQuadraticRegularization = useQuadraticRegularization
         self.edgeBasedStabilizationMethods = edgeBasedStabilizationMethods
@@ -406,6 +412,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #
         elementQuadratureDict = {}
         elemQuadIsDict = isinstance(elementQuadrature, dict)
+        _quad = elementQuadrature['default'] if elemQuadIsDict and 'default' in elementQuadrature else (list(elementQuadrature.values())[0] if elemQuadIsDict else elementQuadrature)
+        self.quadrature_order = getattr(_quad, 'order', None)
         if elemQuadIsDict:  # set terms manually
             for I in self.coefficients.elementIntegralKeys:
                 if I in elementQuadrature:
@@ -796,6 +804,24 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["globalLumpedMassMatrix"] = self.LumpedMassMatrix
         self.mcorr.calculateMassMatrix(argsDict)
 
+    EQUIVALENT_POLYNOMIAL_ORDER = 2   # nP of GeneralizedFunctions in MCorr.h
+
+    def _exact_jacobian_fd(self):
+        """1 if the sharp-Heaviside Jacobian is assembled by finite differences of the equivalent-polynomial weights, else 0 (analytic)."""
+        mode = self.coefficients.exactJacobian
+        if not self.coefficients.useExact or mode == 'fd':
+            return 1 if (self.coefficients.useExact and mode == 'fd') else 0
+        degree_needed = self.EQUIVALENT_POLYNOMIAL_ORDER + 2   # equivalent polynomial degree + degree 2 of the integrand D N_i N_j
+        adequate = self.quadrature_order is not None and self.quadrature_order >= degree_needed
+        if mode == 'analytic' and not adequate:
+            raise ValueError("MCorr exactJacobian='analytic' needs a quadrature exact to degree %d (nP + 2 for D N_i N_j, nP the order of the equivalent polynomials) for the sharp "
+                             "Heaviside, found order %r; raise the quadrature order or use exactJacobian='fd' or 'auto'" % (degree_needed, self.quadrature_order))
+        if not adequate and not getattr(self, "_warned_exact_jacobian", False):
+            logEvent("MCorr: quadrature order %r < %d, the analytic sharp-Heaviside Jacobian would be inexact; using finite differences of the "
+                     "equivalent-polynomial weights (exactJacobian='auto')" % (self.quadrature_order, degree_needed), level=1)
+            self._warned_exact_jacobian = True
+        return 0 if adequate else 1
+
     def getJacobian(self, jacobian):
         cfemIntegrals.zeroJacobian_CSR(self.nNonzerosInJacobian, jacobian)
         argsDict = cArgumentsDict.ArgumentsDict()
@@ -849,6 +875,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["isActiveElement"] = self.isActiveElement
         argsDict["ebqe_phi_s"] = self.coefficients.flowCoefficients.ebqe_phi_s
         argsDict["phi_solid"] = self.coefficients.flowCoefficients.q_phi_solid
+        argsDict["exact_jacobian_fd"] = self._exact_jacobian_fd()
         self.mcorr.calculateJacobian(argsDict,
             self.coefficients.useExact)
         for global_dofN_a in np.argwhere(self.isActiveR==0.0):
@@ -1073,6 +1100,57 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             logEvent("   Mass Conservation Residual " + repr(its)+" ", level=3, data=R)
         self.u[0].dof.flat[:] = U
 
+    def globalConstantBisection(self, u, r):
+        """Mass-conserving CONSTANT shift c of the level set, mass(phi + c) = mass of the VOF phase, found by bracketing and bisection.
+
+        mass(phi + c) is monotone non-decreasing in c; for the exact (sharp) Heaviside it is piecewise smooth with kinks where the zero level
+        set crosses a node, which defeats Newton, but a bracketing method is unaffected.  Converged when |mass - target| <= atol (an absolute
+        tolerance, self.atol, e.g. sqrt(machine epsilon)) or the bracket reaches rounding level.  The shift is stored as the correction dof."""
+        co = self.coefficients
+        phi0 = np.array(co.lsModel.u[0].dof)
+        qphi0 = np.array(co.q_u_ls)
+        target = globalSum(Norms.scalarDomainIntegral(co.vofModel.q['dV'], co.vofModel.q[('m', 0)], self.mesh.nElements_owned))
+
+        def f(c):
+            return self.calculateMass(None, phi_dof=phi0 + c, q_phi_values=qphi0 + c) - target
+
+        h = float(np.max(self.elementDiameter))
+        c_lo = c_hi = 0.0
+        f0 = f(0.0)
+        self.bisection_its = 0
+        if abs(f0) <= self.atol:
+            c = 0.0
+        else:
+            step = 1.0e-4 * h
+            sign = -1.0 if f0 > 0 else 1.0          # f0 > 0: too much mass, decrease phi
+            a, fa = 0.0, f0
+            for _ in range(80):                       # bracket
+                b = a + sign * step
+                fb = f(b)
+                self.bisection_its += 1
+                if fa * fb <= 0.0:
+                    break
+                a, fa = b, fb
+                step *= 2.0
+            else:
+                raise RuntimeError("MCorr bisection: could not bracket the mass-conserving shift (|f(0)| = %g)" % abs(f0))
+            lo, hi = (a, b) if a < b else (b, a)
+            flo, fhi = (fa, fb) if a < b else (fb, fa)
+            c = 0.5 * (lo + hi)
+            for _ in range(self.maxIts if self.maxIts > 200 else 200):
+                c = 0.5 * (lo + hi)
+                fc = f(c)
+                self.bisection_its += 1
+                if abs(fc) <= self.atol or (hi - lo) <= 4.0 * np.finfo(float).eps * max(1.0, abs(c)):
+                    break
+                if fc * flo <= 0.0:
+                    hi, fhi = c, fc
+                else:
+                    lo, flo = c, fc
+        self.coefficients.massConservationError = abs(f(c))
+        logEvent("   Mass Conservation bisection: shift %.6e, residual %.3e, %d mass evaluations" % (c, self.coefficients.massConservationError, self.bisection_its), level=3)
+        self.u[0].dof.flat[:] = c
+
     def calculateElementQuadrature(self):
         """
         Calculate the physical location and weights of the quadrature rules
@@ -1109,7 +1187,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def calculateAuxiliaryQuantitiesAfterStep(self):
         pass
 
-    def calculateMass(self, q_phi):
+    def calculateMass(self, q_phi, phi_dof=None, q_phi_values=None):
+        """Phase 0 mass of the level set whose quadrature values are q_phi (smoothed Heaviside) and, when useExact, whose nodal values
+        are phi_dof (default: the level set model's dof); the exact path ignores q_phi."""
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
@@ -1139,8 +1219,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["elementDiameter"] = self.elementDiameter
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
         argsDict["u_dof"] = self.u[0].dof
-        argsDict["phi_dof"] = self.coefficients.lsModel.u[0].dof
-        argsDict["q_phi"] = self.coefficients.q_u_ls
+        argsDict["phi_dof"] = self.coefficients.lsModel.u[0].dof if phi_dof is None else phi_dof
+        argsDict["q_phi"] = self.coefficients.q_u_ls if q_phi_values is None else q_phi_values
         argsDict["q_normal_phi"] = self.coefficients.q_n_ls
         argsDict["ebqe_phi"] = self.coefficients.ebqe_u_ls
         argsDict["ebqe_normal_phi"] = self.coefficients.ebqe_n_ls
@@ -1308,7 +1388,7 @@ class DummyNewton(proteus.NonlinearSolvers.NonlinearSolver):
         self.par_du = par_du
         if par_du is not None:
             F.dim_proc = par_du.dim_proc
-        NonlinearSolver.__init__(self, F, J, du,
+        proteus.NonlinearSolvers.NonlinearSolver.__init__(self, F, J, du,
                                  rtol_r,
                                  atol_r,
                                  rtol_du,
@@ -1366,7 +1446,7 @@ class ElementNewton(proteus.NonlinearSolvers.NonlinearSolver):
         self.par_du = par_du
         if par_du is not None:
             F.dim_proc = par_du.dim_proc
-        NonlinearSolver.__init__(self, F, J, du,
+        proteus.NonlinearSolvers.NonlinearSolver.__init__(self, F, J, du,
                                  rtol_r,
                                  atol_r,
                                  rtol_du,
@@ -1426,7 +1506,7 @@ class ElementConstantNewton(proteus.NonlinearSolvers.NonlinearSolver):
         self.par_du = par_du
         if par_du is not None:
             F.dim_proc = par_du.dim_proc
-        NonlinearSolver.__init__(self, F, J, du,
+        proteus.NonlinearSolvers.NonlinearSolver.__init__(self, F, J, du,
                                  rtol_r,
                                  atol_r,
                                  rtol_du,
@@ -1486,7 +1566,7 @@ class GlobalConstantNewton(proteus.NonlinearSolvers.NonlinearSolver):
         self.par_du = par_du
         if par_du is not None:
             F.dim_proc = par_du.dim_proc
-        NonlinearSolver.__init__(self, F, J, du,
+        proteus.NonlinearSolvers.NonlinearSolver.__init__(self, F, J, du,
                                  rtol_r,
                                  atol_r,
                                  rtol_du,
@@ -1521,6 +1601,44 @@ class GlobalConstantNewton(proteus.NonlinearSolvers.NonlinearSolver):
         self.F.maxLSits = self.maxLSits
         self.F.atol = self.atol_r
         self.F.globalConstantSolve(u, r)
+        self.failedFlag = False
+        return self.failedFlag
+
+
+class GlobalConstantBisection(proteus.NonlinearSolvers.NonlinearSolver):
+    """Level solver for MCorr correctionType 'bisect': constant mass-conserving shift by bracketing + bisection."""
+
+    def __init__(self,
+                 linearSolver,
+                 F, J=None, du=None, par_du=None,
+                 rtol_r=1.0e-4,
+                 atol_r=1.0e-16,
+                 rtol_du=1.0e-4,
+                 atol_du=1.0e-16,
+                 maxIts=100,
+                 norm=l2Norm,
+                 convergenceTest='r',
+                 computeRates=True,
+                 printInfo=True,
+                 fullNewton=True,
+                 directSolver=False,
+                 EWtol=True,
+                 maxLSits=100):
+        self.par_du = par_du
+        if par_du is not None:
+            F.dim_proc = par_du.dim_proc
+        proteus.NonlinearSolvers.NonlinearSolver.__init__(self, F, J, du, rtol_r, atol_r, rtol_du, atol_du, maxIts, norm, convergenceTest,
+                                                          computeRates, printInfo)
+        self.linearSolver = linearSolver
+        self.updateJacobian = False
+
+    def info(self):
+        return "Not Implemented"
+
+    def solve(self, u, r=None, b=None, par_u=None, par_r=None):
+        self.F.maxIts = self.maxIts
+        self.F.atol = self.atol_r
+        self.F.globalConstantBisection(u, r)
         self.failedFlag = False
         return self.failedFlag
 
