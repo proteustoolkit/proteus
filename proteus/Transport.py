@@ -7089,6 +7089,8 @@ class MultilevelTransport(object):
                 par_du = None
                 par_jacobian = None
             
+            if par_r is not None:
+                attachStrongDirichletAuthority(transport, par_r, par_jacobian)
             self.par_uList.append(par_u)
             self.par_duList.append(par_du)
             self.par_rList.append(par_r)
