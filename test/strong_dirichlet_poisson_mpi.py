@@ -33,6 +33,7 @@ if os.environ.get("TRAP"):
     install((LEFT,), ([0.0, 0.0], [0.0, 1.0]), report=lambda n: print("PROBE trapped corners", n, flush=True))
 mo = MeshTools.getMeshOptions(domain)
 mo.he = HE
+mo.triangleOptions = "VApq30Dena%8.8f" % ((HE ** 2) / 2.0,)
 mo.parallelPartitioningType = MeshTools.MeshParallelPartitioningTypes.element
 mo.nLayersOfOverlapForParallel = 0
 mo.genMesh = True

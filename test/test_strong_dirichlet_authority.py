@@ -69,12 +69,13 @@ def test_rans2p_step_with_the_cut_through_a_dirichlet_corner_gives_the_serial_an
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("ranks", [2, 4])
 @pytest.mark.parametrize("trap", [0, 1])
-def test_poisson_with_flag_selected_strong_dirichlet_dofs_gives_the_serial_answer(trap, tmp_path):
+def test_poisson_with_flag_selected_strong_dirichlet_dofs_gives_the_serial_answer(ranks, trap, tmp_path):
     """The same defect in a scalar model of the base Transport class (kept-DOF strong Dirichlet on the left face
-    only, chosen by flag): before the fix the trapped corner gave s = -3.476 on 2 ranks against -2 on one."""
+    only, chosen by flag): before the fix the trapped corner gave s = -173.293 on 2 and 4 ranks against -171.802 on one."""
     _need_superlu_dist()
     serial = _run(1, tmp_path, POISSON)
-    parallel = _run(2, tmp_path, POISSON, **({"TRAP": 1} if trap else {}))
+    parallel = _run(ranks, tmp_path, POISSON, **({"TRAP": 1} if trap else {}))
     for key in ("s", "s2"):
         numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
