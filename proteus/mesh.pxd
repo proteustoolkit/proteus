@@ -73,9 +73,9 @@ cdef extern from "mesh.h":
     cdef struct MultilevelMesh:
         int nLevels
         Mesh* meshArray
-        int **elementParentsArray
-        int **elementChildrenArray
-        int **elementChildrenOffsets
+        proteus_index_t **elementParentsArray
+        proteus_index_t **elementChildrenArray
+        proteus_index_t **elementChildrenOffsets
 
     cdef void initializeMultilevelMesh(MultilevelMesh& multilevelMesh)
 
@@ -242,11 +242,11 @@ cdef extern from "mesh.h":
 
     cdef int assignElementBoundaryMaterialTypesFromParent(Mesh& parentMesh,
                                                           Mesh& childMesh,
-                                                          const int* levelElementParentsArray,
+                                                          const proteus_index_t* levelElementParentsArray,
 						                                  const int& nSpace_global)
     cdef int allocateNodeAndElementNodeDataStructures(Mesh& mesh,
-                                                      int nElements_global,
-                                                      int nNodes_global,
+                                                      proteus_index_t nElements_global,
+                                                      proteus_index_t nNodes_global,
                                                       int nNodes_element)
     cdef struct triangulateio
 

@@ -212,15 +212,15 @@ void computeLocalGradient3d(double * x0, double * x1, double * x2, double * x3,
   dU[2]  = u0*dN0[2] + u1*dN1[2] + u2*dN2[2] + u3*dN3[2];
 }
 void applyDGlimitingP1Lagrange1d(int limiterFlag,
-				 int nElements_global,
+				 proteus_index_t nElements_global,
 				 int nNodes_element,
 				 int nElementBoundaries_element,
 				 int nDOF_element,
-				 int * elementNodesArray,  
-				 int * elementNeighborsArray,
+				 proteus_index_t * elementNodesArray,  
+				 proteus_index_t * elementNeighborsArray,
 				 double * nodeArray,
 				 double * elementBarycentersArray,
-				 int * l2g,
+				 proteus_index_t * l2g,
 				 int * tag,
 				 double * Uin,
 				 double * Uout)
@@ -254,7 +254,7 @@ void applyDGlimitingP1Lagrange1d(int limiterFlag,
    ***********************************************************************/
   
   int eN;
-  int eN0,eN1,nN0,nN1,ndof0,ndof1;
+  proteus_index_t eN0, eN1, nN0, nN1, ndof0, ndof1;
 
   double dUlim,dU,dU0,dU1,Ubar,Ubar0,Ubar1;
   double xbar,xbar0,xbar1,dx;
@@ -309,15 +309,15 @@ void applyDGlimitingP1Lagrange1d(int limiterFlag,
 
 void applyDGlimitingP1Lagrange1d_withVacuumTol(int enforcePositivity,
 					       double vacuumTol,
-					       int nElements_global,
+					       proteus_index_t nElements_global,
 					       int nNodes_element,
 					       int nElementBoundaries_element,
 					       int nDOF_element,
-					       int * elementNodesArray,  
-					       int * elementNeighborsArray,
+					       proteus_index_t * elementNodesArray,  
+					       proteus_index_t * elementNeighborsArray,
 					       double * nodeArray,
 					       double * elementBarycentersArray,
-					       int * l2g,
+					       proteus_index_t * l2g,
 					       int * tag,
 					       double * Uin,
 					       double * Uout)
@@ -351,7 +351,7 @@ void applyDGlimitingP1Lagrange1d_withVacuumTol(int enforcePositivity,
    ***********************************************************************/
   
   int eN;
-  int eN0,eN1,nN0,nN1,ndof0,ndof1;
+  proteus_index_t eN0, eN1, nN0, nN1, ndof0, ndof1;
 
   double dUlim,dU,dU0,dU1,Ubar,Ubar0,Ubar1,Umin,UminA;
   double xbar,xbar0,xbar1,dx;
@@ -406,11 +406,11 @@ void applyDGlimitingP1Lagrange1d_withVacuumTol(int enforcePositivity,
 
 }
 
-void computeElementNeighborShapeGradients(int nElements_global,
+void computeElementNeighborShapeGradients(proteus_index_t nElements_global,
 					  int nElementBoundaries_element,
 					  int nSpace,
-					  const int * elementBoundariesArray,
-					  const int * elementNeighborsArray,
+					  const proteus_index_t * elementBoundariesArray,
+					  const proteus_index_t * elementNeighborsArray,
 					  double * elementBarycentersArray,
 					  double * elementBoundaryBarycentersArray,
 					  double * elementNeighborShapeGradients)
@@ -428,7 +428,7 @@ void computeElementNeighborShapeGradients(int nElements_global,
 
        
    ***********************************************************************/
-  int eN,ebN,eN_opposite,ebN_global,ebNplus1, ebNplus2,I;
+  proteus_index_t eN_opposite, ebN_global, I; int eN, ebN, ebNplus1, ebNplus2;
   double u[4] = {1.0,1.0,1.0,1.0};
   double dU[3]= {0.0,0.0,0.0};
   /*local shape gradients (nSpace+1)*/
@@ -646,18 +646,19 @@ void computeElementNeighborShapeGradients(int nElements_global,
     }/*3d*/
 }
 
-void computeCockburnDGlimiterArrays2d(int nElements_global,
+void computeCockburnDGlimiterArrays2d(proteus_index_t nElements_global,
 				      int nElementBoundaries_element,
 				      int nSpace,
-				      const int * elementBoundariesArray,
-				      const int * elementNeighborsArray,
+				      const proteus_index_t * elementBoundariesArray,
+				      const proteus_index_t * elementNeighborsArray,
 				      const double * elementBarycentersArray,
 				      const double * elementBoundaryBarycentersArray,
 				      const double * elementNeighborShapeGradients,
 				      double * alphas,
-				      int * alphaNeighbors)
+				      proteus_index_t * alphaNeighbors)
 {
-  int eN,ebN,ebN_global,ebN_I,ebN_Iplus1,eN_ebN_I,eN_ebN_Iplus1,lamn[2],
+  proteus_index_t eN,ebN,ebN_global,eN_ebN_I,eN_ebN_Iplus1,lamn[2];
+  int ebN_I,ebN_Iplus1,
     onBoundary,positiveFound;
   double lam[2];
 
@@ -735,15 +736,15 @@ void computeCockburnDGlimiterArrays2d(int nElements_global,
 
 void applyCockburnDGlimiterP1Lagrange2d(double nu,
 					double Mh2,
-					int nElements_global,
+					proteus_index_t nElements_global,
 					int nElementBoundaries_element,
 					int nSpace,
 					int nDOF_element,
-					int * elementNeighborsArray,
-					int * l2g,
+					proteus_index_t * elementNeighborsArray,
+					proteus_index_t * l2g,
 					int * tag,
 					double * alphas,
-					int * alphaNeighbors,
+					proteus_index_t * alphaNeighbors,
 					double * Uin,
 					double * Uout)
 {
@@ -836,13 +837,13 @@ void applyCockburnDGlimiterP1Lagrange2d(double nu,
       */
     }/*eN*/
 }
-void computeElementAveragesP1Lagrange(int nElements_global,
+void computeElementAveragesP1Lagrange(proteus_index_t nElements_global,
 				      int nDOF_element,
-				      const int * l2g,
+				      const proteus_index_t * l2g,
 				      const double * Uin,
 				      double * elementAverages)
 {
-  int eN,i,I;
+  proteus_index_t I; int eN, i;
   const double denom = 1.0/nDOF_element;
   for (eN = 0; eN < nElements_global; eN++)
     {
@@ -878,19 +879,19 @@ void shortSortDescending(double *A, int * order, int len)
 }
 void applyDurlofskyDGlimiterP1Lagrange2d(int killExtrema,
 					 int allowMinWithUndershoot,
-					 int nElements_global,
+					 proteus_index_t nElements_global,
 					 int nElementBoundaries_element,
 					 int nNodes_element,
 					 int nSpace,
 					 int nDOF_element,
-					 const int * elementNeighborsArray,
-					 const int * elementBoundariesArray,
-					 const int * elementNodesArray,
+					 const proteus_index_t * elementNeighborsArray,
+					 const proteus_index_t * elementBoundariesArray,
+					 const proteus_index_t * elementNodesArray,
 					 const double * nodeArray,
 					 const double * elementBarycentersArray,
 					 const double * elementBoundaryBarycentersArray,
 					 const double * elementNeighborShapeGradients,
-					 const int * l2g,
+					 const proteus_index_t * l2g,
 					 const double * grad_v0,
 					 double * elementAverages,
 					 int * tag,
@@ -898,14 +899,14 @@ void applyDurlofskyDGlimiterP1Lagrange2d(int killExtrema,
 					 double * Uout)
 {
   /*this should be Durlofsky's original version with Phi limiter (not the min one)*/
-  int eN,nN_global,ebN,ebN_global,ebN_1,eN_ebN,eN_ebN_1,onBoundary,isExtremum;
+  proteus_index_t nN_global, ebN_global, eN_ebN, eN_ebN_1; int eN, ebN, ebN_1, onBoundary, isExtremum;
   int dUdescendingOrder[4];
   double normDU[4],dU[4][2],max_ebN,min_ebN,uM;
   /*mwf debug*/
   double normDUsave[4];
   int maxFound,minFound,islot,i,itmp,okGradient;
   int nElementBoundaries_element2 = nElementBoundaries_element*nElementBoundaries_element;
-  register int DOF0,DOF1,DOF2;
+  register proteus_index_t DOF0, DOF1, DOF2;
   register double dUlim0,dUlim1;
   register double uBar,uBar_ebN,uBar_ebN_1;
 
@@ -1106,19 +1107,19 @@ void applyDurlofskyDGlimiterP1Lagrange2d(int killExtrema,
 
 void applyDurlofskyDGlimiterP1Lagrange3d(int killExtrema,
 					 int allowMinWithUndershoot,
-					 int nElements_global,
+					 proteus_index_t nElements_global,
 					 int nElementBoundaries_element,
 					 int nNodes_element,
 					 int nSpace,
 					 int nDOF_element,
-					 const int * elementNeighborsArray,
-					 const int * elementBoundariesArray,
-					 const int * elementNodesArray,
+					 const proteus_index_t * elementNeighborsArray,
+					 const proteus_index_t * elementBoundariesArray,
+					 const proteus_index_t * elementNodesArray,
 					 const double * nodeArray,
 					 const double * elementBarycentersArray,
 					 const double * elementBoundaryBarycentersArray,
 					 const double * elementNeighborShapeGradients,
-					 const int * l2g,
+					 const proteus_index_t * l2g,
 					 const double * grad_v0,
 					 double * elementAverages,
 					 int * tag,
@@ -1126,14 +1127,14 @@ void applyDurlofskyDGlimiterP1Lagrange3d(int killExtrema,
 					 double * Uout)
 {
   /*try 3d version of  Durlofsky's original version with Phi limiter (not the min one)*/
-  int eN,nN_global,ebN,ebN_global,ebN_1,ebN_2,eN_ebN,eN_ebN_1,eN_ebN_2,onBoundary,isExtremum;
+  proteus_index_t nN_global, ebN_global, eN_ebN, eN_ebN_1, eN_ebN_2; int eN, ebN, ebN_1, ebN_2, onBoundary, isExtremum;
   int dUdescendingOrder[5];
   double normDU[5],dU[5][3],max_ebN,min_ebN,uM;
   /*mwf for debugging*/
   double normDUsave[5];
   int maxFound,minFound,islot,i,itmp,okGradient;
   int nElementBoundaries_element2 = nElementBoundaries_element*nElementBoundaries_element;
-  register int DOF0,DOF1,DOF2,DOF3;
+  register proteus_index_t DOF0, DOF1, DOF2, DOF3;
   register double dUlim0,dUlim1,dUlim2;
   register double uBar,uBar_ebN,uBar_ebN_1,uBar_ebN_2;
 
@@ -1398,19 +1399,19 @@ void applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol(int killExtrema,
 						       int allowMinWithUndershoot,
 						       int enforcePositivity,
 						       double vacuumTol,
-						       int nElements_global,
+						       proteus_index_t nElements_global,
 						       int nElementBoundaries_element,
 						       int nNodes_element,
 						       int nSpace,
 						       int nDOF_element,
-						       const int * elementNeighborsArray,
-						       const int * elementBoundariesArray,
-						       const int * elementNodesArray,
+						       const proteus_index_t * elementNeighborsArray,
+						       const proteus_index_t * elementBoundariesArray,
+						       const proteus_index_t * elementNodesArray,
 						       const double * nodeArray,
 						       const double * elementBarycentersArray,
 						       const double * elementBoundaryBarycentersArray,
 						       const double * elementNeighborShapeGradients,
-						       const int * l2g,
+						       const proteus_index_t * l2g,
 						       const double * grad_v0,
 						       double * elementAverages,
 						       int * tag,
@@ -1418,14 +1419,14 @@ void applyDurlofskyDGlimiterP1Lagrange2d_withVacuumTol(int killExtrema,
 						       double * Uout)
 {
   /*this should be Durlofsky's original version with Phi limiter (not the min one)*/
-  int eN,nN_global,ebN,ebN_global,ebN_1,eN_ebN,eN_ebN_1,onBoundary,isExtremum;
+  proteus_index_t nN_global, ebN_global, eN_ebN, eN_ebN_1; int eN, ebN, ebN_1, onBoundary, isExtremum;
   int dUdescendingOrder[4];
   double normDU[4],dU[4][2],max_ebN,min_ebN,uM;
   /*mwf debug*/
   double normDUsave[4];
   int maxFound,minFound,islot,i,itmp,okGradient;
   int nElementBoundaries_element2 = nElementBoundaries_element*nElementBoundaries_element;
-  register int DOF0,DOF1,DOF2;
+  register proteus_index_t DOF0, DOF1, DOF2;
   register double dUlim0,dUlim1;
   register double uBar,uBar_ebN,uBar_ebN_1;
 
