@@ -33,14 +33,14 @@ model:
         for: φ
         equation: "∂φ/∂t + v·∇φ = 0  in Ω"
     coefficients:
-      χ:  {formula: "heaviside(φ)", units: "1"}
-      ρ:  {formula: "ρw (1 − χ) + ρa χ", units: kg/m3}
-      μ:  {formula: "ρw νw (1 − χ) + ρa νa χ", units: Pa*s}
+      χ:  {formula: "heaviside(φ)", units: "1", role: phase_indicator}
+      ρ:  {formula: "ρw (1 − χ) + ρa χ", units: kg/m3, role: density}
+      μ:  {formula: "ρw νw (1 − χ) + ρa νa χ", units: Pa*s, role: dynamic_viscosity}
       ρw: {units: kg/m3}
       νw: {units: m2/s}
       ρa: {units: kg/m3}
       νa: {units: m2/s}
-      g:  {units: m/s2}
+      g:  {units: m/s2, role: gravity}
     # what the cases' walls and tops mean, written once (Proteus's
     # BC_RANS.setFreeSlip and setAtmosphere, for this model's unknowns)
     condition_sets:

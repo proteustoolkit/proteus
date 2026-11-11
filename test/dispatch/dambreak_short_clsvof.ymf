@@ -1,0 +1,26 @@
+# The dam break of dambreak.ymf, level_set_clsvof alone (RANS2P and CLSVOF in place of the four interface solves),
+# for three output intervals (0.01 s each) on the coarse mesh of damBreakLevelSet.py he=0.08 (h = 0.2576), with the
+# deck's direct solves. test_dispatch_run.py runs it from the spec through ymf_run and from the deck through parun
+# with interface=1, and compares the solutions bitwise. The atmosphere is the spec's (p = 0, no flux, φ signed + where
+# flow enters); setAtmosphere imposes no CLSVOF data, and the run's record says so.
+extends: dambreak.ymf
+remove:
+  - "solution_paths.discretizations[level_set_five]"
+  - "solution_paths.discretizations[clsvof_projection]"
+
+model:
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 0.03]"
+    initial_conditions:
+      # the same φ0 with hypot as in dambreak_short.ymf (the deck's arithmetic, to the last bit)
+      - field: φ
+        type: function
+        formula: "hypot(max(x − 1.2, 0), max(y − 0.6, 0)) + min(max(x − 1.2, y − 0.6), 0)"
+        units: m
+
+solution_paths:
+  discretizations:
+    - name: level_set_clsvof
+      mesh: {h: 0.2576}
+      discretization: {outputs: 3}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: direct, max_iterations: 50}

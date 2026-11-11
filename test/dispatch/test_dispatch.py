@@ -13,6 +13,7 @@ import contextlib
 import copy
 import importlib.util
 import os
+import re
 import sys
 
 import pytest
@@ -173,13 +174,13 @@ def test_shallow_water_is_SWFlow(lake):
     assert resolve(found.system["systemStepControllerType"]) is default_so.systemStepControllerType
 
 
-def _dispersive(lake):
+def _dispersive(lake, assumption="dispersive"):
     """The lake at rest declared as the relaxed Serre-Green-Naghdi model. ymf cannot write the dispersive
     equations yet (no D/Dt, C42 section 4.3), so the family is read from the declared assumptions alone."""
     doc = copy.deepcopy(lake)
-    doc["model"]["physical_model"]["assumptions"] = ["depth_averaged", "hyperbolic_relaxation"]
+    doc["model"]["physical_model"]["assumptions"] = ["depth_averaged", assumption]
     entry = doc["solution_paths"]["discretizations"][0]
-    entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": "SSP_RK3",
+    entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": "ssp_rk3",
                                "lumped_mass": "false"}
     entry["subproblems"][0]["proteus"] = {"model": "GN_SW2DCV", "INTEGRATE_BY_PARTS_WALLS": "1"}
     return doc
@@ -192,6 +193,55 @@ def test_dispersive_shallow_water_is_SWFlow_GN(lake):
     assert model.module == "proteus.mprans.GN_SW2DCV"
     p, n = _swflow("dSWEs_steady_state", "GN_sw_p", "GN_sw_n")
     _compare_model(model, p, n, 2)
+
+
+# ---- ymf's words (C5 step 3): the table is keyed on ymf.vocabulary, a spec's older words are aliases -------------
+
+def test_ymf_words_dispatch_as_their_older_aliases_did(dambreak):
+    """The projection discretization with the velocity step's ``vbdf`` written ``bdf2`` (ymf's word) dispatches to
+    the same cells and the same flags: nothing the aliases accept changes what runs."""
+    spec = copy.deepcopy(dambreak)
+    older = copy.deepcopy(dambreak)
+    _sub(spec, "clsvof_projection", "flow")["time_integration"] = "bdf2"
+    _sub(older, "clsvof_projection", "flow")["time_integration"] = "vbdf"
+    found, again = dispatch(spec, "clsvof_projection"), dispatch(older, "clsvof_projection")
+    assert found.as_dict() == again.as_dict()
+    (flow,) = [m for m in found if m.role == "velocity"]
+    assert flow.numerics["timeIntegration"] == "proteus.TimeIntegration.VBDF" and flow.numerics["timeOrder"] == 2
+    assert [m.role for m in found] == ["level_set_redistanced", "velocity", "pressure_increment", "pressure",
+                                       "pressure_spin_up"]
+
+
+def test_the_scheme_block_in_ymf_words_and_in_the_older_ones_dispatch_alike(lake):
+    """``ssp_rk3`` and ``entropy_viscosity_coefficient`` against ``SSP_RK3`` and ``entropy_viscosity_cE``."""
+    def build(time, option):
+        doc = copy.deepcopy(lake)
+        entry = _entry(doc, "convex_limited")
+        entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": time,
+                                   option: "2.5", "lumped_mass": "false"}
+        entry["subproblems"][0]["time_integration"] = time
+        return dispatch(doc, "convex_limited")
+    found, older = build("ssp_rk3", "entropy_viscosity_coefficient"), build("SSP_RK3", "entropy_viscosity_cE")
+    assert found.as_dict() == older.as_dict()
+    (swe,) = found.models
+    assert swe.coefficients["cE"] == 2.5 and swe.numerics["timeOrder"] == 3
+
+
+def test_the_dispersive_family_is_identified_by_dispersive_and_by_the_older_hyperbolic_relaxation(lake):
+    for assumption in ("dispersive", "hyperbolic_relaxation"):
+        found = dispatch(_dispersive(lake, assumption), "convex_limited")
+        assert found.family == "dispersive_shallow_water" and found.models[0].cell == "gn_sw2dcv"
+
+
+def test_residual_shock_capturing_is_the_RANS3PF_artificial_viscosity_1(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "clsvof_projection", "flow")["stabilization"] = {"method": "residual_shock_capturing"}
+    (flow,) = [m for m in dispatch(doc, "clsvof_projection") if m.role == "velocity"]
+    assert (flow.coefficients["ARTIFICIAL_VISCOSITY"], flow.coefficients["USE_SUPG"]) == (1, 0)
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "clsvof_projection", "flow")["stabilization"] = {"method": "shock_capturing"}     # the older word
+    (flow,) = [m for m in dispatch(doc, "clsvof_projection") if m.role == "velocity"]
+    assert flow.coefficients["ARTIFICIAL_VISCOSITY"] == 1
 
 
 # ---- refusals ----------------------------------------------------------------------------------------------------
@@ -232,8 +282,8 @@ def test_an_uncovered_space_is_refused_by_name(dambreak):
 
 def test_an_uncovered_time_integration_is_refused(dambreak):
     doc = copy.deepcopy(dambreak)
-    _sub(doc, "level_set_five", "vof")["time_integration"] = "SSP_RK3"
-    with pytest.raises(DispatchError, match="vof: time integration SSP_RK3, the cell has backward_euler"):
+    _sub(doc, "level_set_five", "vof")["time_integration"] = "ssp_rk3"
+    with pytest.raises(DispatchError, match="vof: time integration ssp_rk3, the cell has backward_euler"):
         dispatch(doc, "level_set_five")
 
 
@@ -263,7 +313,7 @@ def test_a_cell_without_the_sub_problems_it_needs_is_refused(dambreak):
     doc = copy.deepcopy(dambreak)
     entry = _entry(doc, "clsvof_projection")
     entry["subproblems"] = [s for s in entry["subproblems"] if s["name"] != "pressureInit"]
-    with pytest.raises(DispatchError, match="rans3pf_projection .* needs sub-problems with roles pressure_initial"):
+    with pytest.raises(DispatchError, match="rans3pf_projection .* needs sub-problems with roles pressure_spin_up"):
         dispatch(doc, "clsvof_projection")
 
 
@@ -272,6 +322,36 @@ def test_a_sharp_heaviside_is_refused(dambreak):
     del _entry(doc, "level_set_five")["regularize"]
     with pytest.raises(DispatchError, match="heaviside is sharp"):
         dispatch(doc, "level_set_five")
+
+
+def _vof_eps(doc):
+    return next(m for m in dispatch(doc, "level_set_five") if m.role == "volume_fraction").coefficients["epsFact"]
+
+
+def test_a_width_is_a_number_times_the_element_size_or_the_element_size_itself(dambreak):
+    doc = copy.deepcopy(dambreak)
+    assert _vof_eps(doc) == 1.5                                            # ε = 1.5 h
+    _entry(doc, "level_set_five")["regularize"]["heaviside"]["width"] = "h"   # h is bound with meaning element_size
+    assert _vof_eps(doc) == 1.0
+
+
+def test_a_width_that_is_not_bound_or_not_a_multiple_of_the_element_size_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "level_set_five")["regularize"]["heaviside"]["width"] = "δ"
+    with pytest.raises(DispatchError, match="heaviside's width δ is not bound by the discretization"):
+        dispatch(doc, "level_set_five")
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "level_set_five")["binds"]["ε"] = {"formula": "h^2"}
+    with pytest.raises(DispatchError, match="reads a width as a number times the element size"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_model_in_two_families_that_names_none_is_refused(dambreak):
+    from proteus.Dispatch import family_of
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["physical_model"]["assumptions"] = ["hydrostatic", "depth_averaged", "nondispersive"]
+    with pytest.raises(DispatchError, match="identifies the families two_phase_level_set, shallow_water; say which"):
+        family_of(doc)
 
 
 def test_an_unread_scheme_option_is_refused(lake):
@@ -375,16 +455,36 @@ def test_ymf_run_refuses_a_split_discretization_meshed_by_cells(tmp_path, capsys
 
 
 def test_ymf_run_refuses_a_boundary_no_setter_imposes_before_anything_runs(tmp_path, capsys):
-    """level_set_clsvof dispatches (RANS2P + CLSVOF), but no sub-problem carries χ, so the closed atmosphere has
-    no χ inflow, and no BC_RANS setter imposes what is left (p = 0, zero velocity flux): refused up front, exit 2,
-    rather than imposing setAtmosphere's other data under the spec's name."""
+    """level_set_clsvof dispatches (RANS2P + CLSVOF) and its atmosphere is a setter's (below); an atmosphere that
+    holds the pressure at 1 is none, and is refused up front, exit 2, rather than imposing setAtmosphere's other
+    data under the spec's name."""
     from proteus.cli import ymfrun
-    assert ymfrun.main([os.path.join(HERE, "dambreak.ymf"), "--discretization", "level_set_clsvof",
-                        "--outdir", str(tmp_path)]) == 2
+    spec = tmp_path / "high_pressure.ymf"
+    spec.write_text("extends: %s\nmodel:\n  strong_form:\n    condition_sets:\n      atmosphere:\n"
+                    "        - {variable: p, type: dirichlet, value: 1.0}\n        - {variable: v, type: open}\n"
+                    "        - {variable: χ, type: inflow, value: 1.0}\n"
+                    % os.path.join(HERE, "dambreak_short_clsvof.ymf"), encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    assert ymfrun.main([str(spec), "--outdir", str(out)]) == 2
     err = capsys.readouterr().err
     assert "level_set_clsvof: split into sub-problems (flow, clsvof). It dispatches to flow RANS2P, clsvof CLSVOF, " \
         "and cannot run: region top (side y+): no BC_RANS setter imposes its closed conditions" in err
-    assert not os.listdir(str(tmp_path))
+    assert not os.listdir(str(out))
+
+
+def test_the_clsvof_atmosphere_is_setAtmosphere_and_the_run_says_what_it_does_not_impose():
+    """With CLSVOF as the interface solver no sub-problem carries χ, and ymf states the atmosphere's inflow on φ
+    (sign 1, indicator value 1.0): the top is setAtmosphere(vof_air=1.0), as the deck has it, with a note that
+    setAtmosphere sets no CLSVOF data. The same atmosphere with VOF carrying χ is setAtmosphere without a note."""
+    from proteus.DispatchRun import tank_sides
+    from ymf.symbolic.split import split_problem
+    for name, note in (("level_set_clsvof", True), ("level_set_five", False)):
+        sides = tank_sides(split_problem(_spec("dambreak.ymf"), name))
+        region, setter, kwargs, said = sides["y+"]
+        assert (setter, kwargs) == ("setAtmosphere", {"vof_air": 1.0}), name
+        assert bool(said) == note and (not note or "sets no CLSVOF boundary data" in said and "1.0" in said), said
+        assert sides["x-"][1] == "setFreeSlip" and sides["x-"][3] == ""
 
 
 def _dispatch_record(path, old, new):
@@ -407,22 +507,24 @@ def test_ymf_run_keeps_reproduces_and_refuses_a_split_output(tmp_path, capsys):
     out = str(tmp_path)
     archive = os.path.join(out, "dambreak_short.archive.ymf")
     assert ymfrun.main([spec, "--outdir", out]) == 0
-    capsys.readouterr()
+    # the output's key is the digest of the spec's inputs: read it, so that a change of the spec does not need a
+    # constant edited here
+    digest = re.search(r"h 0\.2576, levels 1  ([0-9a-f]{12})", capsys.readouterr().out).group(1)
     assert ymfrun.main([spec, "--outdir", out]) == 0
-    assert "h 0.2576, levels 1  1234a3751d55  in the archive" in capsys.readouterr().out
+    assert "h 0.2576, levels 1  %s  in the archive" % digest in capsys.readouterr().out
     assert ymfrun.main([archive, "--check"]) == 0
     text = capsys.readouterr().out
-    assert "1234a3751d55  reproduced, bitwise" in text
+    assert "%s  reproduced, bitwise" % digest in text
     assert "every rerun reproduced its record" in text
     # a record the rerun does not match: refused, then kept
     _dispatch_record(archive, "runCFL: 0.25", "runCFL: 0.3")
     assert ymfrun.main([archive, "--check"]) == 1
     text = capsys.readouterr().out
-    assert "1234a3751d55  DIFFERENT, refused" in text and "the dispatch differs" in text
+    assert "%s  DIFFERENT, refused" % digest in text and "the dispatch differs" in text
     assert ymfrun.main([archive, "--check", "--keep-different"]) == 0
-    assert "1234a3751d55~2  DIFFERENT, kept" in capsys.readouterr().out
+    assert "%s~2  DIFFERENT, kept" % digest in capsys.readouterr().out
     _, outputs, _ = closure.load(archive, check_state=False)
-    assert sorted(k.split("/")[-1] for k in outputs) == ["1234a3751d55", "1234a3751d55~2"]
+    assert sorted(k.split("/")[-1] for k in outputs) == [digest, digest + "~2"]
     assert ymfrun.main([spec, "--outdir", out], mesh_only=True) == 0
     assert "a split discretization meshes as part of its solve: level_set_five" in capsys.readouterr().out
 
@@ -447,12 +549,16 @@ solution_paths:
     - name: level_set_five
       mesh: {h: 0.2576}
       solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
+    - name: level_set_clsvof              # cannot run: no CLSVOF cell integrates in time by SSP RK3
+      subproblems:
+        - name: clsvof
+          time_integration: ssp_rk3
 """ % os.path.join(HERE, "dambreak.ymf"), encoding="utf-8")
     out = tmp_path / "out"
     assert ymfrun.main([str(spec), "--outdir", str(out), "--ignore"]) == 1     # not closed: one is left out
     text = capsys.readouterr().out
-    assert "level_set_clsvof -- left out (--ignore): level_set_clsvof: split into sub-problems (flow, clsvof). " \
-        "It dispatches to flow RANS2P, clsvof CLSVOF, and cannot run" in text
+    assert "level_set_clsvof -- left out (--ignore): level_set_clsvof: split into sub-problems (flow, clsvof), and " \
+        "the dispatch refuses it: no Proteus module covers clsvof" in text
     assert "level_set_five -- split, dispatched to flow RANS2P" in text
     assert "1 outputs, 1 new" in text
 
@@ -492,10 +598,114 @@ def test_a_constant_density_and_viscosity_are_accepted_and_a_missing_one_is_refu
     from proteus.DispatchRun import RealizeError, _two_phase_values
     doc = copy.deepcopy(dambreak)
     coefficients = doc["model"]["strong_form"]["coefficients"]
-    coefficients["ρ"] = {"value": 1000.0}
-    coefficients["μ"] = {"value": 1.0e-3}
+    coefficients["ρ"] = {"value": 1000.0, "role": "density"}
+    coefficients["μ"] = {"value": 1.0e-3, "role": "dynamic_viscosity"}
     found = _two_phase_values(doc, 2)
     assert (found["rho_0"], found["rho_1"], found["nu_0"], found["nu_1"]) == (1000.0, 1000.0, 1.0e-6, 1.0e-6)
-    coefficients["ρ"] = {"units": "kg/m3"}
+    coefficients["ρ"] = {"units": "kg/m3", "role": "density"}
     with pytest.raises(RealizeError, match="coefficient ρ has neither a formula nor a value.*density"):
         _two_phase_values(doc, 2)
+
+
+# ---- coefficients by role (C5 step 3) ----------------------------------------------------------------------------
+
+def test_the_two_phase_values_are_found_by_role_not_by_name(dambreak):
+    """The density, viscosity and gravity are the coefficients that state those roles, whatever the model calls
+    them: the same model with ρ, μ and g renamed (and the formulas renamed with them) gives the same values."""
+    from proteus.DispatchRun import _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    strong = doc["model"]["strong_form"]
+    base = _two_phase_values(doc, 2)
+    strong["coefficients"] = {{"ρ": "density_of_mixture", "μ": "viscosity_of_mixture", "g": "grav"}.get(k, k): v
+                              for k, v in strong["coefficients"].items()}
+    for name in ("equations", ):
+        for e in strong[name]:
+            for old, new in (("ρ", "density_of_mixture"), ("μ", "viscosity_of_mixture"), ("g", "grav")):
+                if "equation" in e:
+                    e["equation"] = e["equation"].replace(old, new)
+    again = _two_phase_values(doc, 2)
+    assert {k: again[k] for k in base if k != "indicator"} == {k: base[k] for k in base if k != "indicator"}
+
+
+@pytest.mark.parametrize("role", ["density", "dynamic_viscosity", "gravity"])
+def test_a_two_phase_model_without_a_role_is_refused_naming_it(dambreak, role):
+    from proteus.DispatchRun import RealizeError, _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    for entry in doc["model"]["strong_form"]["coefficients"].values():
+        if isinstance(entry, dict) and entry.get("role") == role:
+            del entry["role"]
+    with pytest.raises(RealizeError, match="needs the model's %s, and no coefficient states role: %s" % (
+            role.replace("_", " "), role)):
+        _two_phase_values(doc, 2)
+
+
+@pytest.mark.parametrize("role", ["gravity", "manning_coefficient", "porosity", "linear_drag", "quadratic_drag",
+                                  "bed_elevation"])
+def test_a_shallow_water_model_without_a_role_is_refused_before_anything_runs(lake, role):
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    for entry in doc["model"]["strong_form"]["coefficients"].values():
+        if isinstance(entry, dict) and entry.get("role") == role:
+            del entry["role"]
+    split = split_problem(doc, "convex_limited")
+    with pytest.raises(RealizeError, match="no coefficient states role: %s" % role):
+        precheck(doc, dispatch(doc, "convex_limited"), split)
+
+
+# ---- linear_solver: direct / iterative on all paths (C5 step 3) ----------------------------------------------------
+
+def _with_solver(doc, name, solver):
+    doc = copy.deepcopy(doc)
+    _entry(doc, name)["solver"] = dict(_entry(doc, name).get("solver") or {}, **solver)
+    return doc
+
+
+@pytest.mark.parametrize("word, kind", [("direct", "direct"), ("superlu", "direct"), ("iterative", "iterative"),
+                                        ("petsc", "iterative"), (None, "iterative")])
+def test_the_two_phase_machinery_maps_direct_and_iterative(dambreak, word, kind):
+    from proteus.DispatchRun import _linear_solver
+    doc = copy.deepcopy(dambreak)
+    entry = _entry(doc, "level_set_five")
+    entry["solver"] = {k: v for k, v in entry["solver"].items() if k != "linear_solver"}
+    if word is not None:
+        entry["solver"]["linear_solver"] = word
+    assert _linear_solver(entry, 1) == (kind, "SuperLU" if kind == "direct" else "PETSc KSP")
+    assert _linear_solver(entry, 4) == (kind, "SuperLU_DIST" if kind == "direct" else "PETSc KSP")
+
+
+@pytest.mark.parametrize("solver, message", [
+    ({"linear_solver": "mumps"}, "linear_solver mumps is a package the deck machinery does not select"),
+    ({"linear_solver": "umfpack"}, "linear_solver umfpack is a package the deck machinery does not select"),
+    ({"linear_solver": "cholmod"}, "linear_solver 'cholmod'; ymf knows"),
+    ({"linear_solver": "iterative", "petsc_options": {"ksp_type": "cg"}}, "petsc_options are not read"),
+])
+def test_a_linear_solver_the_two_phase_machinery_cannot_honour_is_refused_before_anything_runs(dambreak, solver, message):
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = _with_solver(dambreak, "level_set_five", solver)
+    with pytest.raises(RealizeError, match=message):
+        precheck(doc, dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five"), ranks=1)
+
+
+@pytest.mark.parametrize("word, ranks, accepted", [
+    (None, 1, True), (None, 3, True),
+    ("direct", 1, True), ("superlu", 1, True), ("direct", 3, False),
+    ("iterative", 3, True), ("petsc", 3, True), ("iterative", 1, False),
+])
+def test_SWFlow_refuses_a_linear_solver_its_n_module_would_override(lake, word, ranks, accepted):
+    """SWFlow's n module solves with LU on one rank and KSP_petsc4py on several, whatever the spec says: a spec that
+    asks for the other kind is refused rather than overridden."""
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    entry = _entry(doc, "convex_limited")
+    entry["solver"] = {k: v for k, v in (entry.get("solver") or {}).items() if k != "linear_solver"}
+    if word is not None:
+        entry["solver"]["linear_solver"] = word
+    found, split = dispatch(doc, "convex_limited"), split_problem(doc, "convex_limited")
+    if accepted:
+        precheck(doc, found, split, ranks=ranks)
+    else:
+        with pytest.raises(RealizeError, match="asks for a .* solve, and SWFlow's n module solves with"):
+            precheck(doc, found, split, ranks=ranks)

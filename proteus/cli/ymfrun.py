@@ -38,7 +38,7 @@ wrote, writes the archive and reports, and the other ranks print nothing.
 The archive records the number of ranks, and a rerun on another number is
 not expected to be bitwise the same: its partition sums in another order.
 Refused on more than one rank, before anything is solved: Proteus's serial
-LU (``linear_solver: superlu``; the default there is MUMPS), and periodic
+LU (``linear_solver: superlu``; ``direct`` picks MUMPS there, as does the default), and periodic
 conditions other than in CG1 without advection (see
 ``ADRProblem.parallel_periodic``).
 
