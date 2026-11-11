@@ -81,7 +81,8 @@ namespace proteus
                                   double& dr)
       {
         r = porosity*(gf.H(epsHeaviside,phi+u) - H);
-        dr = porosity*gf.D(epsDirac,phi+u);
+        // the Jacobian is the derivative of r, so the Dirac must be the derivative of the SAME regularized Heaviside: epsHeaviside, not epsDirac
+        dr = porosity*gf.D(epsHeaviside,phi+u);
       }
 
       inline void calculateElementResidual(//element
@@ -689,7 +690,11 @@ namespace proteus
                                            double* elementJacobian_u_u,
                                            double* element_u,
 					   const double* phi_solid,
-                                           int eN)
+                                           int eN,
+                                           const double* dHdphi = nullptr,
+                                           const double* phi_element = nullptr)
+  // dHdphi (nQuadraturePoints_element x nDOF_trial_element), when not null, is d(gf.H at quadrature point k)/d(element phi_j): the exact derivative of the
+  // sharp-Heaviside weights (cut elements, useExact), used instead of the Dirac weights times the trial function (exact only for linear integrands).
       {
         for (int i=0;i<nDOF_test_element;i++)
           for (int j=0;j<nDOF_trial_element;j++)
@@ -781,6 +786,21 @@ namespace proteus
                                  q_porosity[eN_k],
                                  r,
                                  dr);
+            if (gf.useExact && dHdphi == nullptr && phi_element != nullptr)
+              {
+                // gf.D is the SURFACE Dirac (integrates to the interface measure); the derivative of the Heaviside with respect to the level set
+                // is delta(phi) = D/|grad phi|.  |grad phi| of the element's (P1) level set phi + u from its nodal values.  Exact for the sharp
+                // Heaviside when D N_i N_j is integrated exactly: equivalent polynomials of order nP need a quadrature of degree nP + 2 (= 4 here).
+                double gphi[nSpace], ngphi = 0.0;
+                for (int I=0;I<nSpace;I++)
+                  {
+                    gphi[I] = 0.0;
+                    for (int jj=0;jj<nDOF_trial_element;jj++)
+                      gphi[I] += phi_element[jj]*u_grad_trial[jj*nSpace+I];
+                    ngphi += gphi[I]*gphi[I];
+                  }
+                dr /= std::max(sqrt(ngphi), 1.0e-12);
+              }
             for(int i=0;i<nDOF_test_element;i++)
               {
                 //int eN_k_i=eN_k*nDOF_test_element+i;
@@ -792,7 +812,8 @@ namespace proteus
                     //int eN_k_j_nSpace = eN_k_j*nSpace;
                     int j_nSpace = j*nSpace;
                     elementJacobian_u_u[i*nDOF_trial_element+j] +=
-                      H_s*(ck.ReactionJacobian_weak(dr,u_trial_ref[k*nDOF_trial_element+j],u_test_dV[i]) +
+                      H_s*((dHdphi != nullptr ? q_porosity[eN_k]*dHdphi[k*nDOF_trial_element+j]*u_test_dV[i]
+                                                 : ck.ReactionJacobian_weak(dr,u_trial_ref[k*nDOF_trial_element+j],u_test_dV[i])) +
 			   ck.NumericalDiffusionJacobian(epsDiffusion,&u_grad_trial[j_nSpace],&u_grad_test_dV[i_nSpace]));
                   }//j
               }//i
@@ -849,6 +870,9 @@ namespace proteus
 	double ghost_penalty_constant = args.scalar<double>("ghost_penalty_constant");
 	proteus::pyarray<double>& phi_solid_nodes = args.array<double>("phi_solid_nodes");
 	bool useExact_s = args.scalar<int>("useExact_s");
+	// exact (sharp) Heaviside only: 0 = analytic Jacobian (D/|grad phi| with a quadrature of degree >= nP + 2), 1 = finite difference of the
+	// equivalent-polynomial weights (exact for the discrete residual at any quadrature order, 2 nDOF extra weight evaluations per cut element)
+	int exact_jacobian_fd = args.scalar<int>("exact_jacobian_fd");
 	proteus::pyarray<double>& isActiveR = args.array<double>("isActiveR");
 	proteus::pyarray<double>& isActiveDOF = args.array<double>("isActiveDOF");
 	proteus::pyarray<int>& isActiveElement = args.array<int>("isActiveElement");
@@ -876,6 +900,34 @@ namespace proteus
 	      }//i
 	    gf.calculate(element_phi, element_nodes, x_ref.data(),false);
 	    int icase_s = gf_s.calculate(element_phi_s, element_nodes, x_ref.data(), false);
+	    // exact derivative of the sharp-Heaviside weights on cut elements (central difference of the equivalent-polynomial weights; the step is
+	    // far below the distance of any node to the interface that matters, so the topology of the cut does not change)
+	    double dHdphi_element[nQuadraturePoints_element*nDOF_trial_element];
+	    const double* dHdphi_ptr = nullptr;
+	    if (useExact && exact_jacobian_fd == 1)
+	      {
+	        int icase_e = gf.calculate(element_phi, element_nodes, x_ref.data(), false);
+	        if (icase_e != 1 && icase_e != -1)
+	          {
+	            const double delta = 1.0e-7*elementDiameter.data()[eN];
+	            double Hp[nQuadraturePoints_element], Hm[nQuadraturePoints_element], phi_pert[nDOF_trial_element];
+	            for (int j=0;j<nDOF_trial_element;j++)
+	              {
+	                for (int jj=0;jj<nDOF_trial_element;jj++)
+	                  phi_pert[jj] = element_phi[jj];
+	                phi_pert[j] = element_phi[j] + delta;
+	                gf.calculate(phi_pert, element_nodes, x_ref.data(), false);
+	                for (int kq=0;kq<nQuadraturePoints_element;kq++) { gf.set_quad(kq); Hp[kq] = gf.H(0.0,0.0); }
+	                phi_pert[j] = element_phi[j] - delta;
+	                gf.calculate(phi_pert, element_nodes, x_ref.data(), false);
+	                for (int kq=0;kq<nQuadraturePoints_element;kq++) { gf.set_quad(kq); Hm[kq] = gf.H(0.0,0.0); }
+	                for (int kq=0;kq<nQuadraturePoints_element;kq++)
+	                  dHdphi_element[kq*nDOF_trial_element+j] = (Hp[kq] - Hm[kq])/(2.0*delta);
+	              }
+	            gf.calculate(element_phi, element_nodes, x_ref.data(), false); // restore the unperturbed weights
+	            dHdphi_ptr = dHdphi_element;
+	          }
+	      }
 	    calculateElementJacobian(mesh_trial_ref.data(),
 				     mesh_grad_trial_ref.data(),
 				     mesh_dof.data(),
@@ -910,7 +962,9 @@ namespace proteus
 				     elementJacobian_u_u,
 				     element_u,
 				     phi_solid.data(),
-				     eN);
+				     eN,
+				     dHdphi_ptr,
+				     element_phi);
 	    //
 	    //load into element Jacobian into global Jacobian
 	    //

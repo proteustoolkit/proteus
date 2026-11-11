@@ -179,13 +179,13 @@ class SO_base(object):
                                                                                                                          self.t_system_last,
                                                                                                                          model.stepController.t_model_last,
                                                                                                                          t_stepSequence),level=3)
-        self.stepFailures=0
         model.calculateAuxiliaryQuantitiesAfterStep()
         model.stepController.t_model_last = t_stepSequence
 
     def sequenceStepTaken(self,model):
-        self.stepFailures=0
+        pass
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         self.its += 1
         for model in self.modelList:
@@ -302,12 +302,12 @@ class Sequential_NonUniformFixedStep(SO_base):
         for model in self.modelList:
             model.stepController.set_dt_allLevels()
     def modelStepTaken(self,model,t_stepSequence):
-        self.stepFailures=0
         model.calculateAuxiliaryQuantitiesAfterStep()
         #model.stepController.t_model_last = t_stepSequence
         model.stepController.updateTimeHistory()
         model.stepController.choose_dt_model()
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         self.its += 1
         #for model in self.modelList:
@@ -486,14 +486,13 @@ class Sequential_MinFLCBDFModelStep(SO_base):
         else:
             return False
     def modelStepTaken(self,model,t_stepSequence):
-        self.stepFailures=0
         if model.stepController.t_model >= t_stepSequence:
             self.exitModelStep[model] = True
         model.calculateAuxiliaryQuantitiesAfterStep()
     def sequenceStepTaken(self,model):
-        self.stepFailures=0
         self.exitModelStep[model] = False #reset to False
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         self.its += 1
         #do not need to do step exact here, because taken care of by
@@ -616,14 +615,13 @@ class Sequential_MinAdaptiveModelStep(SO_base):
             else:
                 return False
     def modelStepTaken(self,model,t_stepSequence):
-        self.stepFailures=0
         if model.stepController.t_model >= t_stepSequence:
             self.exitModelStep[model] = True
         model.calculateAuxiliaryQuantitiesAfterStep()
     def sequenceStepTaken(self,model):
-        self.stepFailures=0
         self.exitModelStep[model] = False #reset to False
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         #do not need to do step exact here, because taken care of by
         #systemStepController forcing lock-step?
@@ -744,14 +742,13 @@ class ISO_fixed_MinAdaptiveModelStep(SO_base):
             else:
                 return False
     def modelStepTaken(self,model,t_stepSequence):
-        self.stepFailures=0
         if model.stepController.t_model >= t_stepSequence:
             self.exitModelStep[model] = True
         model.calculateAuxiliaryQuantitiesAfterStep()
     def sequenceStepTaken(self,model):
-        self.stepFailures=0
         self.exitModelStep[model] = False #reset to False
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         #do not need to do step exact here, because taken care of by
         #systemStepController forcing lock-step?
@@ -879,14 +876,13 @@ class Sequential_MinAdaptiveModelStep_SS(SO_base):
             else:
                 return False
     def modelStepTaken(self,model,t_stepSequence):
-        self.stepFailures=0
         if model.stepController.t_model >= t_stepSequence:
             self.exitModelStep[model] = True
         model.calculateAuxiliaryQuantitiesAfterStep()
     def sequenceStepTaken(self,model):
-        self.stepFailures=0
         self.exitModelStep[model] = False #reset to False
     def sequenceTaken(self):
+        self.stepFailures=0#the sequence is accepted: the next system step has its own maxFailures retries
         #this is called when the sequence of steps  is done
         #do not need to do step exact here, because taken care of by
         #systemStepController forcing lock-step?

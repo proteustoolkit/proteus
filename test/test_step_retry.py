@@ -189,3 +189,50 @@ def test_without_the_restore_the_moving_mesh_retry_differs(tmp_path):
     forced, replay = _fsi_replay(tmp_path, "rans2p", 5, NORESTORE=1)
     # the mesh moved twice: the dofs' own coordinates differ as well
     assert numpy.abs(forced[:, :4] - replay[:, :4]).max() > 1e-5
+
+
+# maxFailures binds per system step (C17/C14): SO_base.stepFailures was reset by every model step taken in the retried
+# sequence, so a failing model that is not the first one never reached it
+_CONTROLLERS = ("SO_base", "Sequential_MinFLCBDFModelStep", "Sequential_MinAdaptiveModelStep",
+                "ISO_fixed_MinAdaptiveModelStep", "Sequential_MinAdaptiveModelStep_SS")
+
+
+@pytest.mark.parametrize("name", _CONTROLLERS)
+def test_step_failures_count_per_system_step(name):
+    from unittest import mock
+    from proteus import SplitOperator
+    cls = getattr(SplitOperator, name)
+    so = cls.__new__(cls)
+    so.stepFailures, so.maxFailures, so.retry, so.its = 0, 4, True, 0
+    so.t_system_last, so.exitModelStep = 0.0, {}
+    so.choose_dt_system = lambda: None
+    so.modelList = []
+    first, second = mock.MagicMock(), mock.MagicMock()
+    so.controllerList, so.failureType = [second], 'solver'
+    for m in (first, second):
+        m.stepController.t_model, m.stepController.t_model_last = 0.0, 0.0
+        so.exitModelStep[m] = False
+    retries = 0
+    # the first model takes its step, the second fails, the sequence is retried
+    while retries < 100:
+        so.modelStepTaken(first, 1.0)
+        so.sequenceStepTaken(first)
+        if not so.retrySequence_modelStepFailure():
+            break
+        retries += 1
+    assert retries == so.maxFailures - 1
+    # an accepted sequence gives the next system step its own budget
+    so.sequenceTaken()
+    assert so.stepFailures == 0
+
+
+def test_a_model_that_never_recovers_stops_the_run_after_maxFailures_retries(tmp_path):
+    """VOF, the second of damBreakLevelSet's models, fails every solve from its 5th on: the run stops with exit 1 after
+    maxSolverFailures - 1 = 9 retries."""
+    os.makedirs(str(tmp_path), exist_ok=True)
+    env = dict(os.environ, OMP_NUM_THREADS="1", DECK="damBreakLevelSet.py", FAILMODEL="vof", FAILAT="5", FAILFROM="1")
+    env.setdefault("FI_PROVIDER", "tcp")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    out = subprocess.run([sys.executable, HELPER], capture_output=True, text=True, timeout=1800, env=env, cwd=str(tmp_path))
+    assert out.returncode == 1, out.stdout[-2000:] + out.stderr[-2000:]
+    assert int(open(os.path.join(str(tmp_path), "retries.txt")).read()) == 9

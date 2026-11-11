@@ -94,7 +94,8 @@ namespace proteus
                               double& dr)
     {
       r = porosity*(smoothedHeaviside(epsHeaviside,phi+u) - H);
-      dr = porosity*smoothedDirac(epsDirac,phi+u);
+      // the Jacobian is the derivative of r, so the Dirac must be the derivative of the SAME regularized Heaviside: epsHeaviside, not epsDirac
+      dr = porosity*smoothedDirac(epsHeaviside,phi+u);
     }
 
     inline void calculateElementResidual(//element
@@ -679,7 +680,7 @@ namespace proteus
         proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
         proteus::pyarray<double>& stiffness_matrix = args.array<double>("stiffness_matrix");
         proteus::pyarray<double>& interface_lumpedMassMatrix = args.array<double>("interface_lumpedMassMatrix");
-      if (FAST_ASSEMBLY==1) 
+      if (args.scalar<int>("fast_assembly")==1) // runtime switch (Coefficients.fastAssembly); FAST_ASSEMBLY below is the historical compile-time default
 	{
 	  int ij=0;
 	  for (int i=0; i<numDOFs; i++)

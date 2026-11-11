@@ -1,4 +1,4 @@
-# Computational Geosciences runs
+# Reproduction bundle: variable-density flow and transport runs
 
 Decks and scripts for the figures and tables of the VDFT manuscript. Richards
 (flow) STABILIZATION_TYPE 2 + FCT, TADR (transport) STABILIZATION_TYPE 5 + FCT,

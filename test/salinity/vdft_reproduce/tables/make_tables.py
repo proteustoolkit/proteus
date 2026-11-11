@@ -1,4 +1,4 @@
-"""Per-case verification tables for the comp_geoscience runs.
+"""Per-case verification tables for the vdft_reproduce runs.
 
 usage: python make_tables.py          (from this folder)
 

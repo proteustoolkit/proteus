@@ -372,8 +372,8 @@ jobs:
             --ignore=../test/richards/Tracy_convergence
             --ignore=../test/richards/WRR_input_files
             --ignore=../test/richards/WRR_draft
-            # the VDFT manuscript decks, likewise; test/salinity/test_comp_geoscience_smoke.py runs them briefly
-            --ignore=../test/salinity/comp_geoscience_reproduce
+            # the VDFT manuscript decks, likewise; test/salinity/test_vdft_reproduce_smoke.py runs them briefly
+            --ignore=../test/salinity/vdft_reproduce
           )
           # One xdist worker per core, given tests one at a time. Each worker
           # runs in test_output/<worker id> (test/conftest.py), since tests

@@ -49,7 +49,14 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             applyCorrectionToDOF=True,
             useMetrics=0.0,
             useConstantH=False,
-            set_vos=None):
+            set_vos=None,
+            fastAssembly=False):
+        # fastAssembly=False (default): the consistent element Jacobian (exact derivative of the residual).  True: the LUMPED interface mass matrix
+        # precomputed in the residual (faster, M-matrix, but only approximately the derivative: ~1e-3 relative error).
+        # Measured 2026-11-10 (RANS3PSed bed_sediment, refinement 50, 8134 dofs, 41 steps, MUMPS, macOS arm64): the consistent
+        # assembly is ~5.5x the lumped one per call (1.3 vs 0.22 ms serial) but < 0.5% of the run; at the deck's tolerance both
+        # take one Newton iteration per step, at nl_atol_res=1e-11 the consistent Jacobian takes 82 iterations against 186.
+        self.fastAssembly = fastAssembly
         self.set_vos = set_vos
         self.useConstantH = useConstantH
         self.useMetrics = useMetrics
@@ -826,6 +833,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_DofLoops"] = self.colind
         argsDict["stiffness_matrix"] = self.stiffness_matrix_array
         argsDict["interface_lumpedMassMatrix"] = self.interface_lumpedMassMatrix
+        argsDict["fast_assembly"] = int(self.coefficients.fastAssembly)
         self.mcorr3p.calculateJacobian(argsDict)
         
         log("Jacobian ", level=10, data=jacobian)
