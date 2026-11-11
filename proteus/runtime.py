@@ -63,6 +63,9 @@ class RunOptions:
     #: policy of the archived run; "restart" continues the solution only and
     #: rebuilds that state from it, so the policy may change
     hotStartMode: str = "continue"
+    #: write the solver state with every N-th archived frame (--state-every); 0
+    #: writes it at the final step and at a checkpoint only
+    stateEvery: int = 0
     #: time to restart from (-t)
     hotStartTime: float = math.inf
     #: write the velocity post-processor (-B)

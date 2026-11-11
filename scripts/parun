@@ -188,6 +188,12 @@ parser.add_option("--hotStartMode",
                   choices=["continue", "restart"],
                   default="continue",
                   help="""continue (the default): a hot start resumes the archived numerical state exactly, and stops, naming what differs, if the step policy (time integrator, step controllers, shock capturing, step-size settings) is not the archived run's; restart: continue the solution only and rebuild the history from it, so those settings may change""")
+parser.add_option("--state-every",
+                  dest="stateEvery",
+                  type="int",
+                  default=0,
+                  metavar="N",
+                  help="""write the solver state a continue hot start needs (the lagged shock capturing, subgrid error and time history; some 20 times the size of the solution) with every N-th archived frame, the initial one included. The default, 0, writes it at the final step and at a checkpoint (--wall-limit) only; the other frames carry the solution alone, and a hot start from one restarts from that solution""")
 parser.add_option("-t","--hotStartTime",
                   dest="hotStartTime",
                   action="store",

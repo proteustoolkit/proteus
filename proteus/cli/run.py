@@ -107,6 +107,10 @@ def add_parser(subparsers):
                         "as the archived run; otherwise it stops and names what differs); "
                         "restart: continue the solution only and rebuild the history from "
                         "it, so those settings may change")
+    g.add_argument("--state-every", type=int, default=0, metavar="N",
+                   help="write the solver state a continue hot start needs with every N-th "
+                        "archived frame; 0 (the default): at the final step and at a checkpoint "
+                        "only, the other frames carry the solution alone")
     g.add_argument("-t", "--hot-start-time", type=float, default=float("inf"),
                    metavar="T", help="time to restart from")
     g.add_argument("-F", "--partitioned-mesh", action="store_true",
@@ -166,6 +170,7 @@ def _options(args):
         archiveDocument=args.archive_document,
         hotStart=args.hot_start,
         hotStartMode=args.hot_start_mode,
+        stateEvery=args.state_every,
         hotStartTime=args.hot_start_time,
         writeVPP=args.write_vpp,
         generatePartitionedMeshFromFiles=args.partitioned_mesh,

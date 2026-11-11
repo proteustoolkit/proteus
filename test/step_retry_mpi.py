@@ -19,7 +19,7 @@ system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its ow
 RAISERANK=r raises a ValueError on rank r only, at its first archive write (NS_base.archiveInitialSolution), as one
 rank's Archiver did in a 4096-rank run whose other ranks then waited in a collective until the wall time ran out.
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
-HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
+STATEEVERY=n passes --state-every n; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -248,6 +248,9 @@ else:
 if os.environ.get("HOTSTART"):
     # continue the archive in this directory from its latest step at or before HOTSTART
     sys.argv += ['-H', '-t', os.environ["HOTSTART"], '--hotStartMode', os.environ.get("HOTSTARTMODE", "continue")]
+if os.environ.get("STATEEVERY"):
+    # --state-every N: the solver state with every N-th frame (default: the final step and checkpoints only)
+    sys.argv += ['--state-every', os.environ["STATEEVERY"]]
 # the source tree's driver when there is one: an installed parun is a copy made at install time
 PARUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "scripts", "parun")
 runpy.run_path(PARUN if os.path.isfile(PARUN) else shutil.which('parun'), run_name='__main__')

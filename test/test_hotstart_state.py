@@ -83,7 +83,7 @@ def test_solver_state_is_one_section_and_a_hot_start_from_another_step_restarts(
     _vortex(tmp_path / "hot", "be", 1, "hot", 4, endn=8)
     log = (tmp_path / "hot" / "proteus_default.log").read_text()
     assert re.search(r"Hot start: no solver state to restore at step 4 for model \S+ "
-                     r"\(the archive holds the state of step 6 only\)", log)
+                     r"\(frame 4 carries the solution only: the archive holds the solver state of step 6 only", log)
 
 
 def _hot_with_other_order(tmp_path, mode):

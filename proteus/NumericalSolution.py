@@ -209,6 +209,15 @@ class NS_base(object):  # (HasTraits):
     def __init__(self,so,pList,nList,sList,opts,simFlagsList=None,TwoPhaseFlow=False):
         # a driver that predates the option (an installed parun is a copy made at install time) gets the default
         self.hotStartMode = getattr(opts, 'hotStartMode', 'continue')
+        #the solver state is written at the final step, at a checkpoint, and at every stateEvery-th frame (0: not
+        #otherwise); a frame carries the solution only, as before the state existed (--state-every)
+        self.stateEvery = int(getattr(opts, 'stateEvery', 0) or 0)
+        if self.stateEvery < 0:
+            raise ValueError("stateEvery must be 0 (the final step and checkpoints only) or a number of frames, not %r"
+                             % (self.stateEvery,))
+        #the longest each write took on this rank, seconds: a frame, the solver state
+        self._frameWriteTime = 0.0
+        self._stateWriteTime = 0.0
         self._solverStateRefused = []
         #what _solverStateUsable read, by model name, for _applySolverState
         self._solverStateRead = {}
@@ -589,6 +598,7 @@ class NS_base(object):  # (HasTraits):
         self._retryingSystemStep = False
         self._acceptedSystemTime = None
         self._systemStepRetries = 0
+        self._systemStepFailed = False
 
 
         logEvent("Setting initial conditions",level=0)
@@ -1065,6 +1075,7 @@ class NS_base(object):  # (HasTraits):
                                 self.archiveSolution(model,index,self.systemStepController.t_system)
                 #end system split operator sequence
                 if systemStepFailed:
+                    self._systemStepFailed = True
                     logEvent("System Step Failed")
                     #go ahead and update as if the time step had succeeded
                     self.postStep(model)
@@ -1317,7 +1328,8 @@ class NS_base(object):  # (HasTraits):
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 self.tnList[0],
                                                                 self.tCount)
-            self.archiveSolverState(model,index,self.tCount)
+            if self._solverStateDue(self.tCount):
+                self.archiveSolverState(model,index,self.tCount)
             #could just pull the code and flags out from SimTools rathter than asking it to parse them
             #uses values in simFlags['storeQuantities']
             #q dictionary
@@ -1782,9 +1794,13 @@ class NS_base(object):  # (HasTraits):
         ranks = comm.allreduce(int(found is not None and ranks), op=MPI.MIN)
         if not comm.allreduce(mine, op=MPI.MIN):
             if found is not None and found != tCount:
-                why = "the archive holds the state of step %d only" % found
+                why = ("frame %d carries the solution only: the archive holds the solver state of step %d only "
+                       "(it is written at the final step, at a checkpoint and every --state-every N frames)"
+                       % (tCount, found))
             elif not ranks:
-                why = "none was archived, or it was written by a different number of ranks or partition"
+                why = ("none was archived (a frame carries the solution only: the solver state is written at the "
+                       "final step, at a checkpoint and every --state-every N frames), or it was written by a "
+                       "different number of ranks or partition")
             else:
                 why = "it was written by a different partition"
             logEvent("Hot start: no solver state to restore at step %d for model %s (%s); "
@@ -1815,13 +1831,44 @@ class NS_base(object):  # (HasTraits):
                 continue
             obj.set_state(st)
 
+    def _atFinalStep(self, t):
+        """Whether a frame written at time ``t`` is the run's last: the last interval's end, reached by steps
+        that were all accepted."""
+        final = self.tnList[-1]
+        return (not getattr(self, "_systemStepFailed", False) and getattr(self, "tn", None) == final and
+                t >= final - 1.0e-10 * max(1.0, abs(final)))
+
+    def _solverStateDue(self, tCount, final=False, checkpoint=False):
+        """Whether frame ``tCount`` carries the solver state: the final one, a checkpoint, and with
+        ``--state-every N`` every N-th (the initial frame, 0, among them). The state is some 20 times the solution
+        in size, and a hot start needs it only from the frame the run stopped at."""
+        return bool(final or checkpoint or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
+
     ##save model's solution values to archive
-    def archiveSolution(self,model,index,t=None):
+    def archiveSolution(self,model,index,t=None,checkpoint=False):
+        """Write the frame of ``model`` at ``t``: the solution, and the solver state when this frame is due it
+        (``_solverStateDue``: the final step, a ``checkpoint``, every ``--state-every`` frames). A hot start from
+        a frame that carries no state restarts from its solution. Collective."""
+        import time
+        started = time.time()
+        if t is None:
+            t = self.systemStepController.t_system
+        stateTime = self._archiveSolution(model, index, t, self._solverStateDue(self.tCount,
+                                                                                 final=self._atFinalStep(t),
+                                                                                 checkpoint=checkpoint))
+        if stateTime is not None:
+            self._stateWriteTime = max(self._stateWriteTime, stateTime)
+        self._frameWriteTime = max(self._frameWriteTime, time.time() - started - (stateTime or 0.0))
+        logEvent("Archive: frame %d of model %s at t=%g written in %.3g s%s" % (
+            self.tCount, model.name, t, time.time() - started - (stateTime or 0.0),
+            "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
+
+    def _archiveSolution(self,model,index,t,withState):
+        """archiveSolution's writes; returns the seconds the solver state took, None when it was not written."""
+        stateTime = None
         if True if self.fastArchive == False else 'clsvof' in model.name:
             if self.archiveFlag == ArchiveFlags.UNDEFINED:
-                return
-            if t is None:
-                t = self.systemStepController.t_system
+                return None
             logEvent("Writing mesh header for  model = "+model.name+" at time t="+str(t),level=3)
             logEvent("Writing solution for  model = "+model.name,level=3)
             if self.so.useOneArchive:
@@ -1839,7 +1886,11 @@ class NS_base(object):  # (HasTraits):
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 t,
                                                                 self.tCount)
-            self.archiveSolverState(model,index,self.tCount)
+            if withState:
+                import time
+                started = time.time()
+                self.archiveSolverState(model,index,self.tCount)
+                stateTime = time.time() - started
             #uses values in simFlags['storeQuantities']
             #q dictionary
             if self.archive_q[index] == True and self.fastArchive==False:
@@ -1890,6 +1941,7 @@ class NS_base(object):  # (HasTraits):
                 else:
                     if index == len(self.ar) - 1:
                         self.ar[index].sync()
+        return stateTime
 
     ## clean up archive
     def closeArchive(self,model,index):
