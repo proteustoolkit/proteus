@@ -66,7 +66,7 @@ Context options: `STABILIZATION_TYPE` (0 Galerkin, 2 edge-based low order), `FCT
 ## 4. Priority 1 (RESOLVED): WRR FCT was only first order on Q1
 **Fix:** `calculateResidual_entropy_viscosity` now sets `mDotLow` at strong-Dirichlet DOFs (bc_mask = 0) to
 (m(gⁿ⁺¹) − m(gⁿ))/Δt instead of the masked row's flux divergence (candidate 1 below). Q1 FCT at θ = 1, h = 1/2 … 1/64:
-1.79e-4, 3.11e-4, 2.02e-4, 6.83e-5, 1.11e-5, **1.94e-6** (orders 2.6, 2.5), below the JNMA implicit FCT (3.44e-6).
+1.79e-4, 3.11e-4, 2.02e-4, 6.83e-5, 1.10e-5, **1.91e-6** (orders 2.6, 2.5; the last two were 1.11e-5 and 1.94e-6 before the FemTools trace-gradient fix, refreshed 2026-11-11), below the JNMA implicit FCT (3.44e-6).
 P1 is slightly better at every level (1.575e-6 → 1.546e-6 at h = 1/64). θ = ½ is unchanged (still first order).
 `test_richards.py`: 7 passed. A fully unlimited correction (no bounds, no saturated rule) is unusable on
 both meshes (6e-2 Q1, 4e-2 P1 at h = 1/32), so the limiter and the saturated-DOF rule are essential. The
