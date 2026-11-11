@@ -3937,8 +3937,8 @@ def multilevelNonlinearSolverChooser(nonlinearOperatorList,
                                                        directSolver=linearDirectSolverFlag,
                                                        EWtol=EWtol,
                                                        maxLSits=maxLSits ))
-        except:
-            raise RuntimeError("Unknown level nonlinear solver %r" % (levelNonlinearSolverType,))
+        except Exception as exc:
+            raise RuntimeError("Could not construct level nonlinear solver %r: %s: %s" % (levelNonlinearSolverType, type(exc).__name__, exc)) from exc
     if multilevelNonlinearSolverType == NLNI:
         multilevelNonlinearSolver = NLNI(fList = nonlinearOperatorList,
                                          solverList = levelNonlinearSolverList,
