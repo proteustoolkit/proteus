@@ -18,6 +18,7 @@ arrays back, and that the number of datasets does not depend on the number of ra
 with it: the check that fails before the change).
 """
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -28,7 +29,14 @@ import pytest
 h5py = pytest.importorskip("h5py")
 pytest.importorskip("proteus.Archiver")
 
-from test_archive_parallel_metadata import MPIEXEC  # noqa: E402  (the launcher beside this interpreter)
+
+def _find_mpiexec():
+    """The launcher beside this interpreter (a mismatched one runs N single-rank jobs), else the one on PATH."""
+    beside = os.path.join(os.path.dirname(sys.executable), "mpiexec")
+    return beside if os.path.exists(beside) else shutil.which("mpiexec")
+
+
+MPIEXEC = _find_mpiexec()
 
 RANK_SCRIPT = textwrap.dedent(
     '''
