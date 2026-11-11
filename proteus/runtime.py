@@ -9,6 +9,8 @@ import time. This module holds the same things without a parser, so that
 * :func:`petsc_argv`, PETSc's command line from options and options files;
 * :func:`init`, which starts MPI and PETSc with that command line;
 * :func:`start`, :func:`init` once, with the log open, for a library caller.
+* :func:`abort_on_uncaught_exception`, which makes an exception that one
+  rank raises and nothing catches end the whole MPI job.
 
 Nothing here imports PETSc at module level, so importing it never starts
 PETSc: options that PETSc reads only at start-up (``-log_view``,
@@ -19,7 +21,7 @@ import math
 import sys
 from dataclasses import dataclass
 
-__all__ = ["RunOptions", "petsc_argv", "init", "start"]
+__all__ = ["RunOptions", "petsc_argv", "init", "start", "abort_on_uncaught_exception"]
 
 
 @dataclass
@@ -132,3 +134,48 @@ def start(log="proteus.log", log_level=1):
     if log is not None and Profiling.logFile is None:
         Profiling.openLog(log, log_level)
     return comm
+
+
+def abort_on_uncaught_exception(program):
+    """Make an exception that no code catches end the whole MPI job, not one rank.
+
+    Installs a :data:`sys.excepthook`. The ranks that did not raise are
+    waiting, or soon will be, in a collective for the one that did, and they
+    would wait until the job's wall time runs out: on LONI QB (job 1173802,
+    4096 ranks) one rank raised a ValueError in its first archive write and
+    the other 4095 hung for 2.7 h. The hook writes ``<program>: uncaught
+    exception on rank r of n`` and the traceback to stderr and to the log,
+    flushes both and, with more than one rank, calls MPI ``Abort(1)``. With
+    one rank, or before MPI starts, the process exits 1 as Python's own hook
+    would have it. A failure that every rank reports together (a
+    StepTimeError, a failed system step) is for the driver to catch and exit
+    on, without an abort.
+
+    The communicator is looked up when the hook runs, so it can be installed
+    before MPI starts. Used by ``parun`` and ``pro``.
+    """
+    def hook(excType, excValue, excTraceback):
+        import traceback
+        from proteus import Comm, Profiling
+        comm = Comm.comm
+        rank, size = (comm.rank(), comm.size()) if comm is not None else (0, 1)
+        text = "{0}: uncaught exception on rank {1} of {2}{3}\n{4}".format(
+            program, rank, size, "; aborting the MPI job" if size > 1 else "",
+            "".join(traceback.format_exception(excType, excValue, excTraceback)))
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                if stream is sys.stderr:
+                    stream.write(text)
+                stream.flush()
+            except Exception:
+                pass
+        try:
+            if Profiling.logFile is not None:
+                Profiling.logEvent(text, level=0)
+                Profiling.logFile.flush()
+        except Exception:
+            pass
+        if size > 1:
+            comm.comm.tompi4py().Abort(1)
+    sys.excepthook = hook
+    return hook

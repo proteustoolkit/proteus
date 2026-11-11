@@ -366,7 +366,8 @@ def solve(comm, so, pList, nList, sList, opts, two_phase=False,
     """Build the NumericalSolution and run it, as parun does.
 
     Returns ``(ns, status)``; status is 1 when a system step failed on any
-    rank (the same on every rank), else 0. Shared by ``pro run`` and the
+    rank, or the run stopped on a StepTimeError (the same on every rank),
+    else 0. Shared by ``pro run`` and the
     ``run()`` of ``pro shell``.
     """
     import proteus
@@ -389,8 +390,13 @@ def solve(comm, so, pList, nList, sList, opts, two_phase=False,
                   {}, runName + "_init_prof")
     status = 0
     if not setup_only:
-        failed = dispatch(ns.calculateSolution, (runName,), {},
-                          runName + "_run_prof")
+        try:
+            failed = dispatch(ns.calculateSolution, (runName,), {},
+                              runName + "_run_prof")
+        except NumericalSolution.StepTimeError as e:
+            # raised on every rank at once; the archives are closed
+            log("%s failed: %s" % (so.name, e), level=0)
+            failed = True
         # reduce, so that every rank exits with the same status
         if comm.globalMax(int(bool(failed))):
             log("%s failed: system step failed" % so.name)

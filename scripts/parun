@@ -278,6 +278,11 @@ if opts.petscOptionsFile != None:
 Comm.argv = petsc_argv
 comm = Comm.init()
 
+# an exception one rank raises and nothing catches aborts the whole job
+# instead of leaving the other ranks waiting in a collective
+from proteus import runtime
+runtime.abort_on_uncaught_exception("parun")
+
 logDir = None
 if opts.dataDir != '':
     if comm.isMaster() and not os.path.exists(opts.dataDir):
