@@ -90,6 +90,8 @@ def test_a_nan_on_one_rank_stops_every_rank(tmp_path):
     out, accepted, log = _run(tmp_path, ranks=2, NANDT=3, NANDTRANK=1)
     message = _stopped(out, accepted, log)
     assert "rank 1: system step 4" in message and "rank 0:" not in message, message
+    # every rank raised the StepTimeError together and parun caught it: no MPI abort (test_parun_abort.py)
+    assert "uncaught exception" not in out.stderr and "MPI_Abort" not in out.stderr, out.stderr[-2000:]
 
 
 def test_a_retry_that_walks_the_time_backwards_stops_the_run(tmp_path):
