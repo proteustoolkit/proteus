@@ -137,15 +137,26 @@ def test_a_run_past_its_wall_limit_stops_at_a_step_boundary_with_the_checkpoint_
 
 
 def test_a_run_inside_its_wall_limit_is_the_run_without_one(tmp_path):
-    """The limit is never reached (99 h): same exit status, steps and dofs as without it; the only difference is
-    that each model writes its solver state once, with its first frame, to time it."""
+    """The limit is never reached (99 h): same exit status, steps and dofs as without it, and the same writes (the
+    solver state of the final frame only: a limit does not add a state write)."""
     full = _run(tmp_path / "full", FT=0.04, DTOUT=0.01)
     limited = _run(tmp_path / "limited", FT=0.04, DTOUT=0.01, WALLLIMIT="99:00:00")
     assert full.returncode == 0 and limited.returncode == 0, limited.stderr[-2000:]
     numpy.testing.assert_array_equal(_steps(tmp_path / "full"), _steps(tmp_path / "limited"))
     assert _worst(_u(tmp_path / "full"), _u(tmp_path / "limited")) == 0.0
-    frames = _frames(tmp_path / "limited")
-    assert _frames_with_state(tmp_path / "limited") == [frames[0], frames[-1]]
+    assert _frames_with_state(tmp_path / "limited") == _frames_with_state(tmp_path / "full") == [_frames(tmp_path / "full")[-1]]
+
+
+def test_the_checkpoint_cost_is_estimated_until_a_state_write_has_been_timed(tmp_path):
+    """With no --state-every the state has not been written when the first step boundaries are checked: the cost
+    of a checkpoint then includes an estimate (the frame's time times state bytes over dof bytes), so the margin
+    is not frame-only. After --state-every writes it is the measured time."""
+    from proteus.WallLimit import WallClock  # noqa: F401  (the margin itself is tested in test_wall_limit)
+    out = _run(tmp_path, FT=0.05, DTOUT=0.01, WALLSTEPS=3)
+    assert out.returncode == 75
+    cost = [float(m.group(1)) for m in re.finditer(r"and a checkpoint \(([\d.]+) s\)",
+                                                    open(os.path.join(str(tmp_path), LOG)).read())]
+    assert cost and cost[-1] > 0.0
 
 
 def test_a_malformed_wall_limit_stops_parun_before_it_runs(tmp_path):

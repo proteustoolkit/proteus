@@ -222,6 +222,8 @@ class NS_base(object):  # (HasTraits):
         self._stateTimes = {}
         #the frame (tCount) whose solver state each model last wrote
         self._stateFrame = {}
+        #state bytes over dof bytes, per model, estimated once (_stateToFrameRatio)
+        self._stateRatio = {}
         #the run's wall-clock budget (--wall-limit), None without one; wallLimitStop: the run stopped at a step
         #boundary for it (parun then exits with WallLimit.CHECKPOINT_EXIT_STATUS)
         self.wallClock = self._makeWallClock(opts)
@@ -1383,7 +1385,11 @@ class NS_base(object):  # (HasTraits):
                                                                 self.tnList[0],
                                                                 self.tCount)
             if self._solverStateDue(self.tCount):
+                import time
+                started = time.time()
                 self.archiveSolverState(model,index,self.tCount)
+                self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), time.time() - started)
+                self._stateFrame[model.name] = self.tCount
             #could just pull the code and flags out from SimTools rathter than asking it to parse them
             #uses values in simFlags['storeQuantities']
             #q dictionary
@@ -1905,11 +1911,34 @@ class NS_base(object):  # (HasTraits):
                  % (source, wallClock.left()), level=0)
         return wallClock
 
+    def _stateToFrameRatio(self, model):
+        """How much longer ``model``'s solver state takes to write than its frame, estimated from sizes: the bytes
+        of its state() items over the bytes of its dofs (at least 1). Used until a state write has been timed."""
+        ratio = self._stateRatio.get(model.name)
+        if ratio is None:
+            state = 0
+            for owner, obj in self._solver_state_owners(model):
+                st = obj.state()
+                if st is not None:
+                    state += sum(numpy.asarray(v).nbytes for v in st.values())
+            dofs = sum(lm.u[ci].dof.nbytes for lm in model.levelModelList[-1:] for ci in range(lm.coefficients.nc))
+            ratio = self._stateRatio[model.name] = max(1.0, state / max(dofs, 1))
+        return ratio
+
     def _checkpointCost(self):
         """Seconds one checkpoint takes to write, from this run's own writes: for every model, its frame and its
-        solver state, each as long as the longest so far."""
-        return sum(self._frameTimes.get(name, 0.0) + self._stateTimes.get(name, 0.0)
-                   for name in set(self._frameTimes) | set(self._stateTimes))
+        solver state, each as long as the longest so far. A state not yet written in this run (the default writes
+        it at the end only) is estimated, as the model's frame time times ``_stateToFrameRatio``."""
+        total = 0.0
+        for model in self.modelList:
+            frame = self._frameTimes.get(model.name)
+            if frame is None:
+                continue
+            state = self._stateTimes.get(model.name)
+            if state is None:
+                state = frame * self._stateToFrameRatio(model)
+            total += frame + state
+        return total
 
     def _wallLimitReached(self):
         """At a system step boundary: whether the run must stop now to leave room for a checkpoint
@@ -1937,14 +1966,11 @@ class NS_base(object):  # (HasTraits):
         return (not getattr(self, "_systemStepFailed", False) and getattr(self, "tn", None) == final and
                 t >= final - 1.0e-10 * max(1.0, abs(final)))
 
-    def _solverStateDue(self, tCount, final=False, checkpoint=False, model=None):
+    def _solverStateDue(self, tCount, final=False, checkpoint=False):
         """Whether frame ``tCount`` carries the solver state: the final one, a checkpoint, and with
         ``--state-every N`` every N-th (the initial frame, 0, among them). The state is some 20 times the solution
         in size, and a hot start needs it only from the frame the run stopped at."""
-        #a run with a wall limit writes each model's state once early, to time it (a checkpoint's cost is then
-        #measured, not guessed)
-        measure = self.wallClock is not None and model is not None and model.name not in self._stateTimes
-        return bool(final or checkpoint or measure or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
+        return bool(final or checkpoint or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None,checkpoint=False):
@@ -1957,8 +1983,7 @@ class NS_base(object):  # (HasTraits):
             t = self.systemStepController.t_system
         stateTime = self._archiveSolution(model, index, t, self._solverStateDue(self.tCount,
                                                                                  final=self._atFinalStep(t),
-                                                                                 checkpoint=checkpoint or self.wallLimitStop,
-                                                                                 model=model))
+                                                                                 checkpoint=checkpoint or self.wallLimitStop))
         frameTime = time.time() - started - (stateTime or 0.0)
         self._frameTimes[model.name] = max(self._frameTimes.get(model.name, 0.0), frameTime)
         if stateTime is not None:

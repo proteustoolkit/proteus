@@ -44,8 +44,10 @@ instead, at a system step boundary, with room left to write a checkpoint:
   ``now + margin > limit``, with ``margin`` = the longest system step so far (archive writes not counted) + the
   time one checkpoint takes to write (for each model, its longest frame and solver-state write so far, measured by
   the run itself). One scalar broadcast hands the answer to every rank, so all stop at the same step. Nothing relies
-  on scheduler signals. A run with a limit writes each model's solver state once with its first frame, to time it;
-  the writes are on the log at ``-l2`` and above (``Archive: frame 11 of model mcorr at t=0.05 written in ... s,
+  on scheduler signals. The limit adds no write: until a solver-state write has been timed (the initial frame's and
+  every N-th frame's with ``--state-every N``; the default writes it at the end only) the state's time is estimated,
+  as the frame's time times the state's bytes over the dofs' bytes, which errs on the long side. The writes are on
+  the log at ``-l2`` and above (``Archive: frame 11 of model mcorr at t=0.05 written in ... s,
   solver state in ... s``).
 * the stop writes **one frame at that time, with the solver state**, closes the archives and exits with status
   **75** (``WallLimit.CHECKPOINT_EXIT_STATUS``, sysexits' ``EX_TEMPFAIL``). The frame is off the ``dt_output`` grid
