@@ -24,6 +24,7 @@ import numpy
 
 from proteus import DispatchTable as table
 from proteus.Dispatch import DispatchError, resolve
+from ymf import vocabulary as vocab
 
 __all__ = ["RealizeError", "Realized", "realize", "precheck", "tank_sides", "two_phase", "shallow_water",
            "check_built", "run",
@@ -166,6 +167,16 @@ def _matches(pattern, have):
 # Two-phase level-set flow: TwoPhaseFlowProblem
 # ---------------------------------------------------------------------------------------------------------------
 
+def _by_role(doc, role):
+    """The name of the model's coefficient with ``role`` (``ymf.vocabulary.coefficient_by_role``); refused, naming the
+    role and how to state it, when the model has none."""
+    name = vocab.coefficient_by_role(doc, role)
+    if name is None:
+        raise RealizeError("the realizer needs the model's %s, and no coefficient states role: %s (for example "
+                           "``%s: {formula: ..., role: %s}``)" % (role.replace("_", " "), role, "ρ", role))
+    return name
+
+
 def _two_phase_values(doc, dim):
     """SystemPhysics' rho_0, nu_0, rho_1, nu_1 and gravity from the model's coefficients: the density and dynamic
     viscosity at phase indicator 0 and 1, and nu = mu / rho, simplified symbolically before any number enters, so
@@ -180,11 +191,7 @@ def _two_phase_values(doc, dim):
                            "model has %d" % len(model.heaviside_of))
     (indicator,) = model.heaviside_of
     spec = model.coefficients
-    names = table.TWO_PHASE_COEFFICIENTS
-    for role, name in names.items():
-        if name not in spec:
-            raise RealizeError("the two-phase realizer reads the %s from coefficient %s, which the model does not "
-                               "have" % (role, name))
+    names = {role: _by_role(doc, role) for role in table.TWO_PHASE_COEFFICIENT_ROLES}
     symbols = {n: sympy.Symbol("c_%d" % i) for i, n in enumerate(spec)}
     numbers = {}
     formulas = {}
@@ -512,6 +519,8 @@ def precheck(doc, found, split):
     elif found.family == "shallow_water":
         _box(split)
         shallow_water_boundary(split)
+        for role in list(table.SHALLOW_WATER_COEFFICIENT_ROLES) + [table.SHALLOW_WATER_BED_ROLE]:
+            _by_role(doc, role)
 
 
 def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
@@ -560,11 +569,10 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     components = unknowns[depth[0]] + unknowns[discharge[0]]
     variables = ["water_height", "x_mom", "y_mom"]
     initial = {v: _field(split["initial"][c], dim) for v, c in zip(variables, components)}
-    names = table.SHALLOW_WATER_COEFFICIENTS
     physical = dict(SWF.default_physical_parameters)
-    for key in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta"):
-        physical[key] = _shallow_water_value(doc, names[key], dim)
-    bathymetry = _OfPoint(_coefficient_code(doc, names["bathymetry"], dim), dim)
+    for role, key in table.SHALLOW_WATER_COEFFICIENT_ROLES.items():
+        physical[key] = _shallow_water_value(doc, _by_role(doc, role), dim)
+    bathymetry = _OfPoint(_coefficient_code(doc, _by_role(doc, table.SHALLOW_WATER_BED_ROLE), dim), dim)
 
     problem = SWF.SWFlowProblem(
         sw_model=models["sw_model"], cfl=found.system["runCFL"],

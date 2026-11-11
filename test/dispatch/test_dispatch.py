@@ -13,6 +13,7 @@ import contextlib
 import copy
 import importlib.util
 import os
+import re
 import sys
 
 import pytest
@@ -456,22 +457,24 @@ def test_ymf_run_keeps_reproduces_and_refuses_a_split_output(tmp_path, capsys):
     out = str(tmp_path)
     archive = os.path.join(out, "dambreak_short.archive.ymf")
     assert ymfrun.main([spec, "--outdir", out]) == 0
-    capsys.readouterr()
+    # the output's key is the digest of the spec's inputs: read it, so that a change of the spec does not need a
+    # constant edited here
+    digest = re.search(r"h 0\.2576, levels 1  ([0-9a-f]{12})", capsys.readouterr().out).group(1)
     assert ymfrun.main([spec, "--outdir", out]) == 0
-    assert "h 0.2576, levels 1  1234a3751d55  in the archive" in capsys.readouterr().out
+    assert "h 0.2576, levels 1  %s  in the archive" % digest in capsys.readouterr().out
     assert ymfrun.main([archive, "--check"]) == 0
     text = capsys.readouterr().out
-    assert "1234a3751d55  reproduced, bitwise" in text
+    assert "%s  reproduced, bitwise" % digest in text
     assert "every rerun reproduced its record" in text
     # a record the rerun does not match: refused, then kept
     _dispatch_record(archive, "runCFL: 0.25", "runCFL: 0.3")
     assert ymfrun.main([archive, "--check"]) == 1
     text = capsys.readouterr().out
-    assert "1234a3751d55  DIFFERENT, refused" in text and "the dispatch differs" in text
+    assert "%s  DIFFERENT, refused" % digest in text and "the dispatch differs" in text
     assert ymfrun.main([archive, "--check", "--keep-different"]) == 0
-    assert "1234a3751d55~2  DIFFERENT, kept" in capsys.readouterr().out
+    assert "%s~2  DIFFERENT, kept" % digest in capsys.readouterr().out
     _, outputs, _ = closure.load(archive, check_state=False)
-    assert sorted(k.split("/")[-1] for k in outputs) == ["1234a3751d55", "1234a3751d55~2"]
+    assert sorted(k.split("/")[-1] for k in outputs) == [digest, digest + "~2"]
     assert ymfrun.main([spec, "--outdir", out], mesh_only=True) == 0
     assert "a split discretization meshes as part of its solve: level_set_five" in capsys.readouterr().out
 
@@ -541,10 +544,56 @@ def test_a_constant_density_and_viscosity_are_accepted_and_a_missing_one_is_refu
     from proteus.DispatchRun import RealizeError, _two_phase_values
     doc = copy.deepcopy(dambreak)
     coefficients = doc["model"]["strong_form"]["coefficients"]
-    coefficients["ρ"] = {"value": 1000.0}
-    coefficients["μ"] = {"value": 1.0e-3}
+    coefficients["ρ"] = {"value": 1000.0, "role": "density"}
+    coefficients["μ"] = {"value": 1.0e-3, "role": "dynamic_viscosity"}
     found = _two_phase_values(doc, 2)
     assert (found["rho_0"], found["rho_1"], found["nu_0"], found["nu_1"]) == (1000.0, 1000.0, 1.0e-6, 1.0e-6)
-    coefficients["ρ"] = {"units": "kg/m3"}
+    coefficients["ρ"] = {"units": "kg/m3", "role": "density"}
     with pytest.raises(RealizeError, match="coefficient ρ has neither a formula nor a value.*density"):
         _two_phase_values(doc, 2)
+
+
+# ---- coefficients by role (C5 step 3) ----------------------------------------------------------------------------
+
+def test_the_two_phase_values_are_found_by_role_not_by_name(dambreak):
+    """The density, viscosity and gravity are the coefficients that state those roles, whatever the model calls
+    them: the same model with ρ, μ and g renamed (and the formulas renamed with them) gives the same values."""
+    from proteus.DispatchRun import _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    strong = doc["model"]["strong_form"]
+    base = _two_phase_values(doc, 2)
+    strong["coefficients"] = {{"ρ": "density_of_mixture", "μ": "viscosity_of_mixture", "g": "grav"}.get(k, k): v
+                              for k, v in strong["coefficients"].items()}
+    for name in ("equations", ):
+        for e in strong[name]:
+            for old, new in (("ρ", "density_of_mixture"), ("μ", "viscosity_of_mixture"), ("g", "grav")):
+                if "equation" in e:
+                    e["equation"] = e["equation"].replace(old, new)
+    again = _two_phase_values(doc, 2)
+    assert {k: again[k] for k in base if k != "indicator"} == {k: base[k] for k in base if k != "indicator"}
+
+
+@pytest.mark.parametrize("role", ["density", "dynamic_viscosity", "gravity"])
+def test_a_two_phase_model_without_a_role_is_refused_naming_it(dambreak, role):
+    from proteus.DispatchRun import RealizeError, _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    for entry in doc["model"]["strong_form"]["coefficients"].values():
+        if isinstance(entry, dict) and entry.get("role") == role:
+            del entry["role"]
+    with pytest.raises(RealizeError, match="needs the model's %s, and no coefficient states role: %s" % (
+            role.replace("_", " "), role)):
+        _two_phase_values(doc, 2)
+
+
+@pytest.mark.parametrize("role", ["gravity", "manning_coefficient", "porosity", "linear_drag", "quadratic_drag",
+                                  "bed_elevation"])
+def test_a_shallow_water_model_without_a_role_is_refused_before_anything_runs(lake, role):
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    for entry in doc["model"]["strong_form"]["coefficients"].values():
+        if isinstance(entry, dict) and entry.get("role") == role:
+            del entry["role"]
+    split = split_problem(doc, "convex_limited")
+    with pytest.raises(RealizeError, match="no coefficient states role: %s" % role):
+        precheck(doc, dispatch(doc, "convex_limited"), split)

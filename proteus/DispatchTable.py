@@ -480,10 +480,11 @@ TWO_PHASE_TIME_DISCRETIZATION = {
     "proteus.TimeIntegration.VBDF": "vbdf",
 }
 
-#: the model's coefficients TwoPhaseFlow takes as SystemPhysics values, by name in the family file (ymf gives a
-#: coefficient no meaning beyond its formula, so the family's names are the vocabulary). Phase 0 is where the
-#: phase indicator (the coefficient that is heaviside of the level set) is 0, phase 1 where it is 1.
-TWO_PHASE_COEFFICIENTS = {"density": "ρ", "dynamic_viscosity": "μ", "gravity": "g"}
+#: the roles (ymf.vocabulary.COEFFICIENT_ROLES) of the model's coefficients TwoPhaseFlow takes as SystemPhysics values.
+#: A model states a coefficient's role (``ρ: {formula: ..., role: density}``) and the realizer finds the coefficient by
+#: it, whatever the model calls it. Phase 0 is where the phase indicator (the coefficient that is heaviside of the
+#: level set) is 0, phase 1 where it is 1.
+TWO_PHASE_COEFFICIENT_ROLES = ["density", "dynamic_viscosity", "gravity"]
 
 #: a boundary region's closed conditions (the expansion ymf writes, never the alias) -> the BC_RANS setter that
 #: imposes them. A signature is the set of (variable, type, component, only, value); values are numbers, a vector's
@@ -512,10 +513,12 @@ SHALLOW_WATER_MODELS = {
     "proteus.mprans.SW2DCV": {"sw_model": 0, "p": "sw_p", "n": "sw_n"},
 }
 
-#: the model's coefficients SWFlow takes as physical_parameters, by name in the family file (shallow_water.ymf):
-#: the bed Z is SWFlowProblem's bathymetry; mannings is n in the Manning friction coefficient τb
-SHALLOW_WATER_COEFFICIENTS = {"gravity": "g", "mannings": "n", "porosity": "θ", "drag_alpha": "α",
-                              "drag_beta": "β", "bathymetry": "Z"}
+#: the coefficient role (ymf.vocabulary.COEFFICIENT_ROLES) -> SWFlow's physical_parameters key. The bed
+#: (``bed_elevation``, the model's Z) is SWFlowProblem's bathymetry; the Manning coefficient is n in the friction
+#: coefficient τb, the linear and quadratic drag are the porous medium's α and β.
+SHALLOW_WATER_COEFFICIENT_ROLES = {"gravity": "gravity", "manning_coefficient": "mannings", "porosity": "porosity",
+                                   "linear_drag": "drag_alpha", "quadratic_drag": "drag_beta"}
+SHALLOW_WATER_BED_ROLE = "bed_elevation"
 
 #: SWFlow's swe_parameters a dispatched coefficient flag sets (the same names), and the time order
 SHALLOW_WATER_FLAGS = ["cE", "LUMPED_MASS_MATRIX", "INTEGRATE_BY_PARTS_WALLS", "BOUNDS_RELAXATION",
