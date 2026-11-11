@@ -11,6 +11,7 @@ import array
 import inspect
 import h5py
 from proteus import cmeshTools
+from proteus.csparsity import CSR_INDEX_DTYPE
 import os
 from .Archiver import *
 from .LinearAlgebraTools import ParVec_petsc4py
@@ -2745,9 +2746,9 @@ class MultilevelMesh(Mesh):
         if np.abs(w.sum(axis=1)-1.0).max() > 1.0e-10:
             raise ValueError("a fine node lies outside its coarse cell")
         keep = w > 1.0e-14
-        rowptr = np.zeros((nFine+1,),cmeshTools.INDEX_DTYPE)
+        rowptr = np.zeros((nFine+1,),CSR_INDEX_DTYPE)
         rowptr[1:] = np.cumsum(keep.sum(axis=1))
-        colind = ce[P][keep].astype('i')
+        colind = ce[P][keep].astype(CSR_INDEX_DTYPE)
         nzval = w[keep].astype('d')
         return rowptr,colind,nzval
 
@@ -2781,10 +2782,10 @@ class MultilevelMesh(Mesh):
         oldOfNew = np.empty((nFine,),dtype=int)
         oldOfNew[fineOld2New] = np.arange(nFine)
         lengths = np.diff(rowptr)[oldOfNew]
-        newptr = np.zeros((nFine+1,),'i')
+        newptr = np.zeros((nFine+1,),CSR_INDEX_DTYPE)
         newptr[1:] = np.cumsum(lengths)
         gather = np.repeat(rowptr[oldOfNew]-newptr[:-1],lengths)+np.arange(int(newptr[-1]))
-        return newptr,coarseOld2New[colind[gather]].astype('i'),nzval[gather].copy()
+        return newptr,coarseOld2New[colind[gather]].astype(CSR_INDEX_DTYPE),nzval[gather].copy()
 
     def useHierarchicalGeometry(self):
         """Keep node coordinates only on the finest level.
@@ -2868,9 +2869,9 @@ class MultilevelMesh(Mesh):
         nNodes_fine = parents.shape[0]
         inherited = parents[:,0] == parents[:,1]
         nnz = int(np.where(inherited,1,2).sum())
-        rowptr = np.zeros((nNodes_fine+1,),cmeshTools.INDEX_DTYPE)
+        rowptr = np.zeros((nNodes_fine+1,),CSR_INDEX_DTYPE)
         rowptr[1:] = np.cumsum(np.where(inherited,1,2))
-        colind = np.zeros((nnz,),cmeshTools.INDEX_DTYPE)
+        colind = np.zeros((nnz,),CSR_INDEX_DTYPE)
         nzval = np.zeros((nnz,),'d')
         single = np.flatnonzero(inherited)
         double = np.flatnonzero(~inherited)

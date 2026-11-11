@@ -1,6 +1,7 @@
 # A type of -*- python -*- file
 cdef extern from "index_type.h":
     ctypedef int proteus_index_t
+    ctypedef int proteus_csr_index_t
 
 cdef extern from "postprocessing.h":
     ctypedef struct NodeStarFactorStruct:
@@ -596,8 +597,8 @@ cdef extern from "postprocessing.h":
 				           int nElementBoundaries_element,
 				           int nQuadraturePoints_elementBoundary,
 				           int nSpace,
-				           proteus_index_t* rowptr,
-				           proteus_index_t* colind,
+				           proteus_csr_index_t* rowptr,
+				           proteus_csr_index_t* colind,
 				           int * nFreeDOF_element,
 				           int * freeLocal_element,
 				           double * detJ,
@@ -621,8 +622,8 @@ cdef extern from "postprocessing.h":
 					         int nElementBoundaries_element,
 					         int nQuadraturePoints_elementBoundary,
 					         int nSpace,
-					         proteus_index_t* rowptr,
-					         proteus_index_t* colind,
+					         proteus_csr_index_t* rowptr,
+					         proteus_csr_index_t* colind,
 					         int * nFreeDOF_element,
 					         int * freeLocal_element,
 					         double * detJ,
@@ -641,8 +642,8 @@ cdef extern from "postprocessing.h":
     void updateRT0velocityWithAveragedPotentialP1nc_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nSpace,
-						   proteus_index_t* rowptr,
-						   proteus_index_t* colind,
+						   proteus_csr_index_t* rowptr,
+						   proteus_csr_index_t* colind,
 						   double * detJ,
 						   double * quad_a,
 						   double * phi,
@@ -654,8 +655,8 @@ cdef extern from "postprocessing.h":
 					    int nElementBoundaries_element,
 					    int nQuadraturePoints_elementBoundary,
 					    int nSpace,
-					    proteus_index_t* rowptr,
-					    proteus_index_t* colind,
+					    proteus_csr_index_t* rowptr,
+					    proteus_csr_index_t* colind,
 					    double * uQuadratureWeights_element,
 					    double * elementBarycenters,
 					    double * aElementQuadratureWeights,
@@ -675,8 +676,8 @@ cdef extern from "postprocessing.h":
     void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
 					          int nSpace,
 					          double updateCoef,
-					          proteus_index_t* rowptr,
-					          proteus_index_t* colind,
+					          proteus_csr_index_t* rowptr,
+					          proteus_csr_index_t* colind,
 					          const double* a,
 					          const double* grad_phi,
 					          double * velocity)

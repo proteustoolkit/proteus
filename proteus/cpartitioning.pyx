@@ -26,6 +26,7 @@ from libcpp.map cimport map as cppmap
 from libcpp.string cimport string
 from mpi4py.libmpi cimport MPI_Comm
 cimport mesh
+from proteus.partitioning cimport proteus_csr_index_t
 from proteus cimport cmeshTools
 from proteus.cmeshTools import INDEX_DTYPE
 from proteus.partitioning cimport (c_petscPartitioners,
@@ -71,6 +72,7 @@ def petscPartitioners():
 
 #the dtype of every mesh index array, read from proteus_index_t as in cmeshTools
 INDEX_DTYPE = np.dtype('i%d' % sizeof(mesh.proteus_index_t))
+CSR_INDEX_DTYPE = np.dtype("i%d" % sizeof(proteus_csr_index_t))
 
 cdef object _indexArray(mesh.proteus_index_t* p, mesh.proteus_index_t n):
     """A numpy view of n mesh indices at p; a rank that owns nothing has empty
@@ -340,13 +342,13 @@ def cartesianVertexInterpolation(object kind, int triangleFlag, object nn, objec
     partitioned numbering."""
     cdef int[3] cnn
     cdef int[3] cgrid
-    cdef vector[int] rowptr, colind
+    cdef vector[proteus_csr_index_t] rowptr, colind
     cdef vector[double] nzval
     for d in range(3):
         cnn[d] = _grid3(nn, 1)[d]
         cgrid[d] = _grid3(rankGrid, 1)[d]
     c_cartesianVertexInterpolation(CARTESIAN_KINDS[kind], triangleFlag, cnn, cgrid, level, rank, rowptr, colind, nzval)
-    return (np.array(rowptr, dtype=np.intc), np.array(colind, dtype=np.intc), np.array(nzval, dtype=np.float64))
+    return (np.array(rowptr, dtype=CSR_INDEX_DTYPE), np.array(colind, dtype=CSR_INDEX_DTYPE), np.array(nzval, dtype=np.float64))
 
 def cartesianSubdomainParents(object kind, int triangleFlag, object nn, object rankGrid, int level, int rank):
     """For each element of rank's subdomain on level of a generated hierarchy,

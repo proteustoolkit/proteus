@@ -10,6 +10,7 @@ representations using PETSc.
 """
 import numpy
 from proteus import cmeshTools
+from proteus.csparsity import CSR_INDEX_DTYPE
 import math
 import sys
 from mpi4py import MPI
@@ -1084,14 +1085,14 @@ def SparseMatFromDict(nr,nc,aDict):
     indeces.sort()
     nnz     = len(indeces)
     nzval   = numpy.zeros((nnz,),'d')
-    colind  = numpy.zeros((nnz,),'i')
-    rows    = numpy.zeros((nnz,),'i')
+    colind  = numpy.zeros((nnz,),CSR_INDEX_DTYPE)
+    rows    = numpy.zeros((nnz,),CSR_INDEX_DTYPE)
     for k,ij in enumerate(indeces):
         nzval[k] = aDict[ij]
         rows[k] = ij[0]
         colind[k] = ij[1]
     assert nnz == 0 or (rows.min() >= 0 and rows.max() < nr), "an entry lies outside the %d rows" % nr
-    rowptr  = numpy.zeros((nr+1,),'i')
+    rowptr  = numpy.zeros((nr+1,),CSR_INDEX_DTYPE)
     rowptr[1:] = numpy.cumsum(numpy.bincount(rows,minlength=nr))
     return (SparseMat(nr,nc,nnz,nzval,colind,rowptr),nzval)
 
@@ -1121,12 +1122,13 @@ def SparseMat(nr,nc,nnz,nzval,colind,rowptr):
 
     Note
     ----
-    For the superluWrapper, both the colind and rowptr should use
-    32-bit integer data types.
+    colind and rowptr must be csparsity.CSR_INDEX_DTYPE arrays (the width of
+    PetscInt). superluWrappers converts them to SuperLU's 32-bit int itself,
+    and only if the two widths differ.
     """
-    if (colind.dtype != 'int32' or rowptr.dtype != 'int32'):
-        print('ERROR - colind and rowptr must be "int32" numpy arrays for ' \
-              'superluWrappers')
+    if (colind.dtype != CSR_INDEX_DTYPE or rowptr.dtype != CSR_INDEX_DTYPE):
+        print('ERROR - colind and rowptr must be %s numpy arrays '
+              '(csparsity.CSR_INDEX_DTYPE)' % CSR_INDEX_DTYPE)
         sys.exit(1)
     return superluWrappers.SparseMatrix(nr,nc,nnz,nzval,colind,rowptr)
 

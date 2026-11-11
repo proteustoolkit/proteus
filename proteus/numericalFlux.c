@@ -990,8 +990,8 @@ void calculateInteriorNumericalDiffusiveFlux_sd(int scale_penalty,
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nSpace,
-						proteus_index_t* rowptr,
-						proteus_index_t* colind,
+						proteus_csr_index_t* rowptr,
+						proteus_csr_index_t* colind,
 						proteus_index_t* interiorElementBoundaries,
 						proteus_index_t* elementBoundaryElements,
 						int* elementBoundaryLocalElementBoundaries,
@@ -1002,7 +1002,7 @@ void calculateInteriorNumericalDiffusiveFlux_sd(int scale_penalty,
 						double* penalty,
 						double* flux)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, m, nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
   double diffusiveVelocityComponent_I,max_a=0.0;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
@@ -1170,8 +1170,8 @@ void calculateInteriorNumericalDiffusiveFlux_sd(proteus_index_t nInteriorElement
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nSpace,
-						proteus_index_t* rowptr,
-						proteus_index_t* colind,
+						proteus_csr_index_t* rowptr,
+						proteus_csr_index_t* colind,
 						proteus_index_t* interiorElementBoundaries,
 						proteus_index_t* elementBoundaryElements,
 						int* elementBoundaryLocalElementBoundaries,
@@ -1182,7 +1182,7 @@ void calculateInteriorNumericalDiffusiveFlux_sd(proteus_index_t nInteriorElement
 						double* penalty,
 						double* flux)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, m, nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global, m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
   double diffusiveVelocityComponent_I;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
@@ -1435,8 +1435,8 @@ void updateInteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 						     int nQuadraturePoints_elementBoundary,
 						     int nDOF_trial_element,
 						     int nSpace,
-						     proteus_index_t* rowptr,
-						     proteus_index_t* colind,
+						     proteus_csr_index_t* rowptr,
+						     proteus_csr_index_t* colind,
 						     proteus_index_t* l2g,
 						     proteus_index_t* interiorElementBoundaries,
 						     proteus_index_t* elementBoundaryElements,
@@ -1451,7 +1451,7 @@ void updateInteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 						     double* penalty,
 						     double* fluxJacobian)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, left_j_global, right_j_global, m, nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, j, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global, left_j_global, right_j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, j, I;
   double leftJacobian,rightJacobian,diffusiveVelocityComponent_I_leftJacobian,diffusiveVelocityComponent_I_rightJacobian,diffusiveVelocityComponent_I_leftJacobian2,diffusiveVelocityComponent_I_rightJacobian2,max_a;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
@@ -1769,8 +1769,8 @@ void updateInteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nInteriorEl
 						     int nQuadraturePoints_elementBoundary,
 						     int nDOF_trial_element,
 						     int nSpace,
-						     proteus_index_t* rowptr,
-						     proteus_index_t* colind,
+						     proteus_csr_index_t* rowptr,
+						     proteus_csr_index_t* colind,
 						     proteus_index_t* l2g,
 						     proteus_index_t* interiorElementBoundaries,
 						     proteus_index_t* elementBoundaryElements,
@@ -1785,7 +1785,7 @@ void updateInteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nInteriorEl
 						     double* penalty,
 						     double* fluxJacobian)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, left_j_global, right_j_global, m, nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, j, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global, left_j_global, right_j_global, m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, j, I;
   double leftJacobian,rightJacobian,diffusiveVelocityComponent_I_leftJacobian,diffusiveVelocityComponent_I_rightJacobian,diffusiveVelocityComponent_I_leftJacobian2,diffusiveVelocityComponent_I_rightJacobian2;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
@@ -2013,8 +2013,8 @@ void calculateExteriorNumericalDiffusiveFlux_sd(int scale_penalty,
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nSpace,
-						proteus_index_t* rowptr,
-						proteus_index_t* colind,
+						proteus_csr_index_t* rowptr,
+						proteus_csr_index_t* colind,
 						proteus_index_t* exteriorElementBoundaries,
 						proteus_index_t* elementBoundaryElements,
 						int* elementBoundaryLocalElementBoundaries,
@@ -2029,7 +2029,7 @@ void calculateExteriorNumericalDiffusiveFlux_sd(int scale_penalty,
 						double* penalty,
 						double* flux)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
   double diffusiveVelocityComponent_I,penaltyFlux,max_a=0.0;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2167,8 +2167,8 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_sd(int scale_penalty,
                                                       proteus_index_t nExteriorElementBoundaries_global,
 						      int nQuadraturePoints_elementBoundary,
 						      int nSpace,
-						      proteus_index_t* rowptr,
-						      proteus_index_t* colind,
+						      proteus_csr_index_t* rowptr,
+						      proteus_csr_index_t* colind,
 						      proteus_index_t* exteriorElementBoundaries,
 						      proteus_index_t* elementBoundaryElements,
 						      int* elementBoundaryLocalElementBoundaries,
@@ -2183,7 +2183,7 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_sd(int scale_penalty,
 						      double* penalty,
 						      double* flux)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, I;
   double diffusiveVelocityComponent_I,penaltyFlux,max_a;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2313,8 +2313,8 @@ void calculateExteriorNumericalDiffusiveFlux_sd(proteus_index_t nExteriorElement
 						int nElementBoundaries_element,
 						int nQuadraturePoints_elementBoundary,
 						int nSpace,
-						proteus_index_t* rowptr,
-						proteus_index_t* colind,
+						proteus_csr_index_t* rowptr,
+						proteus_csr_index_t* colind,
 						proteus_index_t* exteriorElementBoundaries,
 						proteus_index_t* elementBoundaryElements,
 						int* elementBoundaryLocalElementBoundaries,
@@ -2329,7 +2329,7 @@ void calculateExteriorNumericalDiffusiveFlux_sd(proteus_index_t nExteriorElement
 						double* penalty,
 						double* flux)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
+  proteus_index_t ebN, eN_global, m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
   double diffusiveVelocityComponent_I,penaltyFlux;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2454,8 +2454,8 @@ void calculateGlobalExteriorNumericalDiffusiveFlux(proteus_index_t nExteriorElem
 void calculateGlobalExteriorNumericalDiffusiveFlux_sd(proteus_index_t nExteriorElementBoundaries_global,
 						      int nQuadraturePoints_elementBoundary,
 						      int nSpace,
-						      proteus_index_t* rowptr,
-						      proteus_index_t* colind,
+						      proteus_csr_index_t* rowptr,
+						      proteus_csr_index_t* colind,
 						      proteus_index_t* exteriorElementBoundaries,
 						      proteus_index_t* elementBoundaryElements,
 						      int* elementBoundaryLocalElementBoundaries,
@@ -2470,7 +2470,7 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_sd(proteus_index_t nExteriorE
 						      double* penalty,
 						      double* flux)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, I;
+  proteus_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, I;
   double diffusiveVelocityComponent_I,penaltyFlux,max_a;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2581,8 +2581,8 @@ void calculateExteriorNumericalDiffusiveFlux_free_sd(proteus_index_t nExteriorEl
 						     int nElementBoundaries_element,
 						     int nQuadraturePoints_elementBoundary,
 						     int nSpace,
-						     proteus_index_t* rowptr,
-						     proteus_index_t* colind,
+						     proteus_csr_index_t* rowptr,
+						     proteus_csr_index_t* colind,
 						     proteus_index_t* exteriorElementBoundaries,
 						     proteus_index_t* elementBoundaryElements,
 						     int* elementBoundaryLocalElementBoundaries,
@@ -2597,7 +2597,7 @@ void calculateExteriorNumericalDiffusiveFlux_free_sd(proteus_index_t nExteriorEl
 						     double* penalty,
 						     double* flux)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
   double diffusiveVelocityComponent_I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2688,8 +2688,8 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_free(proteus_index_t nExterio
 void calculateGlobalExteriorNumericalDiffusiveFlux_free_sd(proteus_index_t nExteriorElementBoundaries_global,
 							   int nQuadraturePoints_elementBoundary,
 							   int nSpace,
-							   proteus_index_t* rowptr,
-							   proteus_index_t* colind,
+							   proteus_csr_index_t* rowptr,
+							   proteus_csr_index_t* colind,
 							   proteus_index_t* exteriorElementBoundaries,
 							   proteus_index_t* elementBoundaryElements,
 							   int* elementBoundaryLocalElementBoundaries,
@@ -2704,7 +2704,7 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_free_sd(proteus_index_t nExte
 							   double* penalty,
 							   double* flux)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, I;
   double diffusiveVelocityComponent_I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -2860,8 +2860,8 @@ void updateExteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 						     int nQuadraturePoints_elementBoundary,
 						     int nDOF_trial_element,
 						     int nSpace,
-						     proteus_index_t* rowptr,
-						     proteus_index_t* colind,
+						     proteus_csr_index_t* rowptr,
+						     proteus_csr_index_t* colind,
 						     proteus_index_t* l2g,
 						     proteus_index_t* exteriorElementBoundaries,
 						     proteus_index_t* elementBoundaryElements,
@@ -2877,7 +2877,7 @@ void updateExteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 						     double* penalty,
 						     double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
   double Jacobian,diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2,max_a=0.0;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -3080,8 +3080,8 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 							   int nQuadraturePoints_elementBoundary,
 							   int nDOF_trial_element,
 							   int nSpace,
-							   proteus_index_t* rowptr,
-							   proteus_index_t* colind,
+							   proteus_csr_index_t* rowptr,
+							   proteus_csr_index_t* colind,
 							   proteus_index_t* l2g,
 							   proteus_index_t* exteriorElementBoundaries,
 							   proteus_index_t* elementBoundaryElements,
@@ -3097,7 +3097,7 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_sd(int scale_penalty,
 							   double* penalty,
 							   double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, k, j, I;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, j, I;
   double Jacobian,diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2,max_a;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -3290,8 +3290,8 @@ void updateExteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nExteriorEl
 						     int nQuadraturePoints_elementBoundary,
 						     int nDOF_trial_element,
 						     int nSpace,
-						     proteus_index_t* rowptr,
-						     proteus_index_t* colind,
+						     proteus_csr_index_t* rowptr,
+						     proteus_csr_index_t* colind,
 						     proteus_index_t* l2g,
 						     proteus_index_t* exteriorElementBoundaries,
 						     proteus_index_t* elementBoundaryElements,
@@ -3307,7 +3307,7 @@ void updateExteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nExteriorEl
 						     double* penalty,
 						     double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
+  proteus_index_t ebN, eN_global, j_global, m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
   double Jacobian,diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -3494,8 +3494,8 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nExte
 							   int nQuadraturePoints_elementBoundary,
 							   int nDOF_trial_element,
 							   int nSpace,
-							   proteus_index_t* rowptr,
-							   proteus_index_t* colind,
+							   proteus_csr_index_t* rowptr,
+							   proteus_csr_index_t* colind,
 							   proteus_index_t* l2g,
 							   proteus_index_t* exteriorElementBoundaries,
 							   proteus_index_t* elementBoundaryElements,
@@ -3511,7 +3511,7 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_sd(proteus_index_t nExte
 							   double* penalty,
 							   double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, k, j, I;
+  proteus_index_t ebN, eN_global, j_global, m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, j, I;
   double Jacobian,diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2,max_a;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -3682,8 +3682,8 @@ void updateExteriorNumericalDiffusiveFluxJacobian_free_sd(proteus_index_t nExter
 							  int nQuadraturePoints_elementBoundary,
 							  int nDOF_trial_element,
 							  int nSpace,
-							  proteus_index_t* rowptr,
-							  proteus_index_t* colind,
+							  proteus_csr_index_t* rowptr,
+							  proteus_csr_index_t* colind,
 							  proteus_index_t* l2g,
 							  proteus_index_t* exteriorElementBoundaries,
 							  proteus_index_t* elementBoundaryElements,
@@ -3699,7 +3699,7 @@ void updateExteriorNumericalDiffusiveFluxJacobian_free_sd(proteus_index_t nExter
 							  double* penalty,
 							  double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, j, I;
   double diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -3847,8 +3847,8 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_free_sd(proteus_index_t 
 								int nQuadraturePoints_elementBoundary,
 								int nDOF_trial_element,
 								int nSpace,
-								proteus_index_t* rowptr,
-								proteus_index_t* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								proteus_index_t* l2g,
 								proteus_index_t* exteriorElementBoundaries,
 								proteus_index_t* elementBoundaryElements,
@@ -3864,7 +3864,7 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_free_sd(proteus_index_t 
 								double* penalty,
 								double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, k, j, I;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, j, I;
   double diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -8082,8 +8082,8 @@ void calculateInteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t nInte
 							   int nElementBoundaries_element,
 							   int nQuadraturePoints_elementBoundary,
 							   int nSpace,
-							   proteus_index_t* rowptr,
-							   proteus_index_t* colind,
+							   proteus_csr_index_t* rowptr,
+							   proteus_csr_index_t* colind,
 							   proteus_index_t* interiorElementBoundaries,
 							   proteus_index_t* elementBoundaryElements,
 							   int* elementBoundaryLocalElementBoundaries,
@@ -8095,7 +8095,7 @@ void calculateInteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t nInte
 							   double* penalty,
 							   double* flux)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, m, nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, left_ebN_element, right_ebN_element, k, I;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
       ebN = interiorElementBoundaries[ebNI];
@@ -8349,8 +8349,8 @@ void updateInteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(proteus_index_t 
 								int nQuadraturePoints_elementBoundary,
 								int nDOF_trial_element,
 								int nSpace,
-								proteus_index_t* rowptr,
-								proteus_index_t* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								proteus_index_t* interiorElementBoundaries,
 								proteus_index_t* elementBoundaryElements,
 								int* elementBoundaryLocalElementBoundaries,
@@ -8366,7 +8366,7 @@ void updateInteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(proteus_index_t 
 								double* fluxJacobian,
 								double* fluxJacobian_eb)
 {
-  proteus_index_t ebN, left_eN_global, right_eN_global, m, nnz=rowptr[nSpace]; int ebNI, eN_ebN_element, left_ebN_element, right_ebN_element, k, j, I;
+  proteus_index_t ebN, left_eN_global, right_eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNI, eN_ebN_element, left_ebN_element, right_ebN_element, k, j, I;
   for(ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
     {
       ebN = interiorElementBoundaries[ebNI];
@@ -8589,8 +8589,8 @@ void calculateExteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t nExte
 							   int nElementBoundaries_element,
 							   int nQuadraturePoints_elementBoundary,
 							   int nSpace,
-							   proteus_index_t* rowptr,
-							   proteus_index_t* colind,
+							   proteus_csr_index_t* rowptr,
+							   proteus_csr_index_t* colind,
 							   proteus_index_t* exteriorElementBoundaries,
 							   proteus_index_t* elementBoundaryElements,
 							   int* elementBoundaryLocalElementBoundaries,
@@ -8603,7 +8603,7 @@ void calculateExteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t nExte
 							   double* penalty,
 							   double* flux)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
       ebN = exteriorElementBoundaries[ebNE];
@@ -8716,8 +8716,8 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t
 								 int nElementBoundaries_element,
 								 int nQuadraturePoints_elementBoundary,
 								 int nSpace,
-								 proteus_index_t* rowptr,
-								 proteus_index_t* colind,
+								 proteus_csr_index_t* rowptr,
+								 proteus_csr_index_t* colind,
 								 proteus_index_t* exteriorElementBoundaries,
 								 proteus_index_t* elementBoundaryElements,
 								 int* elementBoundaryLocalElementBoundaries,
@@ -8730,7 +8730,7 @@ void calculateGlobalExteriorNumericalDiffusiveFlux_LDG_upwind_sd(proteus_index_t
 								 double* penalty,
 								 double* flux)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, k, I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
       ebN = exteriorElementBoundaries[ebNE];
@@ -8904,8 +8904,8 @@ void updateExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(int* isDiffusive
 								int nQuadraturePoints_elementBoundary,
 								int nDOF_trial_element,
 								int nSpace,
-								proteus_index_t* rowptr,
-								proteus_index_t* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								proteus_index_t* exteriorElementBoundaries,
 								proteus_index_t* elementBoundaryElements,
 								int* elementBoundaryLocalElementBoundaries,
@@ -8921,7 +8921,7 @@ void updateExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(int* isDiffusive
 								double* fluxJacobian,
 								double* fluxJacobian_eb)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, eN_ebN_element, k, j, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, eN_ebN_element, k, j, I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
       ebN = exteriorElementBoundaries[ebNE];
@@ -9141,8 +9141,8 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(int* isDif
 								      int nQuadraturePoints_elementBoundary,
 								      int nDOF_trial_element,
 								      int nSpace,
-								      proteus_index_t* rowptr,
-								      proteus_index_t* colind,
+								      proteus_csr_index_t* rowptr,
+								      proteus_csr_index_t* colind,
 								      proteus_index_t* exteriorElementBoundaries,
 								      proteus_index_t* elementBoundaryElements,
 								      int* elementBoundaryLocalElementBoundaries,
@@ -9158,7 +9158,7 @@ void updateGlobalExteriorNumericalDiffusiveFluxJacobian_LDG_upwind_sd(int* isDif
 								      double* fluxJacobian_exterior,
 								      double* fluxJacobian_eb)
 {
-  proteus_index_t ebN, eN_global, m, nnz=rowptr[nSpace]; int ebNE, ebN_element, eN_ebN_element, k, j, I;
+  proteus_index_t ebN, eN_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, ebN_element, eN_ebN_element, k, j, I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
       ebN = exteriorElementBoundaries[ebNE];
@@ -9258,8 +9258,8 @@ void calculateDiffusionMatrixSplittings_LDG_sd(int aSplit,
 					       int nQuadraturePoints_element,
 					       int nQuadraturePoints_elementBoundary,
 					       int nSpace,
-					       const proteus_index_t * rowptr,
-					       const proteus_index_t * colind,
+					       const proteus_csr_index_t * rowptr,
+					       const proteus_csr_index_t * colind,
 					       const double * ebq_a,
 					       const double * q_a,
 					       double *eb_aHat,
@@ -9267,7 +9267,7 @@ void calculateDiffusionMatrixSplittings_LDG_sd(int aSplit,
 					       double *aHat,
 					       double *aTilde)
 {
-  proteus_index_t ebN, m, nnz=rowptr[nSpace]; int eN, k, I;
+  proteus_index_t ebN; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I;
   double factor=0.0;
   if (aSplit == 0)
     { /*inverted matrix is identity*/
@@ -9952,12 +9952,12 @@ void calculateGlobalExteriorNumericalFluxDarcyFCFF(proteus_index_t nExteriorElem
 void calculateGlobalExteriorNumericalFluxDarcyFCFF_sd(proteus_index_t nExteriorElementBoundaries_global,
 						      int nQuadraturePoints_elementBoundary,
 						      int nSpace,
-						      proteus_index_t* rowptr_wm,
-						      proteus_index_t* colind_wm,
-						      proteus_index_t* rowptr_mw,
-						      proteus_index_t* colind_mw,
-						      proteus_index_t* rowptr_mm,
-						      proteus_index_t* colind_mm,
+						      proteus_csr_index_t* rowptr_wm,
+						      proteus_csr_index_t* colind_wm,
+						      proteus_csr_index_t* rowptr_mw,
+						      proteus_csr_index_t* colind_mw,
+						      proteus_csr_index_t* rowptr_mm,
+						      proteus_csr_index_t* colind_mm,
 						      const proteus_index_t* exteriorElementBoundaries,
 						      const proteus_index_t* elementBoundaryElements,
 						      const int* elementBoundaryLocalElementBoundaries,
@@ -9989,7 +9989,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFCFF_sd(proteus_index_t nExteriorE
 						      double * diffusiveFlux_mw,
 						      double * diffusiveFlux_mm)
 {
-  proteus_index_t ebN, m, nnz_wm=rowptr_wm[nSpace], nnz_mw=rowptr_mw[nSpace], nnz_mm=rowptr_mm[nSpace]; int ebNE, I, k;
+  proteus_index_t ebN; proteus_csr_index_t m; proteus_csr_index_t nnz_mm=rowptr_mm[nSpace]; proteus_csr_index_t nnz_wm=rowptr_wm[nSpace]; proteus_csr_index_t nnz_mw=rowptr_mw[nSpace]; int ebNE, I, k;
   double diffusiveFlux_I=0.0,penaltyFlux = 0.0;
 
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
@@ -10491,12 +10491,12 @@ void calculateGlobalExteriorNumericalFluxDarcyFCFF_diffusiveFluxJacobian_sd(prot
 									    int nQuadraturePoints_elementBoundary,
 									    int nSpace,
 									    int nDOF_trial_element,
-									    proteus_index_t* rowptr_wm,
-									    proteus_index_t* colind_wm,
-									    proteus_index_t* rowptr_mw,
-									    proteus_index_t* colind_mw,
-									    proteus_index_t* rowptr_mm,
-									    proteus_index_t* colind_mm,
+									    proteus_csr_index_t* rowptr_wm,
+									    proteus_csr_index_t* colind_wm,
+									    proteus_csr_index_t* rowptr_mw,
+									    proteus_csr_index_t* colind_mw,
+									    proteus_csr_index_t* rowptr_mm,
+									    proteus_csr_index_t* colind_mm,
 									    const proteus_index_t* l2g, /*for now assumes both solution spaces are the same!*/
 									    const proteus_index_t* exteriorElementBoundaries,
 									    const proteus_index_t* elementBoundaryElements,
@@ -10532,7 +10532,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFCFF_diffusiveFluxJacobian_sd(prot
 									    double * fluxJacobian_mw,
 									    double * fluxJacobian_mm)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz_wm=rowptr_wm[nSpace], nnz_mw=rowptr_mw[nSpace], nnz_mm=rowptr_mm[nSpace]; int ebNE, j, I, k;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz_mm=rowptr_mm[nSpace]; proteus_csr_index_t nnz_wm=rowptr_wm[nSpace]; proteus_csr_index_t nnz_mw=rowptr_mw[nSpace]; int ebNE, j, I, k;
   double Jacobian_w,Jacobian_m,
     diffusiveVelocityComponent_I_Jacobian_w,
     diffusiveVelocityComponent_I_Jacobian_m,  
@@ -10994,10 +10994,10 @@ void calculateGlobalExteriorNumericalFluxDarcyFC(proteus_index_t nExteriorElemen
 void calculateGlobalExteriorNumericalFluxDarcyFC_sd(proteus_index_t nExteriorElementBoundaries_global,
 						    int nQuadraturePoints_elementBoundary,
 						    int nSpace,
-						    proteus_index_t* rowptr_ww,
-						    proteus_index_t* colind_ww,
-						    proteus_index_t* rowptr_nn,
-						    proteus_index_t* colind_nn,
+						    proteus_csr_index_t* rowptr_ww,
+						    proteus_csr_index_t* colind_ww,
+						    proteus_csr_index_t* rowptr_nn,
+						    proteus_csr_index_t* colind_nn,
 						    const proteus_index_t* exteriorElementBoundaries,
 						    const proteus_index_t* elementBoundaryElements,
 						    const int* elementBoundaryLocalElementBoundaries,
@@ -11026,7 +11026,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFC_sd(proteus_index_t nExteriorEle
 						    double * diffusiveFlux_ww,
 						    double * diffusiveFlux_nn)
 {
-  proteus_index_t ebN, m, nnz_ww=rowptr_ww[nSpace], nnz_nn=rowptr_nn[nSpace]; int ebNE, I, k;
+  proteus_index_t ebN; proteus_csr_index_t m; proteus_csr_index_t nnz_nn=rowptr_nn[nSpace]; proteus_csr_index_t nnz_ww=rowptr_ww[nSpace]; int ebNE, I, k;
   double diffusiveFlux_I=0.0,penaltyFlux = 0.0,potential_gradient_w=0.0,potential_gradient_n=0.0;
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
     {
@@ -11497,10 +11497,10 @@ void calculateGlobalExteriorNumericalFluxDarcyFC_diffusiveFluxJacobian_sd(proteu
 									  int nQuadraturePoints_elementBoundary,
 									  int nSpace,
 									  int nDOF_trial_element,
-									  proteus_index_t* rowptr_ww,
-									  proteus_index_t* colind_ww,
-									  proteus_index_t* rowptr_nn,
-									  proteus_index_t* colind_nn,
+									  proteus_csr_index_t* rowptr_ww,
+									  proteus_csr_index_t* colind_ww,
+									  proteus_csr_index_t* rowptr_nn,
+									  proteus_csr_index_t* colind_nn,
 									  const proteus_index_t* l2g, /*for now assumes both solution spaces are the same!*/
 									  const proteus_index_t* exteriorElementBoundaries,
 									  const proteus_index_t* elementBoundaryElements,
@@ -11537,7 +11537,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFC_diffusiveFluxJacobian_sd(proteu
 									  double * fluxJacobian_nw,
 									  double * fluxJacobian_nn)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz_ww=rowptr_ww[nSpace], nnz_nn=rowptr_nn[nSpace]; int ebNE, j, I, k;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz_ww=rowptr_ww[nSpace]; proteus_csr_index_t nnz_nn=rowptr_nn[nSpace]; int ebNE, j, I, k;
   double Jacobian_w,Jacobian_n,
     diffusiveVelocityComponent_I_Jacobian_w,
     diffusiveVelocityComponent_I_Jacobian_n,  
@@ -12150,10 +12150,10 @@ void calculateGlobalExteriorNumericalFluxDarcyFCPP(proteus_index_t nExteriorElem
 void calculateGlobalExteriorNumericalFluxDarcyFCPP_sd(proteus_index_t nExteriorElementBoundaries_global,
 						      int nQuadraturePoints_elementBoundary,
 						      int nSpace,
-						      proteus_index_t* rowptr_ww,
-						      proteus_index_t* colind_ww,
-						      proteus_index_t* rowptr_nn,
-						      proteus_index_t* colind_nn,
+						      proteus_csr_index_t* rowptr_ww,
+						      proteus_csr_index_t* colind_ww,
+						      proteus_csr_index_t* rowptr_nn,
+						      proteus_csr_index_t* colind_nn,
 						      const proteus_index_t* exteriorElementBoundaries,
 						      const proteus_index_t* elementBoundaryElements,
 						      const int* elementBoundaryLocalElementBoundaries,
@@ -12182,7 +12182,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFCPP_sd(proteus_index_t nExteriorE
 						      double * diffusiveFlux_ww,
 						      double * diffusiveFlux_nn)
 {
-  proteus_index_t ebN, m, nnz_ww=rowptr_ww[nSpace], nnz_nn=rowptr_nn[nSpace]; int ebNE, I, k;
+  proteus_index_t ebN; proteus_csr_index_t m; proteus_csr_index_t nnz_nn=rowptr_nn[nSpace]; proteus_csr_index_t nnz_ww=rowptr_ww[nSpace]; int ebNE, I, k;
   double diffusiveFlux_I=0.0,penaltyFlux = 0.0,potential_gradient_w=0.0,potential_gradient_n=0.0;
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
     {
@@ -12653,10 +12653,10 @@ void calculateGlobalExteriorNumericalFluxDarcyFCPP_diffusiveFluxJacobian_sd(prot
 									    int nQuadraturePoints_elementBoundary,
 									    int nSpace,
 									    int nDOF_trial_element,
-									    proteus_index_t* rowptr_ww,
-									    proteus_index_t* colind_ww,
-									    proteus_index_t* rowptr_nn,
-									    proteus_index_t* colind_nn,
+									    proteus_csr_index_t* rowptr_ww,
+									    proteus_csr_index_t* colind_ww,
+									    proteus_csr_index_t* rowptr_nn,
+									    proteus_csr_index_t* colind_nn,
 									    const proteus_index_t* l2g, /*for now assumes both solution spaces are the same!*/
 									    const proteus_index_t* exteriorElementBoundaries,
 									    const proteus_index_t* elementBoundaryElements,
@@ -12693,7 +12693,7 @@ void calculateGlobalExteriorNumericalFluxDarcyFCPP_diffusiveFluxJacobian_sd(prot
 									    double * fluxJacobian_nw,
 									    double * fluxJacobian_nn)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz_ww=rowptr_ww[nSpace], nnz_nn=rowptr_nn[nSpace]; int ebNE, j, I, k;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz_ww=rowptr_ww[nSpace]; proteus_csr_index_t nnz_nn=rowptr_nn[nSpace]; int ebNE, j, I, k;
   double Jacobian_w,Jacobian_n,
     diffusiveVelocityComponent_I_Jacobian_w,
     diffusiveVelocityComponent_I_Jacobian_n,  
@@ -13079,8 +13079,8 @@ void calculateGlobalExteriorNumericalFluxDarcySplitPressure(proteus_index_t nExt
 void calculateGlobalExteriorNumericalFluxDarcySplitPressure_sd(proteus_index_t nExteriorElementBoundaries_global,
 							       int nQuadraturePoints_elementBoundary,
 							       int nSpace,
-							       const proteus_index_t* rowptr,
-							       const proteus_index_t* colind,
+							       const proteus_csr_index_t* rowptr,
+							       const proteus_csr_index_t* colind,
 							       const proteus_index_t* exteriorElementBoundaries,
 							       const proteus_index_t* elementBoundaryElements,
 							       const int* elementBoundaryLocalElementBoundaries,
@@ -13098,7 +13098,7 @@ void calculateGlobalExteriorNumericalFluxDarcySplitPressure_sd(proteus_index_t n
 							       const double* penalty,
 							       double * diffusiveFlux)
 {
-  proteus_index_t ebN, m, nnz = rowptr[nSpace]; int ebNE, I, k;
+  proteus_index_t ebN; proteus_csr_index_t m; proteus_csr_index_t nnz = rowptr[nSpace]; int ebNE, I, k;
   double diffusiveFlux_I=0.0,penaltyFlux = 0.0;
 
   for (ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
@@ -14271,8 +14271,8 @@ void applySeepageFace(proteus_index_t nExteriorElementBoundaries_global,
     }
 }
 
-void calculateExteriorNumericalFluxRichards_sd(proteus_index_t* rowptr,
-					       proteus_index_t* colind,
+void calculateExteriorNumericalFluxRichards_sd(proteus_csr_index_t* rowptr,
+					       proteus_csr_index_t* colind,
 					       proteus_index_t nExteriorElementBoundaries_global,
 					       int nQuadraturePoints_elementBoundary,
 					       int nSpace,
@@ -14287,7 +14287,7 @@ void calculateExteriorNumericalFluxRichards_sd(proteus_index_t* rowptr,
 					       double* penalty,
 					       double* diffusiveFlux)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, I;
   double flux,v_I;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -14362,8 +14362,8 @@ void calculateExteriorNumericalFluxRichards_sd(proteus_index_t* rowptr,
     }
 }
 
-void calculateExteriorNumericalFluxJacobianRichards_sd(proteus_index_t* rowptr,
-						       proteus_index_t* colind,
+void calculateExteriorNumericalFluxJacobianRichards_sd(proteus_csr_index_t* rowptr,
+						       proteus_csr_index_t* colind,
 						       proteus_index_t nExteriorElementBoundaries_global,
 						       int nQuadraturePoints_elementBoundary,
 						       int nDOF_trial_element,
@@ -14381,7 +14381,7 @@ void calculateExteriorNumericalFluxJacobianRichards_sd(proteus_index_t* rowptr,
 						       double* penalty,
 						       double* fluxJacobian)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, j, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, j, I;
   double dFlux_j,dv_I_j;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
     {
@@ -14857,8 +14857,8 @@ void calculateGlobalExteriorNumericalDiffusiveFluxWithUpwinding_sd(int scale_pen
 								   proteus_index_t nExteriorElementBoundaries_global,
 								   int nQuadraturePoints_elementBoundary,
 								   int nSpace,
-								   proteus_index_t* rowptr,
-								   proteus_index_t* colind,
+								   proteus_csr_index_t* rowptr,
+								   proteus_csr_index_t* colind,
 								   proteus_index_t* exteriorElementBoundaries,
 								   proteus_index_t* elementBoundaryElements,
 								   int* elementBoundaryLocalElementBoundaries,
@@ -14874,7 +14874,7 @@ void calculateGlobalExteriorNumericalDiffusiveFluxWithUpwinding_sd(int scale_pen
 								   double* penalty,
 								   double* flux)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int ebNE, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, I;
   double diffusiveVelocityComponent_I,penaltyFlux,max_a;
   double potential_gradient=0.0;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
@@ -14948,8 +14948,8 @@ void updateGlobalExteriorNumericalDiffusiveFluxWithUpwindingJacobian_sd(int scal
 									int nQuadraturePoints_elementBoundary,
 									int nDOF_trial_element,
 									int nSpace,
-									proteus_index_t* rowptr,
-									proteus_index_t* colind,
+									proteus_csr_index_t* rowptr,
+									proteus_csr_index_t* colind,
 									proteus_index_t* l2g,
 									proteus_index_t* exteriorElementBoundaries,
 									proteus_index_t* elementBoundaryElements,
@@ -14966,7 +14966,7 @@ void updateGlobalExteriorNumericalDiffusiveFluxWithUpwindingJacobian_sd(int scal
 									double* penalty,
 									double* fluxJacobian)
 {
-  proteus_index_t ebN, eN_global, j_global, m, nnz=rowptr[nSpace]; int ebNE, k, j, I;
+  proteus_index_t ebN, eN_global, j_global; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int ebNE, k, j, I;
   double Jacobian,diffusiveVelocityComponent_I_Jacobian,diffusiveVelocityComponent_I_Jacobian2,max_a;
   double potential_gradient=0.;
   for(ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)

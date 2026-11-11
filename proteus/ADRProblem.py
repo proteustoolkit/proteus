@@ -32,6 +32,7 @@ from proteus import (FemTools, LinearAlgebraTools, LinearSolvers, MeshTools,
                      NonlinearSolvers, NumericalFlux, Quadrature, StepControl,
                      TimeIntegration, defaults)
 from proteus.TransportCoefficients import TC_base
+from proteus.csparsity import CSR_INDEX_DTYPE
 
 __all__ = ["ADRCoefficients", "physics", "numerics", "run", "emit_pn", "describe",
            "l2_errors", "ELEMENTS"]
@@ -117,8 +118,8 @@ class ADRCoefficients(TC_base):
                     diffusion[i][ck] = ({index[c]: 'nonlinear' for c in b["depends_on"]}
                                         or {ck: 'constant'})
                     potential[ck] = {ck: 'u'}
-                    sdInfo[(i, ck)] = (numpy.array(b["rowptr"], 'i'),
-                                       numpy.array(b["colind"], 'i'))
+                    sdInfo[(i, ck)] = (numpy.array(b["rowptr"], CSR_INDEX_DTYPE),
+                                       numpy.array(b["colind"], CSR_INDEX_DTYPE))
                     for n, code in enumerate(b["a"]):
                         self._add(('a', i, ck), code, n)
                     for c, codes in b["da"].items():

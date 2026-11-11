@@ -1,7 +1,10 @@
 # A type of -*- python -*- file
 import numpy as np
 cimport numpy as np
-from csparsity cimport SparsityInfo, proteus_index_t
+from csparsity cimport SparsityInfo, proteus_index_t, proteus_csr_index_t
+
+#: dtype of CSR row pointers and column indices (proteus_csr_index_t, = PetscInt)
+CSR_INDEX_DTYPE = np.dtype('i%d' % sizeof(proteus_csr_index_t))
 
 cdef class PySparsityInfo:
     cdef SparsityInfo cpp
@@ -119,15 +122,15 @@ cdef class PySparsityInfo:
                                 <proteus_index_t*> exteriorElementBoundariesArray.data,
                                 hasOutflowBoundary,
                                 needOutflowJacobian,
-                                <proteus_index_t*> rowptr.data,
-                                <proteus_index_t*> csrRowIndeces.data,
-                                <proteus_index_t*> csrColumnOffsets.data,
-                                <proteus_index_t*> csrColumnOffsets_eNebN.data,
-                                <proteus_index_t*> csrColumnOffsets_eb.data,
-                                <proteus_index_t*> csrColumnOffsets_eb_eNebN.data)
+                                <proteus_csr_index_t*> rowptr.data,
+                                <proteus_csr_index_t*> csrRowIndeces.data,
+                                <proteus_csr_index_t*> csrColumnOffsets.data,
+                                <proteus_csr_index_t*> csrColumnOffsets_eNebN.data,
+                                <proteus_csr_index_t*> csrColumnOffsets_eb.data,
+                                <proteus_csr_index_t*> csrColumnOffsets_eb_eNebN.data)
     def getCSR(self):
         self.cpp.getCSR()
-        return (np.asarray(<proteus_index_t[:self.cpp.nrows]>self.cpp.rowptr),
-                np.asarray(<proteus_index_t[:self.cpp.nnz]>self.cpp.colind),
+        return (np.asarray(<proteus_csr_index_t[:self.cpp.nrows]>self.cpp.rowptr),
+                np.asarray(<proteus_csr_index_t[:self.cpp.nnz]>self.cpp.colind),
                 self.cpp.nnz,
                 np.asarray(<double[:self.cpp.nnz]>self.cpp.nzval))

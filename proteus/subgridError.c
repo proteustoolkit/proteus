@@ -132,8 +132,8 @@ void calculateSubgridError_ADR_tau_p(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_tau_p_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					proteus_index_t* rowptr,
-					proteus_index_t* colind,
+					proteus_csr_index_t* rowptr,
+					proteus_csr_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -146,7 +146,7 @@ void calculateSubgridError_ADR_tau_p_sd(proteus_index_t nElements_global,
 					double* cfl,
 					double* tau)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I, J;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I, J;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],alpha,beta;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -304,8 +304,8 @@ void calculateSubgridError_ADR_tau_1(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_tau_1_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					proteus_index_t* rowptr,
-					proteus_index_t* colind,
+					proteus_csr_index_t* rowptr,
+					proteus_csr_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -318,7 +318,7 @@ void calculateSubgridError_ADR_tau_1_sd(proteus_index_t nElements_global,
 					double* cfl,
 					double* tau)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3],tauMax;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -484,8 +484,8 @@ void calculateSubgridError_ADR_tau_2(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_tau_2_sd(proteus_index_t nElements_global,
 					int nQuadraturePoints_element,
 					int nSpace,
-					proteus_index_t* rowptr,
-					proteus_index_t* colind,
+					proteus_csr_index_t* rowptr,
+					proteus_csr_index_t* colind,
 					double* elementDiameter,
 					double* dmt,
 					double* df,
@@ -498,7 +498,7 @@ void calculateSubgridError_ADR_tau_2_sd(proteus_index_t nElements_global,
 					double* cfl,
 					double* tau)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I;
   double h,Vlin,Alin,A_II,num,den,cfl1,cfl2,vlin[3];
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -699,8 +699,8 @@ void calculateSubgridError_ADR_generic_tau(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_generic_tau_sd(proteus_index_t nElements_global,
 					      int nQuadraturePoints_element,
 					      int nSpace,
-					      proteus_index_t* rowptr,
-					      proteus_index_t* colind,
+					      proteus_csr_index_t* rowptr,
+					      proteus_csr_index_t* colind,
 					      double* inverseJ,
 					      double* dmt,
 					      double* df,
@@ -713,7 +713,7 @@ void calculateSubgridError_ADR_generic_tau_sd(proteus_index_t nElements_global,
 					      double* cfl,
 					      double* tau)
 {
-  proteus_index_t m, nnz=rowptr[nSpace], nSpace2=nSpace*nSpace; int eN, k, I, J, K;
+  proteus_index_t  nSpace2=nSpace*nSpace; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -851,8 +851,8 @@ void calculateSubgridError_ADR_tau(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_tau_sd(proteus_index_t nElements_global,
 				      int nQuadraturePoints_element,
 				      int nSpace,
-				      proteus_index_t* rowptr,
-				      proteus_index_t* colind,
+				      proteus_csr_index_t* rowptr,
+				      proteus_csr_index_t* colind,
 				      char stabilization,
 				      double* elementDiameter,
 				      double* dmt,
@@ -4018,13 +4018,13 @@ void calculateSubgridError_Harari_tau_sd(proteus_index_t nElements_global,
 					 int nQuadraturePoints_element,
 					 int nSpace,
 					 double dt,
-					 proteus_index_t* rowptr,
-					 proteus_index_t* colind,
+					 proteus_csr_index_t* rowptr,
+					 proteus_csr_index_t* colind,
 					 double* elementDiameter,
 					 double* a,
 					 double* tau)
 {
-  proteus_index_t m, nnz=rowptr[nSpace]; int eN, k, I;
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I;
   double h,A_max,A_II,tauMax,heps;
   for(eN=0;eN<nElements_global;eN++)
     {
@@ -4244,8 +4244,8 @@ void calculateSubgridError_ADR_Sangalli_tau(proteus_index_t nElements_global,
 void calculateSubgridError_ADR_Sangalli_tau_sd(proteus_index_t nElements_global,
 					       int nQuadraturePoints_element,
 					       int nSpace,
-					       proteus_index_t* rowptr,
-					       proteus_index_t* colind,
+					       proteus_csr_index_t* rowptr,
+					       proteus_csr_index_t* colind,
 					       double* inverseJ,
 					       double* dmt,
 					       double* df,
@@ -4259,7 +4259,7 @@ void calculateSubgridError_ADR_Sangalli_tau_sd(proteus_index_t nElements_global,
 					       double* tau,
 					       double* tau_gradient)
 {
-  proteus_index_t m, nnz=rowptr[nSpace], nSpace2=nSpace*nSpace; int eN, k, I, J, K;
+  proteus_index_t  nSpace2=nSpace*nSpace; proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace]; int eN, k, I, J, K;
   double Vlin,Alin,A_II,cfl1,cfl2,vlin[3],G_IJ,v_dot_Gv,CI_nu2_G_ddot_G,Gv_I,CI=36.0*36.0,g_I,g_dot_g;
   double Da,h_e,tau_00,tau_11,t_00,t_11,coshGamma,Pe,sinhAlpha,coshAlpha,PeEval,gamma2,gam2Eval,DaEval;
   for(eN=0;eN<nElements_global;eN++)

@@ -63,20 +63,20 @@ namespace proteus
                         proteus_index_t* exteriorElementBoundariesArray,
                         int hasOutflowBoundary,
                         int needOutflowJacobian,
-                        proteus_index_t* rowptr,
-                        proteus_index_t* csrRowIndeces,
-                        proteus_index_t* csrColumnOffsets,
-                        proteus_index_t* csrColumnOffsets_eNebN,
-                        proteus_index_t* csrColumnOffsets_eb,
-                        proteus_index_t* csrColumnOffsets_eb_eNebN);
+                        proteus_csr_index_t* rowptr,
+                        proteus_csr_index_t* csrRowIndeces,
+                        proteus_csr_index_t* csrColumnOffsets,
+                        proteus_csr_index_t* csrColumnOffsets_eNebN,
+                        proteus_csr_index_t* csrColumnOffsets_eb,
+                        proteus_csr_index_t* csrColumnOffsets_eb_eNebN);
     void getCSR();
     proteus_index_t nrows;
-    proteus_index_t nnz;
-    proteus_index_t *rowptr, *colind;
+    proteus_csr_index_t nnz;
+    proteus_csr_index_t *rowptr, *colind;
     double* nzval;
   private:
     std::map<proteus_index_t,std::set<proteus_index_t> > columnIndecesMap;
-    std::map<proteus_index_t,std::map<proteus_index_t,proteus_index_t> > columnOffsetsMap;
+    std::map<proteus_index_t,std::map<proteus_index_t,proteus_csr_index_t> > columnOffsetsMap;
   };
 }
 #endif

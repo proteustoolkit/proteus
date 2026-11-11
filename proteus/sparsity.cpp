@@ -228,12 +228,12 @@ namespace proteus
                                     proteus_index_t* exteriorElementBoundariesArray,
                                     int hasOutflowBoundary,
                                     int needOutflowJacobian,
-                                    proteus_index_t* rowptr,
-                                    proteus_index_t* csrRowIndeces,
-                                    proteus_index_t* csrColumnOffsets,
-                                    proteus_index_t* csrColumnOffsets_eNebN,
-                                    proteus_index_t* csrColumnOffsets_eb,
-                                    proteus_index_t* csrColumnOffsets_eb_eNebN)
+                                    proteus_csr_index_t* rowptr,
+                                    proteus_csr_index_t* csrRowIndeces,
+                                    proteus_csr_index_t* csrColumnOffsets,
+                                    proteus_csr_index_t* csrColumnOffsets_eNebN,
+                                    proteus_csr_index_t* csrColumnOffsets_eb,
+                                    proteus_csr_index_t* csrColumnOffsets_eb_eNebN)
   {
     //elements
     for(int eN=0;eN<nElements_global;eN++)
@@ -464,14 +464,14 @@ namespace proteus
     //       std::cout<<std::endl;
     //     }
     nrows = int(columnIndecesMap.size())+1;
-    rowptr = new proteus_index_t[nrows];
+    rowptr = new proteus_csr_index_t[nrows];
     rowptr[0] = 0;
     for(proteus_index_t I=1;I< columnIndecesMap.size()+1;I++)
-      rowptr[I]=rowptr[I-1] + int(columnIndecesMap[I-1].size());
+      rowptr[I]=rowptr[I-1] + proteus_csr_index_t(columnIndecesMap[I-1].size());
     nnz = rowptr[columnIndecesMap.size()];
-    colind = new proteus_index_t[nnz];
+    colind = new proteus_csr_index_t[nnz];
     nzval = new double[nnz];
-    proteus_index_t max_nonzeros=0;
+    proteus_csr_index_t max_nonzeros=0;
     for(proteus_index_t I=0;I< columnIndecesMap.size();I++)
       {
         int offset=0;
@@ -479,7 +479,7 @@ namespace proteus
           {
             columnOffsetsMap[I][*sit] = offset;
             assert(rowptr[I]+offset < nnz);
-            colind[rowptr[I]+offset]=*sit;
+            colind[rowptr[I]+offset]=proteus_csr_index_t(*sit); // a column number (PETSc matrix column)
             offset++;
           }
         std::sort(&colind[rowptr[I]],&colind[rowptr[I+1]]);

@@ -116,14 +116,24 @@ cdef class cSparseMatrix(object):
                  int nc,
                  int nnz,
                  np.float64_t [:] nzval,
-                 np.int32_t [:] colind,
-                 np.int32_t [:] rowptr):
+                 object colind,
+                 object rowptr):
+        # colind and rowptr arrive in the CSR index type (csparsity.CSR_INDEX_DTYPE,
+        # = PetscInt) and SuperLU takes int: the structure is converted here, and
+        # only when the widths differ (ascontiguousarray returns the caller's array
+        # when the dtype already matches, so the usual build shares memory as before).
+        if nnz > 2147483647 or max(nr, nc) > 2147483647:
+            raise OverflowError("superluWrappers: a %i x %i matrix with %i nonzeros does not fit SuperLU's 32-bit int" % (nr, nc, nnz))
+        self._colind32 = np.ascontiguousarray(colind, dtype=np.int32)
+        self._rowptr32 = np.ascontiguousarray(rowptr, dtype=np.int32)
+        cdef np.int32_t [:] c32 = self._colind32
+        cdef np.int32_t [:] r32 = self._rowptr32
         self.dim[0] = nr ; self.dim[1] = nc
         self.A.nnz = nnz
         #ARB - should memory for these ptrs need be allocated?
         self.A.nzval = &nzval[0]
-        self.A.colind = &colind[0]
-        self.A.rowptr = &rowptr[0]
+        self.A.colind = &c32[0]
+        self.A.rowptr = &r32[0]
 
 cdef void SparseMatrix_matvec(cSparseMatrix sm,
                               np.float64_t [:] xp,
