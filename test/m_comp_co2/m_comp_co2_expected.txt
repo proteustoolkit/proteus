@@ -1,0 +1,55 @@
+# Expected values for test_m_comp_co2.py, one row per checked quantity:
+#
+#   case  metric  expected  tolerance  # why this tolerance
+#
+# A check passes when |computed - expected| <= tolerance.  Regenerate the
+# expected column (tolerances and notes are kept) with
+#
+#   PROTEUS_SAVE_COMPARISON=1 python -m pytest test_m_comp_co2.py
+#
+# and inspect the diff before committing: a regenerated file blesses whatever
+# the code does today.
+#
+# Metrics (maxima are over every archived frame):
+#   p_dev              static: max|p - P_ATM|; open_top*: max|p - p_hydro| [Pa]
+#   p_profile_dev      max|(p - p_hydro) - mean(p - p_hydro)|; the closed
+#                      column's datum floats [Pa]
+#   z_dev              max|z - 1e-5|
+#   co2_drift          max over steps |total CO2 - initial| / initial, from the
+#                      kernel's own nodal masses sum_i ML_i mLow_n_i
+#   h2o_drift          the same for H2O, sum_i ML_i mLow_i, relative to step 1
+#   gas_centroid       S_g-weighted height of the free gas at the end [m]
+#   pool_Sg            max S_g in the 0.02 m of C sand below the ESF, at the end
+#   esf_Sg             max S_g inside the ESF, at the end
+#   above_Sg           max S_g in the C sand above the ESF, at the end
+#   bracket_violation  max over interface nodes and frames of how far S_g lies
+#                      outside [min_r S_r, max_r S_r]
+#   interface_jump     min over the lower-interface nodes of max_r S_r - min_r S_r
+#   p_diff, z_diff     max|closure on - closure off| with no rock interfaces
+#
+# case                  metric             expected      tolerance
+static                  p_dev              0.000000e+00  1.0e-6    # exact steady state: the residual vanishes at the initial iterate
+static                  z_dev              0.000000e+00  1.0e-15   # as p_dev
+hydrostatic             p_profile_dev      1.037510e+00  4.0       # flash rho_a(p) vs the IC's 998 kg/m^3; 4 Pa is 0.04% of the 9790 Pa column
+hydrostatic             z_dev              1.104397e-07  9.0e-7    # p-dependent N in z = m/(phi N); keeps |z - 1e-5| < 10% of z
+hydrostatic             co2_drift          2.817809e-13  1.0e-8    # Newton stops at |r| = 1e-8; largest drift seen 7.5e-10
+hydrostatic             h2o_drift          5.471697e-16  1.0e-8    # as co2_drift
+segregation             co2_drift          1.260714e-10  1.0e-8    # as hydrostatic co2_drift
+segregation             h2o_drift          7.511559e-10  1.0e-8    # as hydrostatic co2_drift
+segregation             gas_centroid       6.134255e-01  0.2       # gas starts below y = 0.3 m (tanh half-width 0.04); > 0.4 m means it rose out of the band
+open_top                p_dev              2.067965e+00  3.0       # as hydrostatic p_profile_dev, datum pinned; 5 Pa total
+open_top                z_dev              4.414322e-07  1.6e-6    # brine exchanged at the top changes N, hence z; < 20% of z
+open_top_stab2          p_dev              2.067964e+00  3.0       # as open_top
+open_top_stab2          z_dev              4.392043e-07  1.6e-6    # as open_top
+open_top_stab2          co2_drift          9.719771e-12  1.0e-8    # z no-flow everywhere; as hydrostatic co2_drift
+rock_column             co2_drift          4.005305e-12  1.0e-8    # Newton stops at |r| = 1e-10 on this strip
+rock_column             h2o_drift          9.928341e-12  1.0e-8    # as co2_drift
+rock_column             pool_Sg            7.524479e-01  0.25      # > 0.5: the gas has pooled under the ESF
+rock_column             esf_Sg             8.318220e-05  9.0e-4    # < 1e-3: the ESF holds the pool (0.16 without the closure)
+rock_column             bracket_violation  0.000000e+00  1.0e-12   # S_g is the pore-volume average of the S_r; 1e-12 is roundoff
+rock_column             interface_jump     7.628836e-01  0.26      # > 0.5: sand side pooled, ESF side dry
+rock_column_no_closure  co2_drift          2.429522e-12  1.0e-8    # as rock_column
+rock_column_no_closure  h2o_drift          1.195177e-11  1.0e-8    # as rock_column
+rock_column_no_closure  above_Sg           7.117432e-01  0.6       # > 0.1: without the closure the gas crosses the ESF
+rock_column_one_rock    p_diff             0.000000e+00  1.0e-9    # same deck run twice differs by up to 4.4e-11 Pa (SuperLU_DIST); 25x that
+rock_column_one_rock    z_diff             0.000000e+00  3.0e-16   # same, 1.2e-17 run to run; 25x that
