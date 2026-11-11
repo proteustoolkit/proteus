@@ -78,6 +78,12 @@ CASES = {
                          "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short.ymf",
                          "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
                          "mcorr MCorr", "velocity_t4"),
+    # the same deck with interface=1: RANS2P and CLSVOF. The spec's atmosphere (p = 0, no flux, φ signed + where flow
+    # enters) is setAtmosphere, which sets no CLSVOF data; the deck has the same boundary
+    "damBreakLevelSet_clsvof": ("TwoPhaseFlow", "damBreakLevelSet.py", "--TwoPhaseFlow",
+                                "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True interface=1",
+                                "dambreak_short_clsvof.ymf",
+                                "level_set_clsvof -- split, dispatched to flow RANS2P, clsvof CLSVOF", "velocity_t4"),
     "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0",
                   "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }

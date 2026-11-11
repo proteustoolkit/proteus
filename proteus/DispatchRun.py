@@ -140,10 +140,17 @@ def _number(value):
         return value
 
 
+def _value_of(condition):
+    """A condition's value for a signature: its number(s), or ``sign:1`` for a signed condition without one (the
+    level set's inflow at an atmosphere, whose value is the phase indicator's, not its own)."""
+    if condition.get("value") is None and condition.get("sign") is not None:
+        return "sign:%d" % int(condition["sign"])
+    return _number(condition.get("value"))
+
+
 def _signature(conditions):
     """{(variable, type, component, only, value)} of one region's closed conditions."""
-    return {(c["variable"], c["type"], c.get("component"), c.get("only"), _number(c.get("value")))
-            for c in conditions}
+    return {(c["variable"], c["type"], c.get("component"), c.get("only"), _value_of(c)) for c in conditions}
 
 
 def _matches(pattern, have):
@@ -246,8 +253,8 @@ def _box(split):
 
 
 def tank_sides(split):
-    """{side: (region, BC_RANS setter, its arguments)} for the four sides of a SpatialTools Tank2D of the domain's
-    box, from the closed conditions of every sub-problem (one region per side, one setter per region's
+    """{side: (region, BC_RANS setter, its arguments, a note on what it does not impose)} for the four sides of a
+    SpatialTools Tank2D of the domain's box, from the closed conditions of every sub-problem (one region per side, one setter per region's
     conditions); refused (:class:`RealizeError`) otherwise. Data only: nothing is built."""
     lower, upper = _box(split)
     size = [u - l for u, l in zip(upper, lower)]
@@ -283,10 +290,12 @@ def tank_sides(split):
                                "knows %s" % (region, side, sorted(map(str, signature)),
                                              ", ".join(s["name"] for s in table.TWO_PHASE_BOUNDARY_SETTERS)))
         kwargs = {}
-        for argument, (variable, kind) in (setter.get("kwargs") or {}).items():
-            value = next(c["value"] for c in have if (c["variable"], c["type"]) == (variable, kind))
+        for argument, (variable, kind, *path) in (setter.get("kwargs") or {}).items():
+            value = next(c for c in have if (c["variable"], c["type"]) == (variable, kind))
+            for key in (path[0] if path else "value").split("."):
+                value = value[key]
             kwargs[argument] = float(value)
-        out[side] = (region, setter["setter"], kwargs)
+        out[side] = (region, setter["setter"], kwargs, setter.get("note", "") % kwargs)
     return out
 
 
@@ -303,9 +312,10 @@ def _tank(split, he, name, outdir, comm):
     coords = None if all(v == 0.0 for v in lower) else [(u + l) / 2.0 for u, l in zip(upper, lower)]
     tank = st.Tank2D(domain, tuple(size), coords)
     record = {}
-    for side, (region, setter, kwargs) in sides.items():
+    for side, (region, setter, kwargs, note) in sides.items():
         getattr(tank.BC[side], setter)(**kwargs)
-        record[side] = {"region": region, "setter": setter, **({"kwargs": kwargs} if kwargs else {})}
+        record[side] = {"region": region, "setter": setter, **({"kwargs": kwargs} if kwargs else {}),
+                        **({"note": note} if note else {})}
     st.assembleDomain(domain)
     domain.MeshOptions.he = he
     domain.MeshOptions.triangleOptions = mesh_constraint(he, 2)

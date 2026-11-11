@@ -488,7 +488,8 @@ TWO_PHASE_COEFFICIENT_ROLES = ["density", "dynamic_viscosity", "gravity"]
 
 #: a boundary region's closed conditions (the expansion ymf writes, never the alias) -> the BC_RANS setter that
 #: imposes them. A signature is the set of (variable, type, component, only, value); values are numbers, a vector's
-#: per component. ``kwargs`` takes a setter argument from the value of one condition, by (variable, type).
+#: per component, and for a signed condition without a value ``sign:<±1>``. ``kwargs`` takes a setter argument from one
+#: condition, by (variable, type) and optionally the path of the field (default ``value``).
 #: A region whose conditions match no signature is refused.
 TWO_PHASE_BOUNDARY_SETTERS = [
     {"name": "free_slip", "setter": "setFreeSlip",
@@ -499,6 +500,17 @@ TWO_PHASE_BOUNDARY_SETTERS = [
      "signature": {("p", "dirichlet", None, None, 0.0), ("v", "neumann", None, None, "zero_vector"),
                    ("χ", "dirichlet", None, "inflow", "any")},
      "kwargs": {"vof_air": ("χ", "dirichlet")}},
+    # With CLSVOF as the interface solver no sub-problem carries χ, and ymf states the atmosphere's inflow on the
+    # level set itself: φ is signed (+1, air) where flow enters, with the phase indicator's value on the condition
+    # (`indicator`). setAtmosphere sets no CLSVOF data (clsvof_dirichlet stays unset, as in damBreakLevelSet's
+    # interface=1), so this realization is weaker than the spec on one point, and says so (``note``, which the run
+    # records): where flow enters, CLSVOF's level set is not held at the air side. vof_air is the indicator's value.
+    {"name": "atmosphere_clsvof", "setter": "setAtmosphere",
+     "signature": {("p", "dirichlet", None, None, 0.0), ("v", "neumann", None, None, "zero_vector"),
+                   ("φ", "dirichlet", None, "inflow", "sign:1")},
+     "kwargs": {"vof_air": ("φ", "dirichlet", "indicator.value")},
+     "note": "setAtmosphere sets no CLSVOF boundary data: the level set's inflow condition (sign 1, indicator "
+             "value %(vof_air)s) is not imposed"},
 ]
 
 #: a regularization by name -> Proteus's own implementation, so that an initial condition such as heaviside(φ)

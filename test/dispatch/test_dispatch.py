@@ -425,16 +425,36 @@ def test_ymf_run_refuses_a_split_discretization_meshed_by_cells(tmp_path, capsys
 
 
 def test_ymf_run_refuses_a_boundary_no_setter_imposes_before_anything_runs(tmp_path, capsys):
-    """level_set_clsvof dispatches (RANS2P + CLSVOF), but no sub-problem carries χ, so the closed atmosphere has
-    no χ inflow, and no BC_RANS setter imposes what is left (p = 0, zero velocity flux): refused up front, exit 2,
-    rather than imposing setAtmosphere's other data under the spec's name."""
+    """level_set_clsvof dispatches (RANS2P + CLSVOF) and its atmosphere is a setter's (below); an atmosphere that
+    holds the pressure at 1 is none, and is refused up front, exit 2, rather than imposing setAtmosphere's other
+    data under the spec's name."""
     from proteus.cli import ymfrun
-    assert ymfrun.main([os.path.join(HERE, "dambreak.ymf"), "--discretization", "level_set_clsvof",
-                        "--outdir", str(tmp_path)]) == 2
+    spec = tmp_path / "high_pressure.ymf"
+    spec.write_text("extends: %s\nmodel:\n  strong_form:\n    condition_sets:\n      atmosphere:\n"
+                    "        - {variable: p, type: dirichlet, value: 1.0}\n        - {variable: v, type: open}\n"
+                    "        - {variable: χ, type: inflow, value: 1.0}\n"
+                    % os.path.join(HERE, "dambreak_short_clsvof.ymf"), encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    assert ymfrun.main([str(spec), "--outdir", str(out)]) == 2
     err = capsys.readouterr().err
     assert "level_set_clsvof: split into sub-problems (flow, clsvof). It dispatches to flow RANS2P, clsvof CLSVOF, " \
         "and cannot run: region top (side y+): no BC_RANS setter imposes its closed conditions" in err
-    assert not os.listdir(str(tmp_path))
+    assert not os.listdir(str(out))
+
+
+def test_the_clsvof_atmosphere_is_setAtmosphere_and_the_run_says_what_it_does_not_impose():
+    """With CLSVOF as the interface solver no sub-problem carries χ, and ymf states the atmosphere's inflow on φ
+    (sign 1, indicator value 1.0): the top is setAtmosphere(vof_air=1.0), as the deck has it, with a note that
+    setAtmosphere sets no CLSVOF data. The same atmosphere with VOF carrying χ is setAtmosphere without a note."""
+    from proteus.DispatchRun import tank_sides
+    from ymf.symbolic.split import split_problem
+    for name, note in (("level_set_clsvof", True), ("level_set_five", False)):
+        sides = tank_sides(split_problem(_spec("dambreak.ymf"), name))
+        region, setter, kwargs, said = sides["y+"]
+        assert (setter, kwargs) == ("setAtmosphere", {"vof_air": 1.0}), name
+        assert bool(said) == note and (not note or "sets no CLSVOF boundary data" in said and "1.0" in said), said
+        assert sides["x-"][1] == "setFreeSlip" and sides["x-"][3] == ""
 
 
 def _dispatch_record(path, old, new):
@@ -499,12 +519,16 @@ solution_paths:
     - name: level_set_five
       mesh: {h: 0.2576}
       solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
+    - name: level_set_clsvof              # cannot run: no CLSVOF cell integrates in time by SSP RK3
+      subproblems:
+        - name: clsvof
+          time_integration: ssp_rk3
 """ % os.path.join(HERE, "dambreak.ymf"), encoding="utf-8")
     out = tmp_path / "out"
     assert ymfrun.main([str(spec), "--outdir", str(out), "--ignore"]) == 1     # not closed: one is left out
     text = capsys.readouterr().out
-    assert "level_set_clsvof -- left out (--ignore): level_set_clsvof: split into sub-problems (flow, clsvof). " \
-        "It dispatches to flow RANS2P, clsvof CLSVOF, and cannot run" in text
+    assert "level_set_clsvof -- left out (--ignore): level_set_clsvof: split into sub-problems (flow, clsvof), and " \
+        "the dispatch refuses it: no Proteus module covers clsvof" in text
     assert "level_set_five -- split, dispatched to flow RANS2P" in text
     assert "1 outputs, 1 new" in text
 
