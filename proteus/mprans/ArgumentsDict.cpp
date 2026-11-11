@@ -11,6 +11,8 @@ namespace
     const std::string IARRAY_DICT_NAME = "IArrayDict";
     const std::string DSCALAR_DICT_NAME = "DScalarDict";
     const std::string ISCALAR_DICT_NAME = "IScalarDict";
+    const std::string LARRAY_DICT_NAME = "LArrayDict";
+    const std::string LSCALAR_DICT_NAME = "LScalarDict";
 }
 
 namespace proteus
@@ -89,12 +91,19 @@ namespace proteus
         cl.def_readwrite("darray", &arguments_dict::m_darray);
         cl.def_readwrite("iarray", &arguments_dict::m_iarray);
         cl.def_readwrite("dscalar", &arguments_dict::m_dscalar);
+        cl.def_readwrite("larray", &arguments_dict::m_larray);
         cl.def_readwrite("iscalar", &arguments_dict::m_iscalar);
+        cl.def_readwrite("lscalar", &arguments_dict::m_lscalar);
 
         cl.def("__setitem__",
                 [](arguments_dict& ad, std::string& k, proteus::pyarray<int>& a)
                 {
                     ad.m_iarray.insert_or_assign(std::move(k), std::move(a));
+                });
+        cl.def("__setitem__",
+                [](arguments_dict& ad, std::string& k, proteus::pyarray<std::int64_t>& a)
+                {
+                    ad.m_larray.insert_or_assign(std::move(k), std::move(a));
                 });
         cl.def("__setitem__",
                 [](arguments_dict& ad, std::string& k, proteus::pyarray<double>& a)
@@ -107,9 +116,13 @@ namespace proteus
         // pyarray overload, it is chosen by pybind11 and the array ends up
         // in the wrong dictionary.
         cl.def("__setitem__",
-                [](arguments_dict& ad, std::string& k, int i)
+                [](arguments_dict& ad, std::string& k, std::int64_t i)
                 {
-                    ad.m_iscalar.insert_or_assign(std::move(k), std::move(i));
+                    if (i >= INT32_MIN && i <= INT32_MAX)
+                    {
+                        ad.m_iscalar.insert_or_assign(std::string(k), static_cast<int>(i));
+                    }
+                    ad.m_lscalar.insert_or_assign(std::move(k), std::move(i));
                 });
         cl.def("__setitem__",
                 [](arguments_dict& ad, std::string& k, double d)
@@ -125,10 +138,14 @@ namespace proteus
                     detail::print_map(oss, DARRAY_DICT_NAME, ad.m_darray);
                     oss << "\n  " << "m_iarray: ";
                     detail::print_map(oss, IARRAY_DICT_NAME, ad.m_iarray);
+                    oss << "\n  " << "m_larray: ";
+                    detail::print_map(oss, LARRAY_DICT_NAME, ad.m_larray);
                     oss << "\n  " << "m_dscalar: ";
                     detail::print_map(oss, DSCALAR_DICT_NAME, ad.m_dscalar);
                     oss << "\n  " << "m_iscalar: ";
                     detail::print_map(oss, ISCALAR_DICT_NAME, ad.m_iscalar);
+                    oss << "\n  " << "m_lscalar: ";
+                    detail::print_map(oss, LSCALAR_DICT_NAME, ad.m_lscalar);
                     oss << "\n}";
                     return oss.str();
                 });
@@ -147,6 +164,8 @@ PYBIND11_MODULE(cArgumentsDict, m)
     using ipyarray_dict = pyarray_dict<std::string, int>;
     using dscalar_dict = scalar_dict<std::string, double>;
     using iscalar_dict = scalar_dict<std::string, int>;
+    using lpyarray_dict = pyarray_dict<std::string, std::int64_t>;
+    using lscalar_dict = scalar_dict<std::string, std::int64_t>;
 
     py::class_<dpyarray_dict> dad(m, DARRAY_DICT_NAME.c_str());
     proteus::bind_throwing_map(dad, DARRAY_DICT_NAME.c_str());
@@ -159,6 +178,12 @@ PYBIND11_MODULE(cArgumentsDict, m)
 
     py::class_<iscalar_dict> isd(m, ISCALAR_DICT_NAME.c_str());
     proteus::bind_throwing_map(isd, ISCALAR_DICT_NAME.c_str());
+
+    py::class_<lpyarray_dict> lad(m, LARRAY_DICT_NAME.c_str());
+    proteus::bind_throwing_map(lad, LARRAY_DICT_NAME.c_str());
+
+    py::class_<lscalar_dict> lsd(m, LSCALAR_DICT_NAME.c_str());
+    proteus::bind_throwing_map(lsd, LSCALAR_DICT_NAME.c_str());
 
     py::class_<arguments_dict> ad(m, "ArgumentsDict");
     proteus::bind_arguments_dict(ad, "ArgumentsDict");

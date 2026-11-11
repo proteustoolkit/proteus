@@ -208,3 +208,31 @@ def test_a_matrix_too_large_for_superlu_is_refused():
     with pytest.raises(OverflowError):
         superluWrappers.SparseMatrix(1, 1, nnz, np.zeros(1), np.zeros(1, dtype=np.int64), np.zeros(2, dtype=np.int64))
 
+
+# --- ArgumentsDict: arrays go to the dict of their own dtype, nothing converts ---
+
+def test_arguments_dict_keeps_each_integer_width_in_its_own_dict():
+    from proteus.mprans import cArgumentsDict
+    ad = cArgumentsDict.ArgumentsDict()
+    ad["i32"] = np.arange(3, dtype=np.int32)
+    ad["i64"] = np.arange(3, dtype=np.int64)
+    ad["d"] = np.arange(3, dtype=np.float64)
+    assert list(ad.iarray["i32"]) == [0, 1, 2]
+    assert list(ad.larray["i64"]) == [0, 1, 2]
+    assert list(ad.darray["d"]) == [0.0, 1.0, 2.0]
+    for name, other in (("i32", ad.larray), ("i64", ad.iarray)):
+        with pytest.raises(RuntimeError):
+            other[name]
+
+
+def test_arguments_dict_int_scalars_that_do_not_fit_an_int_are_64_bit_only():
+    from proteus.mprans import cArgumentsDict
+    ad = cArgumentsDict.ArgumentsDict()
+    ad["small"] = 7
+    ad["big"] = 2 ** 40
+    ad["x"] = 1.5
+    assert ad.iscalar["small"] == 7 and ad.lscalar["small"] == 7
+    assert ad.lscalar["big"] == 2 ** 40
+    with pytest.raises(RuntimeError):
+        ad.iscalar["big"]
+    assert ad.dscalar["x"] == 1.5

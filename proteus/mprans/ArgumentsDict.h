@@ -1,6 +1,7 @@
 #ifndef ARGUMENTSDICT_H
 #define ARGUMENTSDICT_H
 
+#include <cstdint>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -69,8 +70,17 @@ namespace proteus
     {
         pyarray_dict<std::string, double> m_darray;
         pyarray_dict<std::string, int> m_iarray;
+        // 64-bit integer arrays: the mesh and CSR index arrays when
+        // proteus_index_t / proteus_csr_index_t are 64 bits (index_type.h).
+        // An array lands in the dict of its own dtype, nothing is converted,
+        // so a kernel that asks for the wrong width gets a key error that
+        // names the dict the array is in.
+        pyarray_dict<std::string, std::int64_t> m_larray;
         scalar_dict<std::string, double> m_dscalar;
         scalar_dict<std::string, int> m_iscalar;
+        // A Python int is stored in m_lscalar always, and also in m_iscalar
+        // when it fits an int; a count that does not fit is only in m_lscalar.
+        scalar_dict<std::string, std::int64_t> m_lscalar;
 
         template <class T>
         proteus::pyarray<T>& array(const std::string& key);
@@ -80,18 +90,12 @@ namespace proteus
 
     private:
 
-        template <class D1, class D2>
+        template <class D1>
         typename D1::mapped_type& find_element(const std::string& key,
                                                D1& expected_dict,
-                                               const D2& other_dict,
-                                               const std::string& expected_type,
-                                               const std::string& other_type);
+                                               const std::string& expected_type);
 
-        template <class D>
-        std::string get_additional_error_msg(const std::string& key,
-                                             const D& d,
-                                             const std::string& asked_type,
-                                             const std::string& tried_type) const;
+        std::string where_is(const std::string& key) const;
     };
 
     /*******************************
@@ -151,33 +155,43 @@ namespace proteus
     template <>
     inline proteus::pyarray<double>& arguments_dict::array<double>(const std::string& key)
     {
-        return find_element(key, m_darray, m_iarray, "pyarray<double>", "pyarray<int>");
+        return find_element(key, m_darray, "pyarray<double>");
     }
 
     template <>
     inline proteus::pyarray<int>& arguments_dict::array<int>(const std::string& key)
     {
-        return find_element(key, m_iarray, m_darray, "pyarray<int>", "pyarray<double>");
+        return find_element(key, m_iarray, "pyarray<int>");
+    }
+
+    template <>
+    inline proteus::pyarray<std::int64_t>& arguments_dict::array<std::int64_t>(const std::string& key)
+    {
+        return find_element(key, m_larray, "pyarray<int64>");
     }
 
     template <>
     inline double& arguments_dict::scalar<double>(const std::string& key)
     {
-        return find_element(key, m_dscalar, m_iscalar, "double scalar", "int scalar");
+        return find_element(key, m_dscalar, "double scalar");
     }
 
     template <>
     inline int& arguments_dict::scalar<int>(const std::string& key)
     {
-        return find_element(key, m_iscalar, m_dscalar, "int scalar", "double scalar");
+        return find_element(key, m_iscalar, "int scalar");
     }
 
-    template <class D1, class D2>
+    template <>
+    inline std::int64_t& arguments_dict::scalar<std::int64_t>(const std::string& key)
+    {
+        return find_element(key, m_lscalar, "int64 scalar");
+    }
+
+    template <class D1>
     typename D1::mapped_type& arguments_dict::find_element(const std::string& key,
                                                            D1& expected_dict,
-                                                           const D2& other_dict,
-                                                           const std::string& expected_type,
-                                                           const std::string& other_type)
+                                                           const std::string& expected_type)
     {
         try
         {
@@ -185,26 +199,31 @@ namespace proteus
         }
         catch(std::runtime_error& e)
         {
-            throw std::runtime_error(e.what()
-                    + get_additional_error_msg(key, other_dict, expected_type, other_type));
+            throw std::runtime_error(e.what() + std::string(" in dict of ") + expected_type + where_is(key));
         }
     }
 
-    template <class D>
-    std::string arguments_dict::get_additional_error_msg(const std::string& key,
-                                                         const D& d,
-                                                         const std::string& asked_type,
-                                                         const std::string& tried_type) const
+    inline std::string arguments_dict::where_is(const std::string& key) const
     {
-        auto it = d.find(key);
-        if (it == d.cend())
+        std::string found;
+        auto note = [&](const auto& d, const char* name)
         {
-            return " in any of the internal dicts";
-        }
-        else
+            if (d.find(key) != d.cend())
+            {
+                found += std::string(found.empty() ? "" : ", ") + name;
+            }
+        };
+        note(m_darray, "pyarray<double>");
+        note(m_iarray, "pyarray<int>");
+        note(m_larray, "pyarray<int64>");
+        note(m_dscalar, "double scalar");
+        note(m_iscalar, "int scalar");
+        note(m_lscalar, "int64 scalar");
+        if (found.empty())
         {
-            return " in dict of " + asked_type + " but found in dict of " + tried_type;
+            return " or in any of the internal dicts";
         }
+        return " but found in dict of " + found;
     }
 }
 
