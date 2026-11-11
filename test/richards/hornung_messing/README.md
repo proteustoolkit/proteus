@@ -49,7 +49,7 @@ On P1 at h = 1/64: 7.55e-7 (θ = 1) and 4.90e-7 (θ = ½). Without the prelimite
 1.82e-5, 5.20e-6 and 1.01e-6 at h = 1/16, 1/32 and 1/64. On this smooth problem the prelimiter, not the bounds,
 causes most of the gap to Galerkin (2.34e-7).
 
-The Q1 tables were regenerated on 1.9.x (b6c60a5d) after the P2/Q1 trace-gradient fix in `FemTools` (cekees/proteus#153): the bilinear Q1 gradients are not constant, so the earlier routine was wrong for Q1 too. Only the WRR FCT rows and the θ = ½ implicit FCT rows at h ≥ 1/16 moved (by up to 2%, more at the coarsest h); the low-order, Galerkin and θ = 1 implicit FCT rows are unchanged. The P1 tables are unchanged.
+The Q1 tables were regenerated on 1.9.x (b6c60a5d) after the P2/Q1 trace-gradient fix in `FemTools` (88975541, proteustoolkit/proteus#1327): the bilinear Q1 gradients are not constant, so the earlier routine was wrong for Q1 too. Only the WRR FCT rows and the θ = ½ implicit FCT rows at h ≥ 1/16 moved (by up to 2%, more at the coarsest h); the low-order, Galerkin and θ = 1 implicit FCT rows are unchanged. The P1 tables are unchanged.
 
 On Q1 (`MESH=q1`, tables `convergence_q1_theta*.txt`) at h = 1/64, θ = 1: low order 1.15e-4, Galerkin
 2.34e-7, WRR FCT 1.91e-6 (order ≈ 2.5). The JNMA MFEM values are 1.15e-4, 1.01e-6 and 3.44e-6 (implicit FCT).
