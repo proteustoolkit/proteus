@@ -69,8 +69,6 @@ class RunOptions:
     #: stop at a step boundary with a checkpoint before this much wall time has
     #: passed ("HH:MM:SS", or "scheduler"); None: no limit (--wall-limit)
     wallLimit: str = None
-    #: when the run began, epoch seconds (the limit counts from it); None: when NS_base starts
-    wallStart: float = None
     #: time to restart from (-t)
     hotStartTime: float = math.inf
     #: write the velocity post-processor (-B)

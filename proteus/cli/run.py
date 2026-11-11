@@ -166,7 +166,7 @@ def _split(path):
 
 def _options(args):
     from proteus.runtime import RunOptions
-    return RunOptions(
+    opts = RunOptions(
         dataDir=args.data_dir,
         useTextArchive=args.text_archive,
         cacheArchive=args.cache_archive,
@@ -180,11 +180,13 @@ def _options(args):
         hotStartMode=args.hot_start_mode,
         stateEvery=args.state_every,
         wallLimit=args.wall_limit,
-        wallStart=_WALL_START,
         hotStartTime=args.hot_start_time,
         writeVPP=args.write_vpp,
         generatePartitionedMeshFromFiles=args.partitioned_mesh,
         save_dof=args.save_dof)
+    # not an option: when pro started, which the wall limit counts from
+    opts.wallStart = _WALL_START
+    return opts
 
 
 def _context_string(args):
