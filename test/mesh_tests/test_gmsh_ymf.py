@@ -1,14 +1,12 @@
-"""A gmsh ``.msh`` is read as a ymf mesh (C7.1 round 4).
+"""A gmsh ``.msh`` is read as a ymf mesh, and only so (C7.1 rounds 4 and 5).
 
-``ymf-import-gmsh`` (proteustoolkit/ymf-import-gmsh, private, like ymf-import-sms) converts a
-``.msh`` to the ymf mesh proteus reads. Here, ``importer_meshes/gmsh_{square,cube}.ymf`` and ``.h5``
-are that converter's output for the stored ``.msh`` files; the sha256 in their provenance says which
-``.msh`` they are the conversion of, so a ``use_gmsh`` domain reads them without the converter, and
-a ``.msh`` that changed since is not mistaken for them. The acceptance test: the mesh read this way is
-bit-equal to the one ``msh2simplex`` and the triangle/tetgen readers build (the path it replaces).
-
-Not covered here: ``-F`` (partitioned reads of the triangle/tetgen files), which still takes the
-deprecated ``msh2simplex`` path.
+``ymf-import-gmsh`` (proteustoolkit/ymf-import-gmsh) converts a ``.msh`` to the ymf mesh proteus reads.
+Here, ``importer_meshes/gmsh_{square,cube}.ymf`` and ``.h5`` are that converter's output for the stored
+``.msh`` files; the sha256 in their provenance says which ``.msh`` they are the conversion of, so a
+``use_gmsh`` domain reads them without the converter, and a ``.msh`` that changed since is not
+mistaken for them. ``gmsh_{square,cube}_reference.npz`` are the arrays ``msh2simplex`` and the
+triangle/tetgen readers built from the same ``.msh`` (the path round 5 removed): the mesh read through
+the ymf path is bit-equal to them. ``-F`` reads the ymf mesh whole and partitions it like any other.
 """
 import os
 import shutil
@@ -67,29 +65,16 @@ def _domain(nd, name):
     return domain, options
 
 
-def _simplex_mesh(tmp_path, nd, name):
-    """The path being replaced: msh2simplex, tetgen (3D), the triangle/tetgen reader."""
-    base = str(tmp_path / ("simplex_" + name))
-    shutil.copy(os.path.join(MESHES, name + ".msh"), base + ".msh")
-    with pytest.warns(DeprecationWarning, match="msh2simplex is deprecated"):
-        MeshTools.msh2simplex(base, nd=nd)
-    if nd == 2:
-        mesh = MeshTools.TriangularMesh()
-        mesh.generateFromTriangleFiles(base, 1)
-        return mesh
-    if shutil.which("tetgen") is None:
-        pytest.skip("no tetgen")
-    subprocess.run(["tetgen", "-Vfeen", base + ".ele"], check=True, capture_output=True, timeout=120)
-    for ext in ("ele", "node", "face"):
-        os.replace("%s.1.%s" % (base, ext), "%s.%s" % (base, ext))
-    mesh = MeshTools.TetrahedralMesh()
-    mesh.generateFromTetgenFiles(base, 1)
-    return mesh
+def _reference(name):
+    """The mesh the removed path (msh2simplex, tetgen -Vfeen in 3D, the triangle/tetgen readers) built
+    from the stored ``.msh``: its arrays, stored before that path was removed (C7.1 round 5)."""
+    return dict(np.load(os.path.join(MESHES, name + "_reference.npz")))
 
 
-def _assert_same(a, b):
+def _assert_same(mesh, reference):
+    assert set(reference) == set(MESH_ARRAYS)
     for key in MESH_ARRAYS:
-        np.testing.assert_array_equal(getattr(a, key), getattr(b, key), err_msg=key)
+        np.testing.assert_array_equal(getattr(mesh, key), reference[key], err_msg=key)
 
 
 @pytest.mark.parametrize("nd, name", CASES)
@@ -102,40 +87,43 @@ def test_the_stored_ymf_mesh_is_the_conversion_of_the_stored_msh(tmp_path, monke
 
 
 @pytest.mark.parametrize("nd, name", CASES)
-def test_a_use_gmsh_domain_reads_its_ymf_mesh_bit_equal_to_msh2simplex(tmp_path, monkeypatch, nd, name):
-    """The round 4 acceptance. No converter, no triangle/tetgen files, no tetgen run."""
+def test_a_use_gmsh_domain_reads_its_ymf_mesh_bit_equal_to_the_reference(tmp_path, monkeypatch, nd, name):
+    """No converter, no triangle/tetgen files, no tetgen run."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setitem(sys.modules, "ymf_import_gmsh", None)       # not installed
-    reference = _simplex_mesh(tmp_path, nd, name)
     _copy(tmp_path, name, (".msh", ".ymf", ".h5"))
     domain, options = _domain(nd, name)
     mesh = MeshTools._generateMesh(domain, options).meshList[0]
     assert not os.path.exists(name + ".ele") and not os.path.exists(name + ".node")
-    _assert_same(mesh, reference)
+    _assert_same(mesh, _reference(name))
 
 
 @pytest.mark.parametrize("nd, name", CASES)
-def test_a_msh_with_no_ymf_mesh_and_no_converter_takes_the_deprecated_path(tmp_path, monkeypatch, nd, name):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setitem(sys.modules, "ymf_import_gmsh", None)
-    _copy(tmp_path, name, (".msh",))
-    domain, options = _domain(nd, name)
-    with pytest.warns(DeprecationWarning, match="msh2simplex is deprecated"):
-        mesh = MeshTools._generateMesh(domain, options).meshList[0]
-    assert os.path.exists(name + ".ele") and not os.path.exists(name + ".ymf")
-    _assert_same(mesh, _simplex_mesh(tmp_path, nd, name))
-
-
-@pytest.mark.parametrize("nd, name", CASES)
-def test_a_changed_msh_is_not_read_as_its_old_ymf_mesh(tmp_path, monkeypatch, nd, name):
+def test_partitioned_reads_take_the_same_ymf_path(tmp_path, monkeypatch, nd, name):
+    """-F (generatePartitionedMeshFromFiles) used to read triangle/tetgen files; now the ymf mesh."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setitem(sys.modules, "ymf_import_gmsh", None)
     _copy(tmp_path, name, (".msh", ".ymf", ".h5"))
-    _change_msh(name + ".msh")
     domain, options = _domain(nd, name)
-    with pytest.warns(DeprecationWarning, match="msh2simplex is deprecated"):
+    mesh = MeshTools._generateMesh(domain, options, True).meshList[0]
+    assert not os.path.exists(name + ".ele") and not os.path.exists(name + ".node")
+    _assert_same(mesh, _reference(name))
+
+
+@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("nd, name", CASES)
+def test_a_msh_with_no_current_ymf_mesh_and_no_converter_names_the_package(tmp_path, monkeypatch, nd, name,
+                                                                          changed):
+    """No fallback: a missing ymf mesh, or one of an earlier .msh, with no converter, fails and says why."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sys.modules, "ymf_import_gmsh", None)
+    _copy(tmp_path, name, (".msh", ".ymf", ".h5") if changed else (".msh",))
+    if changed:
+        _change_msh(name + ".msh")
+    domain, options = _domain(nd, name)
+    with pytest.raises(ImportError, match="ymf-import-gmsh"):
         MeshTools._generateMesh(domain, options)
-    assert os.path.exists(name + ".ele")
+    assert not os.path.exists(name + ".ele") and not os.path.exists(name + ".node")
 
 
 @pytest.mark.parametrize("nd, name", CASES)
@@ -146,4 +134,32 @@ def test_the_converter_makes_the_ymf_mesh_when_installed(tmp_path, monkeypatch, 
     domain, options = _domain(nd, name)
     mesh = MeshTools._generateMesh(domain, options).meshList[0]
     assert os.path.exists(name + ".ymf") and not os.path.exists(name + ".ele")
-    _assert_same(mesh, _simplex_mesh(tmp_path, nd, name))
+    _assert_same(mesh, _reference(name))
+
+
+@pytest.mark.parametrize("nd, name", CASES)
+def test_the_mesh_plan_of_a_gmsh_domain_is_the_ymf_mesh(tmp_path, monkeypatch, nd, name):
+    """What pro msh plans and writes: the .msh and the ymf mesh, no triangle/tetgen files."""
+    domain, options = _domain(nd, name)
+    plan = MeshTools.meshFiles(domain, options)
+    assert plan["generator"] == "gmsh"
+    assert plan["outputs"] == [name + e for e in (".msh", ".ymf", ".h5")] and plan["optional"] == []
+    assert "msh2simplex" not in plan["command"] and "ymf-import-gmsh" in plan["command"]
+
+
+@pytest.mark.parametrize("nd, name", CASES)
+def test_pro_msh_writes_the_ymf_mesh(tmp_path, monkeypatch, nd, name):
+    pytest.importorskip("ymf_import_gmsh")
+    if shutil.which("gmsh") is None:
+        pytest.skip("no gmsh")
+    from proteus.cli import mesh as pro_mesh
+    monkeypatch.chdir(tmp_path)
+    _copy(tmp_path, name, (".geo",))
+    domain, options = _domain(nd, name)
+    options.genMesh = True
+    plan = MeshTools.meshFiles(domain, options)
+    pro_mesh.make(plan, domain, options)
+    for ext in (".msh", ".ymf", ".h5"):
+        assert os.path.exists(name + ext)
+    assert not os.path.exists(name + ".ele")
+    assert pro_mesh.state(plan)[0] == "current"
