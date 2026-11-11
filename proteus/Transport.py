@@ -4613,17 +4613,6 @@ class OneLevelTransport(NonlinearEquation):
                                         for jj in range(self.l2g[cj]['nFreeDOF'][eN_ebN]):
                                             J = self.offset[cj]+self.stride[cj]*self.l2g[cj]['freeGlobal'][eN_ebN,jj]
                                             columnIndecesDict[I].add(J)
-        # Model hook for extra coupling nonzeros not implied by the FE element graph
-        # (e.g. m_comp_co2 node-split: the two z-copies z_a/z_b of a split interface
-        # node share NO element, so findNonzeros never allocates the (z_a,z_b)/(z_b,z_a)
-        # slots).  getExtraSparsityElements() returns a list of ready-made findNonzeros
-        # arg-tuples (synthetic "element" blocks) fed through the SAME sparsity builder
-        # BEFORE getCSR.  No-op (backward-identical) for models without the method.
-        if useC:
-            _extraSparsity = getattr(self, 'getExtraSparsityElements', None)
-            if _extraSparsity is not None:
-                for _blk in _extraSparsity():
-                    self.sparsityInfo.findNonzeros(*_blk)
         if useC:
             (self.rowptr,self.colind,self.nnz,self.nzval)  = self.sparsityInfo.getCSR()
         else:
