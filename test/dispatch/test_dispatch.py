@@ -324,6 +324,36 @@ def test_a_sharp_heaviside_is_refused(dambreak):
         dispatch(doc, "level_set_five")
 
 
+def _vof_eps(doc):
+    return next(m for m in dispatch(doc, "level_set_five") if m.role == "volume_fraction").coefficients["epsFact"]
+
+
+def test_a_width_is_a_number_times_the_element_size_or_the_element_size_itself(dambreak):
+    doc = copy.deepcopy(dambreak)
+    assert _vof_eps(doc) == 1.5                                            # ε = 1.5 h
+    _entry(doc, "level_set_five")["regularize"]["heaviside"]["width"] = "h"   # h is bound with meaning element_size
+    assert _vof_eps(doc) == 1.0
+
+
+def test_a_width_that_is_not_bound_or_not_a_multiple_of_the_element_size_is_refused(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "level_set_five")["regularize"]["heaviside"]["width"] = "δ"
+    with pytest.raises(DispatchError, match="heaviside's width δ is not bound by the discretization"):
+        dispatch(doc, "level_set_five")
+    doc = copy.deepcopy(dambreak)
+    _entry(doc, "level_set_five")["binds"]["ε"] = {"formula": "h^2"}
+    with pytest.raises(DispatchError, match="reads a width as a number times the element size"):
+        dispatch(doc, "level_set_five")
+
+
+def test_a_model_in_two_families_that_names_none_is_refused(dambreak):
+    from proteus.Dispatch import family_of
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["physical_model"]["assumptions"] = ["hydrostatic", "depth_averaged", "nondispersive"]
+    with pytest.raises(DispatchError, match="identifies the families two_phase_level_set, shallow_water; say which"):
+        family_of(doc)
+
+
 def test_an_unread_scheme_option_is_refused(lake):
     doc = copy.deepcopy(lake)
     doc["solution_paths"]["discretizations"][0]["discretization"]["limiter"] = "minmod"
