@@ -6,6 +6,7 @@ Run serially in an empty directory; leaves u.csv (every model's dofs, sorted by 
 key, x, y, z, value), accepted.txt (the accepted system times), retries.txt (how many system steps were retried) and
 the deck's own history files. ATOL=a sets every model's nonlinear atol to a (linear a/100); without it the deck's
 tolerances apply; MAXITS=n raises every model's maxNonlinearIts to n.
+FAILFROM=1 (with FAILAT=n) fails the n-th and every later solve of FAILMODEL (a model that never recovers).
 FAILMODEL=<name prefix> and FAILAT=n report the n-th solve of that model as failed (after solving it), so the system
 step is cut and retried; FAILSTEP=n instead counts the model's steps, whatever its nonlinear solver (FAILAT counts a
 TwoStageNewton's stages: an odd n fails a first stage, which skips the second). REPLAYDT=<steps.txt> replays the accepted steps' dts bit for bit. REPLAY=<file> makes the system step
@@ -118,7 +119,7 @@ elif os.environ.get("FAILMODEL"):
         # CLSVOFNewton.solve calls Newton.solve for its stages: count the model's solve, not the stages
         if type(self).__name__ != "CLSVOFNewton" and self.F.name.startswith(os.environ["FAILMODEL"]):
             calls[0] += 1
-            if calls[0] == int(os.environ["FAILAT"]):
+            if calls[0] == int(os.environ["FAILAT"]) or (os.environ.get("FAILFROM") and calls[0] >= int(os.environ["FAILAT"])):
                 self.failedFlag = True
         return self.failedFlag
     NonlinearSolvers.Newton.solve = solve
