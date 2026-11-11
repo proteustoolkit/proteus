@@ -607,6 +607,11 @@ class NS_base(object):  # (HasTraits):
         self._acceptedSystemTime = None
         self._systemStepRetries = 0
         self._systemStepFailed = False
+        if self.wallClock is not None and hasattr(self.pList[0].domain, "AdaptManager"):
+            #an adaptive PUMI run checkpoints through its own Checkpointer, whose restart is not a parun -H
+            logEvent("WARNING: --wall-limit is not supported with PUMI mesh adaptivity (see its own checkpoint "
+                     "frequency); the run has no wall limit", level=0)
+            self.wallClock = None
 
 
         logEvent("Setting initial conditions",level=0)

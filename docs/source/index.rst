@@ -333,6 +333,7 @@ Source Code Documentation
    tools/spatial_tools
    tools/wave_tools
    tools/gauges
+   tools/checkpoints
 
 .. toctree::
    :maxdepth: 1
