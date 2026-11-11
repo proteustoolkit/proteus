@@ -37,6 +37,22 @@ comm = None
 argv = sys.argv
 petscInitialized = False
 
+def _set_reproducible_vector_defaults():
+    """Make PETSc's multi-vector dot product bitwise reproducible from run to run.
+
+    PETSc >= 3.21 computes VecMDot, which GMRES with classical Gram-Schmidt calls once per
+    iteration, with one BLAS gemv over its Krylov vectors (-vec_mdot_use_gemv, default on).
+    The sums that OpenBLAS's gemv forms depend on the alignment of those vectors, which
+    malloc settles from the heap's history, so the same linear solve can differ in the last
+    bit from one run to the next (from the tenth Krylov vector on; CLSVOF's GMRES showed it as
+    a damBreak that differed in 1 run of 20 on two ranks). The plain C kernel does not have
+    the dependence. A value given on the command line or in PETSC_OPTIONS is kept.
+    """
+    from petsc4py import PETSc
+    OptDB = PETSc.Options()
+    if not OptDB.hasName("vec_mdot_use_gemv"):
+        OptDB.setValue("vec_mdot_use_gemv", False)
+
 def init():
     global comm, petscInitialized
     if petsc4py is None:
@@ -59,6 +75,7 @@ def init():
                     OptDB.setValue(name,value)
         if not OptDB.hasName("options_left"):
             OptDB.setValue("options_left",False)
+    _set_reproducible_vector_defaults()
     petsc4py.PETSc.Log.Stage('proteus').push()
     new_comm = Comm()
     if not comm:

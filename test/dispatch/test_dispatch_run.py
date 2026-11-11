@@ -89,18 +89,8 @@ CASES = {
 }
 
 
-#: damBreakLevelSet.py interface=1 (RANS2P + CLSVOF) on two ranks is not run-to-run reproducible under load, deck
-#: alone: 2 of 20 runs of this test, and 1 of 16 decks run at once with nothing of the spec's, differ from the rest in
-#: 64-66 of ~215 datasets (macOS arm64, 2026-11-11). The spec's path is the deck's; the cause is in the model
-#: (C0's territory: HANDOFF_2026-11-11_c5-step3.md), so this one case is not asserted bitwise on two ranks.
-NONREPRODUCIBLE = {("damBreakLevelSet_clsvof", 2)}
-
-
 def _params():
-    return [pytest.param(case, ranks, marks=[pytest.mark.xfail(
-        strict=False, reason="the deck itself differs from run to run on two ranks with CLSVOF (see NONREPRODUCIBLE)")]
-        if (case, ranks) in NONREPRODUCIBLE else [], id="%s-%d" % (case, ranks))
-        for case in sorted(CASES) for ranks in (1, 2)]
+    return [pytest.param(case, ranks, id="%s-%d" % (case, ranks)) for case in sorted(CASES) for ranks in (1, 2)]
 
 
 @pytest.mark.parametrize("case, ranks", _params())
