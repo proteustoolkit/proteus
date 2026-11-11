@@ -517,6 +517,18 @@ TWO_PHASE_BOUNDARY_SETTERS = [
 #: unknown for them, and a run starts them at zero as the decks do
 SCHEME_AUXILIARY_ROLES = ("pressure_increment", "pressure_spin_up")
 
+#: the PETSc options prefix of each TwoPhaseFlow model's linear solver (``n.linear_solver_options_prefix`` of its
+#: Parameters class), by the model's name. A ``petsc_options`` key that starts with one of these is that model's alone
+#: (``vof_ksp_type``, as PETSc writes it); one that starts with none is the sub-problem's own. The models after
+#: MCorr are TwoPhaseFlow's that no cell of the table dispatches: an option for one is refused as an option for a
+#: model the discretization does not have.
+TWO_PHASE_SOLVER_PREFIXES = {
+    "rans2p_": "RANS2P", "rans3p_": "RANS3PF", "phi_": "PresInc", "pressure_": "Pres", "pinit_": "PresInit",
+    "clsvof_": "CLSVOF", "vof_": "VOF", "ncls_": "NCLS", "rdls_": "RDLS", "mcorr_": "MCorr",
+    "kappa_": "Kappa", "dissipation_": "Dissipation", "am_": "AddedMass", "mesh_": "MoveMesh",
+    "mesh2_": "MoveMesh2",
+}
+
 #: a regularization by name -> Proteus's own implementation, so that an initial condition such as heaviside(φ)
 #: under smoothed_heaviside of width ε is the value the decks compute (smoothedHeaviside(ε, φ)) bit for bit
 REGULARIZED_FUNCTIONS = {

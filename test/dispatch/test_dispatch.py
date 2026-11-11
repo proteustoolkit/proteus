@@ -678,7 +678,6 @@ def test_the_two_phase_machinery_maps_direct_and_iterative(dambreak, word, kind)
     ({"linear_solver": "mumps"}, "linear_solver mumps is a package the deck machinery does not select"),
     ({"linear_solver": "umfpack"}, "linear_solver umfpack is a package the deck machinery does not select"),
     ({"linear_solver": "cholmod"}, "linear_solver 'cholmod'; ymf knows"),
-    ({"linear_solver": "iterative", "petsc_options": {"ksp_type": "cg"}}, "petsc_options are not read"),
 ])
 def test_a_linear_solver_the_two_phase_machinery_cannot_honour_is_refused_before_anything_runs(dambreak, solver, message):
     from proteus.DispatchRun import RealizeError, precheck
@@ -737,3 +736,57 @@ def test_a_surface_tension_is_refused_where_the_flow_solver_computes_none(dambre
         with pytest.raises(RealizeError, match="surface tension σ = 0.0728, and RANS2P computes none"):
             _two_phase_values(doc, 2, found)
     assert _two_phase_values(dambreak, 2, dispatch(dambreak, name))["surface_tension"] == 0.0
+
+
+# ---- per-model petsc_options (C5 step 4) --------------------------------------------------------------------------
+
+def _options_doc(name="level_set_five", linear_solver="iterative", options=None, sub_options=None):
+    doc = copy.deepcopy(_spec("dambreak_short.ymf" if name == "level_set_five" else "dambreak_short_clsvof.ymf"))
+    entry = _entry(doc, name)
+    entry["solver"] = dict(entry["solver"], linear_solver=linear_solver)
+    if options:
+        entry["solver"]["petsc_options"] = dict(options)
+    for sub, opts in (sub_options or {}).items():
+        target = next(s for s in entry["subproblems"] if s["name"] == sub)
+        target["solver"] = dict(target.get("solver") or {}, petsc_options=dict(opts))
+    return doc
+
+
+def test_each_models_petsc_options_reach_its_solver_prefix(tmp_path):
+    """The discretization's options reach every model, a sub-problem's its model alone, and a key that starts with a
+    model's prefix (ncls_ksp_rtol) that model alone: nothing the spec states is dropped."""
+    from petsc4py import PETSc
+    from proteus import DispatchRun
+    from ymf.symbolic.split import split_problem
+    doc = _options_doc(options={"ksp_type": "cg", "ncls_ksp_rtol": "1e-9"}, sub_options={"vof": {"pc_type": "jacobi"}})
+    found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
+    assert DispatchRun.model_petsc_options(found, split) == {
+        "flow": {"ksp_type": "cg"}, "vof": {"ksp_type": "cg", "pc_type": "jacobi"},
+        "ncls": {"ksp_type": "cg", "ksp_rtol": "1e-9"}, "rdls": {"ksp_type": "cg"}, "mcorr": {"ksp_type": "cg"}}
+    with DispatchRun.petsc_options_restored():
+        realized = DispatchRun.realize(doc, found, split, {"h": 0.2576}, "opts", str(tmp_path), 1)
+        have = PETSc.Options().getAll()
+        assert have["rans2p_ksp_type"] == "cg" and have["vof_ksp_type"] == "cg" and have["mcorr_ksp_type"] == "cg"
+        assert have["vof_pc_type"] == "jacobi" and have["ncls_ksp_rtol"] == "1e-9"
+        assert have.get("rans2p_pc_type") != "jacobi" and "ncls_pc_type" not in have or have["ncls_pc_type"] != "jacobi"
+        assert "ksp_type" not in have                        # nothing leaked unprefixed
+    assert realized.record["system"]["petsc_options"]["vof"] == {"vof_ksp_type": "cg", "vof_pc_type": "jacobi"}
+
+
+def test_an_option_for_a_model_the_discretization_does_not_have_is_refused_by_name():
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = _options_doc("level_set_clsvof", options={"vof_ksp_type": "cg"})
+    with pytest.raises(RealizeError, match="'vof_ksp_type' is for the VOF model, which this discretization does not "
+                                           "have \\(it dispatches CLSVOF, RANS2P\\)"):
+        precheck(doc, dispatch(doc, "level_set_clsvof"), split_problem(doc, "level_set_clsvof"), ranks=1)
+
+
+def test_petsc_options_for_a_serial_direct_solve_are_refused_not_dropped():
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = _options_doc(linear_solver="direct", options={"ksp_type": "cg"})
+    found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
+    with pytest.raises(RealizeError, match="on one rank this discretization solves with LU"):
+        precheck(doc, found, split, ranks=1)
+    precheck(doc, found, split, ranks=2)                    # SuperLU_DIST goes through PETSc: the options are read

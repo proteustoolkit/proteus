@@ -109,13 +109,10 @@ _MACHINERY_PACKAGES = {"superlu": "direct", "petsc": "iterative"}
 
 def _linear_request(entry, family):
     """The kind (``direct`` or ``iterative``) of the discretization's ``linear_solver``, or None when it names none.
-    A package the machinery does not select, and ``petsc_options`` (which no deck machinery reads), are refused:
-    asking for what is not done is not met by doing something else."""
+    A package the machinery does not select is refused: asking for what is not done is not met by doing something
+    else. (The solver's ``petsc_options`` are read per model: :func:`model_petsc_options`.)"""
     solver = entry.get("solver") or {}
     word = solver.get("linear_solver")
-    if solver.get("petsc_options"):
-        raise RealizeError("%s: petsc_options are not read when a %s discretization runs from its dispatch; its PETSc "
-                           "options are the deck machinery's" % (entry["name"], family))
     if word is None:
         return None
     try:
@@ -148,6 +145,57 @@ def _shallow_water_linear_solver(entry, ranks):
             "told otherwise (leave linear_solver out to take what it does)"
             % (entry["name"], kind, "LU" if ranks == 1 else "KSP_petsc4py", ranks, "" if ranks == 1 else "s"))
     return solves, "LU" if ranks == 1 else "KSP_petsc4py"
+
+
+def model_petsc_options(found, split):
+    """{sub-problem: {option: value}}: the PETSc options (``solver.petsc_options``, without the leading dash) each
+    dispatched model's linear solve is given. A sub-problem's own options are its model's; the discretization's
+    (which ymf's split merges into every sub-problem) reach every model. A key that starts with a model's solver prefix
+    (``vof_ksp_type``, TWO_PHASE_SOLVER_PREFIXES) is that model's alone, whichever block states it; one that names a
+    model the discretization does not dispatch is refused by that name. Data only."""
+    present = {m.module.rsplit(".", 1)[1]: m.subproblem for m in found}
+    out = {m.subproblem: {} for m in found}
+    for sub in split["subproblems"]:
+        for key, value in ((sub.get("solver") or {}).get("petsc_options") or {}).items():
+            prefix = next((p for p in table.TWO_PHASE_SOLVER_PREFIXES if key.startswith(p)), None)
+            if prefix is None:
+                if sub["name"] in out:
+                    out[sub["name"]][key] = str(value)
+                continue
+            model = table.TWO_PHASE_SOLVER_PREFIXES[prefix]
+            if model not in present:
+                raise RealizeError("%s: petsc_options key %r is for the %s model, which this discretization does not "
+                                   "have (it dispatches %s)" % (found.discretization, key, model,
+                                                                 ", ".join(sorted(present))))
+            out[present[model]][key[len(prefix):]] = str(value)
+    return {name: options for name, options in out.items() if options}
+
+
+def _serial_lu(found, entry, ranks):
+    """Whether the discretization's linear solves are LU (no PETSc KSP to read options): two-phase ``direct`` on one
+    rank (useSuperlu), SWFlow on one rank."""
+    if found.family == "two_phase_level_set":
+        return _linear_solver(entry, ranks)[0] == "direct" and ranks == 1
+    return found.family == "shallow_water" and ranks == 1
+
+
+def _check_petsc_options(found, split, entry, ranks):
+    options = model_petsc_options(found, split)
+    if options and _serial_lu(found, entry, ranks):
+        raise RealizeError("%s: petsc_options for %s are given, and on one rank this discretization solves with LU, "
+                           "which reads no PETSc options (ask for iterative, or run on several ranks)"
+                           % (found.discretization, ", ".join(sorted(options))))
+    return options
+
+
+def _apply_petsc_options(options, prefixes):
+    """Set each model's options under its solver prefix in PETSc's options database, after the machinery has set its
+    own (the spec's win where they name the same option)."""
+    from petsc4py import PETSc
+    database = PETSc.Options()
+    for name, mine in options.items():
+        for key, value in mine.items():
+            database.setValue(prefixes[name] + key, value)
 
 
 def _where(condition, dim, tol):
@@ -457,7 +505,7 @@ def _regularized_initial(spec_sub, sub, split, dim, he, entry, model):
 
 def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     """A ``TwoPhaseFlowProblem`` built from the dispatch, initialized (its p and n modules built) and checked."""
-    from proteus import Comm
+    from proteus import Comm, LinearSolvers
     import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
     entry = _entry(doc, found.discretization)
     if "h" not in realization:
@@ -510,6 +558,19 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
         record["initial"][model.subproblem] = _initial_conditions(param, model, subs[model.subproblem], split, dim,
                                                                   he, entry)
     problem.initializeAll()
+    petsc_options = _check_petsc_options(found, split, entry, ranks)
+    prefixes = {}
+    for model in found:
+        n = physics.modelDict[model.subproblem].n
+        prefixes[model.subproblem] = n.linear_solver_options_prefix or ""
+        if model.subproblem in petsc_options and not (isinstance(n.multilevelLinearSolver, type) and issubclass(
+                n.multilevelLinearSolver, LinearSolvers.KSP_petsc4py)):
+            raise RealizeError("%s: %s solves with %s, which reads no PETSc options" % (
+                model.subproblem, model.module, n.multilevelLinearSolver.__name__))
+    _apply_petsc_options(petsc_options, prefixes)
+    if petsc_options:
+        record["system"]["petsc_options"] = {m: {prefixes[m] + k: v for k, v in o.items()}
+                                             for m, o in petsc_options.items()}
     check_built(found, [(model, physics.modelDict[model.subproblem].p, physics.modelDict[model.subproblem].n)
                         for model in found], dim)
     so = problem.so
@@ -595,12 +656,14 @@ def precheck(doc, found, split, ranks=None):
         tank_sides(split)
         _two_phase_values(doc, split["dim"], found)
         _linear_solver(_entry(doc, found.discretization), ranks)
+        _check_petsc_options(found, split, _entry(doc, found.discretization), ranks)
     elif found.family == "shallow_water":
         _box(split)
         shallow_water_boundary(split)
         for role in list(table.SHALLOW_WATER_COEFFICIENT_ROLES) + [table.SHALLOW_WATER_BED_ROLE]:
             _by_role(doc, role)
         _shallow_water_linear_solver(_entry(doc, found.discretization), ranks)
+        _check_petsc_options(found, split, _entry(doc, found.discretization), ranks)
 
 
 def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
@@ -679,6 +742,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     n = defaults.load_numerics(models["n"], path=path)
     p.name = models["p"]
     check_built(found, [(model, p, n)], dim)
+    petsc_options = _check_petsc_options(found, split, entry, ranks)
+    _apply_petsc_options(petsc_options, {model.subproblem: n.linear_solver_options_prefix or ""})
     so = defaults.System_base()
     so.name = name
     so.pnList = [(p, n)]
@@ -696,6 +761,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
                   "linear_solver": "%s (%s)" % (solves, how),
                   **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()
                      if k in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta")}}}
+    if petsc_options:
+        record["system"]["petsc_options"] = {m: dict(o) for m, o in petsc_options.items()}
     return Realized(so, [p], [n], problem, record)
 
 
