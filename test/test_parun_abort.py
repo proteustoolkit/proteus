@@ -124,3 +124,75 @@ def test_each_driver_exits_one_without_an_abort_on_a_step_time_error(tmp_path, d
 def test_each_driver_runs_the_deck_without_raising(tmp_path, driver):
     out = _run_driver(tmp_path, driver, ranks=2)
     assert out.returncode == 0, out.stdout[-3000:] + out.stderr[-3000:]
+
+
+class _FakeComm:
+    """What the hook uses of proteus.Comm.comm; Abort records its code instead of ending the test run."""
+    def __init__(self, rank, size):
+        self._rank, self._size, self.aborted = rank, size, []
+        self.comm = self
+
+    def rank(self):
+        return self._rank
+
+    def size(self):
+        return self._size
+
+    def tompi4py(self):
+        return self
+
+    def Abort(self, code):
+        self.aborted.append(code)
+
+
+class _BrokenStream:
+    """A stdout or log that cannot be written: the hook must still get to the abort."""
+    def write(self, text):
+        raise OSError("closed")
+
+    flush = write
+
+
+def _hook(monkeypatch, comm, logFile=None):
+    from proteus import Comm, Profiling, runtime
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)    # put back after the test
+    monkeypatch.setattr(Comm, "comm", comm)
+    monkeypatch.setattr(Profiling, "logFile", logFile)
+    monkeypatch.setattr(Profiling, "logLevel", 1)
+    # only rank 0 writes the log (without -a)
+    monkeypatch.setattr(Profiling, "procID", 0)
+    monkeypatch.setattr(Profiling, "logAllProcesses", False)
+    hook = runtime.abort_on_uncaught_exception("prog")
+    assert sys.excepthook is hook
+    try:
+        raise ValueError("on this rank only")
+    except ValueError:
+        hook(*sys.exc_info())
+
+
+def test_the_hook_logs_and_aborts_with_more_than_one_rank(monkeypatch, capsys):
+    """In process, so coverage sees the hook: the drivers' runs above end in the abort, before coverage writes."""
+    import io
+    comm, log = _FakeComm(0, 4), io.StringIO()
+    _hook(monkeypatch, comm, log)
+    err = capsys.readouterr().err
+    assert err.startswith("prog: uncaught exception on rank 0 of 4; aborting the MPI job\n"), err
+    assert "ValueError: on this rank only" in err
+    assert "prog: uncaught exception on rank 0 of 4" in log.getvalue()
+    assert comm.aborted == [1]
+
+
+def test_the_hook_only_logs_with_one_rank_or_before_mpi(monkeypatch, capsys):
+    comm = _FakeComm(0, 1)
+    _hook(monkeypatch, comm)
+    assert capsys.readouterr().err.startswith("prog: uncaught exception on rank 0 of 1\n")
+    assert comm.aborted == []
+    _hook(monkeypatch, None)                                  # MPI not started
+    assert capsys.readouterr().err.startswith("prog: uncaught exception on rank 0 of 1\n")
+
+
+def test_the_hook_aborts_when_stdout_and_the_log_cannot_be_written(monkeypatch):
+    comm = _FakeComm(0, 2)
+    monkeypatch.setattr(sys, "stdout", _BrokenStream())
+    _hook(monkeypatch, comm, _BrokenStream())
+    assert comm.aborted == [1]
