@@ -763,13 +763,14 @@ def test_each_models_petsc_options_reach_its_solver_prefix(tmp_path):
     assert DispatchRun.model_petsc_options(found, split) == {
         "flow": {"ksp_type": "cg"}, "vof": {"ksp_type": "cg", "pc_type": "jacobi"},
         "ncls": {"ksp_type": "cg", "ksp_rtol": "1e-9"}, "rdls": {"ksp_type": "cg"}, "mcorr": {"ksp_type": "cg"}}
+    before = PETSc.Options().getAll().get("ksp_type")        # another test in the process may have left one
     with DispatchRun.petsc_options_restored():
         realized = DispatchRun.realize(doc, found, split, {"h": 0.2576}, "opts", str(tmp_path), 1)
         have = PETSc.Options().getAll()
         assert have["rans2p_ksp_type"] == "cg" and have["vof_ksp_type"] == "cg" and have["mcorr_ksp_type"] == "cg"
         assert have["vof_pc_type"] == "jacobi" and have["ncls_ksp_rtol"] == "1e-9"
         assert have.get("rans2p_pc_type") != "jacobi" and "ncls_pc_type" not in have or have["ncls_pc_type"] != "jacobi"
-        assert "ksp_type" not in have                        # nothing leaked unprefixed
+        assert have.get("ksp_type") == before                # nothing leaked unprefixed
     assert realized.record["system"]["petsc_options"]["vof"] == {"vof_ksp_type": "cg", "vof_pc_type": "jacobi"}
 
 
