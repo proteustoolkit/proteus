@@ -19,7 +19,7 @@ system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its ow
 RAISERANK=r raises a ValueError on rank r only, at its first archive write (NS_base.archiveInitialSolution), as one
 rank's Archiver did in a 4096-rank run whose other ranks then waited in a collective until the wall time ran out.
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
-STATEEVERY=n passes --state-every n; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
+WALLLIMIT=hh:mm:ss passes --wall-limit; STATEEVERY=n passes --state-every n; WALLSTEPS=n stops the run at the step boundary after its n-th accepted system step, for its wall limit; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -248,6 +248,16 @@ else:
 if os.environ.get("HOTSTART"):
     # continue the archive in this directory from its latest step at or before HOTSTART
     sys.argv += ['-H', '-t', os.environ["HOTSTART"], '--hotStartMode', os.environ.get("HOTSTARTMODE", "continue")]
+if os.environ.get("WALLSTEPS"):
+    # WALLSTEPS=n: the run's wall clock is the number of system steps it has accepted (one second each) and its limit
+    # n + 0.5 s, so that it stops at the boundary after the n-th step, whatever the machine's speed (parun's own
+    # --wall-limit is given a value that is replaced)
+    from proteus import WallLimit
+    NS.NS_base._makeWallClock = staticmethod(lambda opts: WallLimit.WallClock(
+        float(os.environ["WALLSTEPS"]) + 0.5, "WALLSTEPS", clock=lambda: float(len(accepted))))
+    sys.argv += ['--wall-limit', '99:00:00']
+if os.environ.get("WALLLIMIT"):
+    sys.argv += ['--wall-limit', os.environ["WALLLIMIT"]]
 if os.environ.get("STATEEVERY"):
     # --state-every N: the solver state with every N-th frame (default: the final step and checkpoints only)
     sys.argv += ['--state-every', os.environ["STATEEVERY"]]

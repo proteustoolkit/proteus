@@ -23,8 +23,12 @@ import argparse
 import ast
 import os
 import sys
+import time
 
 from . import add_command
+
+# the wall limit counts from when pro started
+_WALL_START = time.time()
 
 __all__ = ["add_parser", "run", "model_kind"]
 
@@ -111,6 +115,10 @@ def add_parser(subparsers):
                    help="write the solver state a continue hot start needs with every N-th "
                         "archived frame; 0 (the default): at the final step and at a checkpoint "
                         "only, the other frames carry the solution alone")
+    g.add_argument("--wall-limit", default=None, metavar="HH:MM:SS",
+                   help="stop at a step boundary with room for a checkpoint before this much wall "
+                        "time has passed (or 'scheduler': the SLURM or PBS job's end) and exit "
+                        "with status 75 so a job script can continue with --hot-start")
     g.add_argument("-t", "--hot-start-time", type=float, default=float("inf"),
                    metavar="T", help="time to restart from")
     g.add_argument("-F", "--partitioned-mesh", action="store_true",
@@ -171,6 +179,8 @@ def _options(args):
         hotStart=args.hot_start,
         hotStartMode=args.hot_start_mode,
         stateEvery=args.state_every,
+        wallLimit=args.wall_limit,
+        wallStart=_WALL_START,
         hotStartTime=args.hot_start_time,
         writeVPP=args.write_vpp,
         generatePartitionedMeshFromFiles=args.partitioned_mesh,
@@ -406,5 +416,9 @@ def solve(comm, so, pList, nList, sList, opts, two_phase=False,
         if comm.globalMax(int(bool(failed))):
             log("%s failed: system step failed" % so.name)
             status = 1
+        elif ns.wallLimitStop:
+            from proteus import WallLimit
+            log("%s stopped for the wall limit: exit status %d" % (so.name, WallLimit.CHECKPOINT_EXIT_STATUS), level=0)
+            status = WallLimit.CHECKPOINT_EXIT_STATUS
     log("Completed " + so.name)
     return ns, status

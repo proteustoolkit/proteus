@@ -115,3 +115,39 @@ def test_a_hot_start_from_the_final_frame_is_still_exact(tmp_path):
     assert out.returncode == 0, out.stderr[-2000:]
     assert not [l for l in out.stderr.splitlines() if "RuntimeWarning: hot start" in l]
     assert _worst(_u(tmp_path / "full"), _u(tmp_path / "hot")) == 0.0
+
+
+def _steps(cwd):
+    return numpy.atleast_1d(numpy.loadtxt(os.path.join(str(cwd), "accepted.txt")))
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_a_run_past_its_wall_limit_stops_at_a_step_boundary_with_the_checkpoint_status(tmp_path, ranks):
+    """WALLSTEPS=3 (the helper's clock counts accepted system steps, one second each, against a limit of 3.5 s:
+    another step and a checkpoint do not fit after the third): exit status 75 on every rank, three steps taken."""
+    if ranks > 1 and _mpiexec() is None:
+        pytest.skip("needs mpiexec")
+    out = _run(tmp_path, ranks=ranks, FT=0.05, DTOUT=0.01, WALLSTEPS=3)
+    assert out.returncode == 75, out.stdout[-1500:] + out.stderr[-1500:]
+    assert len(_steps(tmp_path)) == 3
+    log = open(os.path.join(str(tmp_path), LOG)).read()
+    assert "Wall limit: " in log and "stopping at t=" in log and "Stopped at t=" in log
+    from proteus import WallLimit
+    assert WallLimit.CHECKPOINT_EXIT_STATUS == 75
+
+
+def test_a_run_inside_its_wall_limit_is_the_run_without_one(tmp_path):
+    """The limit is never reached (99 h): same exit status, steps and dofs as without it; the only difference is
+    that each model writes its solver state once, with its first frame, to time it."""
+    full = _run(tmp_path / "full", FT=0.04, DTOUT=0.01)
+    limited = _run(tmp_path / "limited", FT=0.04, DTOUT=0.01, WALLLIMIT="99:00:00")
+    assert full.returncode == 0 and limited.returncode == 0, limited.stderr[-2000:]
+    numpy.testing.assert_array_equal(_steps(tmp_path / "full"), _steps(tmp_path / "limited"))
+    assert _worst(_u(tmp_path / "full"), _u(tmp_path / "limited")) == 0.0
+    frames = _frames(tmp_path / "limited")
+    assert _frames_with_state(tmp_path / "limited") == [frames[0], frames[-1]]
+
+
+def test_a_malformed_wall_limit_stops_parun_before_it_runs(tmp_path):
+    out = _run(tmp_path, FT=0.04, DTOUT=0.01, WALLLIMIT="soon")
+    assert out.returncode == 2 and "wall limit" in out.stderr, out.stderr[-1500:]

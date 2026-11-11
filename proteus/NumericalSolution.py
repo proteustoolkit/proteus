@@ -18,6 +18,7 @@ from . import SimTools
 from . import Archiver
 from . import Viewers
 from . import Gauges
+from . import WallLimit
 from .mprans import PressureNormalization
 from .Archiver import ArchiveFlags
 from . import Domain
@@ -215,9 +216,14 @@ class NS_base(object):  # (HasTraits):
         if self.stateEvery < 0:
             raise ValueError("stateEvery must be 0 (the final step and checkpoints only) or a number of frames, not %r"
                              % (self.stateEvery,))
-        #the longest each write took on this rank, seconds: a frame, the solver state
-        self._frameWriteTime = 0.0
-        self._stateWriteTime = 0.0
+        #the longest each write of a model took on this rank, seconds: its frame, its solver state (what a
+        #checkpoint costs, for WallLimit.WallClock)
+        self._frameTimes = {}
+        self._stateTimes = {}
+        #the run's wall-clock budget (--wall-limit), None without one; wallLimitStop: the run stopped at a step
+        #boundary for it (parun then exits with WallLimit.CHECKPOINT_EXIT_STATUS)
+        self.wallClock = self._makeWallClock(opts)
+        self.wallLimitStop = False
         self._solverStateRefused = []
         #what _solverStateUsable read, by model name, for _applySolverState
         self._solverStateRead = {}
@@ -1150,6 +1156,13 @@ class NS_base(object):  # (HasTraits):
                     #
                     measureSpeed = False
                 #
+                # the last thing of a system step: stop here for the wall limit, unless the run is done. The frame
+                # of this time is written below (the end of the interval), or is the one just written
+                if (self.wallClock is not None and
+                        not self._atFinalStep(self.systemStepController.t_system_last) and
+                        self._wallLimitReached()):
+                    self.wallLimitStop = True
+                    break
             if measureSpeed and startToMeasureSpeed and self.comm.isMaster():
                 end = time.time()
                 Nproc = self.comm.size()
@@ -1189,7 +1202,7 @@ class NS_base(object):  # (HasTraits):
                 for index,model in enumerate(self.modelList):
                     self.archiveSolution(model,index,self.systemStepController.t_system_last)
 
-            if systemStepFailed:
+            if systemStepFailed or self.wallLimitStop:
                 break
 
             if measureSpeed and self.comm.isMaster():
@@ -1198,6 +1211,8 @@ class NS_base(object):  # (HasTraits):
                 measureSpeed=True
                 numTimeSteps=0
             #
+        if self.wallLimitStop:
+            return self._finishAtWallLimit()
         logEvent("Finished calculating solution",level=3)
         # compute auxiliary quantities at last time step
         for index,model in enumerate(self.modelList):
@@ -1257,6 +1272,15 @@ class NS_base(object):  # (HasTraits):
             self.closeArchive(model,index)
 
         return systemStepFailed
+    def _finishAtWallLimit(self):
+        """The run has stopped at a step boundary for its wall limit: close the archives and return (parun then
+        exits with WallLimit.CHECKPOINT_EXIT_STATUS). No end-of-simulation work: the run is not over."""
+        logEvent("Stopped at t=%g for the wall limit" % (self.systemStepController.t_system_last,), level=0)
+        for index, model in enumerate(self.modelList):
+            self.finalizeViewSolution(model)
+            self.closeArchive(model, index)
+        return False
+
     #
     #try to make preStep and postStep just manipulate "current values" and let the step controllers manage the history setting
     ##intermodel transfer before a solution step
@@ -1831,6 +1855,51 @@ class NS_base(object):  # (HasTraits):
                 continue
             obj.set_state(st)
 
+    @staticmethod
+    def _makeWallClock(opts):
+        """The run's WallClock for ``--wall-limit``, or None. ``opts.wallStart`` is when parun started (so the
+        limit counts the setup too), else now. A limit whose end the run cannot find (``scheduler`` outside a
+        batch job) is said so on the log and does not stop the run."""
+        import time
+        limit = getattr(opts, 'wallLimit', None)
+        if limit is None:
+            return None
+        start = getattr(opts, 'wallStart', None) or time.time()
+        deadline, source = WallLimit.resolve_deadline(limit, start)
+        if deadline is None:
+            logEvent("WARNING: --wall-limit %s: no scheduler end time found (not in a SLURM or PBS job?); "
+                     "the run has no wall limit" % (limit,), level=0)
+            return None
+        wallClock = WallLimit.WallClock(deadline, source)
+        logEvent("Wall limit: stop at a step boundary with a checkpoint, by %s (%.0f s from now)"
+                 % (source, wallClock.left()), level=0)
+        return wallClock
+
+    def _checkpointCost(self):
+        """Seconds one checkpoint takes to write, from this run's own writes: for every model, its frame and its
+        solver state, each as long as the longest so far."""
+        return sum(self._frameTimes.get(name, 0.0) + self._stateTimes.get(name, 0.0)
+                   for name in set(self._frameTimes) | set(self._stateTimes))
+
+    def _wallLimitReached(self):
+        """At a system step boundary: whether the run must stop now to leave room for a checkpoint
+        (``WallClock.due``: another step, at the longest one so far, and the checkpoint would pass the limit).
+        Rank 0 decides and every rank gets its answer, so all stop at the same step. Collective; False at once,
+        with no communication, in a run without a wall limit."""
+        wallClock = self.wallClock
+        if wallClock is None:
+            return False
+        wallClock.stepBoundary()
+        wallClock.checkpointCost = self._checkpointCost()
+        due = int(wallClock.due()) if self.comm.isMaster() else 0
+        if not self.comm.globalMax(due):
+            return False
+        logEvent("Wall limit: %.0f s left of %s, and the next step (%.1f s at most) and a checkpoint (%.1f s) "
+                 "need %.1f s: stopping at t=%g" % (wallClock.left(), wallClock.source, wallClock.longestStep,
+                                                    wallClock.checkpointCost, wallClock.margin(),
+                                                    self.systemStepController.t_system_last), level=0)
+        return True
+
     def _atFinalStep(self, t):
         """Whether a frame written at time ``t`` is the run's last: the last interval's end, reached by steps
         that were all accepted."""
@@ -1838,11 +1907,14 @@ class NS_base(object):  # (HasTraits):
         return (not getattr(self, "_systemStepFailed", False) and getattr(self, "tn", None) == final and
                 t >= final - 1.0e-10 * max(1.0, abs(final)))
 
-    def _solverStateDue(self, tCount, final=False, checkpoint=False):
+    def _solverStateDue(self, tCount, final=False, checkpoint=False, model=None):
         """Whether frame ``tCount`` carries the solver state: the final one, a checkpoint, and with
         ``--state-every N`` every N-th (the initial frame, 0, among them). The state is some 20 times the solution
         in size, and a hot start needs it only from the frame the run stopped at."""
-        return bool(final or checkpoint or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
+        #a run with a wall limit writes each model's state once early, to time it (a checkpoint's cost is then
+        #measured, not guessed)
+        measure = self.wallClock is not None and model is not None and model.name not in self._stateTimes
+        return bool(final or checkpoint or measure or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None,checkpoint=False):
@@ -1855,12 +1927,16 @@ class NS_base(object):  # (HasTraits):
             t = self.systemStepController.t_system
         stateTime = self._archiveSolution(model, index, t, self._solverStateDue(self.tCount,
                                                                                  final=self._atFinalStep(t),
-                                                                                 checkpoint=checkpoint))
+                                                                                 checkpoint=checkpoint,
+                                                                                 model=model))
+        frameTime = time.time() - started - (stateTime or 0.0)
+        self._frameTimes[model.name] = max(self._frameTimes.get(model.name, 0.0), frameTime)
         if stateTime is not None:
-            self._stateWriteTime = max(self._stateWriteTime, stateTime)
-        self._frameWriteTime = max(self._frameWriteTime, time.time() - started - (stateTime or 0.0))
+            self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), stateTime)
+        if self.wallClock is not None:
+            self.wallClock.archiving(time.time() - started)
         logEvent("Archive: frame %d of model %s at t=%g written in %.3g s%s" % (
-            self.tCount, model.name, t, time.time() - started - (stateTime or 0.0),
+            self.tCount, model.name, t, frameTime,
             "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
 
     def _archiveSolution(self,model,index,t,withState):
