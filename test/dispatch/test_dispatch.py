@@ -753,41 +753,44 @@ def _options_doc(name="level_set_five", linear_solver="iterative", options=None,
 
 
 def test_each_models_petsc_options_reach_its_solver_prefix(tmp_path):
-    """The discretization's options reach every model, a sub-problem's its model alone, and a key that starts with a
-    model's prefix (ncls_ksp_rtol) that model alone: nothing the spec states is dropped."""
+    """The discretization's options reach every model and a sub-problem's its model alone: nothing the spec states is
+    dropped."""
     from petsc4py import PETSc
     from proteus import DispatchRun
     from ymf.symbolic.split import split_problem
-    doc = _options_doc(options={"ksp_type": "cg", "ncls_ksp_rtol": "1e-9"}, sub_options={"vof": {"pc_type": "jacobi"}})
+    doc = _options_doc(options={"ksp_type": "cg"}, sub_options={"vof": {"pc_type": "jacobi", "ksp_rtol": "1e-9"}})
     found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
     assert DispatchRun.model_petsc_options(found, split) == {
-        "flow": {"ksp_type": "cg"}, "vof": {"ksp_type": "cg", "pc_type": "jacobi"},
-        "ncls": {"ksp_type": "cg", "ksp_rtol": "1e-9"}, "rdls": {"ksp_type": "cg"}, "mcorr": {"ksp_type": "cg"}}
+        "flow": {"ksp_type": "cg"}, "vof": {"ksp_type": "cg", "pc_type": "jacobi", "ksp_rtol": "1e-9"},
+        "ncls": {"ksp_type": "cg"}, "rdls": {"ksp_type": "cg"}, "mcorr": {"ksp_type": "cg"}}
     before = PETSc.Options().getAll().get("ksp_type")        # another test in the process may have left one
     with DispatchRun.petsc_options_restored():
         realized = DispatchRun.realize(doc, found, split, {"h": 0.2576}, "opts", str(tmp_path), 1)
         have = PETSc.Options().getAll()
         assert have["rans2p_ksp_type"] == "cg" and have["vof_ksp_type"] == "cg" and have["mcorr_ksp_type"] == "cg"
-        assert have["vof_pc_type"] == "jacobi" and have["ncls_ksp_rtol"] == "1e-9"
-        assert have.get("rans2p_pc_type") != "jacobi" and "ncls_pc_type" not in have or have["ncls_pc_type"] != "jacobi"
+        assert have["vof_pc_type"] == "jacobi" and have["vof_ksp_rtol"] == "1e-9"
+        assert have.get("ncls_pc_type") != "jacobi" and have.get("rans2p_pc_type") != "jacobi"    # the vof sub-problem's alone
         assert have.get("ksp_type") == before                # nothing leaked unprefixed
-    assert realized.record["system"]["petsc_options"]["vof"] == {"vof_ksp_type": "cg", "vof_pc_type": "jacobi"}
+    assert realized.record["system"]["petsc_options"]["vof"] == {
+        "vof_ksp_type": "cg", "vof_pc_type": "jacobi", "vof_ksp_rtol": "1e-9"}
 
 
-def test_an_option_for_a_model_the_discretization_does_not_have_is_refused_by_name():
-    from proteus.DispatchRun import RealizeError, precheck
-    from ymf.symbolic.split import split_problem
-    doc = _options_doc("level_set_clsvof", options={"vof_ksp_type": "cg"})
-    with pytest.raises(RealizeError, match="'vof_ksp_type' is for the VOF model, which this discretization does not "
-                                           "have \\(it dispatches CLSVOF, RANS2P\\)"):
-        precheck(doc, dispatch(doc, "level_set_clsvof"), split_problem(doc, "level_set_clsvof"), ranks=1)
+def test_options_for_a_sub_problem_the_discretization_does_not_have_are_refused_by_name():
+    from proteus.Dispatch import DispatchError
+    doc = _options_doc("level_set_clsvof")
+    _entry(doc, "level_set_clsvof")["subproblems"].append({"name": "vof", "solver": {"petsc_options": {"ksp_type": "cg"}}})
+    with pytest.raises(DispatchError, match="sub-problem vof .* has no role the table knows"):
+        dispatch(doc, "level_set_clsvof")
 
 
-def test_petsc_options_for_a_serial_direct_solve_are_refused_not_dropped():
-    from proteus.DispatchRun import RealizeError, precheck
+def test_petsc_options_for_a_serial_direct_solve_are_warned_as_unused_not_dropped():
+    from proteus.DispatchRun import _check_petsc_options
     from ymf.symbolic.split import split_problem
     doc = _options_doc(linear_solver="direct", options={"ksp_type": "cg"})
     found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
-    with pytest.raises(RealizeError, match="on one rank this discretization solves with LU"):
-        precheck(doc, found, split, ranks=1)
-    precheck(doc, found, split, ranks=2)                    # SuperLU_DIST goes through PETSc: the options are read
+    entry = _entry(doc, "level_set_five")
+    with pytest.warns(RuntimeWarning, match="on one rank this discretization solves with LU"):
+        applied, unused = _check_petsc_options(found, split, entry, 1)
+    assert applied == {} and unused["flow"] == {"ksp_type": "cg"}
+    applied, unused = _check_petsc_options(found, split, entry, 2)    # SuperLU_DIST goes through PETSc: they are read
+    assert unused == {} and applied["flow"] == {"ksp_type": "cg"}
