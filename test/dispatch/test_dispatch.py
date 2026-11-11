@@ -709,3 +709,31 @@ def test_SWFlow_refuses_a_linear_solver_its_n_module_would_override(lake, word, 
     else:
         with pytest.raises(RealizeError, match="asks for a .* solve, and SWFlow's n module solves with"):
             precheck(doc, found, split, ranks=ranks)
+
+
+# ---- the projection scheme as a run (C5 step 4) ------------------------------------------------------------------
+
+def test_the_projection_scheme_dam_break_passes_the_precheck():
+    from proteus.DispatchRun import precheck
+    from ymf.symbolic.split import split_problem
+    doc = _spec("dambreak_short_projection.ymf")
+    precheck(doc, dispatch(doc, "clsvof_projection"), split_problem(doc, "clsvof_projection"), ranks=1)
+
+
+@pytest.mark.parametrize("name, sigma, accepted", [
+    ("clsvof_projection", 0.0728, True), ("clsvof_projection", 0.0, True),
+    ("level_set_five", 0.0728, False), ("level_set_five", 0.0, True),
+])
+def test_a_surface_tension_is_refused_where_the_flow_solver_computes_none(dambreak, name, sigma, accepted):
+    """RANS3PF's kernels read σ and RANS2P's do not: a nonzero σ with RANS2P would run without the force the spec
+    states, so it is refused. Without a coefficient of role surface_tension there is none (C42 D6)."""
+    from proteus.DispatchRun import RealizeError, _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["strong_form"]["coefficients"]["σ"] = {"value": sigma, "role": "surface_tension", "units": "N/m"}
+    found = dispatch(doc, name)
+    if accepted:
+        assert _two_phase_values(doc, 2, found)["surface_tension"] == sigma
+    else:
+        with pytest.raises(RealizeError, match="surface tension σ = 0.0728, and RANS2P computes none"):
+            _two_phase_values(doc, 2, found)
+    assert _two_phase_values(dambreak, 2, dispatch(dambreak, name))["surface_tension"] == 0.0

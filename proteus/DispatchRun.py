@@ -219,7 +219,7 @@ def _by_role(doc, role):
     return name
 
 
-def _two_phase_values(doc, dim):
+def _two_phase_values(doc, dim, found=None):
     """SystemPhysics' rho_0, nu_0, rho_1, nu_1 and gravity from the model's coefficients: the density and dynamic
     viscosity at phase indicator 0 and 1, and nu = mu / rho, simplified symbolically before any number enters, so
     that a viscosity written rho_w nu_w gives nu_w itself."""
@@ -272,7 +272,30 @@ def _two_phase_values(doc, dim):
     g = [float(v) for v in (g if isinstance(g, sympy.MatrixBase) else [g])]
     out["gravity"] = g + [0.0] * (3 - len(g))
     out["indicator"] = indicator
+    out["surface_tension"] = _surface_tension(doc, spec, found)
     return out
+
+
+def _surface_tension(doc, spec, found):
+    """σ of the coefficient with role ``surface_tension`` (a number), else 0 (C42 D6: the family assumes none). Only
+    RANS3PF's kernels read it (RANS2P computes no surface tension), so a nonzero σ with another flow solver is
+    refused, rather than run without the force the spec states."""
+    name = vocab.coefficient_by_role(doc, "surface_tension")
+    if name is None:
+        return 0.0
+    entry = spec[name]
+    value = entry.get("value") if isinstance(entry, dict) else entry
+    if value is None:
+        raise RealizeError("the surface tension %s must be a number (value: ...) for the realizer" % name)
+    sigma = float(value)
+    if sigma != 0.0:
+        flow = [m for m in found if m.module == "proteus.mprans.RANS2P"] \
+            if found is not None else []
+        if flow:
+            raise RealizeError("the model states surface tension %s = %r, and %s computes none (only RANS3PF's "
+                               "kernels read it): state 0 or choose a RANS3PF discretization"
+                               % (name, sigma, ", ".join(m.module.rsplit(".", 1)[1] for m in flow)))
+    return sigma
 
 
 def _box(split):
@@ -390,6 +413,12 @@ def _initial_conditions(param, model, sub, split, dim, he, entry):
             components += unknowns[scalar[0]] if scalar else []
         else:
             components += [c for comps in unknowns.values() for c in comps]
+    if not unknowns and model.role in table.SCHEME_AUXILIARY_ROLES:
+        # the projection scheme's pressure increment and its spin-up are the scheme's own variables: the spec has
+        # no unknown for them, and the decks start them at zero
+        for variable in variables:
+            setattr(param.p.initialConditions, variable, _Constant(0.0))
+        return {variable: "zero (the scheme's own variable, no unknown of the spec)" for variable in variables}
     if len(components) != len(variables):
         raise RealizeError("%s: %s has variables %s, and the sub-problem's unknowns are %s"
                            % (model.subproblem, model.module, variables, components))
@@ -442,7 +471,7 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     domain, sides = _tank(split, he, name, outdir, comm)
     final_time, outputs = _time(split, entry)
     solver, direct = _linear_solver(entry, ranks)      # the kind, and what does it
-    values = _two_phase_values(doc, dim)
+    values = _two_phase_values(doc, dim, found)
 
     problem = TpFlow.TwoPhaseFlowProblem()
     problem.domain = domain
@@ -453,8 +482,8 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     for key in ("rho_0", "nu_0", "rho_1", "nu_1"):
         setattr(physics, key, values[key])
     physics.gravity = numpy.array(values["gravity"])
-    # the family assumes no surface tension (C42 D6); RANS2P's kernels do not read it either way
-    physics.surf_tension_coeff = 0.0
+    # sigma: the spec's coefficient with role surface_tension, else none (C42 D6)
+    physics.surf_tension_coeff = values["surface_tension"]
     for model in found:
         if model.module not in table.TWO_PHASE_PARAMETERS:
             raise RealizeError("%s: no TwoPhaseFlow Parameters class builds %s" % (model.subproblem, model.module))
@@ -465,7 +494,7 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     subs = {s["name"]: s for s in split["subproblems"]}
     record = {"boundary": sides, "initial": {}, "system": {
         "final_time": final_time, "outputs": outputs, "linear_solver": "%s (%s)" % (solver, direct),
-        **{k: values[k] for k in ("rho_0", "nu_0", "rho_1", "nu_1", "gravity")}}}
+        **{k: values[k] for k in ("rho_0", "nu_0", "rho_1", "nu_1", "gravity", "surface_tension")}}}
     for model in found:
         param = physics.modelDict[model.subproblem]
         for flag, value in model.coefficients.items():
@@ -564,7 +593,7 @@ def precheck(doc, found, split, ranks=None):
                            % (found.family, ", ".join(sorted(table.REALIZERS))))
     if found.family == "two_phase_level_set":
         tank_sides(split)
-        _two_phase_values(doc, split["dim"])
+        _two_phase_values(doc, split["dim"], found)
         _linear_solver(_entry(doc, found.discretization), ranks)
     elif found.family == "shallow_water":
         _box(split)

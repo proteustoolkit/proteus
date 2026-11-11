@@ -1,0 +1,28 @@
+# The dam break of dambreak.ymf, clsvof_projection alone (CLSVOF, RANS3PF, PresInc, Pres, PresInit), three output
+# intervals on the coarse mesh of damBreak.py he=0.08 (h = 0.2576), direct solves as the deck's useSuperlu.
+extends: dambreak.ymf
+remove:
+  - "solution_paths.discretizations[level_set_five]"
+  - "solution_paths.discretizations[level_set_clsvof]"
+
+model:
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 0.03]"
+    initial_conditions:
+      # CLSVOF here starts from a characteristic function (the dispatch sets disc_ICs, as damBreak.py does): -1 in the
+      # water, +1 in the air, 0 on the column's edge. The distance function of the other discretizations is not it.
+      - field: φ
+        type: function
+        formula: "sign(max(x − 1.2, y − 0.6))"
+        units: m
+
+    coefficients:
+      # RANS3PF computes surface tension (RANS2P does not), and damBreak.py leaves TwoPhaseFlow's default, 0.0728 N/m
+      σ: {value: 0.0728, role: surface_tension, units: "N/m"}
+
+solution_paths:
+  discretizations:
+    - name: clsvof_projection
+      mesh: {h: 0.2576}
+      discretization: {outputs: 3}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: direct}
