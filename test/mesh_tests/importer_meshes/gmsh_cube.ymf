@@ -1,0 +1,67 @@
+ymf_archive_version: 2
+domain:
+  times:
+  - time: 0.0
+    spaces:
+      Spatial_Domain:
+        topology:
+          type: Tetrahedron
+          number_of_elements: 1125
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [1125, 4]
+            data: gmsh_cube.h5:/elements
+        geometry:
+          type: XYZ
+          data_item:
+            format: HDF
+            data_type: Float
+            precision: 8
+            dimensions: [341, 3]
+            data: gmsh_cube.h5:/nodes
+        attributes:
+        - name: nodeMaterialTypes
+          attribute_type: Scalar
+          center: Node
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [341]
+            data: gmsh_cube.h5:/nodeMaterialTypes
+        - name: elementMaterialTypes
+          attribute_type: Scalar
+          center: Cell
+          data_item:
+            format: HDF
+            data_type: Int
+            precision: 4
+            dimensions: [1125]
+            data: gmsh_cube.h5:/elementMaterialTypes
+        facets:
+          topology:
+            type: Triangle
+            number_of_elements: 540
+            data_item:
+              format: HDF
+              data_type: Int
+              precision: 4
+              dimensions: [540, 3]
+              data: gmsh_cube.h5:/facets
+            nodes_per_element: 3
+          tags:
+            data_item:
+              format: HDF
+              data_type: Int
+              precision: 4
+              dimensions: [540]
+              data: gmsh_cube.h5:/facetTags
+          view: global
+        provenance:
+          tool: ymf-import-gmsh
+          version: 0.1.0.dev0
+          files:
+          - name: gmsh_cube.msh
+            sha256: b7431acb8b2b9dab2a35e502f436bd900acdb95ffcb2c4de5cf5c2fc46b4331d
