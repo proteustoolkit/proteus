@@ -2,6 +2,7 @@ import proteus
 import proteus.MeshTools
 from proteus.mprans.cNCLS import *
 import numpy as np
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport, cfemIntegrals, SparseMat
 from proteus.LinearAlgebraTools import ParVec_petsc4py
 from proteus.Transport import TC_base, logEvent, NonlinearEquation, Quadrature, Comm
@@ -737,7 +738,7 @@ class LevelModel(OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #
