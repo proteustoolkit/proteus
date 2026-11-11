@@ -43,14 +43,16 @@ low-order solve from the corrected datum θ^{n,FCT}. No θ → p inversion. Q1 L
 | | proteus | JNMA MFEM |
 |---|---|---|
 | θ = 1 | 9.79e-4, 6.66e-4, 1.98e-4, 5.23e-5, 1.42e-5, 3.43e-6 | 9.78e-4, 6.74e-4, 1.99e-4, 5.23e-5, 1.42e-5, 3.44e-6 |
-| θ = ½ | 7.30e-4, 4.99e-4, 1.57e-4, 4.42e-5, 1.27e-5, 3.24e-6 | 9.86e-4, 5.66e-4, 1.71e-4, 4.63e-5, 1.31e-5, 3.28e-6 |
+| θ = ½ | 7.30e-4, 5.10e-4, 1.57e-4, 4.43e-5, 1.27e-5, 3.24e-6 | 9.86e-4, 5.66e-4, 1.71e-4, 4.63e-5, 1.31e-5, 3.28e-6 |
 
 On P1 at h = 1/64: 7.55e-7 (θ = 1) and 4.90e-7 (θ = ½). Without the prelimiter (`fct_prelimiter=0`), Q1 at θ = 1 gives
 1.82e-5, 5.20e-6 and 1.01e-6 at h = 1/16, 1/32 and 1/64. On this smooth problem the prelimiter, not the bounds,
 causes most of the gap to Galerkin (2.34e-7).
 
+The Q1 tables were regenerated on 1.9.x (b6c60a5d) after the P2/Q1 trace-gradient fix in `FemTools` (88975541, proteustoolkit/proteus#1327): the bilinear Q1 gradients are not constant, so the earlier routine was wrong for Q1 too. Only the WRR FCT rows and the θ = ½ implicit FCT rows at h ≥ 1/16 moved (by up to 2%, more at the coarsest h); the low-order, Galerkin and θ = 1 implicit FCT rows are unchanged. The P1 tables are unchanged.
+
 On Q1 (`MESH=q1`, tables `convergence_q1_theta*.txt`) at h = 1/64, θ = 1: low order 1.15e-4, Galerkin
-2.34e-7, WRR FCT 1.94e-6 (order ≈ 2.5). The JNMA MFEM values are 1.15e-4, 1.01e-6 and 3.44e-6 (implicit FCT).
+2.34e-7, WRR FCT 1.91e-6 (order ≈ 2.5). The JNMA MFEM values are 1.15e-4, 1.01e-6 and 3.44e-6 (implicit FCT).
 
 ### What the FCT needed
 The kernel sets ṁᴸ at strong-Dirichlet DOFs to (m(gⁿ⁺¹) − m(gⁿ))/Δt. ṁᴸ enters the mass antidiffusion
