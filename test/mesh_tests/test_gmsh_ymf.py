@@ -79,7 +79,7 @@ def _simplex_mesh(tmp_path, nd, name):
         return mesh
     if shutil.which("tetgen") is None:
         pytest.skip("no tetgen")
-    subprocess.run(["tetgen", "-Vfeen", base + ".ele"], check=True, capture_output=True)
+    subprocess.run(["tetgen", "-Vfeen", base + ".ele"], check=True, capture_output=True, timeout=120)
     for ext in ("ele", "node", "face"):
         os.replace("%s.1.%s" % (base, ext), "%s.%s" % (base, ext))
     mesh = MeshTools.TetrahedralMesh()
