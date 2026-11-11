@@ -1,0 +1,44 @@
+# Simmons et al. (2002) infiltration record for the UNSATURATED HIGH-DENSITY
+# case (UHD), the verification case of Guevara Morel & Graf (2023).  This is
+# the q(t) that their Fig. 1 means by "UNSAT: q = q(t) ... adopted from Simmons
+# et al. (2002)"; neither paper tabulates it, so it exists only as a figure.
+#
+# Read points, supplied 2026-09-23, in the figure's own units (minutes, ml/min):
+#
+#       t[min]   Q[ml/min]
+#          3      250        record starts at its peak
+#         20      102
+#         61       75
+#
+# Linear between samples, monotonically decreasing.
+#
+# ASSUMPTION, t < 3 min.  Only the three points above were given, and nothing
+# was said about the first three minutes.  The 0 s row below holds 250 ml/min
+# back to t = 0, which is exactly what np.interp does with no row there -- so
+# the row is documentation, not a change.  NOTE this differs from UMD, whose
+# record is ZERO before t = 8 min (the reservoir had not started).  If UHD also
+# began at zero, replace the 0.0 row with
+#       0.0,0.0000e+00
+#       179.0,0.0000e+00
+# which makes the switch-on a step rather than a held peak.  The choice matters:
+# it is 3 min of infiltration at the record's maximum rate.
+#
+# UNIT CONVERSION, identical to q_UMD.csv.  q is a Darcy flux, positive for
+# infiltration; the sign flip to Richards' outward normal is done in
+# getFlowFluxBCs, not here.
+#
+#     q [m/s] = Q [ml/min] * 1e-6 / 60 / A,   A = 0.54 * 0.053 = 0.02862 m^2
+#
+# A is the 2D deck's source area: the strip length times the tank thickness Dy,
+# which is the mass-conserving choice for a 2D model of the whole tank.  The
+# PHYSICAL PVC source box is 54 cm x 3.8 cm (Simmons p. 220), so the real
+# surface flux over the real box is 1.395x larger than the value modelled here.
+#
+# UHD runs to T = 48 min = 2880 s, which is inside the record's span, so no
+# end-holding is in play for this case.
+#
+# t_seconds,q_m_per_s
+0.0,1.4559e-04
+180.0,1.4559e-04
+1200.0,5.9399e-05
+3660.0,4.3676e-05
