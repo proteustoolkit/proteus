@@ -131,7 +131,7 @@ def test_a_run_past_its_wall_limit_stops_at_a_step_boundary_with_the_checkpoint_
     assert out.returncode == 75, out.stdout[-1500:] + out.stderr[-1500:]
     assert len(_steps(tmp_path)) == 3
     log = open(os.path.join(str(tmp_path), LOG)).read()
-    assert "Wall limit: " in log and "stopping at t=" in log and "Stopped at t=" in log
+    assert "Wall limit: " in log and "stopping at t=" in log and "Wall limit: checkpoint at t=" in log
     from proteus import WallLimit
     assert WallLimit.CHECKPOINT_EXIT_STATUS == 75
 
@@ -151,3 +151,69 @@ def test_a_run_inside_its_wall_limit_is_the_run_without_one(tmp_path):
 def test_a_malformed_wall_limit_stops_parun_before_it_runs(tmp_path):
     out = _run(tmp_path, FT=0.04, DTOUT=0.01, WALLLIMIT="soon")
     assert out.returncode == 2 and "wall limit" in out.stderr, out.stderr[-1500:]
+
+
+FT, DTOUT = 0.1, 0.02
+
+
+def _legs(tmp_path, stop_after, ranks=1):
+    """The uninterrupted run, and the same run in two legs: the first stopped by its wall limit after
+    ``stop_after`` accepted system steps (exit status 75), the second a hot start of its archive to the end."""
+    full = _run(tmp_path / "full", ranks=ranks, FT=FT, DTOUT=DTOUT)
+    assert full.returncode == 0, full.stderr[-2000:]
+    first = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, WALLSTEPS=stop_after)
+    assert first.returncode == 75, first.stdout[-1500:] + first.stderr[-1500:]
+    # the next leg writes the same log file
+    first.log = open(os.path.join(str(tmp_path / "legs"), LOG)).read()
+    second = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, HOTSTART="inf")
+    assert second.returncode == 0, second.stderr[-2000:]
+    assert not [l for l in second.stderr.splitlines() if "RuntimeWarning: hot start" in l], second.stderr[-3000:]
+    return full, first, second
+
+
+def _same_run(tmp_path, ranks, stop_after):
+    """Bit for bit: every rank's dofs, the steps the second leg takes, and the rows of the force histories."""
+    full_steps = _steps(tmp_path / "full")
+    assert len(full_steps) > stop_after
+    # the second leg's accepted steps are the uninterrupted run's after the stop
+    stop_time = full_steps[stop_after - 1]
+    numpy.testing.assert_array_equal(_steps(tmp_path / "legs"), full_steps[full_steps > stop_time + 1e-12])
+    for rank in range(ranks):
+        name = "u.csv" if ranks == 1 else "u%d.csv" % rank
+        a, b = (numpy.loadtxt(os.path.join(str(tmp_path / d), name), delimiter=",", skiprows=1) for d in ("full", "legs"))
+        assert _worst(a, b) == 0.0
+    for rows in ("forceHistory_p.txt", "forceHistory_v.txt", "momentHistory.txt"):
+        numpy.testing.assert_array_equal(numpy.loadtxt(os.path.join(str(tmp_path / "legs"), rows)),
+                                         numpy.loadtxt(os.path.join(str(tmp_path / "full"), rows)))
+
+
+def _stop_steps(tmp_path):
+    """Steps to stop after: in the middle of an interval, and exactly at the end of one (an archived frame)."""
+    out = _run(tmp_path / "probe", FT=FT, DTOUT=DTOUT)
+    assert out.returncode == 0, out.stderr[-2000:]
+    steps = _steps(tmp_path / "probe")
+    on_grid = [i + 1 for i, t in enumerate(steps) if abs(t / DTOUT - round(t / DTOUT)) < 1e-9 and t > 0.03][0]
+    mid = [i + 1 for i, t in enumerate(steps) if t > 0.025 and abs(t / DTOUT - round(t / DTOUT)) > 1e-3][0]
+    return {"mid-interval": mid, "interval-end": on_grid}
+
+
+@pytest.mark.parametrize("where", ["mid-interval", "interval-end"])
+def test_the_next_leg_of_a_run_stopped_by_its_wall_limit_is_the_uninterrupted_run(tmp_path, where):
+    """Serial: leg one stops at a step boundary (off the output grid, or exactly at a frame), leg two is `parun -H`
+    from its archive; steps, dofs and force rows equal the run that was never stopped, with no warning that the
+    state was rebuilt."""
+    stop_after = _stop_steps(tmp_path)[where]
+    _, first, _ = _legs(tmp_path, stop_after)
+    _same_run(tmp_path, 1, stop_after)
+    # the stop frame carries the state: the first leg's log says so
+    assert "Wall limit: checkpoint at t=" in first.log and "solver state included" in first.log
+
+
+@pytest.mark.skipif(_mpiexec() is None, reason="needs mpiexec")
+@pytest.mark.parametrize("where", ["mid-interval", "interval-end"])
+def test_the_next_leg_on_two_ranks_is_the_uninterrupted_run(tmp_path, where):
+    """The same on 2 ranks (the partition pinned, as the other parallel hot-start tests do): both ranks stop at the
+    same step, and the hot start on the same ranks is the uninterrupted run to the last bit."""
+    stop_after = _stop_steps(tmp_path)[where]
+    _legs(tmp_path, stop_after, ranks=2)
+    _same_run(tmp_path, 2, stop_after)

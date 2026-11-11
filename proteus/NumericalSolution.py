@@ -220,6 +220,8 @@ class NS_base(object):  # (HasTraits):
         #checkpoint costs, for WallLimit.WallClock)
         self._frameTimes = {}
         self._stateTimes = {}
+        #the frame (tCount) whose solver state each model last wrote
+        self._stateFrame = {}
         #the run's wall-clock budget (--wall-limit), None without one; wallLimitStop: the run stopped at a step
         #boundary for it (parun then exits with WallLimit.CHECKPOINT_EXIT_STATUS)
         self.wallClock = self._makeWallClock(opts)
@@ -1273,9 +1275,32 @@ class NS_base(object):  # (HasTraits):
 
         return systemStepFailed
     def _finishAtWallLimit(self):
-        """The run has stopped at a step boundary for its wall limit: close the archives and return (parun then
-        exits with WallLimit.CHECKPOINT_EXIT_STATUS). No end-of-simulation work: the run is not over."""
-        logEvent("Stopped at t=%g for the wall limit" % (self.systemStepController.t_system_last,), level=0)
+        """The run has stopped at a step boundary for its wall limit: make the last frame a checkpoint, close the
+        archives and return (parun then exits with WallLimit.CHECKPOINT_EXIT_STATUS). No end-of-simulation work:
+        the run is not over.
+
+        The frame of this time is the one the stop left: ``archiveSolution`` writes the solver state with it
+        (``wallLimitStop`` makes every frame due it), so a ``parun -H`` of the next leg reads that frame, whose
+        stamp matches, and continues exactly. The per-step archive flags wrote their frame before the stop was
+        decided, so a model whose last frame has no state gets it here."""
+        import time
+        t = self.systemStepController.t_system_last
+        started = time.time()
+        written = 0
+        for index, model in enumerate(self.modelList):
+            if self.archiveFlag == ArchiveFlags.UNDEFINED:
+                continue
+            if self._stateFrame.get(model.name) != self.tCount:
+                self.archiveSolverState(model, index, self.tCount)
+                self._stateFrame[model.name] = self.tCount
+            written += 1
+        if self.archiveFlag == ArchiveFlags.UNDEFINED:
+            logEvent("WARNING: stopped at t=%g for the wall limit, but this run writes no archive: there is "
+                     "nothing to continue from" % (t,), level=0)
+        else:
+            logEvent("Wall limit: checkpoint at t=%g, frame %d of %d models, solver state included (%.3g s "
+                     "of it written after the frames); continue it with parun -H --hotStartMode continue on "
+                     "the same number of ranks" % (t, self.tCount, written, time.time() - started), level=0)
         for index, model in enumerate(self.modelList):
             self.finalizeViewSolution(model)
             self.closeArchive(model, index)
@@ -1927,12 +1952,13 @@ class NS_base(object):  # (HasTraits):
             t = self.systemStepController.t_system
         stateTime = self._archiveSolution(model, index, t, self._solverStateDue(self.tCount,
                                                                                  final=self._atFinalStep(t),
-                                                                                 checkpoint=checkpoint,
+                                                                                 checkpoint=checkpoint or self.wallLimitStop,
                                                                                  model=model))
         frameTime = time.time() - started - (stateTime or 0.0)
         self._frameTimes[model.name] = max(self._frameTimes.get(model.name, 0.0), frameTime)
         if stateTime is not None:
             self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), stateTime)
+            self._stateFrame[model.name] = self.tCount
         if self.wallClock is not None:
             self.wallClock.archiving(time.time() - started)
         logEvent("Archive: frame %d of model %s at t=%g written in %.3g s%s" % (
