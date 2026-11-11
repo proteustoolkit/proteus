@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include "pyarray.h"
+#include "index_type.h"
 
 namespace proteus
 {
