@@ -29,12 +29,13 @@ No 2.0-only redesign work is included.
   [#1342](https://github.com/proteustoolkit/proteus/pull/1342); Darsh Nathawani).
 - **Compatible variable-density flow to transport coupling** (Barua & Kees, section 2.2) (cekees/proteus#150), Henry K = 0.01 and Barua's
   edge-flux transport beside the compatible one (cekees/proteus#174), levee and Henry figure decks (cekees/proteus#169).
-- **TADR/Richards compatible coupling and outflow flux, ported from main** (cekees/proteus#247, pending merge; originals #219 by Arnob Barua
+- **TADR/Richards compatible coupling and outflow flux, ported from main** (cekees/proteus#247, [proteustoolkit/proteus#1353](https://github.com/proteustoolkit/proteus/pull/1353); originals #219 by Arnob Barua
   and #223): `Coefficients` options `EDGE_VELOCITY`, `diagnostics`, `FCT_BND_RESET`, `FCT_DU_MAX`, plus new `VELOCITY_COUPLING` and
-  `CONSERVATIVE_FORM`; the `comp_geoscience_reproduce` bundle with a smoke test is added.
+  `CONSERVATIVE_FORM`; the variable-density reproduction bundle (`test/salinity/vdft_reproduce`) with a smoke test is added.
   **Breaking on 1.9.x:** the environment variables `RICHARDS_EDGE_VELOCITY`, `TADR_*_DBG` and `RICHARDS_*` no longer work; use the options above.
 - **Richards**: implicit FCT, theta-scheme, L-scheme and increment tests, Hornung-Messing example (cekees/proteus#123);
   air-entry van Genuchten closure `VG_AIR_ENTRY` and levee Case B/C on the compatible transport (cekees/proteus#170).
+- **Richards Hornung-Messing**: Q1 tables refreshed after the FemTools trace-gradient fix (cekees/proteus#251, same train).
 - **HPC**: Cray EX configurations for Carpenter, Barfoot, Blueback and Narwhal (cekees/proteus#26).
 - `Context.Options` splits `-C` on any whitespace, commas and semicolons; `gatherTimes` takes the frame count from the `.h5`,
   is a no-op on a complete `.xmf`, and `-t` never duplicates frames (cekees/proteus#31).
