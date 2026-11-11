@@ -130,14 +130,14 @@ def test_a_refused_model_makes_the_whole_hot_start_a_restart(tmp_path):
     for name in ("mixed", "restart"):
         shutil.copytree(str(tmp_path / "stop"), str(tmp_path / name))
     with h5py.File(str(tmp_path / "mixed" / "damBreakLevelSet.h5"), "r+") as f:
-        del f["solver_state/vof/step_p0"]
+        del f["solver_state/vof/step"]
     mixed = _run(tmp_path / "mixed", FT=ft, DTOUT=dtout, HOTSTART=t)
     restart = _run(tmp_path / "restart", FT=ft, DTOUT=dtout, HOTSTART=t, HOTSTARTMODE="restart")
     assert _worst(mixed, restart) == 0.0
     # the warning: run the hot start again from the archive of the mixed directory's stop state
     shutil.copytree(str(tmp_path / "stop"), str(tmp_path / "warn"))
     with h5py.File(str(tmp_path / "warn" / "damBreakLevelSet.h5"), "r+") as f:
-        del f["solver_state/vof/step_p0"]
+        del f["solver_state/vof/step"]
     env = dict(os.environ, OMP_NUM_THREADS="1", DECK="damBreakLevelSet.py", FT=str(ft), DTOUT=str(dtout), HOTSTART=str(t))
     env.setdefault("FI_PROVIDER", "tcp")
     env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
@@ -241,6 +241,12 @@ def test_a_two_rank_continue_is_exact_whatever_each_rank_hashes(tmp_path):
         return out
     run(tmp_path / "full", FT=ft)
     run(tmp_path / "hot", FT=t)
+    # each model's state is four datasets whatever the number of ranks: one per rank and item (108 for RANS2P on
+    # 2 ranks) was ranks x items collective creates, which broke parallel HDF5 at 1,536 ranks
+    import h5py
+    with h5py.File(str(tmp_path / "hot" / "damBreakLevelSet.h5"), "r") as f:
+        for model in f["solver_state"]:
+            assert sorted(f["solver_state"][model]) == ["records", "records.index", "records.keys", "step"], model
     out = run(tmp_path / "hot", FT=ft, HOTSTART=t)
     assert not [line for line in out.stderr.splitlines() if "RuntimeWarning: hot start" in line], out.stderr[-3000:]
     numpy.testing.assert_array_equal(numpy.loadtxt(str(tmp_path / "hot" / "accepted.txt")),
@@ -248,6 +254,44 @@ def test_a_two_rank_continue_is_exact_whatever_each_rank_hashes(tmp_path):
     for rank in range(2):
         a, b = (numpy.loadtxt(str(tmp_path / d / ("u%d.csv" % rank)), delimiter=",", skiprows=1) for d in ("full", "hot"))
         assert _worst(a, b) == 0.0
+
+
+def _to_per_rank_datasets(path):
+    """Rewrite an archive's solver state in the layout written before the records: one dataset per rank and item,
+    ``solver_state/<model>/<key>_p<rank>`` (``fingerprint``, ``policy``, ``step``, ``<owner>/<a|s>.<key>``)."""
+    import json
+    import h5py
+    with h5py.File(str(path), "r+") as f:
+        for model in list(f["solver_state"]):
+            g = f["solver_state"][model]
+            meta = json.loads(bytes(g["records.keys"][...]).decode())
+            keys, dtypes = meta["keys"], [numpy.dtype(d) for d in meta["dtypes"]]
+            index, data, step = g["records.index"][...], g["records"][...], g["step"][...]
+            maxndim = (index.shape[1] - 3) // len(keys) - 2
+            for row in index:
+                rank, start = int(row[0]), int(row[1])
+                for j, (key, dtype) in enumerate(zip(keys, dtypes)):
+                    c = 3 + j * (2 + maxndim)
+                    shape = tuple(int(s) for s in row[c + 2:c + 2 + int(row[c + 1])])
+                    n = int(numpy.prod(shape, dtype="int64")) * dtype.itemsize
+                    g["%s_p%d" % (key, rank)] = data[start + row[c]:start + row[c] + n].view(dtype).reshape(shape)
+                g["step_p%d" % rank] = step
+            for name in ("records", "records.index", "records.keys", "step"):
+                del g[name]
+
+
+def test_an_archive_with_one_dataset_per_rank_and_item_still_continues(tmp_path):
+    """Archives written before the records (main up to 266eb974) hold the solver state as one dataset per rank
+    and item; a hot start from one still continues the uninterrupted run exactly."""
+    import h5py
+    dtout, t, ft = CASES["lagged"]
+    full = _run(tmp_path / "full", FT=ft, DTOUT=dtout)
+    _run(tmp_path / "hot", FT=t, DTOUT=dtout)
+    _to_per_rank_datasets(tmp_path / "hot" / "damBreakLevelSet.h5")
+    with h5py.File(str(tmp_path / "hot" / "damBreakLevelSet.h5"), "r") as f:
+        assert "solver_state/rans2p/step_p0" in f and "solver_state/rans2p/records" not in f
+    hot = _run(tmp_path / "hot", FT=ft, DTOUT=dtout, HOTSTART=t)
+    assert _worst(full, hot) == 0.0
 
 
 def test_a_driver_without_hot_start_mode_continues(tmp_path):
