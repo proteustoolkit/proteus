@@ -11,7 +11,9 @@ import array
 import inspect
 import h5py
 from proteus import cmeshTools
+from proteus.csparsity import CSR_INDEX_DTYPE
 import os
+import warnings
 from .Archiver import *
 from .LinearAlgebraTools import ParVec_petsc4py
 from .Profiling import logEvent,memory, memHardLimit
@@ -2745,9 +2747,9 @@ class MultilevelMesh(Mesh):
         if np.abs(w.sum(axis=1)-1.0).max() > 1.0e-10:
             raise ValueError("a fine node lies outside its coarse cell")
         keep = w > 1.0e-14
-        rowptr = np.zeros((nFine+1,),cmeshTools.INDEX_DTYPE)
+        rowptr = np.zeros((nFine+1,),CSR_INDEX_DTYPE)
         rowptr[1:] = np.cumsum(keep.sum(axis=1))
-        colind = ce[P][keep].astype('i')
+        colind = ce[P][keep].astype(CSR_INDEX_DTYPE)
         nzval = w[keep].astype('d')
         return rowptr,colind,nzval
 
@@ -2781,10 +2783,10 @@ class MultilevelMesh(Mesh):
         oldOfNew = np.empty((nFine,),dtype=int)
         oldOfNew[fineOld2New] = np.arange(nFine)
         lengths = np.diff(rowptr)[oldOfNew]
-        newptr = np.zeros((nFine+1,),'i')
+        newptr = np.zeros((nFine+1,),CSR_INDEX_DTYPE)
         newptr[1:] = np.cumsum(lengths)
         gather = np.repeat(rowptr[oldOfNew]-newptr[:-1],lengths)+np.arange(int(newptr[-1]))
-        return newptr,coarseOld2New[colind[gather]].astype('i'),nzval[gather].copy()
+        return newptr,coarseOld2New[colind[gather]].astype(CSR_INDEX_DTYPE),nzval[gather].copy()
 
     def useHierarchicalGeometry(self):
         """Keep node coordinates only on the finest level.
@@ -2868,9 +2870,9 @@ class MultilevelMesh(Mesh):
         nNodes_fine = parents.shape[0]
         inherited = parents[:,0] == parents[:,1]
         nnz = int(np.where(inherited,1,2).sum())
-        rowptr = np.zeros((nNodes_fine+1,),cmeshTools.INDEX_DTYPE)
+        rowptr = np.zeros((nNodes_fine+1,),CSR_INDEX_DTYPE)
         rowptr[1:] = np.cumsum(np.where(inherited,1,2))
-        colind = np.zeros((nnz,),cmeshTools.INDEX_DTYPE)
+        colind = np.zeros((nnz,),CSR_INDEX_DTYPE)
         nzval = np.zeros((nnz,),'d')
         single = np.flatnonzero(inherited)
         double = np.flatnonzero(~inherited)
@@ -8806,12 +8808,20 @@ def msh2simplex(fileprefix, nd):
     Converts a .msh file (Gmsh) to .ele .edge .node files (triangle).
     (!) Works only with triangle elements in 2D and tetrahedral elements in 3D.
 
+    Deprecated: proteus reads meshes as ymf, and ``ymf-import-gmsh`` converts a gmsh
+    ``.msh`` to one (:func:`gmshYmfMesh`), bit-equal to this function and the triangle/tetgen
+    readers. This path remains for ``-F`` partitioned reads of the triangle/tetgen files and
+    where ``ymf-import-gmsh`` is not installed.
+
     Parameters
     ----------
     fileprefix: str
         prefix of the .msh file (e.g. 'mesh' if file called 'mesh.msh')
 
     """
+    warnings.warn("msh2simplex is deprecated: convert the .msh with ymf-import-gmsh "
+                  "(ymf-import-gmsh %s.msh), which proteus reads as a ymf mesh" % (fileprefix,),
+                  DeprecationWarning, stacklevel=2)
     assert nd == 2 or nd == 3, 'nd must be 2 or 3'
     mshfile = open(fileprefix+'.msh', 'r')
     nodes = []
@@ -9112,6 +9122,52 @@ def setDomainFromPhysics(p, n):
         n, 'nLayersOfOverlapForParallel', meshOptions.nLayersOfOverlapForParallel)
     meshOptions.regularGrid = getattr(n, 'regularGrid', 'generated')
 
+def _gmshYmfCurrent(prefix):
+    """True if ``prefix.ymf`` is the conversion of ``prefix.msh`` as it is now.
+
+    The ymf mesh's provenance names the file it was converted from and that file's SHA-256, so a
+    ymf mesh stored beside its ``.msh`` (the converter's output) is used without the converter,
+    and a ``.msh`` that changed since is not mistaken for it.
+    """
+    import hashlib
+    if not (os.path.exists(prefix + '.ymf') and os.path.exists(prefix + '.msh')):
+        return False
+    try:
+        space = _ymfMeshSpace(prefix)[0]
+        files = space.get("provenance", {}).get("files", [])
+    except Exception:
+        return False
+    digest = hashlib.sha256(open(prefix + '.msh', 'rb').read()).hexdigest()
+    return any(f.get("name") == os.path.basename(prefix) + '.msh' and f.get("sha256") == digest
+               for f in files)
+
+def gmshYmfMesh(prefix):
+    """Make ``prefix.ymf`` and ``prefix.h5`` the conversion of ``prefix.msh``, and say whether they are.
+
+    A current ymf mesh (:func:`_gmshYmfCurrent`) is kept. Otherwise ``ymf-import-gmsh`` converts
+    the ``.msh`` if it is installed. Returns False, and writes nothing, if neither holds: the caller
+    falls back to the deprecated :func:`msh2simplex`.
+    """
+    if _gmshYmfCurrent(prefix):
+        return True
+    try:
+        from ymf_import_gmsh import convert
+    except ImportError:
+        return False
+    logEvent("Converting %s.msh to the ymf mesh %s.ymf with ymf-import-gmsh" % (prefix, prefix))
+    convert(prefix)
+    return True
+
+def _gmshYmfAvailable(prefix):
+    """Whether a gmsh domain's ``.msh`` can be read as ymf: a current ymf mesh, or the converter"""
+    if _gmshYmfCurrent(prefix):
+        return True
+    try:
+        import ymf_import_gmsh
+    except ImportError:
+        return False
+    return True
+
 def meshFiles(domain, meshOptions):
     """What :func:`writeMeshFiles` would do for this domain, or None.
 
@@ -9165,7 +9221,7 @@ def _runMesher(cmd):
                            % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
     return result.stdout
 
-def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
+def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed, ymf=False):
     """:func:`writeMeshFiles` on rank 0 when ``needed`` there; a failure raises on every rank.
 
     The other ranks go on to read rank 0's files, so an exception on rank 0
@@ -9174,7 +9230,7 @@ def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
     failure = None
     if comm.isMaster() and needed:
         try:
-            writeMeshFiles(domain, meshOptions)
+            writeMeshFiles(domain, meshOptions, **({'ymf': True} if ymf else {}))
         except Exception as error:
             failure = error
     message = comm.comm.tompi4py().bcast(
@@ -9184,8 +9240,12 @@ def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
     if message is not None:
         raise RuntimeError("mesh generation failed on rank 0: " + message)
 
-def writeMeshFiles(domain, meshOptions):
+def writeMeshFiles(domain, meshOptions, ymf=False):
     """Run the mesh generator for a PSLG or PLC domain.
+
+    With ``ymf`` a ``use_gmsh`` domain's ``.msh`` is made a ymf mesh (:func:`gmshYmfMesh`) when it can
+    be, and no triangle/tetgen files are written (no msh2simplex, no tetgen run); otherwise, and for
+    the other generators, the files below.
 
     The serial step of :func:`_generateMesh`, which runs it on rank 0 and
     then reads the files collectively. Writes the files
@@ -9204,6 +9264,8 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Done running gmsh; converting to triangle")
             else:
                 logEvent("Using "+fileprefix+".msh to convert to triangle")
+            if ymf and gmshYmfMesh(fileprefix):
+                return
             # convert gmsh to triangle format
             msh2simplex(fileprefix=fileprefix, nd=2)
         else:
@@ -9230,6 +9292,8 @@ def writeMeshFiles(domain, meshOptions):
                 logEvent("Done running gmsh; converting to tetgen")
             else:
                 logEvent("Using "+domain.geofile+".msh to convert to tetgen")
+            if ymf and gmshYmfMesh(fileprefix):
+                return
             msh2simplex(fileprefix=fileprefix, nd=3)
             logEvent(_runMesher("tetgen -Vfeen {0:s}.ele".format(fileprefix)))
         else:
@@ -9588,12 +9652,21 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
     elif isinstance(domain, Domain.PlanarStraightLineGraphDomain):
         fileprefix = None
         # run mesher
+        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh) unless the triangle files are asked for
+        # (-F) or neither the ymf mesh nor the converter is there: then msh2simplex, deprecated
+        gmshYmf = False
         if domainMeshOptions.use_gmsh is True:
             fileprefix = domain.geofile
+            ymf = not generatePartitionedMeshFromFiles
             _writeMeshFilesOnMaster(comm, domain, meshOptions,
-                                    comm.isMaster() and (not (os.path.exists(fileprefix+".ele") and
-                                                              os.path.exists(fileprefix+".node") and
-                                                              os.path.exists(fileprefix+".edge"))))
+                                    comm.isMaster() and (
+                                        (ymf and not _gmshYmfCurrent(fileprefix) and _gmshYmfAvailable(fileprefix)) or
+                                        not ((ymf and _gmshYmfCurrent(fileprefix)) or
+                                             (os.path.exists(fileprefix+".ele") and
+                                              os.path.exists(fileprefix+".node") and
+                                              os.path.exists(fileprefix+".edge")))),
+                                    ymf=ymf)
+            gmshYmf = ymf and _gmshYmfCurrent(fileprefix)
         else:
             fileprefix = domain.polyfile
             _writeMeshFilesOnMaster(comm, domain, meshOptions, comm.isMaster() and meshOptions.genMesh)
@@ -9606,7 +9679,13 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                           nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                           parallelPartitioningType=meshOptions.parallelPartitioningType)
         logEvent("Generating %i-level mesh from coarse Triangle mesh" % (meshOptions.nLevels,))
-        if generatePartitionedMeshFromFiles:
+        if gmshYmf:
+            logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (fileprefix,))
+            mesh.generateFromYmfFile(fileprefix)
+            mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
+                                                  nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                                  parallelPartitioningType=meshOptions.parallelPartitioningType)
+        elif generatePartitionedMeshFromFiles:
             logEvent("Generating partitioned mesh from Triangle files")
             mlMesh.generatePartitionedMeshFromTriangleFiles(fileprefix, nbase,mesh,meshOptions.nLevels,
                                                           nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
@@ -9623,11 +9702,17 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             fileprefix = domain.geofile
         else:
             fileprefix = domain.polyfile
+        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh), with no tetgen run, unless the tetgen
+        # files are asked for (-F) or neither the ymf mesh nor the converter is there (msh2simplex, deprecated)
+        ymf = domainMeshOptions.use_gmsh is True and not generatePartitionedMeshFromFiles
         _writeMeshFilesOnMaster(comm, domain, meshOptions,
-                                comm.rank() == 0 and (meshOptions.genMesh or (
-                                    not (os.path.exists(fileprefix+".ele") and
-                                         os.path.exists(fileprefix+".node") and
-                                         os.path.exists(fileprefix+".face")))))
+                                comm.rank() == 0 and (
+                                    (ymf and not _gmshYmfCurrent(fileprefix) and _gmshYmfAvailable(fileprefix)) or
+                                    (not (ymf and _gmshYmfCurrent(fileprefix)) and (meshOptions.genMesh or (
+                                        not (os.path.exists(fileprefix+".ele") and
+                                             os.path.exists(fileprefix+".node") and
+                                             os.path.exists(fileprefix+".face")))))),
+                                ymf=ymf)
         comm.barrier()
         logEvent("Initializing mesh and MultilevelMesh")
         nbase = 1
@@ -9635,7 +9720,13 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
         mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
                                            nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                            parallelPartitioningType=meshOptions.parallelPartitioningType)
-        if generatePartitionedMeshFromFiles:
+        if ymf and _gmshYmfCurrent(fileprefix):
+            logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (fileprefix,))
+            mesh.generateFromYmfFile(fileprefix)
+            mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,
+                                                  nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
+                                                  parallelPartitioningType=meshOptions.parallelPartitioningType)
+        elif generatePartitionedMeshFromFiles:
             logEvent("Generating partitioned mesh from Tetgen files")
             if("f" not in meshOptions.triangleOptions or "ee" not in meshOptions.triangleOptions):
                 sys.exit("ERROR: Remake the mesh with the `f` flag and `ee` flags in triangleOptions.")

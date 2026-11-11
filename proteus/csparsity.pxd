@@ -2,13 +2,14 @@
 # cython: language_level=3
 cdef extern from "index_type.h":
     ctypedef int proteus_index_t
+    ctypedef int proteus_csr_index_t
 
 cdef extern from "sparsity.h" namespace "proteus":
     cdef cppclass SparsityInfo:
         proteus_index_t nrows
-        proteus_index_t nnz
-        proteus_index_t *rowptr
-        proteus_index_t *colind
+        proteus_csr_index_t nnz
+        proteus_csr_index_t *rowptr
+        proteus_csr_index_t *colind
         double *nzval
         SparsityInfo()
         void findNonzeros(proteus_index_t nElements_global,
@@ -61,10 +62,10 @@ cdef extern from "sparsity.h" namespace "proteus":
                             proteus_index_t* exteriorElementBoundariesArray,
                             int hasOutflowBoundary,
                             int needOutflowJacobian,
-                            proteus_index_t* rowptr,
-                            proteus_index_t* csrRowIndeces,
-                            proteus_index_t* csrColumnOffsets,
-                            proteus_index_t* csrColumnOffsets_eNebN,
-                            proteus_index_t* csrColumnOffsets_eb,
-                            proteus_index_t* csrColumnOffsets_eb_eNebN)
+                            proteus_csr_index_t* rowptr,
+                            proteus_csr_index_t* csrRowIndeces,
+                            proteus_csr_index_t* csrColumnOffsets,
+                            proteus_csr_index_t* csrColumnOffsets_eNebN,
+                            proteus_csr_index_t* csrColumnOffsets_eb,
+                            proteus_csr_index_t* csrColumnOffsets_eb_eNebN)
         void getCSR()

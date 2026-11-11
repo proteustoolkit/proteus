@@ -52,7 +52,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative, max_iterations: 50}
       subproblems:
         - name: flow
           solves: [momentum, continuity]
@@ -61,7 +61,7 @@ solution_paths:
           time_integration: backward_euler
           stabilization: {method: ASGS, lag: true, shock_capturing: {factor: 0.5, lag: true}}
           solver: {max_iterations: 100}
-          proteus: {model: RANS2P, useVF: 1.0, eb_penalty_constant: 1000000.0}
+          proteus: {model: RANS2P, useVF: 1.0, eb_penalty_constant: 1.0e6}
         - name: vof
           introduces: {name: χh, approximates: χ, units: "1"}
           equation: "∂χh/∂t + ∇·(v χh) = 0"
@@ -112,7 +112,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative, max_iterations: 50}
       subproblems:
         - name: flow
           solves: [momentum, continuity]
@@ -120,7 +120,7 @@ solution_paths:
           finite_element: {velocity: {family: CG, order: 1}, pressure: {family: CG, order: 1}}
           time_integration: backward_euler
           solver: {max_iterations: 100}
-          proteus: {model: RANS2P, eb_penalty_constant: 1000000.0}
+          proteus: {model: RANS2P, eb_penalty_constant: 1.0e6}
         - name: clsvof
           solves: [interface]
           enforces: "norm(∇φ) = 1"
@@ -140,7 +140,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative}
       subproblems:
         - name: clsvof
           solves: [interface]
@@ -152,9 +152,9 @@ solution_paths:
           solves: [momentum]
           lags: {φ: {via: clsvof, at: current_step}, χ: {via: clsvof, at: current_step}}
           finite_element: {velocity: {family: CG, order: 2}}
-          time_integration: vbdf
+          time_integration: bdf2
           solver: {max_iterations: 1}
-          proteus: {model: RANS3PF, eb_penalty_constant: 1000000.0}
+          proteus: {model: RANS3PF, eb_penalty_constant: 1.0e6}
         - name: pressureInc
           enforces: "∇·v = 0"
           solver: {max_iterations: 50}

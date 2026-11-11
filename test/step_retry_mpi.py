@@ -16,6 +16,8 @@ only its t_model_last part. NANDT=n makes the n-th system step the controller ch
 only); NOTIMECHECK=1 turns off the stepping loop's time check (NS_base._checkStepTimes). accepted.txt and
 retries.txt are written also when the run stops on a StepTimeError (u.csv is not). SYSTEMCONTROLLER=<class of proteus.SplitOperator> runs the deck under that
 system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its own).
+RAISERANK=r raises a ValueError on rank r only, at its first archive write (NS_base.archiveInitialSolution), as one
+rank's Archiver did in a 4096-rank run whose other ranks then waited in a collective until the wall time ran out.
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
 HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
@@ -199,6 +201,15 @@ def restoreSystemStepState(self):
     retries[0] += 1
     return _restore(self)
 NS.NS_base.restoreSystemStepState = restoreSystemStepState
+
+if os.environ.get("RAISERANK"):
+    _archiveInitialSolution = NS.NS_base.archiveInitialSolution
+    def archiveInitialSolution(self, model, index):
+        from proteus import Comm
+        if Comm.get().rank() == int(os.environ["RAISERANK"]):
+            raise ValueError("RAISERANK: rank %d fails its first archive write" % Comm.get().rank())
+        return _archiveInitialSolution(self, model, index)
+    NS.NS_base.archiveInitialSolution = archiveInitialSolution
 
 _calc = NS.NS_base.calculateSolution
 def calc(self, *a, **k):

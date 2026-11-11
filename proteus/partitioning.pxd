@@ -6,6 +6,9 @@ from libcpp.map cimport map as cppmap
 from libcpp.utility cimport pair
 from libcpp cimport bool as cppbool
 from mpi4py.libmpi cimport MPI_Comm
+
+cdef extern from "index_type.h":
+    ctypedef int proteus_csr_index_t
 cimport mesh
 
 cdef extern from "partitioning.h" namespace "proteus":
@@ -26,7 +29,7 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                    int level, int elements, int n, const int* oldNumbers, int* newNumbers)
     extern int c_cartesianVertexInterpolation "proteus::cartesianVertexInterpolation" (int kind, int triangleFlag, const int* nn,
                                                                                        const int* rankGrid, int level, int rank,
-                                                                                       vector[int]& rowptr, vector[int]& colind,
+                                                                                       vector[proteus_csr_index_t]& rowptr, vector[proteus_csr_index_t]& colind,
                                                                                        vector[double]& nzval)
     extern int c_cartesianSubdomainParents "proteus::cartesianSubdomainParents" (int kind, int triangleFlag, const int* nn,
                                                                                  const int* rankGrid, int level, int rank,

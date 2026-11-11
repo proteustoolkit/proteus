@@ -5741,8 +5741,8 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
 						       const int nPointsPerSimplex,
 						       const int nSpace,
 						       double pc_eps,
-						       const proteus_index_t * rowptr,
-						       const proteus_index_t * colind,
+						       const proteus_csr_index_t * rowptr,
+						       const proteus_csr_index_t * colind,
 						       const int* materialTypes,
 						       const double rho,
 						       const double beta,
@@ -5761,7 +5761,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
 						       double *da,
 						       double* vol_frac)
 {
-  proteus_index_t ii; int i, j, k, I, matID;
+  proteus_csr_index_t ii; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,pcBarStar,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5774,7 +5774,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het(const int nSimplex,
     thetaS,
     rhom,drhom,m,
     betauStar;
-  const proteus_index_t nnz = rowptr[nSpace];
+  const proteus_csr_index_t nnz = rowptr[nSpace];
   for (i=0; i < nSimplex; i++)
     {
       matID= materialTypes[i];
@@ -5848,8 +5848,8 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
 										const int nPointsPerSimplex,
 										const int nSpace,
 										double linear_break,
-										const proteus_index_t * rowptr,
-										const proteus_index_t * colind,
+										const proteus_csr_index_t * rowptr,
+										const proteus_csr_index_t * colind,
 										const int* materialTypes,
 										const double rho,
 										const double beta,
@@ -5868,7 +5868,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
 										double *da,
 										double* vol_frac)
 {
-  proteus_index_t ii; int i, j, k, I, matID;
+  proteus_csr_index_t ii; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,pcBarStar,sBarStar,KWrStar,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,
@@ -5881,7 +5881,7 @@ void conservativeHeadRichardsMualemVanGenuchten_sd_het_linearized_at_saturation(
     thetaS,
     rhom,drhom,m,
     betauStar;
-  const proteus_index_t nnz = rowptr[nSpace];
+  const proteus_csr_index_t nnz = rowptr[nSpace];
   pcBarStar = linear_break;
   
   for (i=0; i < nSimplex; i++)
@@ -11713,8 +11713,8 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
 										 const int nPointsPerSimplex,
 										 const int nSpace,
 										 const int nQuadraturePoints_elementBoundary,
-										 const proteus_index_t *rowptr,
-										 const proteus_index_t *colind,
+										 const proteus_csr_index_t *rowptr,
+										 const proteus_csr_index_t *colind,
 										 const proteus_index_t* elementBoundaryElementsArray,
 										 const int* quadraturePointToElementBoundary,
 										 const int* materialTypes,
@@ -11741,7 +11741,7 @@ void conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd
 										 double *a,
 										 double *da)
 {
-  proteus_index_t J, nnz; int i, j, k, I, matID;
+  proteus_csr_index_t J; proteus_csr_index_t nnz; int i, j, k, I, matID;
   const int nSpace2=nSpace*nSpace;
   register double psiC,
     pcBar,pcBar_n,pcBar_nM1,pcBar_nM2,

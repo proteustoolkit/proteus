@@ -222,6 +222,10 @@ def run_spec(argv, mesh_only=False):
 def main(argv=None):
     """Entry point for the ``pro`` console script; returns the exit status."""
     argv = sys.argv[1:] if argv is None else list(argv)
+    # under mpiexec, an exception one rank raises and nothing catches aborts
+    # the whole job instead of leaving the other ranks waiting in a collective
+    from proteus import runtime
+    runtime.abort_on_uncaught_exception("pro")
     spec = _spec_command(argv)
     if spec is not None:
         return run_spec(argv[1:], mesh_only=spec == "msh")

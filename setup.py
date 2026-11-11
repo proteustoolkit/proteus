@@ -1086,6 +1086,26 @@ if _os.environ.get("PROTEUS_SKIP_PUMI_CHRONO") or _os.environ.get("PROTEUS_SKIP_
     _skip.add("mbd.CouplingFSI")
 EXTENSIONS_TO_BUILD = [e for e in EXTENSIONS_TO_BUILD if e.name not in _skip]
 
+def _petsc_index_bits():
+    """Width of PetscInt, read from petscconf.h (C33: proteus_csr_index_t is
+    PetscInt). PROTEUS_CSR_INDEX_BITS in the environment overrides, for a
+    PETSc whose headers are not in PROTEUS_PETSC_INCLUDE_DIRS."""
+    forced = os.environ.get('PROTEUS_CSR_INDEX_BITS')
+    if forced:
+        return int(forced)
+    for d in PROTEUS_PETSC_INCLUDE_DIRS:
+        conf = os.path.join(d, 'petscconf.h')
+        if os.path.exists(conf):
+            with open(conf, errors='replace') as f:
+                return 64 if '#define PETSC_USE_64BIT_INDICES' in f.read() else 32
+    return 32
+
+# Every extension sees the same width (index_type.h), so a mixed build cannot
+# happen: the macro is added to all of them here rather than per Extension above.
+PROTEUS_CSR_INDEX_BITS = _petsc_index_bits()
+for _e in EXTENSIONS_TO_BUILD:
+    _e.define_macros = list(getattr(_e, 'define_macros', None) or []) + [('PROTEUS_CSR_INDEX_BITS', PROTEUS_CSR_INDEX_BITS)]
+
 def setup_given_extensions(extensions):
     # Most Extensions above list several *_LIB_DIR constants (SUPERLU, LAPACK,
     # BLAS, PETSC, HDF5, ...) in library_dirs -- in a conda/mamba dev install

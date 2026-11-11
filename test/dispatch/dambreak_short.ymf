@@ -12,9 +12,7 @@ remove:
 model:
   strong_form:
     domain: "Ω = [0, 3.22] × [0, 1.8],  t ∈ (0, 0.03]"
-    initial_conditions:                 # a list: replaced whole, not merged
-      - {field: v, type: constant, value: 0.0}
-      - {field: p, type: constant, value: 0.0}
+    initial_conditions:                 # merged by field: only φ is restated
       # the same φ0 with hypot, as damBreakLevelSet.py computes it: the sqrt of
       # a sum of squares rounds twice, and differs from the deck by one ulp at
       # some nodes (2 of the 109 of its stored mesh), so no run could match it
@@ -28,4 +26,4 @@ solution_paths:
     - name: level_set_five
       mesh: {h: 0.2576}
       discretization: {outputs: 3}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: direct, max_iterations: 50}
