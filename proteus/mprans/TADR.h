@@ -1760,10 +1760,23 @@ inline
                   flux_fluid_ext = boundary_flow_w*rho_up_fluid;
                 }
 
-              ebqe_flux.data()[ebNE_kb] = flux_ext;
+              // ImplicitEV without the flow model's edge fluxes: on an upwinded
+              // OUTFLOW face the residual applies c_i times the fluid flux to
+              // row i (see the residual update below), not the trace flux.
+              const bool outflow_upwind =
+                STABILIZATION_TYPE == STABILIZATION::ImplicitEV && !USE_EDGE_FLUX &&
+                boundary_flow_w >= 0.0 &&
+                ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
+                 (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
+              // Record the flux the residual applies.  On an upwinded outflow face
+              // sum_i c_i F^f w_i = c_h F^f at each quadrature point, so c_h F^f is
+              // that flux pointwise.  n.f(c_h) = (v.n) rho(c_h) c_h differs from it
+              // through the density, which F^f freezes at rho(c^n).
+              const double flux_adv_applied = outflow_upwind ? u_ext*flux_fluid_ext : flux_adv_ext;
+              ebqe_flux.data()[ebNE_kb] = outflow_upwind ? flux_adv_applied + flux_diff_ext : flux_ext;
               // advective/dispersive split + quadrature weight, see the note at
               // the ebqe_flux_adv declaration
-              ebqe_flux_adv.data()[ebNE_kb] = flux_adv_ext;
+              ebqe_flux_adv.data()[ebNE_kb] = flux_adv_applied;
               ebqe_dS_ext.data()[ebNE_kb]   = dS;
               if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                 ebqe_u.data()[ebNE_kb] = bc_u_ext;
@@ -1839,10 +1852,22 @@ inline
                       }
                   else if (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                       {
+                    // OUTFLOW carries the node's own concentration: on an upwinded
+                    // outflow face the solute flux is c_i times the fluid flux of
+                    // the same face, so B^s_i - c_i B^f_i of the cancelled row is
+                    // exactly zero there.  The trace flux n.f(c_h) coupled c_i to
+                    // the other nodes of the face with a positive off-diagonal,
+                    // which broke the M-matrix of the low-order row (Zalesak level
+                    // 4 FCT: c^L = -2.9e-9 at the outflow wall node (0, 0.625)).
+                    // outflow_upwind: decided once per quadrature point, above,
+                    // where the recorded flux is set from the same condition
+                    const double flux_i = outflow_upwind
+                      ? u_dof.data()[u_l2g.data()[eN*nDOF_test_element+i]]*flux_fluid_ext + flux_diff_ext
+                      : flux_ext;
                     // ImplicitEV also transports the group variable, so its
                     // boundary_integral must be the adjoint of the w-operator
                     // (see the GROUP-VARIABLE trace block above).
-                    elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(flux_ext,u_test_dS[i])+
+                    elementResidual_u[i] += ck.ExteriorElementBoundaryFlux(flux_i,u_test_dS[i])+
                                             ck.ExteriorElementBoundaryDiffusionAdjoint(isDOFBoundary_u.data()[ebNE_kb],
                                                                                             isDiffusiveFluxBoundary_u.data()[ebNE_kb],
                                                                                             eb_adjoint_sigma,
@@ -2256,9 +2281,9 @@ inline
           /////////////////////////////////////////////
           // ** LOOP IN DOFs FOR EDGE BASED TERMS ** //
           /////////////////////////////////////////////
-          // DMP diagnostic, enabled with TADR_DMP_DBG=1 (off by default, and
-          // the branch is a single bool test when off).
-          static const bool TADR_DMP_DBG = (std::getenv("TADR_DMP_DBG") != nullptr);
+          // DMP diagnostic, Coefficients(diagnostics=("dmp",)) (off by default,
+          // and the branch is a single bool test when off).
+          const bool TADR_DMP_DBG = args.scalar<int>("DMP_DIAGNOSTICS") != 0;
           // total lines emitted over the whole run, so the first violation is
           // captured and the log does not explode over ~12000 substeps x 64 ranks
           static int dbg_budget = 40;
@@ -2291,7 +2316,7 @@ inline
               // u = m/M a convex combination.
               double ith_flux_term_fluid = 0;
               double ith_low_order_dissipative_term_fluid = 0;
-              // --- DMP diagnostic accumulators (TADR_DMP_DBG=1) ---
+              // --- DMP diagnostic accumulators (diagnostics "dmp") ---
               // gamma_ij = dLow_ij - T_ij - D_ij is the coefficient of
               // (w_j - w_i) in the low-order update.  The update is a convex
               // combination iff every gamma_ij >= 0 AND
@@ -3094,6 +3119,21 @@ inline
                   for (int ii=0; ii<a_rowptr.data()[nSpace]; ii++)
                     { a_w_ext_j[ii] = a_ext[ii]/dwdu_ext_j; zero_da_ext_j[ii] = 0.0; }
                   const double* v_w_ext_j = &ebqe_velocity_ext.data()[ebNE_kb_nSpace];
+                  // Upwinded outflow face of calculateResidual: the solute flux is
+                  // c_i (v.n) rho_trace with rho_trace from the frozen nodal
+                  // rho(c^n), so its derivative is diagonal and replaces the
+                  // consistent trace derivative (v.n) dw/du w_j.
+                  double flow_w_j = 0.0;
+                  for (int I=0;I<nSpace;I++)
+                    flow_w_j += normal[I]*v_w_ext_j[I];
+                  const bool outflow_upwind_j = flow_w_j >= 0.0 &&
+                    ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
+                     (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
+                  double rho_trace_j = 0.0;
+                  if (outflow_upwind_j && !USE_EDGE_FLUX)
+                    for (int j=0;j<nDOF_trial_element;j++)
+                      rho_trace_j += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
+                                   * rho_dof_proj[u_l2g.data()[eN_nDOF_trial_element+j]];
                   for (int i=0;i<nDOF_test_element;i++)
                     for (int j=0;j<nDOF_trial_element;j++)
                       {
@@ -3119,7 +3159,13 @@ inline
                               }
                             continue;
                           }
-                        exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,v_w_ext_j,advJacobian_ext);
+                        if (outflow_upwind_j)
+                          {
+                            if (j == i)
+                              fluxJacobian_u_u[i][j] += flow_w_j*rho_trace_j*u_test_dS[i];
+                          }
+                        else
+                          exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,v_w_ext_j,advJacobian_ext);
                         exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_w_ext_j,zero_da_ext_j,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
                         difffluxjacobian_ext = (advJacobian_ext*u_trial_trace_ref.data()[ebN_local_kb_j] + diffJacobian_ext)*dwdu_ext_j;
                         fluxJacobian_u_u[i][j] += difffluxjacobian_ext*u_test_dS[i];

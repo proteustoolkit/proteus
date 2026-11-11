@@ -1,0 +1,3 @@
+-tadr_ksp_type preonly
+-tadr_pc_type lu
+-tadr_pc_factor_mat_solver_type superlu_dist

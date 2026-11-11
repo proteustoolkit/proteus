@@ -1,0 +1,15 @@
+# Variant of q_UHD.csv (read it first; same units and source) for the
+# unrecorded first 3 minutes: q ramps LINEARLY from 0 at t = 0 to the record's
+# first sample (250 ml/min at 3 min) instead of being held at 250 back to t = 0.
+# Select with SIMMONS_Q_FILE=data/q_UHD_ramp.csv.
+#
+# Why: Simmons et al. (2002) Fig. 10 has only three UHD samples, the first at
+# ~3 min, and the reservoir loss it records also filled the source box
+# (diatomaceous earth layer + shallow ponding, p.220).  The ramp puts 1.09 L
+# in by 6 min (1D fill depth 0.123 m), which reproduces Guevara Morel & Graf
+# (2023) Fig. 7's HGS mean (~0.12 m at 6 min); the held record puts in 1.46 L
+# (0.165 m).  From t = 180 s on the two files are identical.
+0.0,0.0000e+00
+180.0,1.4559e-04
+1200.0,5.9399e-05
+3660.0,4.3676e-05

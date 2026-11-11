@@ -2,7 +2,6 @@
 """
 An optimized Advection-Diffusion-Reaction  transport module
 """
-import os
 import numpy as np
 from proteus import cfemIntegrals, Quadrature, Norms, Comm, TimeIntegration
 from proteus.NonlinearSolvers import NonlinearEquation
@@ -23,15 +22,23 @@ from proteus.mprans.cTADR import cTADR_base
 
 from . import cArgumentsDict
 
-#: TADR_BC_DBG=1 logs the exterior-boundary solute-flux split once per time
-#: step; see LevelModel._logBoundarySoluteFlux.  Off by default: the reduction
-#: costs a handful of MPI allreduces per step.
-_TADR_BC_DBG = os.environ.get("TADR_BC_DBG", "0") not in ("0", "false", "False")
-#: RICHARDS_EDGE_VELOCITY=1: in flow-model-flux mode, advect with the velocity
-#: Richards rebuilds from its realized edge fluxes (Richards.computeEdgeVelocity)
-#: and assemble the edge fluxes from it at the quadrature points, instead of
-#: copying Richards' edge fluxes.  Off by default.
-_EDGE_VELOCITY = os.environ.get("RICHARDS_EDGE_VELOCITY", "0") not in ("0", "false", "False")
+#: Coefficients(diagnostics=...): the run-time diagnostics a TADR model can log, each off by default since it
+#: costs MPI reductions every step or call.
+DIAGNOSTICS = {
+    "boundary_flux": "the exterior-boundary solute-flux split, once per step (LevelModel._logBoundarySoluteFlux)",
+    "dmp": "the low- and high-order maxima of every residual call, against the discrete maximum principle",
+    "rowsum": "with 'dmp': the largest row sum of the transport operator, at the boundary and in the interior",
+    "fct": "sum(u^2) before and after the FCT step: does the limiter sharpen or diffuse",
+}
+
+
+def _diagnostics(names):
+    """The validated set of diagnostic names."""
+    names = frozenset([names] if isinstance(names, str) else names)
+    unknown = sorted(names - set(DIAGNOSTICS))
+    if unknown:
+        raise ValueError("unknown TADR diagnostics %s; known: %s" % (unknown, sorted(DIAGNOSTICS)))
+    return names
 
 
 def _accepted_mass(vModel):
@@ -463,9 +470,38 @@ class Coefficients(TC_base):
                  # [mass/(volume time)] at the mesh nodes x, evaluated in preStep.
                  # For a conservative solute source f_s pass f_s - c*f_w, f_w the
                  # flow model's water source.  None leaves it zero.
-                 mms_source=None):
+                 mms_source=None,
+                 # with the flow model's edge fluxes and a Richards model of STABILIZATION_TYPE 1 or 2: advect with
+                 # the velocity Richards rebuilds from its realized edge fluxes (Richards.computeEdgeVelocity) and
+                 # assemble the edge fluxes from it at the quadrature points, instead of copying the edge fluxes
+                 EDGE_VELOCITY=False,
+                 # the velocity-based coupling of the coupling ablation (paper Table tab:uhd_coupling). Edge-flux
+                 # mode is switched off, so the cancelled form is advected with the flow model's Galerkin Darcy
+                 # velocity (velocity_couple), and the storage M is
+                 #   "lagged": Richards' mn = theta(psi^n) rho(c^{n-1}), the density of the preceding flow solve
+                 #   "eos":    theta(psi^n) rho(c^n), re-evaluated with the updated density every step
+                 # None (default): the compatible coupling, advected with the edge fluxes.
+                 VELOCITY_COUPLING=None,
+                 # with VELOCITY_COUPLING: solve the conservative solute row instead of the cancelled one. The
+                 # cancelled row is the conservative one minus c_i times the fluid row, so the conservative row is
+                 # the cancelled row plus c_i*delta_i, delta_i = ML_i (M^{n+1}_i - M^n_i)/dt + fluidResidual_i, the
+                 # continuity defect _reportContinuityDefect integrates. With the compatible coupling delta_i = 0
+                 # and the two forms coincide, so the option is only defined for the velocity-based one. Low
+                 # order only (FCT=False), serial only, k_d = 0.
+                 CONSERVATIVE_FORM=False,
+                 # run-time diagnostics, logged once per step or call; each costs MPI reductions, so all are off
+                 # by default. Names in DIAGNOSTICS.
+                 diagnostics=()):
         self.variableNames = ['u']
         self.mms_source = mms_source
+        self.EDGE_VELOCITY = bool(EDGE_VELOCITY)
+        assert VELOCITY_COUPLING in (None, "lagged", "eos"), \
+            "VELOCITY_COUPLING must be None, 'lagged' or 'eos', not %r" % (VELOCITY_COUPLING,)
+        self.VELOCITY_COUPLING = VELOCITY_COUPLING
+        assert not CONSERVATIVE_FORM or VELOCITY_COUPLING, \
+            "CONSERVATIVE_FORM=True needs VELOCITY_COUPLING (with edge fluxes the forms coincide)"
+        self.CONSERVATIVE_FORM = bool(CONSERVATIVE_FORM)
+        self.diagnostics = _diagnostics(diagnostics)
         self.LS_modelIndex = LS_model
         self.V_model = V_model
         self.RD_modelIndex = RD_model
@@ -1226,7 +1262,7 @@ class LevelModel(OneLevelTransport):
             (self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'i')
         self.ebqe[('advectiveFlux_bc', 0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
         self.ebqe[('advectiveFlux', 0)] = np.zeros((self.mesh.nExteriorElementBoundaries_global, self.nElementBoundaryQuadraturePoints_elementBoundary), 'd')
-        # BOUNDARY-FLUX DIAGNOSTIC, see TADR_BC_DBG in getResidual.
+        # BOUNDARY-FLUX DIAGNOSTIC, see diagnostics "boundary_flux" in getResidual.
         # ('advectiveFlux',0) holds advection PLUS dispersion; these hold the
         # advective half on its own and the quadrature weight, so the two can be
         # separated and integrated.
@@ -1657,7 +1693,8 @@ class LevelModel(OneLevelTransport):
             # every edge-based branch: ImplicitEV and the explicit 2/3/4
             # Richards allocates edgeFluxInterior, mn and thetaW_dof for every type, but only its edge-based
             # (entropy-viscosity) kernel fills them: a Galerkin Richards (type 0) exports nothing
-            if (self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
+            if (not self.coefficients.VELOCITY_COUPLING
+                    and self.coefficients.STABILIZATION_TYPE in (2, 3, 4, 5) and vModel is not None
                     and getattr(getattr(vModel, 'coefficients', None), 'STABILIZATION_TYPE', 0) != 0
                     and np.shape(getattr(vModel, 'edgeFluxInterior', None)) == np.shape(self.edgeFlux)):
                 r_f, c_f, _ = vModel.MC_global.getCSRrepresentation()
@@ -1666,7 +1703,7 @@ class LevelModel(OneLevelTransport):
             self._use_edge_flux = int(Comm.globalMin(ok))
             # the edge velocity needs Richards' realized flux, which only
             # STABILIZATION_TYPE 1 and 2 export (Richards.computeEdgeVelocity)
-            ok_v = int(_EDGE_VELOCITY and self._use_edge_flux
+            ok_v = int(self.coefficients.EDGE_VELOCITY and self._use_edge_flux
                        and hasattr(vModel, 'computeEdgeVelocity')
                        and vModel.coefficients.STABILIZATION_TYPE in (1, 2))
             self._use_edge_velocity = int(Comm.globalMin(ok_v))
@@ -1680,8 +1717,11 @@ class LevelModel(OneLevelTransport):
                 logEvent("TADR STABILIZATION_TYPE %d: advecting with the flow model's edge fluxes: %s"
                          % (self.coefficients.STABILIZATION_TYPE,
                             "YES" if self._use_edge_flux else
-                            "no (no export, or CSR pattern differs)"))
-                if _EDGE_VELOCITY:
+                            ("no (VELOCITY_COUPLING=%s: Galerkin velocity_couple)"
+                             % self.coefficients.VELOCITY_COUPLING
+                             if self.coefficients.VELOCITY_COUPLING else
+                             "no (no export, or CSR pattern differs)")))
+                if self.coefficients.EDGE_VELOCITY:
                     logEvent("TADR STABILIZATION_TYPE %d: edge fluxes assembled from Richards' edge velocity: %s"
                              % (self.coefficients.STABILIZATION_TYPE,
                                 "YES" if self._use_edge_velocity else
@@ -1754,6 +1794,12 @@ class LevelModel(OneLevelTransport):
                 self.theta_nodal[:] = theta_flow
             else:
                 self.theta_nodal[:] = 0.0
+            if self.coefficients.VELOCITY_COUPLING == "eos":
+                assert theta_flow is not None, "VELOCITY_COUPLING='eos' needs the flow model's nodal theta"
+                # storage re-evaluated with the updated density, theta(psi^n) rho(c^n);
+                # u_dof_old is c^n (set in Coefficients.preStep)
+                eps_rho = (self.coefficients.rho_s - self.coefficients.rho_f)/self.coefficients.rho_f
+                self.M_dof[:] = self.theta_nodal*self.coefficients.rho_f*(1.0 + eps_rho*self.u_dof_old)
             if not self._M_dof_initialized:
                 logEvent("TADR SCHEME B (option C): fluid mass M read from "
                          "Richards mn every step (min=%.6e max=%.6e); no fluid "
@@ -2292,7 +2338,7 @@ class LevelModel(OneLevelTransport):
         self._cont_jump_int = 0.0
 
     def _logBoundarySoluteFlux(self):
-        """TADR_BC_DBG=1: split the exterior solute boundary flux.
+        """Diagnostics "boundary_flux": split the exterior solute boundary flux.
 
         ebqe_flux is advection + dispersion summed, which cannot distinguish a
         boundary that is delivering solute from one that is merely leaking it by
@@ -2306,7 +2352,7 @@ class LevelModel(OneLevelTransport):
         strip the inflow and outflow parts are physically different boundaries
         and their sum hides both.
         """
-        if not _TADR_BC_DBG:
+        if "boundary_flux" not in self.coefficients.diagnostics:
             return
         t = self.timeIntegration.t
         if getattr(self, '_tadr_bc_dbg_t', None) == t:
@@ -2555,6 +2601,7 @@ class LevelModel(OneLevelTransport):
         argsDict["nodalSource"] = self.nodalSource
         argsDict["USE_EDGE_FLUX"] = self._use_edge_flux
         argsDict["USE_EDGE_VELOCITY"] = self._use_edge_velocity
+        argsDict["DMP_DIAGNOSTICS"] = int("dmp" in self.coefficients.diagnostics)
         # the density Richards divided the edge velocity by.  Not TADR's q_rho:
         # the kernel rewrites that at every residual call (rho of the current c
         # iterate), while this one is fixed for the step, so rho*v is exactly the
@@ -2612,6 +2659,19 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_rowptr"] = self.coefficients.sdInfo[(0,0)][0]
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
         self.adr.calculateResidual(argsDict)
+        if self.coefficients.CONSERVATIVE_FORM:
+            # conservative solute row = cancelled row + c_i*delta_i; delta does not
+            # depend on c^{n+1} (rho is frozen at rho(c^n) in the fluxes, M^{n+1} is
+            # the flow model's), so getJacobian adds delta_i on the diagonal
+            assert not self.coefficients.FCT, "CONSERVATIVE_FORM=True is low order: set FCT=False"
+            assert Comm.get().size() == 1, "CONSERVATIVE_FORM=True is serial only"
+            # the kinetic dissolution term enters the two rows differently, so the
+            # identity above holds only without it
+            assert float(self.coefficients.k_d) == 0.0, "CONSERVATIVE_FORM=True needs k_d = 0"
+            M_new = _accepted_mass(self.coefficients.vModel)
+            self._conservativeDelta = (self.ML*(np.asarray(M_new) - self.M_dof)/self.timeIntegration.dt
+                                       + self.fluidResidual)
+            r += self.u[0].dof*self._conservativeDelta
         self._logBoundarySoluteFlux()
         # OPTION C: no second residual pass here.  Under the sub-cycled fluid
         # solve this call was needed because the kernel assembled the fluid
@@ -2620,7 +2680,7 @@ class LevelModel(OneLevelTransport):
         # pass is all there is -- which also halves the residual cost per Newton
         # iteration.
 
-        # --- DMP probe (env TADR_DMP_DBG=1) -------------------------------
+        # --- DMP probe (diagnostics "dmp") --------------------------------
         # Python-side on purpose: std::cout from the MPI ranks does not reach
         # the redirected run.log, but logEvent does reach ls_CCS_so.log.
         # For the explicit edge-based types with LUMPED_MASS_MATRIX=1 the
@@ -2631,18 +2691,15 @@ class LevelModel(OneLevelTransport):
         #                exists), and the question becomes why the limited
         #                result does not survive to the archive.
         # globalMax is essential: rank 0 owns only its own slice.
-        logEvent("TADR_DMP_GATE env=%r aux=%r" % (os.environ.get("TADR_DMP_DBG"),
-                 getattr(self, "auxiliaryCallCalculateResidual", "MISSING")), level=1)
-        if True:
+        if "dmp" in self.coefficients.diagnostics:
             try:
                 _lo = globalMax(float(self.uLow.max()))
                 _hi = globalMax(float(r.max()))
                 _u0 = globalMax(float(self.u[0].dof.max()))
                 _od = globalMax(float(self.u_dof_old.max()))
-                # UNCONDITIONAL: log every main residual call.  A conditional
-                # probe that prints nothing is indistinguishable from a probe
-                # that never runs -- which is exactly how the C++ std::cout
-                # version misled me.
+                # every main residual call while the diagnostic is on: a probe
+                # that prints only on a violation is indistinguishable from one
+                # that never runs
                 logEvent("TADR_DMP t=%g dt=%g max(u_dof_old)=%.8f max(uLow)=%.8f max(r=solH)=%.8f max(u[0].dof)=%.8f"
                          % (self.timeIntegration.t, self.timeIntegration.dt,
                             _od, _lo, _hi, _u0),
@@ -2668,7 +2725,7 @@ class LevelModel(OneLevelTransport):
                             _rh.min(), _rh.max(), float(np.abs(_vv).max()),
                             float(np.asarray(self.ML).min()) if getattr(self, 'ML', None) is not None else -1.0),
                          level=1)
-                # ROW-SUM PROBE (env TADR_ROWSUM_DBG=1).  The kernel parks the
+                # ROW-SUM PROBE (diagnostics "rowsum").  The kernel parks the
                 # RELATIVE row sum  sum_j (T+D)_ij / sum_j |T+D|_ij  in quantDOFs.
                 # The full-speed Kuzmin form assumes that is 0; where it is not,
                 # the residue (sum_j (T+D)_ij)*w_i is an additive source that no
@@ -2676,7 +2733,7 @@ class LevelModel(OneLevelTransport):
                 # min_u_bc is left at +1e10 on every node that no exterior face
                 # touched, so it is an exact boundary mask.  globalMax across
                 # ranks -- rank 0 owns only its own slice.
-                if os.environ.get("TADR_ROWSUM_DBG"):
+                if "rowsum" in self.coefficients.diagnostics:
                     _rs = np.abs(np.asarray(self.quantDOFs))
                     _isb = np.asarray(self.min_u_bc) < 1.0e9
                     _all = globalMax(float(_rs.max()) if _rs.size else 0.0)
@@ -2873,6 +2930,13 @@ class LevelModel(OneLevelTransport):
         #argsDict["a_colind"] = self.coefficients.sdInfo[(0,0)][1]
 
         self.adr.calculateJacobian(argsDict)
+        if self.coefficients.CONSERVATIVE_FORM:
+            # d(c_i*delta_i)/dc_i = delta_i (see getResidual)
+            rowptr_j, colind_j, nzval_j = jacobian.getCSRrepresentation()
+            if getattr(self, '_diag_csr', None) is None:
+                rows = np.repeat(np.arange(len(rowptr_j) - 1), np.diff(rowptr_j))
+                self._diag_csr = np.nonzero(np.asarray(colind_j) == rows)[0]
+            nzval_j[self._diag_csr] += self._conservativeDelta[:len(self._diag_csr)]
 
         # Load the Dirichlet conditions directly into residual
         if self.forceStrongConditions:
@@ -3217,14 +3281,13 @@ class LevelModel(OneLevelTransport):
             if _conv is not None:
                 self.u[0].dof[:] = _conv
             self.uLow[:] = self.u[0].dof
-            # In-situ FCT sharpness diagnostic (set env TADR_FCT_DBG=1).  sum(u^2)
+            # In-situ FCT sharpness diagnostic (diagnostics "fct").  sum(u^2)
             # rises when mass concentrates (front sharpens) and falls when it
             # spreads (diffuses), at fixed mass.  Compares the low-order field
             # (uLow) with the FCT-limited result to settle, on the REAL 2D run,
             # whether the STAB=5 FCTStep sharpens or diffuses.  MAX/SUM-reduced
             # across ranks (rank 0 owns a near-empty slice in parallel).
-            import os as _os
-            _dbg = bool(_os.environ.get("TADR_FCT_DBG"))
+            _dbg = "fct" in self.coefficients.diagnostics
             if _dbg:
                 _s_low = float(np.sum(self.uLow * self.uLow))
             self.FCTStep()

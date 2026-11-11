@@ -1,8 +1,6 @@
 #ifndef Richards_H
 #define Richards_H
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <valarray>
 #include <vector>
@@ -28,20 +26,14 @@ enum class STABILIZATION : int {
 
 namespace richards
 {
-//A/B switch for the weak-Dirichlet boundary block that feeds the HIGH order FCT flux fH.
-//1 (default) -> fH's boundary block uses a_ext = rho*k_rw*Ks, matching the cell loop's `a`,
-//               so it cancels against fL's boundary block (as_ext scaled by the nodal
-//               upwind k_rw) in fA = fH - fL, exactly as the interior blocks do.
-//0           -> the old behaviour: fH's boundary block uses as_ext = rho*Ks, leaving a
-//               residue in fA of order 1/k_rw times the interior antidiffusion.
-//Read once; only TransportMatrixConsistent depends on it, so FCT=False is unaffected either way.
-inline bool richards_env_on(const char *name)
-{
-  const char *e = std::getenv(name);
-  return (e == nullptr) || (std::strcmp(e, "0") != 0);
-}
-static const bool RICHARDS_FCT_BND_KRW = richards_env_on("RICHARDS_FCT_BND_KRW");
-//Step B: keep the weak-Dirichlet block in its own matrix TB instead of folding it into
+//Coefficients(FCT_BND_KRW=...), the weak-Dirichlet boundary block that feeds the HIGH order FCT flux fH.
+//True            -> fH's boundary block uses a_ext = rho*k_rw*Ks, matching the cell loop's `a`,
+//                   so it cancels against fL's boundary block (as_ext scaled by the nodal
+//                   upwind k_rw) in fA = fH - fL, exactly as the interior blocks do.
+//False (default) -> the old behaviour: fH's boundary block uses as_ext = rho*Ks, leaving a
+//                   residue in fA of order 1/k_rw times the interior antidiffusion.
+//Only TransportMatrixConsistent depends on it, so FCT=False is unaffected either way.
+//Coefficients(FCT_BND_DIFF=...), step B: keep the weak-Dirichlet block in its own matrix TB instead of folding it into
 //TransportMatrix where the interior fmax(0,-T_ij) clip mangles it, and apply it
 //identically in the low and the high order flux,
 //  fH_ij = fL_ij = -TB_ij dPhi   (boundary block),
@@ -51,15 +43,13 @@ static const bool RICHARDS_FCT_BND_KRW = richards_env_on("RICHARDS_FCT_BND_KRW")
 //limiter could remove, and the limiter clips exactly there
 //(test/salinity/mms_coupled/MMS_PLAN.md).
 //The price is that the low order boundary rows are not an M-matrix.
-//RICHARDS_FCT_BND_DIFF=0 restores the old routing (TB folded into TransportMatrix).
-static const bool RICHARDS_FCT_BND_DIFF  = richards_env_on("RICHARDS_FCT_BND_DIFF");
-static const bool RICHARDS_FCT_BND_RESET = richards_env_on("RICHARDS_FCT_BND_RESET");
-//Hand the transport model the water flux this scheme really applies on the exterior
+//FCT_BND_DIFF=False keeps the old routing (TB folded into TransportMatrix).
+//Coefficients(FCT_BND_RESET=True): reset the FCT boundary bounds min_m_bc/max_m_bc every call
+//(see calculateResidual_entropy_viscosity); False keeps the old accumulate-forever window.
+//Coefficients(BC_CONS=True): hand the transport model the water flux this scheme really applies on the exterior
 //boundary instead of the pointwise interior trace -(a/rho)(grad psi - rho_r g).n.  See
 //the consBoundaryFlux comment in calculateResidual_entropy_viscosity for the algebra and
-//for the numbers that motivated it.  Opt-in: Coefficients(BC_CONS=True), off by default;
-//RICHARDS_BC_CONS=0 still forces it off.
-static const bool RICHARDS_BC_CONS       = richards_env_on("RICHARDS_BC_CONS");
+//for the numbers that motivated it.  BC_CONS=False restores the pointwise trace.
 
 //cek todo: revisit entry for mass transport form
 // Power entropy //
@@ -1760,17 +1750,17 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     xt::pyarray<double> &dt_times_fH_minus_fL = args.array<double>("dt_times_fH_minus_fL");
     xt::pyarray<double> &min_m_bc             = args.array<double>("min_m_bc");
     xt::pyarray<double> &max_m_bc             = args.array<double>("max_m_bc");
-    //weak-Dirichlet block of the transport operator, used only when RICHARDS_FCT_BND_DIFF
+    //weak-Dirichlet block of the transport operator, used only when FCT_BND_DIFF
     //is on.  See the flag's comment above.
     xt::pyarray<double> &TransportBoundary    = args.array<double>("TransportBoundary");
     //Step B changes the RESIDUAL (TB unclipped instead of through the fmax clip), so it is
     //tied to FCT, where it keeps the limited correction conservative; an FCT=False run keeps
-    //the old routing.  Python passes coefficients.FCT here; the env var can still force it
-    //off for an A/B but can never turn it on for an FCT=False run.
-    const bool useBndDiff = (args.scalar<int>("FCT_BND_DIFF") != 0) && RICHARDS_FCT_BND_DIFF;
-    const bool useBndKrw  = (args.scalar<int>("FCT_BND_KRW") != 0) && RICHARDS_FCT_BND_KRW;
-    //Coefficients(BC_CONS=...), off by default; the environment variable can still force it off
-    const bool bcCons = (args.scalar<int>("BC_CONS") != 0) && RICHARDS_BC_CONS;
+    //the old routing.  Python passes coefficients.FCT_BND_DIFF and coefficients.FCT here.
+    const bool useBndDiff = args.scalar<int>("FCT_BND_DIFF") != 0;
+    const bool useBndKrw  = args.scalar<int>("FCT_BND_KRW") != 0;
+    //Coefficients(FCT_BND_RESET=True) and (BC_CONS=True), see their comments at the top
+    const bool fctBndReset = args.scalar<int>("FCT_BND_RESET") != 0;
+    const bool bcCons      = args.scalar<int>("BC_CONS") != 0;
     // AUX QUANTITIES OF INTEREST
     xt::pyarray<double> &quantDOFs = args.array<double>("quantDOFs");
     xt::pyarray<double> &mn        = args.array<double>("mn");
@@ -1903,8 +1893,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //min/max_m_bc are only ever fmin/fmax'd into below, so without this they would be the
     //widest window ever seen rather than this step's: a time dependent Dirichlet or a
     //moving seepage active set would keep loosening the FCT bound and never tighten it.
-    //RICHARDS_FCT_BND_RESET=0 restores the old accumulate-forever behaviour.
-    if (RICHARDS_FCT_BND_RESET)
+    //FCT_BND_RESET=False restores the old accumulate-forever behaviour.
+    if (fctBndReset)
       for (int i = 0; i < numDOFs; i++) {
         min_m_bc.data()[i] =  1.0e10;
         max_m_bc.data()[i] = -1.0e10;
@@ -2378,7 +2368,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
                 TransportBoundary.data()[ij_eb] += fluxJacobian_u_u[j] * u_test_dS[i];
                 //k_rw-weighted: this array is read ONLY by fH in the edge loop below, so this
                 //line cannot change the residual, the Jacobian or the FCT=False solution.
-                //RICHARDS_FCT_BND_KRW=0 restores the old Ks-based boundary block for an A/B.
+                //FCT_BND_KRW=False keeps the old Ks-based boundary block.
                 TransportMatrixConsistent[ij_eb] +=
                   (useBndKrw ? cfluxJacobian_u_u[j] : fluxJacobian_u_u[j]) * u_test_dS[i];
               }
