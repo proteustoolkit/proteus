@@ -1,5 +1,8 @@
 #include "partitioning.h"
 #include "PyEmbeddedFunctions.h"
+
+/* the CSR index type is PetscInt (index_type.h; setup.py reads the width from PETSc) */
+PROTEUS_CSR_INDEX_MATCHES_PETSC;
 #include <cstdlib>
 #include <vector>
 #include <string>

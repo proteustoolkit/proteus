@@ -824,7 +824,7 @@ int coarseSubOf(const CartesianGrid& g, const Ijk& o, int sub)
 }//namespace
 
 int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                                 std::vector<int>& rowptr, std::vector<int>& colind, std::vector<double>& nzval)
+                                 std::vector<proteus_csr_index_t>& rowptr, std::vector<proteus_csr_index_t>& colind, std::vector<double>& nzval)
 {
   /* The rows of the prolongation from level-1 to level for the fine nodes
      this rank owns, in its owned order, with columns in the coarse level's
@@ -887,10 +887,10 @@ int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, cons
         }
       for (auto& r : row)
         {
-          colind.push_back(int(r.first));
+          colind.push_back(proteus_csr_index_t(r.first));
           nzval.push_back(r.second);
         }
-      rowptr.push_back(int(colind.size()));
+      rowptr.push_back(proteus_csr_index_t(colind.size()));
     });
   return 0;
 }

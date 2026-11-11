@@ -243,7 +243,7 @@ namespace proteus
      of a generated hierarchy, in CSR, with columns in level-1's partitioned
      numbering. */
   extern int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                                          std::vector<proteus_index_t>& rowptr, std::vector<proteus_index_t>& colind, std::vector<double>& nzval);
+                                          std::vector<proteus_csr_index_t>& rowptr, std::vector<proteus_csr_index_t>& colind, std::vector<double>& nzval);
   /* For each element of this rank's subdomain on level, its parent's index in
      the subdomain on level-1, or -1. */
   extern int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,

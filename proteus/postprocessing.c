@@ -418,8 +418,8 @@ void postProcessRT0velocityFromP1nc_sd(proteus_index_t nElements_global,
 				       int nElementBoundaries_element,
 				       int nQuadraturePoints_elementBoundary,
 				       int nSpace,
-				       proteus_index_t* rowptr,
-				       proteus_index_t* colind,
+				       proteus_csr_index_t* rowptr,
+				       proteus_csr_index_t* colind,
 				       int * nFreeDOF_element,
 				       int * freeLocal_element,
 				       double * detJ,
@@ -530,7 +530,7 @@ void postProcessRT0velocityFromP1nc_sd(proteus_index_t nElements_global,
 
    ***********************************************************************/
   proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
-  proteus_index_t m, nnz=rowptr[nSpace];
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -1050,8 +1050,8 @@ void postProcessRT0velocityFromP1ncNoMass_sd(proteus_index_t nElements_global,
 					     int nElementBoundaries_element,
 					     int nQuadraturePoints_elementBoundary,
 					     int nSpace,
-					     proteus_index_t* rowptr,
-					     proteus_index_t* colind,
+					     proteus_csr_index_t* rowptr,
+					     proteus_csr_index_t* colind,
 					     int * nFreeDOF_element,
 					     int * freeLocal_element,
 					     double * detJ,
@@ -1072,7 +1072,7 @@ void postProcessRT0velocityFromP1ncNoMass_sd(proteus_index_t nElements_global,
     version of postProcessRT0velocityFromP1nc without a mass variable
    ***********************************************************************/
   proteus_index_t eN, ebN; int I, J, i, k, ebN_free, ebN_dir;
-  proteus_index_t m, nnz=rowptr[nSpace];
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,area,volFact,areaFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -1410,8 +1410,8 @@ void updateRT0velocityWithAveragedPotentialP1nc(proteus_index_t nElements_global
 void updateRT0velocityWithAveragedPotentialP1nc_sd(proteus_index_t nElements_global,
 						   int nQuadraturePoints_element,
 						   int nSpace,
-						   proteus_index_t* rowptr,
-						   proteus_index_t* colind,
+						   proteus_csr_index_t* rowptr,
+						   proteus_csr_index_t* colind,
 						   double * detJ,
 						   double * quad_a,
 						   double * phi,
@@ -1432,7 +1432,7 @@ void updateRT0velocityWithAveragedPotentialP1nc_sd(proteus_index_t nElements_glo
 
    ***********************************************************************/
   proteus_index_t eN; int I, J, k;
-  proteus_index_t m, nnz=rowptr[nSpace];
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,volFact;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -1845,8 +1845,8 @@ void postProcessRT0potentialFromP1nc_sd(proteus_index_t nElements_global,
 					int nElementBoundaries_element,
 					int nQuadraturePoints_elementBoundary,
 					int nSpace,
-					proteus_index_t* rowptr,
-					proteus_index_t* colind,
+					proteus_csr_index_t* rowptr,
+					proteus_csr_index_t* colind,
 					double * uQuadratureWeights_element,
 					double * elementBarycenters,
 					double * aElementQuadratureWeights,
@@ -1889,7 +1889,7 @@ void postProcessRT0potentialFromP1nc_sd(proteus_index_t nElements_global,
     
    ***********************************************************************/
   proteus_index_t eN, ebN; int I, J, k;
-  proteus_index_t m, nnz=rowptr[nSpace];
+  proteus_csr_index_t m; proteus_csr_index_t nnz=rowptr[nSpace];
   int nDOF_RT0V_element = nSpace+1; /*number of dofs for vector part of RT0*/
   double volume,vmass,bndsum,adot,ahqInvI,xdotn,gravsum;
   double ah[3][3] = {{0.0,0.0,0.0},
@@ -5546,8 +5546,8 @@ void postprocessDiffusiveVelocityPointEval(int nPoints,
 void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
 					      int nSpace,
 					      double updateCoef,
-					      proteus_index_t* rowptr,
-					      proteus_index_t* colind,
+					      proteus_csr_index_t* rowptr,
+					      proteus_csr_index_t* colind,
 					      const double* a,
 					      const double* grad_phi,
 					      double * velocity)
@@ -5558,8 +5558,8 @@ void postprocessDiffusiveVelocityPointEval_sd(int nPoints,
     q_a and or q_f may be null if not defined for system
     (only reason why calculateFlowVelocity wouldnt work)
   */
-  proteus_index_t eN, m; int k, I;
-  const proteus_index_t nnz=rowptr[nSpace];
+  proteus_index_t eN; proteus_csr_index_t m; int k, I;
+  const proteus_csr_index_t nnz=rowptr[nSpace];
   for (k = 0; k < nPoints; k++)
     {
       for (I = 0; I < nSpace; I++)

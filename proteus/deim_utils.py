@@ -3,6 +3,7 @@
 utility module for generating deim interpolants
 """
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
 
 def read_from_hdf5(hdfFile,label,dof_map=None):
     """
@@ -145,13 +146,13 @@ def extract_sub_matrix_csr(rho,rowptr,colind,nnzval):
     returns a csr representation 
     """
     m = len(rho)
-    rowptr_sub = np.zeros(m+1,'i')
+    rowptr_sub = np.zeros(m+1,CSR_INDEX_DTYPE)
     nnz_sub = 0
     for k,I in enumerate(rho):#count number of nonzero entries
         diff = rowptr[I+1]-rowptr[I]
         rowptr_sub[k+1]=rowptr_sub[k]+diff
         nnz_sub += diff
-    colind_sub = np.zeros(nnz_sub,'i'); nzval_sub=np.zeros(nnz_sub,'d')
+    colind_sub = np.zeros(nnz_sub,CSR_INDEX_DTYPE); nzval_sub=np.zeros(nnz_sub,'d')
     for k,KK in enumerate(rho):
         for m,MM in enumerate(range(rowptr[KK],rowptr[KK+1])):
             colind_sub[rowptr_sub[k]+m]=colind[MM]

@@ -67,4 +67,5 @@ cdef struct _NRformat:
 
 cdef class cSparseMatrix(object):
     cdef np.int32_t dim[2]
+    cdef object _colind32, _rowptr32  # SuperLU-width copies, or the caller's arrays when the widths agree
     cdef _NRformat A

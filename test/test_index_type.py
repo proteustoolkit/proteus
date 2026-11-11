@@ -153,6 +153,86 @@ def test_the_sparsity_pattern_has_the_index_dtype():
                       0, 1, 0, 1, 0, 0, 0, 3, np.full((1, 3), -1, dtype=n), 0, empty,
                       np.zeros((0, 2), dtype=n), np.zeros((0, 2), dtype=np.intc), 0, 0, empty, 0, 0)
     rowptr, colind, nnz, nzval = info.getCSR()
-    assert rowptr.dtype == n
-    assert colind.dtype == n
+    assert rowptr.dtype == csparsity.CSR_INDEX_DTYPE
+    assert colind.dtype == csparsity.CSR_INDEX_DTYPE
     assert list(rowptr) == [0, 3, 6, 9]
+
+
+# --- the CSR index type (C33, decision 2026-11-10): its own type, = PetscInt ---
+
+def test_the_csr_index_type_is_declared_and_exported():
+    from proteus import csparsity, cpartitioning
+    with open(HEADER) as f:
+        text = f.read()
+    # the width is a build setting (PROTEUS_CSR_INDEX_BITS, read from PETSc by setup.py)
+    assert re.search(r"typedef\s+int64_t\s+proteus_csr_index_t", text)
+    assert re.search(r"typedef\s+int32_t\s+proteus_csr_index_t", text)
+    assert csparsity.CSR_INDEX_DTYPE.kind == "i"
+    assert cpartitioning.CSR_INDEX_DTYPE == csparsity.CSR_INDEX_DTYPE
+
+
+def test_the_csr_index_type_is_the_width_of_petscint():
+    from proteus import csparsity
+    PETSc = pytest.importorskip("petsc4py.PETSc")
+    assert csparsity.CSR_INDEX_DTYPE == np.dtype(PETSc.IntType)
+
+
+def test_the_csr_index_type_varies_independently_of_the_mesh_index_type():
+    # no assertion on equality: the two are different questions (a mesh of
+    # 3e9 nodes on a 32-bit PETSc is legal); each only has to be what it says
+    from proteus import csparsity
+    assert cmeshTools.INDEX_DTYPE.itemsize in (4, 8)
+    assert csparsity.CSR_INDEX_DTYPE.itemsize in (4, 8)
+
+
+@pytest.mark.parametrize("width", [np.int32, np.int64])
+def test_superlu_takes_csr_arrays_of_either_width(width):
+    # SuperLU's int is 32 bits; the wrapper converts the structure only when
+    # the caller's width differs, and never touches the caller's arrays
+    from proteus import superluWrappers
+    rowptr = np.array([0, 2, 5, 8], dtype=width)
+    colind = np.array([0, 1, 0, 1, 2, 0, 1, 2], dtype=width)
+    nzval = np.arange(1.0, 9.0)
+    A = superluWrappers.SparseMatrix(3, 3, 8, nzval, colind, rowptr)
+    x = np.array([1.0, 2.0, 3.0])
+    y = np.zeros(3)
+    A.matvec(x, y)
+    expected = np.array([1 * 1 + 2 * 2, 3 * 1 + 4 * 2 + 5 * 3, 6 * 1 + 7 * 2 + 8 * 3], dtype=float)
+    assert np.allclose(y, expected)
+    assert rowptr.dtype == width and colind.dtype == width
+
+
+def test_a_matrix_too_large_for_superlu_is_refused():
+    from proteus import superluWrappers
+    nnz = 2 ** 31
+    with pytest.raises(OverflowError):
+        superluWrappers.SparseMatrix(1, 1, nnz, np.zeros(1), np.zeros(1, dtype=np.int64), np.zeros(2, dtype=np.int64))
+
+
+# --- ArgumentsDict: arrays go to the dict of their own dtype, nothing converts ---
+
+def test_arguments_dict_keeps_each_integer_width_in_its_own_dict():
+    from proteus.mprans import cArgumentsDict
+    ad = cArgumentsDict.ArgumentsDict()
+    ad["i32"] = np.arange(3, dtype=np.int32)
+    ad["i64"] = np.arange(3, dtype=np.int64)
+    ad["d"] = np.arange(3, dtype=np.float64)
+    assert list(ad.iarray["i32"]) == [0, 1, 2]
+    assert list(ad.larray["i64"]) == [0, 1, 2]
+    assert list(ad.darray["d"]) == [0.0, 1.0, 2.0]
+    for name, other in (("i32", ad.larray), ("i64", ad.iarray)):
+        with pytest.raises(RuntimeError):
+            other[name]
+
+
+def test_arguments_dict_int_scalars_that_do_not_fit_an_int_are_64_bit_only():
+    from proteus.mprans import cArgumentsDict
+    ad = cArgumentsDict.ArgumentsDict()
+    ad["small"] = 7
+    ad["big"] = 2 ** 40
+    ad["x"] = 1.5
+    assert ad.iscalar["small"] == 7 and ad.lscalar["small"] == 7
+    assert ad.lscalar["big"] == 2 ** 40
+    with pytest.raises(RuntimeError):
+        ad.iscalar["big"]
+    assert ad.dscalar["x"] == 1.5

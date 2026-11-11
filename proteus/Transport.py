@@ -20,6 +20,7 @@ from . import Quadrature
 from .TimeIntegration import *
 from .NonlinearSolvers import *
 from . import cfemIntegrals
+from .csparsity import CSR_INDEX_DTYPE
 from .TransportCoefficients import *
 from . import NumericalFlux
 from . import cnumericalFlux
@@ -328,6 +329,11 @@ class OneLevelTransport(NonlinearEquation):
                         coefficients.sdInfo[(ci,ck)] = (numpy.arange(start=0,stop=self.nSpace_global**2+1,step=self.nSpace_global,dtype='i'),
                                                         numpy.array([list(range(self.nSpace_global)) for row in range(self.nSpace_global)],dtype='i'))
                     logEvent("Sparse diffusion information key "+repr((ci,ck))+' = '+repr(coefficients.sdInfo[(ci,ck)]))
+        if self.sd and getattr(coefficients, 'sdInfo', None):
+            # the models build these with 'i'; the kernels take the CSR index type
+            for key, (sdRowptr, sdColind) in list(coefficients.sdInfo.items()):
+                coefficients.sdInfo[key] = (numpy.ascontiguousarray(sdRowptr, dtype=CSR_INDEX_DTYPE),
+                                            numpy.ascontiguousarray(sdColind, dtype=CSR_INDEX_DTYPE))
         #
         NonlinearEquation.__init__(self,self.nFreeVDOF_global)
         #
@@ -4622,7 +4628,7 @@ class OneLevelTransport(NonlinearEquation):
             (self.rowptr,self.colind,self.nnz,self.nzval)  = self.sparsityInfo.getCSR()
         else:
             self.nnz = 0
-            self.rowptr = numpy.zeros(self.nFreeVDOF_global+1,cmeshTools.INDEX_DTYPE)
+            self.rowptr = numpy.zeros(self.nFreeVDOF_global+1,CSR_INDEX_DTYPE)
             lastIndex=0
             columnOffsetDict={}
             for I in range(self.nFreeVDOF_global):
@@ -4632,7 +4638,7 @@ class OneLevelTransport(NonlinearEquation):
                 lastIndex += len(columnIndeces)
             self.rowptr[self.nFreeVDOF_global]=lastIndex
             self.nnz = lastIndex
-            self.colind = numpy.zeros((self.nnz,),cmeshTools.INDEX_DTYPE)
+            self.colind = numpy.zeros((self.nnz,),CSR_INDEX_DTYPE)
             self.connectionList = [list(columnIndecesDict[I]-set([I])) for I in range(self.nFreeVDOF_global)]
             for I in range(self.nFreeVDOF_global):
                 columnIndeces=list(columnIndecesDict[I])
@@ -4662,24 +4668,24 @@ class OneLevelTransport(NonlinearEquation):
                 needsOutflowJacobian_int = int(needOutflowJacobian == True)
                 memory()
                 self.csrRowIndeces[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,
-                                                             self.nDOF_test_element[ci]),cmeshTools.INDEX_DTYPE)
+                                                             self.nDOF_test_element[ci]),CSR_INDEX_DTYPE)
                 logEvent(memory("csrRowIndeces","OneLevelTransport"),level=4)
                 self.csrColumnOffsets[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,
-                                                                self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
+                                                                self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),CSR_INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets","OneLevelTransport"),level=4)
                 if hasDiffusionInMixedForm:
                     self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((self.mesh.nElements_global,self.mesh.nElementBoundaries_element,
-                                                                        self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
+                                                                        self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),CSR_INDEX_DTYPE)
                 else:
-                    self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((0,),cmeshTools.INDEX_DTYPE)
+                    self.csrColumnOffsets_eNebN[(ci,cj)] = numpy.zeros((0,),CSR_INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eNebN","OneLevelTransport"),level=4)
-                self.csrColumnOffsets_eb[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
+                self.csrColumnOffsets_eb[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),CSR_INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eb","OneLevelTransport"),level=4)
                 if hasDiffusionInMixedForm:
                     self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((self.mesh.nElementBoundaries_global,2,2,self.mesh.nElementBoundaries_element,
-                                                                           self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),cmeshTools.INDEX_DTYPE)
+                                                                           self.nDOF_test_element[ci],self.nDOF_trial_element[cj]),CSR_INDEX_DTYPE)
                 else:
-                    self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((0,),cmeshTools.INDEX_DTYPE)
+                    self.csrColumnOffsets_eb_eNebN[(ci,cj)] = numpy.zeros((0,),CSR_INDEX_DTYPE)
                 logEvent(memory("csrColumnOffsets_eb_eNebN","OneLevelTransport"),level=4)
                 if useC:
                     self.sparsityInfo.getOffsets_CSR(self.mesh.nElements_global,
