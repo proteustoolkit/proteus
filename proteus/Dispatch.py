@@ -23,6 +23,7 @@ import importlib
 import re
 
 from proteus import DispatchTable as table
+from ymf import vocabulary as vocab
 
 __all__ = ["DispatchError", "Dispatched", "Dispatch", "dispatch", "dispatch_file", "role_of", "family_of"]
 
@@ -44,6 +45,15 @@ def resolve(name, module=None):
         name = name.replace("{module}", module)
     path, _, attribute = name.rpartition(".")
     return getattr(importlib.import_module(path), attribute)
+
+
+def _canonical(kind, word):
+    """ymf's word for a spec's ``word`` of ``kind`` (an alias such as ``vbdf`` becomes ``bdf2``); a word ymf does not
+    know is returned as it is, so that the table refuses it by name where it is not covered."""
+    try:
+        return vocab.canonical(kind, word)
+    except vocab.VocabularyError:
+        return word
 
 
 class Dispatched:
@@ -160,78 +170,33 @@ class _Model:
         self.level_sets = set(self.heaviside_of.values())
         self.weak_forms = [w.get("label") for w in model.get("weak_forms") or []]
 
-    def solved_for(self, sub):
-        return [self.equations[e].get("for") for e in sub.get("solves") or [] if e in self.equations]
-
 
 def family_of(doc):
-    """The table's family of the spec's model, by its physical_model; refused if none or several match."""
-    physical = _Model(doc).physical
-    have = {"processes": set(physical.get("processes") or []),
-            "assumptions": set(physical.get("assumptions") or [])}
-    found = [name for name, needs in table.FAMILIES.items()
-             if all(set(needs.get(key) or []) <= have[key] for key in ("processes", "assumptions"))]
-    if len(found) != 1:
-        known = "; ".join("%s (%s)" % (name, ", ".join("%s %s" % (key, "+".join(v)) for key, v in needs.items()))
-                          for name, needs in table.FAMILIES.items())
+    """The family of the spec's model (``ymf.vocabulary.family_of``); refused if none or several match."""
+    try:
+        found = vocab.family_of(doc)
+    except vocab.VocabularyError as error:
+        raise DispatchError(str(error))
+    if found is None:
+        physical = _Model(doc).physical
+        known = "; ".join("%s (%s)" % (name, ", ".join("%s %s" % (key, "+".join(v)) for key, v in needs.items()
+                                                       if key in ("processes", "assumptions")))
+                          for name, needs in vocab.FAMILIES.items())
         raise DispatchError(
-            "the model's physical_model (processes %s, assumptions %s) %s; the table knows %s"
-            % (sorted(have["processes"]), sorted(have["assumptions"]),
-               "matches no family" if not found else "matches several families (%s)" % ", ".join(found), known))
-    return found[0]
+            "the model's physical_model (processes %s, assumptions %s) matches no family; ymf knows %s"
+            % (sorted(physical.get("processes") or []), sorted(physical.get("assumptions") or []), known))
+    return found
 
 
-def _normal(text):
-    return re.sub(r"\s+", "", str(text or ""))
-
-
-def _is_eikonal(enforces, model):
-    text = _normal(enforces)
-    return any(text in ("norm(∇%s)=1" % phi, "|∇%s|=1" % phi) for phi in model.level_sets)
-
-
-def _is_divergence_free(enforces, model):
-    text = _normal(enforces)
-    return any(rank == 1 and text == "∇·%s=0" % name for name, rank in model.unknowns.items())
-
-
-def role_of(sub, model, family):
-    """What one sub-problem does, in the table's vocabulary (``DispatchTable.ROLES``); refused if none fits."""
-    solved = model.solved_for(sub)
-    vectors = [u for u in solved if model.unknowns.get(u) == 1]
-    scalars = [u for u in solved if model.unknowns.get(u) == 0]
-    new = sub.get("introduces") or {}
-    enforces = sub.get("enforces")
-    role = None
-    if family == "two_phase_level_set":
-        if solved:
-            if len(vectors) == 1 and len(scalars) == 1 and not set(scalars) & model.level_sets:
-                role = "velocity_pressure"
-            elif len(vectors) == 1 and not scalars:
-                role = "velocity"
-            elif not vectors and len(scalars) == 1 and scalars[0] in model.level_sets:
-                role = "level_set_redistanced" if _is_eikonal(enforces, model) else "level_set"
-            elif not vectors and len(scalars) == 1:
-                role = "pressure"
-        elif new.get("approximates") in model.heaviside_of:
-            role = "volume_fraction"
-        elif new.get("correction_of") in model.level_sets:
-            role = "mass_correction"
-        elif _is_eikonal(enforces, model):
-            role = "redistancing"
-        elif _is_divergence_free(enforces, model):
-            role = "pressure_increment"
-        elif sub.get("spin_up"):
-            role = "pressure_initial"
-    elif family in ("shallow_water", "dispersive_shallow_water"):
-        if solved and set(solved) == set(model.unknowns):
-            role = "shallow_water"
+def role_of(sub, doc, family):
+    """What one sub-problem does, a word of ``ymf.vocabulary.ROLES``, read from its structure; refused if none fits."""
+    role = vocab.role_of(sub, doc, family)
     if role is None:
         said = ", ".join("%s %s" % (key, sub[key]) for key in ("solves", "enforces", "introduces", "spin_up")
                          if sub.get(key)) or "nothing the table reads"
         raise DispatchError(
             "sub-problem %s (%s) has no role the table knows in family %s; roles: %s"
-            % (sub.get("name"), said, family, ", ".join(table.ROLES[family])), subproblem=sub.get("name"))
+            % (sub.get("name"), said, family, ", ".join(vocab.ROLES[family])), subproblem=sub.get("name"))
     return role
 
 
@@ -255,10 +220,10 @@ def _element_size_factor(symbol, entry, sub, what):
         raise DispatchError("%s: %s's width %s is not bound by the discretization" % (sub["name"], what, symbol),
                             subproblem=sub["name"])
     binding = binds[symbol] or {}
-    if binding.get("meaning") == "element_size":
+    if _canonical("binding_meaning", binding.get("meaning")) == "element_size":
         return 1.0
     m = _FACTOR.match(str(binding.get("formula") or ""))
-    if m and (binds.get(m.group(2)) or {}).get("meaning") == "element_size":
+    if m and _canonical("binding_meaning", (binds.get(m.group(2)) or {}).get("meaning")) == "element_size":
         return float(m.group(1))
     raise DispatchError("%s: %s = %r; the table reads a width as a number times the element size (a symbol bound "
                         "with meaning: element_size)" % (sub["name"], symbol, binding.get("formula")),
@@ -280,20 +245,34 @@ def _stabilization(sub):
     s = sub.get("stabilization")
     if s is None:
         return {}
-    if isinstance(s, str):
-        return {"method": s}
-    return _value(dict(s))
+    out = {"method": s} if isinstance(s, str) else _value(dict(s))
+    if out.get("method") is not None:
+        out["method"] = _canonical("stabilization", out["method"])
+    return out
 
 
 def _time_of(sub):
     if sub.get("time_integration") is not None:
-        return str(sub["time_integration"])
+        return _canonical("time_integration", str(sub["time_integration"]))
     return None
 
 
 def _scheme(entry):
+    """The ``discretization:`` block in ymf's words: its keys are the common ones or ``vocabulary.SCHEMES`` options,
+    its scheme name and time integration are words of their kinds."""
     block = entry.get("discretization")
-    return _value(dict(block)) if isinstance(block, dict) else {}
+    if not isinstance(block, dict):
+        return {}
+    out = {}
+    for key, value in _value(dict(block)).items():
+        if key not in vocab.SCHEME_COMMON:
+            key = _canonical("scheme_option", key)
+        elif key == "scheme":
+            value = _canonical("scheme", value)
+        elif key == "time_integration":
+            value = _canonical("time_integration", value)
+        out[key] = value
+    return out
 
 
 def _options(sub, entry, formulation):
@@ -582,7 +561,7 @@ def dispatch(doc, discretization=None):
     cells = []
     subs = _subproblems(entry, model)
     for index, sub in enumerate(subs):
-        role = role_of(sub, model, family)
+        role = role_of(sub, doc, family)
         options = _options(sub, entry, formulation)
         cell = _cell(family, role, sub, options)
         cells.append(cell)
@@ -606,7 +585,7 @@ def dispatch(doc, discretization=None):
 
     # the system
     control = entry.get("step_control") or {}
-    kind = control.get("type", "min_cfl")
+    kind = _canonical("step_control", control.get("type", "min_cfl"))
     if (family, kind) not in table.STEP_CONTROL:
         raise DispatchError("step_control type %s: the table has no system step controller for it in family %s"
                             % (kind, family), cell=(family, kind))

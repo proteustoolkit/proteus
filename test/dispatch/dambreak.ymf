@@ -152,7 +152,7 @@ solution_paths:
           solves: [momentum]
           lags: {φ: {via: clsvof, at: current_step}, χ: {via: clsvof, at: current_step}}
           finite_element: {velocity: {family: CG, order: 2}}
-          time_integration: vbdf
+          time_integration: bdf2
           solver: {max_iterations: 1}
           proteus: {model: RANS3PF, eb_penalty_constant: 1000000.0}
         - name: pressureInc

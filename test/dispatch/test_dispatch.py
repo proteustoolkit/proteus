@@ -173,13 +173,13 @@ def test_shallow_water_is_SWFlow(lake):
     assert resolve(found.system["systemStepControllerType"]) is default_so.systemStepControllerType
 
 
-def _dispersive(lake):
+def _dispersive(lake, assumption="dispersive"):
     """The lake at rest declared as the relaxed Serre-Green-Naghdi model. ymf cannot write the dispersive
     equations yet (no D/Dt, C42 section 4.3), so the family is read from the declared assumptions alone."""
     doc = copy.deepcopy(lake)
-    doc["model"]["physical_model"]["assumptions"] = ["depth_averaged", "hyperbolic_relaxation"]
+    doc["model"]["physical_model"]["assumptions"] = ["depth_averaged", assumption]
     entry = doc["solution_paths"]["discretizations"][0]
-    entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": "SSP_RK3",
+    entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": "ssp_rk3",
                                "lumped_mass": "false"}
     entry["subproblems"][0]["proteus"] = {"model": "GN_SW2DCV", "INTEGRATE_BY_PARTS_WALLS": "1"}
     return doc
@@ -192,6 +192,55 @@ def test_dispersive_shallow_water_is_SWFlow_GN(lake):
     assert model.module == "proteus.mprans.GN_SW2DCV"
     p, n = _swflow("dSWEs_steady_state", "GN_sw_p", "GN_sw_n")
     _compare_model(model, p, n, 2)
+
+
+# ---- ymf's words (C5 step 3): the table is keyed on ymf.vocabulary, a spec's older words are aliases -------------
+
+def test_ymf_words_dispatch_as_their_older_aliases_did(dambreak):
+    """The projection discretization with the velocity step's ``vbdf`` written ``bdf2`` (ymf's word) dispatches to
+    the same cells and the same flags: nothing the aliases accept changes what runs."""
+    spec = copy.deepcopy(dambreak)
+    older = copy.deepcopy(dambreak)
+    _sub(spec, "clsvof_projection", "flow")["time_integration"] = "bdf2"
+    _sub(older, "clsvof_projection", "flow")["time_integration"] = "vbdf"
+    found, again = dispatch(spec, "clsvof_projection"), dispatch(older, "clsvof_projection")
+    assert found.as_dict() == again.as_dict()
+    (flow,) = [m for m in found if m.role == "velocity"]
+    assert flow.numerics["timeIntegration"] == "proteus.TimeIntegration.VBDF" and flow.numerics["timeOrder"] == 2
+    assert [m.role for m in found] == ["level_set_redistanced", "velocity", "pressure_increment", "pressure",
+                                       "pressure_spin_up"]
+
+
+def test_the_scheme_block_in_ymf_words_and_in_the_older_ones_dispatch_alike(lake):
+    """``ssp_rk3`` and ``entropy_viscosity_coefficient`` against ``SSP_RK3`` and ``entropy_viscosity_cE``."""
+    def build(time, option):
+        doc = copy.deepcopy(lake)
+        entry = _entry(doc, "convex_limited")
+        entry["discretization"] = {"scheme": "graph_viscosity_convex_limiting", "time_integration": time,
+                                   option: "2.5", "lumped_mass": "false"}
+        entry["subproblems"][0]["time_integration"] = time
+        return dispatch(doc, "convex_limited")
+    found, older = build("ssp_rk3", "entropy_viscosity_coefficient"), build("SSP_RK3", "entropy_viscosity_cE")
+    assert found.as_dict() == older.as_dict()
+    (swe,) = found.models
+    assert swe.coefficients["cE"] == 2.5 and swe.numerics["timeOrder"] == 3
+
+
+def test_the_dispersive_family_is_identified_by_dispersive_and_by_the_older_hyperbolic_relaxation(lake):
+    for assumption in ("dispersive", "hyperbolic_relaxation"):
+        found = dispatch(_dispersive(lake, assumption), "convex_limited")
+        assert found.family == "dispersive_shallow_water" and found.models[0].cell == "gn_sw2dcv"
+
+
+def test_residual_shock_capturing_is_the_RANS3PF_artificial_viscosity_1(dambreak):
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "clsvof_projection", "flow")["stabilization"] = {"method": "residual_shock_capturing"}
+    (flow,) = [m for m in dispatch(doc, "clsvof_projection") if m.role == "velocity"]
+    assert (flow.coefficients["ARTIFICIAL_VISCOSITY"], flow.coefficients["USE_SUPG"]) == (1, 0)
+    doc = copy.deepcopy(dambreak)
+    _sub(doc, "clsvof_projection", "flow")["stabilization"] = {"method": "shock_capturing"}     # the older word
+    (flow,) = [m for m in dispatch(doc, "clsvof_projection") if m.role == "velocity"]
+    assert flow.coefficients["ARTIFICIAL_VISCOSITY"] == 1
 
 
 # ---- refusals ----------------------------------------------------------------------------------------------------
@@ -232,8 +281,8 @@ def test_an_uncovered_space_is_refused_by_name(dambreak):
 
 def test_an_uncovered_time_integration_is_refused(dambreak):
     doc = copy.deepcopy(dambreak)
-    _sub(doc, "level_set_five", "vof")["time_integration"] = "SSP_RK3"
-    with pytest.raises(DispatchError, match="vof: time integration SSP_RK3, the cell has backward_euler"):
+    _sub(doc, "level_set_five", "vof")["time_integration"] = "ssp_rk3"
+    with pytest.raises(DispatchError, match="vof: time integration ssp_rk3, the cell has backward_euler"):
         dispatch(doc, "level_set_five")
 
 
@@ -263,7 +312,7 @@ def test_a_cell_without_the_sub_problems_it_needs_is_refused(dambreak):
     doc = copy.deepcopy(dambreak)
     entry = _entry(doc, "clsvof_projection")
     entry["subproblems"] = [s for s in entry["subproblems"] if s["name"] != "pressureInit"]
-    with pytest.raises(DispatchError, match="rans3pf_projection .* needs sub-problems with roles pressure_initial"):
+    with pytest.raises(DispatchError, match="rans3pf_projection .* needs sub-problems with roles pressure_spin_up"):
         dispatch(doc, "clsvof_projection")
 
 

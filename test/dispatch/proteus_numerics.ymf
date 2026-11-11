@@ -21,13 +21,13 @@ solution_paths:
       # a second solver needs them typed
       discretization:
         scheme: graph_viscosity_convex_limiting
-        time_integration: SSP_RK3
-        entropy_viscosity_cE: 1.0
+        time_integration: ssp_rk3
+        entropy_viscosity_coefficient: 1.0
         lumped_mass: false
         bounds_relaxation: true
       subproblems:
         - name: swe
           solves: [mass, momentum]
           finite_element: {fields: {family: CG, order: 1}}
-          time_integration: SSP_RK3
+          time_integration: ssp_rk3
           proteus: {model: SW2DCV, INTEGRATE_BY_PARTS_WALLS: 1}

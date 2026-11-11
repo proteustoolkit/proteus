@@ -9,9 +9,13 @@ A generated kernel (C19) will be one more cell.
 
 How a sub-problem finds its cell:
 
-1. **Family**: the model's ``physical_model`` processes and assumptions (``FAMILIES``).
+1. **Family**: the model's ``physical_model`` (``ymf.vocabulary.family_of``).
 2. **Role**: what the sub-problem does, read from the closed spec's structure: which unknowns its equations are for,
-   what it enforces, what it introduces (``ROLES``; the rules are in :func:`proteus.Dispatch.role_of`).
+   what it enforces, what it introduces (``ymf.vocabulary.role_of``).
+
+The words (families, roles, time integrations, stabilizations, scheme options) are ymf's (``ymf.vocabulary``, C42
+round 3): the cells below are keyed on them, and :mod:`proteus.Dispatch` reads a spec's words through
+``ymf.vocabulary.canonical``, so a spec that still says ``vbdf`` or ``SSP_RK3`` dispatches as it did.
 3. **Cell**: the cells of that family and role, matched on the formulation and on each typed option the sub-problem
    states. An option the spec leaves out takes the cell's ``default`` and is recorded as defaulted.
 
@@ -44,50 +48,13 @@ QUADRATURE_ORDER_EXACT = 6
 #: element size scaling of the stabilization by velocity order (FESpace.hFactor)
 H_FACTOR = {1: 1.0, 2: 0.5}
 
-#: the families the table knows: a model belongs to one when its physical_model lists all of these
-FAMILIES = {
-    "two_phase_level_set": {
-        "processes": ["incompressible_flow", "two_phase_flow", "interface_transport"],
-    },
-    "shallow_water": {
-        "assumptions": ["hydrostatic", "depth_averaged", "nondispersive"],
-    },
-    # Serre-Green-Naghdi by hyperbolic relaxation (GN_SW2DCV). ymf cannot write the dispersive model yet (no D/Dt,
-    # C42 section 4.3); until it can, the family is the depth-averaged model declared as relaxed.
-    "dispersive_shallow_water": {
-        "assumptions": ["depth_averaged", "hyperbolic_relaxation"],
-    },
-}
-
-#: the roles a sub-problem can have, by family (the rules that assign them are in proteus.Dispatch.role_of)
-ROLES = {
-    "two_phase_level_set": {
-        "velocity_pressure": "solves the equations for the velocity and the pressure together",
-        "velocity": "solves the momentum equation alone (a projection scheme's velocity step)",
-        "pressure_increment": "enforces a divergence-free velocity (the projection)",
-        "pressure": "solves the continuity equation for the pressure alone (the pressure update)",
-        "pressure_initial": "a spin-up solve for the initial pressure",
-        "volume_fraction": "introduces a conservative carrier of heaviside(level set) and transports it",
-        "level_set": "solves the interface equation for the level set",
-        "level_set_redistanced": "solves the interface equation and enforces |grad level set| = 1 in one solve",
-        "redistancing": "enforces |grad level set| = 1 to steady state, writing the level set back",
-        "mass_correction": "introduces a correction of the level set so that heaviside(level set) matches the carrier",
-    },
-    "shallow_water": {
-        "shallow_water": "solves the mass and momentum equations together",
-    },
-    "dispersive_shallow_water": {
-        "shallow_water": "solves the mass and momentum equations together",
-    },
-}
-
 #: time integration by name, per kind of cell. ``none`` is a sub-problem with no time derivative.
 _IMPLICIT_TIME = {
     "backward_euler": {"timeIntegration": "proteus.TimeIntegration.BackwardEuler_cfl", "timeOrder": 1},
-    "vbdf": {"timeIntegration": "proteus.TimeIntegration.VBDF", "timeOrder": 2},
+    "bdf2": {"timeIntegration": "proteus.TimeIntegration.VBDF", "timeOrder": 2},
 }
 _NO_TIME = {"none": {"timeIntegration": "proteus.TimeIntegration.NoIntegration"}}
-_SSP_RK3 = {"SSP_RK3": {"timeIntegration": "{module}.RKEV", "timeOrder": 3, "nStagesTime": 3}}
+_SSP_RK3 = {"ssp_rk3": {"timeIntegration": "{module}.RKEV", "timeOrder": 3, "nStagesTime": 3}}
 
 #: the inertia forms of the momentum equation the table knows, by weak-form label (D1: a formulation is a
 #: weak_forms entry). Both are formulations of the same strong form when div v = 0.
@@ -200,20 +167,20 @@ CELLS = [
         "formulation": "nonconservative_inertia",
         "spaces": {"velocity": {"options": [("CG", 2)], "default": ("CG", 2)}},
         "components": ["velocity"],
-        "time_integration": {"options": _IMPLICIT_TIME, "default": "vbdf"},
+        "time_integration": {"options": _IMPLICIT_TIME, "default": "bdf2"},
         # ARTIFICIAL_VISCOSITY: 0 none, 1 residual shock capturing, 2 entropy viscosity, 3 graph viscosity with a
-        # Hessian smoothness indicator (TwoPhaseFlow's), 4 graph viscosity with an entropy residual. The labels
-        # are this table's; ymf has no vocabulary for them yet.
+        # Hessian smoothness indicator (TwoPhaseFlow's), 4 graph viscosity with an entropy residual (ymf.vocabulary
+        # STABILIZATION)
         "stabilization": {"options": ["graph_viscosity_smoothness", "graph_viscosity_entropy_residual",
-                                      "entropy_viscosity", "shock_capturing", "SUPG"],
+                                      "entropy_viscosity", "residual_shock_capturing", "SUPG"],
                           "default": "graph_viscosity_smoothness",
                           "flags": {"graph_viscosity_smoothness": {"ARTIFICIAL_VISCOSITY": 3, "USE_SUPG": 0},
                                     "graph_viscosity_entropy_residual": {"ARTIFICIAL_VISCOSITY": 4, "USE_SUPG": 0},
                                     "entropy_viscosity": {"ARTIFICIAL_VISCOSITY": 2, "USE_SUPG": 0},
-                                    "shock_capturing": {"ARTIFICIAL_VISCOSITY": 1, "USE_SUPG": 0},
+                                    "residual_shock_capturing": {"ARTIFICIAL_VISCOSITY": 1, "USE_SUPG": 0},
                                     "SUPG": {"ARTIFICIAL_VISCOSITY": 0, "USE_SUPG": 1}},
                           "subgrid_lag": True, "shock_capturing": {"factor": 0.5, "lag": True}},
-        "requires": ["pressure_increment", "pressure", "pressure_initial"],
+        "requires": ["pressure_increment", "pressure", "pressure_spin_up"],
         "physics": {
             "coefficients": "{module}.Coefficients",
             "LevelModelType": "{module}.LevelModel",
@@ -276,7 +243,7 @@ CELLS = [
     {
         "cell": "presinit",
         "family": "two_phase_level_set",
-        "role": "pressure_initial",
+        "role": "pressure_spin_up",
         "module": "proteus.mprans.PresInit",
         "name": "pressureInitial",
         "formulation": AS_WRITTEN,
@@ -404,14 +371,14 @@ CELLS = [
         "scheme": {"options": ["graph_viscosity_convex_limiting"], "default": "graph_viscosity_convex_limiting"},
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
         "components": ["fields", "fields", "fields"],
-        "time_integration": {"options": _SSP_RK3, "default": "SSP_RK3"},
+        "time_integration": {"options": _SSP_RK3, "default": "ssp_rk3"},
         "physics": {
             "coefficients": "{module}.Coefficients",
             "LevelModelType": "{module}.LevelModel",
             "default": {"cE": 1.0, "LUMPED_MASS_MATRIX": 0, "INTEGRATE_BY_PARTS_WALLS": 1, "BOUNDS_RELAXATION": 1,
                         "BOUNDS_EXCLUDE_SELF": 0, "WALL_RIEMANN": 0, "LOW_ORDER_ONLY": 0, "NODAL_H_BOUNDS": 0,
                         "NO_STAR_STATES": 0},
-            "from_scheme": {"entropy_viscosity_cE": ("cE", float), "lumped_mass": ("LUMPED_MASS_MATRIX", int),
+            "from_scheme": {"entropy_viscosity_coefficient": ("cE", float), "lumped_mass": ("LUMPED_MASS_MATRIX", int),
                             "bounds_relaxation": ("BOUNDS_RELAXATION", int)},
         },
         "numerics": {
@@ -441,7 +408,7 @@ CELLS = [
         "scheme": {"options": ["graph_viscosity_convex_limiting"], "default": "graph_viscosity_convex_limiting"},
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
         "components": ["fields"] * 6,
-        "time_integration": {"options": _SSP_RK3, "default": "SSP_RK3"},
+        "time_integration": {"options": _SSP_RK3, "default": "ssp_rk3"},
         "physics": {
             "coefficients": "{module}.Coefficients",
             "LevelModelType": "{module}.LevelModel",
