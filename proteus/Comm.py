@@ -52,6 +52,9 @@ def _set_reproducible_vector_defaults():
     OptDB = PETSc.Options()
     if not OptDB.hasName("vec_mdot_use_gemv"):
         OptDB.setValue("vec_mdot_use_gemv", False)
+    # PETSc reads it when the first vector is made; a run that makes none (a shim, a spec check) would end with
+    # "WARNING! There are options you set that were not used!", so read it here to mark it used
+    OptDB.getBool("vec_mdot_use_gemv", False)
 
 def init():
     global comm, petscInitialized
