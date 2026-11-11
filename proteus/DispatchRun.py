@@ -102,17 +102,52 @@ def _time(split, entry):
     return t1, outputs
 
 
+#: the packages ymf's ``linear_solver`` names that the deck machinery selects, by the kind they request; ``direct`` and
+#: ``iterative`` are the kinds themselves (ymf.vocabulary.LINEAR_SOLVERS)
+_MACHINERY_PACKAGES = {"superlu": "direct", "petsc": "iterative"}
+
+
+def _linear_request(entry, family):
+    """The kind (``direct`` or ``iterative``) of the discretization's ``linear_solver``, or None when it names none.
+    A package the machinery does not select, and ``petsc_options`` (which no deck machinery reads), are refused:
+    asking for what is not done is not met by doing something else."""
+    solver = entry.get("solver") or {}
+    word = solver.get("linear_solver")
+    if solver.get("petsc_options"):
+        raise RealizeError("%s: petsc_options are not read when a %s discretization runs from its dispatch; its PETSc "
+                           "options are the deck machinery's" % (entry["name"], family))
+    if word is None:
+        return None
+    try:
+        kind = vocab.LINEAR_SOLVERS[str(word)]["kind"]
+    except KeyError:
+        raise RealizeError("%s: linear_solver %r; ymf knows %s" % (entry["name"], word, ", ".join(vocab.LINEAR_SOLVERS)))
+    if str(word) not in ("direct", "iterative") and str(word) not in _MACHINERY_PACKAGES:
+        raise RealizeError("%s: linear_solver %s is a package the deck machinery does not select (it takes direct "
+                           "or iterative, or the packages %s)" % (entry["name"], word, ", ".join(_MACHINERY_PACKAGES)))
+    return kind
+
+
 def _linear_solver(entry, ranks):
-    """``superlu``: a direct solve, TwoPhaseFlow's useSuperlu (SuperLU on one rank, SuperLU_DIST through PETSc on
-    several); ``petsc``: the machinery's iterative solvers and their options per model prefix."""
-    solver = (entry.get("solver") or {}).get("linear_solver")
-    if solver not in (None, "superlu", "petsc"):
-        raise RealizeError("%s: linear_solver %r; the deck machinery takes superlu or petsc"
-                           % (entry["name"], solver))
-    solver = solver or "petsc"
-    if solver == "superlu":
-        return solver, "SuperLU" if ranks == 1 else "SuperLU_DIST"
-    return solver, "PETSc KSP"
+    """``(kind, how)`` for TwoPhaseFlow: ``direct`` is useSuperlu (SuperLU on one rank, SuperLU_DIST through PETSc on
+    several), ``iterative`` the machinery's PETSc KSP solvers and their options per model prefix. Not stated: iterative."""
+    kind = _linear_request(entry, "two-phase") or "iterative"
+    if kind == "direct":
+        return kind, "SuperLU" if ranks == 1 else "SuperLU_DIST"
+    return kind, "PETSc KSP"
+
+
+def _shallow_water_linear_solver(entry, ranks):
+    """What SWFlow's n module solves with, by the number of ranks (LU on one rank, KSP_petsc4py on several), against
+    what the spec asks: a different kind is refused rather than overridden."""
+    kind = _linear_request(entry, "shallow-water")
+    solves = "direct" if ranks == 1 else "iterative"
+    if kind is not None and kind != solves:
+        raise RealizeError(
+            "%s: linear_solver asks for a %s solve, and SWFlow's n module solves with %s on %d rank%s; it cannot be "
+            "told otherwise (leave linear_solver out to take what it does)"
+            % (entry["name"], kind, "LU" if ranks == 1 else "KSP_petsc4py", ranks, "" if ranks == 1 else "s"))
+    return solves, "LU" if ranks == 1 else "KSP_petsc4py"
 
 
 def _where(condition, dim, tol):
@@ -406,7 +441,7 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     dim = split["dim"]
     domain, sides = _tank(split, he, name, outdir, comm)
     final_time, outputs = _time(split, entry)
-    solver, direct = _linear_solver(entry, ranks)
+    solver, direct = _linear_solver(entry, ranks)      # the kind, and what does it
     values = _two_phase_values(doc, dim)
 
     problem = TpFlow.TwoPhaseFlowProblem()
@@ -425,7 +460,7 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
             raise RealizeError("%s: no TwoPhaseFlow Parameters class builds %s" % (model.subproblem, model.module))
         physics.addModel(resolve(table.TWO_PHASE_PARAMETERS[model.module]), model.subproblem)
     problem.SystemNumerics.cfl = found.system["runCFL"]
-    problem.SystemNumerics.useSuperlu = solver == "superlu"
+    problem.SystemNumerics.useSuperlu = solver == "direct"
 
     subs = {s["name"]: s for s in split["subproblems"]}
     record = {"boundary": sides, "initial": {}, "system": {
@@ -517,20 +552,26 @@ def shallow_water_boundary(split):
     return boundary
 
 
-def precheck(doc, found, split):
+def precheck(doc, found, split, ranks=None):
     """What :func:`realize` would refuse that the data alone decides (the family, the domain, the boundary, the
-    two-phase physical values), so that a runner refuses before anything runs. Raises :class:`RealizeError`."""
+    two-phase physical values, the linear solver asked for against the number of ``ranks`` -- the started Proteus's,
+    else 1), so that a runner refuses before anything runs. Raises :class:`RealizeError`."""
+    if ranks is None:
+        from proteus.ADRProblem import _ranks
+        ranks = _ranks()
     if found.family not in table.REALIZERS:
         raise RealizeError("nothing realizes family %s yet (the table realizes %s)"
                            % (found.family, ", ".join(sorted(table.REALIZERS))))
     if found.family == "two_phase_level_set":
         tank_sides(split)
         _two_phase_values(doc, split["dim"])
+        _linear_solver(_entry(doc, found.discretization), ranks)
     elif found.family == "shallow_water":
         _box(split)
         shallow_water_boundary(split)
         for role in list(table.SHALLOW_WATER_COEFFICIENT_ROLES) + [table.SHALLOW_WATER_BED_ROLE]:
             _by_role(doc, role)
+        _shallow_water_linear_solver(_entry(doc, found.discretization), ranks)
 
 
 def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
@@ -555,6 +596,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("the shallow-water realizer builds a 2-D box (RectangularDomain)")
     comm = Comm.get()
     final_time, outputs = _time(split, entry)
+    solves, how = _shallow_water_linear_solver(entry, ranks)
 
     (sub,) = split["subproblems"]
     boundary = shallow_water_boundary(split)
@@ -622,7 +664,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
               "initial": dict(zip(variables, components)),
               "system": {"final_time": final_time, "outputs": outputs, "mesh": "triangle, %s" % (
                   domain.MeshOptions.triangleOptions,),
-                  "linear_solver": "SWFlow's n module: LU on one rank, KSP_petsc4py on several",
+                  "linear_solver": "%s (%s)" % (solves, how),
                   **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()
                      if k in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta")}}}
     return Realized(so, [p], [n], problem, record)

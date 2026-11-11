@@ -621,3 +621,61 @@ def test_a_shallow_water_model_without_a_role_is_refused_before_anything_runs(la
     split = split_problem(doc, "convex_limited")
     with pytest.raises(RealizeError, match="no coefficient states role: %s" % role):
         precheck(doc, dispatch(doc, "convex_limited"), split)
+
+
+# ---- linear_solver: direct / iterative on all paths (C5 step 3) ----------------------------------------------------
+
+def _with_solver(doc, name, solver):
+    doc = copy.deepcopy(doc)
+    _entry(doc, name)["solver"] = dict(_entry(doc, name).get("solver") or {}, **solver)
+    return doc
+
+
+@pytest.mark.parametrize("word, kind", [("direct", "direct"), ("superlu", "direct"), ("iterative", "iterative"),
+                                        ("petsc", "iterative"), (None, "iterative")])
+def test_the_two_phase_machinery_maps_direct_and_iterative(dambreak, word, kind):
+    from proteus.DispatchRun import _linear_solver
+    doc = copy.deepcopy(dambreak)
+    entry = _entry(doc, "level_set_five")
+    entry["solver"] = {k: v for k, v in entry["solver"].items() if k != "linear_solver"}
+    if word is not None:
+        entry["solver"]["linear_solver"] = word
+    assert _linear_solver(entry, 1) == (kind, "SuperLU" if kind == "direct" else "PETSc KSP")
+    assert _linear_solver(entry, 4) == (kind, "SuperLU_DIST" if kind == "direct" else "PETSc KSP")
+
+
+@pytest.mark.parametrize("solver, message", [
+    ({"linear_solver": "mumps"}, "linear_solver mumps is a package the deck machinery does not select"),
+    ({"linear_solver": "umfpack"}, "linear_solver umfpack is a package the deck machinery does not select"),
+    ({"linear_solver": "cholmod"}, "linear_solver 'cholmod'; ymf knows"),
+    ({"linear_solver": "iterative", "petsc_options": {"ksp_type": "cg"}}, "petsc_options are not read"),
+])
+def test_a_linear_solver_the_two_phase_machinery_cannot_honour_is_refused_before_anything_runs(dambreak, solver, message):
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = _with_solver(dambreak, "level_set_five", solver)
+    with pytest.raises(RealizeError, match=message):
+        precheck(doc, dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five"), ranks=1)
+
+
+@pytest.mark.parametrize("word, ranks, accepted", [
+    (None, 1, True), (None, 3, True),
+    ("direct", 1, True), ("superlu", 1, True), ("direct", 3, False),
+    ("iterative", 3, True), ("petsc", 3, True), ("iterative", 1, False),
+])
+def test_SWFlow_refuses_a_linear_solver_its_n_module_would_override(lake, word, ranks, accepted):
+    """SWFlow's n module solves with LU on one rank and KSP_petsc4py on several, whatever the spec says: a spec that
+    asks for the other kind is refused rather than overridden."""
+    from proteus.DispatchRun import RealizeError, precheck
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    entry = _entry(doc, "convex_limited")
+    entry["solver"] = {k: v for k, v in (entry.get("solver") or {}).items() if k != "linear_solver"}
+    if word is not None:
+        entry["solver"]["linear_solver"] = word
+    found, split = dispatch(doc, "convex_limited"), split_problem(doc, "convex_limited")
+    if accepted:
+        precheck(doc, found, split, ranks=ranks)
+    else:
+        with pytest.raises(RealizeError, match="asks for a .* solve, and SWFlow's n module solves with"):
+            precheck(doc, found, split, ranks=ranks)

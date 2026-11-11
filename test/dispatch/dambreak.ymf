@@ -52,7 +52,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative, max_iterations: 50}
       subproblems:
         - name: flow
           solves: [momentum, continuity]
@@ -112,7 +112,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative, max_iterations: 50}
       subproblems:
         - name: flow
           solves: [momentum, continuity]
@@ -140,7 +140,7 @@ solution_paths:
       regularize:
         heaviside: {by: smoothed_heaviside, width: ε}
       step_control: {type: min_cfl, cfl: 0.25, step_exact: true}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: petsc}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative}
       subproblems:
         - name: clsvof
           solves: [interface]

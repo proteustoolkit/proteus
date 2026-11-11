@@ -356,6 +356,25 @@ def test_the_emitted_p_file_carries_the_neumann_flux(tmp_path):
 CG1 = {"u": ("CG", 1)}
 
 
+def test_direct_and_iterative_are_requests_of_their_kind():
+    """ymf's ``direct`` and ``iterative`` (ymf.vocabulary.LINEAR_SOLVERS): a direct solve is SuperLU on one rank,
+    MUMPS on several or on a singular operator; iterative is petsc, refined by petsc_options."""
+    choice = ADRProblem.linear_solver_choice
+    plain = {}
+    assert choice(plain, CG1, "direct", ranks=1) == ("superlu", None)
+    assert choice(plain, CG1, "iterative", ranks=1) == ("petsc", {})
+    assert choice(plain, CG1, "iterative", {"ksp_type": "cg"}, ranks=4) == ("petsc", {"ksp_type": "cg"})
+    with pytest.raises(ValueError, match=r"petsc_options apply to linear_solver petsc or mumps, not direct \(superlu\)"):
+        choice(plain, CG1, "direct", {"ksp_type": "cg"}, ranks=1)
+
+
+@pytest.mark.mumps("a direct solve on several ranks, or of a singular operator, is MUMPS")
+def test_a_direct_solve_of_many_ranks_or_a_singular_operator_is_mumps():
+    choice = ADRProblem.linear_solver_choice
+    assert choice({}, CG1, "direct", ranks=4) == ("mumps", ADRProblem.MUMPS_SOLVER)
+    assert choice({"up_to_constant": ["u"]}, CG1, "direct", ranks=1) == ("mumps", ADRProblem.NULL_SPACE_SOLVER)
+
+
 @pytest.mark.mumps("an omitted linear_solver on a singular operator picks MUMPS only when PETSc has it")
 def test_the_linear_solver_choice_follows_the_spec():
     choice = ADRProblem.linear_solver_choice

@@ -544,7 +544,7 @@ MUMPS_SOLVER = {"ksp_type": "preonly", "pc_type": "lu",
 
 #: the spec's ``linear_solver`` values Proteus has a solver for (see
 #: :func:`linear_solver_choice`); ``umfpack`` is the schema's fourth, and has none
-LINEAR_SOLVERS = ("superlu", "mumps", "petsc")
+LINEAR_SOLVERS = ("direct", "iterative", "superlu", "mumps", "petsc")
 
 
 def _ranks():
@@ -589,6 +589,9 @@ def linear_solver_choice(problem, spaces, linear_solver=None, petsc_options=None
                          ranks=None):
     """``(solver, petsc options)`` for a spec's ``linear_solver`` and ``petsc_options``.
 
+    * ``direct``: a direct factorization, the package picked here: ``superlu`` on one rank, ``mumps`` on more than
+      one or when the operator has a null space.
+    * ``iterative``: ``petsc``.
     * ``superlu``: Proteus's own LU (SuperLU), serial; refused on more than
       one rank.
     * ``mumps``: a direct solve through PETSc, LU by MUMPS.
@@ -612,11 +615,17 @@ def linear_solver_choice(problem, spaces, linear_solver=None, petsc_options=None
     if solver is not None and solver not in LINEAR_SOLVERS:
         raise ValueError("linear_solver %r has no Proteus solver (have %s)"
                          % (linear_solver, ", ".join(LINEAR_SOLVERS)))
-    if petsc_options and solver not in ("petsc", "mumps"):
-        raise ValueError("petsc_options apply to linear_solver petsc or mumps, not %s"
-                         % ("the default" if solver is None else solver))
     if ranks is None:
         ranks = _ranks()
+    asked = solver
+    if solver == "iterative":
+        solver = "petsc"
+    elif solver == "direct":
+        solver = "mumps" if ranks > 1 or null_space else "superlu"
+    if petsc_options and solver not in ("petsc", "mumps"):
+        raise ValueError("petsc_options apply to linear_solver petsc or mumps, not %s"
+                         % ("the default" if solver is None else
+                            asked if asked == solver else "%s (%s)" % (asked, solver)))
     if solver is None:
         if ranks > 1:
             from petsc4py import PETSc

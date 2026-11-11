@@ -28,4 +28,4 @@ solution_paths:
     - name: level_set_five
       mesh: {h: 0.2576}
       discretization: {outputs: 3}
-      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: superlu, max_iterations: 50}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: direct, max_iterations: 50}

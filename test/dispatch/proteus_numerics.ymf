@@ -16,7 +16,7 @@ solution_paths:
         heaviside: {by: smoothed_heaviside, width: he}   # a canopy's edge, over one element
         inverse: {by: wet_dry_cutoff, of: h, width: hε}  # 1/h -> 2h/(h² + max(h, hε)²) (one_over_hReg)
       step_control: {type: min_cfl, cfl: 0.33}
-      solver: {type: time_marching, linear_solver: petsc}
+      solver: {type: time_marching}
       # the scheme is algebraic (no weak form); its options free-form until
       # a second solver needs them typed
       discretization:
