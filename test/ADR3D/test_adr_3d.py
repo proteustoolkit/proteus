@@ -117,6 +117,17 @@ def test_p1_plane_cut_with_ghost_penalty_converges_at_rate_two(tmp_path):
     np.testing.assert_allclose(l2, PLANE_GP_L2, rtol=1e-5)
 
 
+SPHERE_L2 = [3.79973288609295468e-02, 8.63172377002737953e-03, 2.23261167258554305e-03, 5.62128889801431710e-04]
+
+
+def test_p1_sphere_embedded_boundary_converges_at_rate_two(tmp_path):
+    """Curved solid (r = 0.3 at the cube centre), P1, ghost penalty on: nnx = 3, 5, 9, 17."""
+    l2 = [_run("refinement={0} pOrder=1 cut=\"embedded\"".format(r), cwd=tmp_path)["L2"] for r in range(4)]
+    rates = [np.log2(l2[i] / l2[i + 1]) for i in range(3)]
+    assert all(r >= 1.9 for r in rates), "L2 errors {0}, rates {1}".format(l2, rates)
+    np.testing.assert_allclose(l2, SPHERE_L2, rtol=1e-5)
+
+
 def test_p2_reproduces_a_quadratic_with_advection(tmp_path):
     out = _run("refinement=1 pOrder=2 exact=\"quadratic\"", cwd=tmp_path)
     assert out["L2"] < 1e-10 and out["Linfty"] < 1e-10, out
