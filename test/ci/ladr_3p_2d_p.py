@@ -53,6 +53,10 @@ opts = Context.Options([
         "the enriched va/vb IFEM basis. Trial/solution side is unchanged."),
     ("unstructured", False, "use unstructured mesh (default is structured)"),
     ("skew", 0.0001, "skew the domain when using unstructured mesh"),
+    ("meshFile", "", "unstructured=True only: read the mesh from the Triangle files <meshFile>.node,\n"
+     "        <meshFile>.ele and <meshFile>.edge instead of running triangle. Triangle can produce a\n"
+     "        different mesh on another platform from the same .poly and options; test/IFEM/meshes holds\n"
+     "        the meshes behind the manuscript tables"),
     ("refinement", 0, "number of times to refine the mesh (default is 0)"),
     ("nCells", 0, "cells per side of the square; overrides refinement when > 0 (e.g. 10*2**k\n"
      "        to match the node counts of the fitted and unstructured meshes)"),
@@ -182,6 +186,24 @@ domainUS.boundaryTags = domainR.boundaryTags
 domain = domainR
 if opts.unstructured:
     domain = domainUS
+
+
+def use_mesh_files(meshFile, fileprefix):
+    """Copy <meshFile>.node/.ele/.edge to <fileprefix>.* so Proteus reads them instead of running triangle."""
+    import shutil
+    from proteus import Comm
+    comm = Comm.get()
+    if comm.isMaster():
+        for ext in ("node", "ele", "edge"):
+            shutil.copyfile(meshFile + "." + ext, fileprefix + "." + ext)
+    comm.barrier()
+
+
+if opts.meshFile:
+    if not opts.unstructured:
+        raise ValueError("meshFile reads a Triangle mesh, so it needs unstructured=True")
+    use_mesh_files(opts.meshFile, "ladr_3p_2d_p")
+    domain.MeshOptions.genMesh = False
 # The ghost-penalty and SCIFEM face terms need two layers of overlap in parallel (see ADR.LevelModel).
 from proteus import MeshTools
 MeshTools.getMeshOptions(domain).nLayersOfOverlapForParallel = 2

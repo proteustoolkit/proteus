@@ -1,333 +1,136 @@
+"""Bioswale domain sketch: soil zones, drain, boundary and initial conditions.
+
+    python plot_domain_bioswale.py [run_dir]
+
+The geometry is read from the Triangle files the simulation was meshed with,
+bio2d_N.node / bio2d_N.ele / bio2d_N.poly in run_dir (default: this script's
+directory, where run.sh copies it): the zones are the mesh elements coloured
+by their region attribute, the outlines are the PSLG segments, the drain is
+the PSLG hole.  The boundary and initial conditions are those of
+Raingarden_p.py and tranport_p.py.
+
+Drawn at the printed width (0.45 of the 174 mm text width in sn-article.tex)
+with 8 pt lettering, no transparency, so it stays vector in EPS.
+Writes bioswale_contamination_domain.png next to this script.
+"""
+import sys
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.tri as mtri
 import numpy as np
-from matplotlib.patches import Circle, FancyArrowPatch, Polygon, Rectangle
+
+BASE = Path(__file__).resolve().parent
+RUN = Path(sys.argv[1]) if len(sys.argv) > 1 else BASE
+OUT_PATH = BASE / "bioswale_contamination_domain.png"
+
+WIDTH_MM = 0.45 * 174.0   # \includegraphics width in sn-article.tex
+
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
+    "font.size": 8,
+    "axes.linewidth": 0.6,
+    "xtick.major.width": 0.6,
+    "ytick.major.width": 0.6,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 
 
-# ============================================================
-# 2D bioswale domain schematic
-# Ponded saline inflow on the top strip with an internal drain
-# ============================================================
-
-# -------------------------
-# Domain dimensions
-# -------------------------
-Lx = 3.0
-z_bottom = 0.0
-z_top = 5.0
-ponding_depth = 0.18
-
-# Region geometry
-swale_poly = np.array(
-    [
-        [0.5, 3.0],
-        [2.5, 3.0],
-        [2.0, 1.0],
-        [1.0, 1.0],
-    ]
-)
-drain_center = np.array([1.45, 1.65])
-drain_radius = 0.25
-
-# Ponding strip on the top boundary
-pond_x0 = 1.0
-pond_x1 = 2.0
-pond_z0 = z_top
-pond_z1 = z_top + ponding_depth
-
-# -------------------------
-# Figure setup
-# -------------------------
-fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
-
-# Base soil region
-ax.add_patch(
-    Rectangle(
-        (0.0, z_bottom),
-        Lx,
-        3.0 - z_bottom,
-        facecolor="#e6cfaa",
-        edgecolor="black",
-        linewidth=1.4,
-        zorder=1,
-    )
-)
-
-# Storage zone above the swale
-ax.add_patch(
-    Rectangle(
-        (0.0, 3.0),
-        Lx,
-        z_top - 3.0,
-        facecolor="#f1ddbe",
-        edgecolor="black",
-        linewidth=1.4,
-        zorder=2,
-    )
-)
-
-# Bioswale media
-ax.add_patch(
-    Polygon(
-        swale_poly,
-        closed=True,
-        facecolor="#98c98b",
-        edgecolor="black",
-        linewidth=1.6,
-        zorder=4,
-    )
-)
-
-# Internal drain (no-flux wall; Raingarden_p.py useSeepageFace = False)
-drain_patch = Circle(
-    drain_center,
-    drain_radius,
-    facecolor="#6f7d86",
-    edgecolor="black",
-    linewidth=1.2,
-    zorder=6,
-)
-ax.add_patch(drain_patch)
-
-# Ponded saline water
-ax.add_patch(
-    Rectangle(
-        (pond_x0, pond_z0),
-        pond_x1 - pond_x0,
-        ponding_depth,
-        facecolor="#5dade2",
-        edgecolor="#0057d9",
-        linewidth=1.2,
-        alpha=0.95,
-        zorder=7,
-    )
-)
-
-xw = np.linspace(pond_x0, pond_x1, 250)
-yw = pond_z1 + 0.03 * np.sin(2 * np.pi * (xw - pond_x0) / 0.20)
-ax.plot(xw, yw, color="#0057d9", linewidth=1.5, zorder=8)
-
-# Soil speckles to match the levee-style schematic
-rng = np.random.default_rng(8)
-for x0, y0, width, height, color, npts, zorder in [
-    (0.0, 0.0, 3.0, 3.0, "#9a6b3a", 900, 3),
-    (0.0, 3.0, 3.0, 2.0, "#c9a77a", 700, 3),
-]:
-    xs = rng.uniform(x0, x0 + width, npts)
-    zs = rng.uniform(y0, y0 + height, npts)
-    ax.scatter(xs, zs, s=4.5, color=color, alpha=0.18, zorder=zorder, linewidths=0)
-
-xs = rng.uniform(0.9, 2.1, 350)
-zs = rng.uniform(1.0, 3.0, 350)
-swale_line_left = 3.0 - 2.0 * (xs - 0.5)
-swale_line_right = 3.0 - 2.0 * (2.5 - xs)
-in_swale = np.logical_and.reduce(
-    [
-        xs >= 1.0,
-        xs <= 2.0,
-        zs >= 1.0,
-        zs <= 3.0,
-    ]
-)
-in_swale |= np.logical_and.reduce(
-    [
-        xs >= 0.5,
-        xs < 1.0,
-        zs >= swale_line_left,
-        zs <= 3.0,
-    ]
-)
-in_swale |= np.logical_and.reduce(
-    [
-        xs > 2.0,
-        xs <= 2.5,
-        zs >= swale_line_right,
-        zs <= 3.0,
-    ]
-)
-outside_drain = (
-    (xs - drain_center[0]) ** 2 + (zs - drain_center[1]) ** 2
-    >= drain_radius ** 2
-)
-mask = np.logical_and(in_swale, outside_drain)
-ax.scatter(xs[mask], zs[mask], s=4.5, color="#487d3b", alpha=0.16, zorder=5, linewidths=0)
-
-# Boundary markers
-for xpos in np.linspace(0.18, 0.82, 4):
-    ax.plot([xpos, xpos], [z_bottom, z_bottom + 0.15], color="gray", linewidth=0.7, zorder=9)
-for xpos in np.linspace(0.0, Lx - 0.16, 22):
-    ax.plot([xpos, xpos + 0.12], [z_bottom - 0.10, z_bottom], color="gray", linewidth=0.7, zorder=9)
-
-for xpos in [0.35, 0.70, 2.30, 2.65]:
-    ax.plot([xpos, xpos], [z_top, z_top + 0.12], color="green", linewidth=1.0, zorder=9)
-    ax.plot([xpos, xpos - 0.04], [z_top + 0.05, z_top + 0.13], color="green", linewidth=1.0, zorder=9)
-    ax.plot([xpos, xpos + 0.04], [z_top + 0.05, z_top + 0.13], color="green", linewidth=1.0, zorder=9)
-
-for xpos in [1.2, 1.5, 1.8]:
-    ax.add_patch(
-        FancyArrowPatch(
-            (xpos, 5.15),
-            (xpos, 4.58 if xpos == 1.5 else 4.70),
-            arrowstyle="-|>",
-            mutation_scale=12,
-            linewidth=1.1,
-            color="#0057d9",
-            zorder=9,
-        )
-    )
-
-# -------------------------
-# Labels
-# -------------------------
-ax.text(
-    1.50,
-    5.56,
-    "Ponding, $\\psi = 0.5$ m",
-    color="#003fb3",
-    fontsize=12,
-    ha="center",
-    va="bottom",
-    fontweight="bold",
-)
-# ax.text(
-#     1.50,
-#     5.44,
-#     "Constant head  $\\psi=0.5$ m\nHigh concentration  $c=c_{in}=3.0$",
-#     color="#003fb3",
-#     fontsize=9.5,
-#     ha="center",
-#     va="top",
-# )
-
-ax.text(
-    0.44,
-    4.20,
-    "Storage zone",
-    fontsize=11,
-    ha="left",
-    va="center",
-    fontweight="bold",
-)
-ax.text(
-    0.44,
-    3.88,
-    "Region 3\nuniform IC\n$\\psi=-3$ m, $c=0$",
-    fontsize=8.8,
-    ha="left",
-    va="top",
-)
-
-ax.text(
-    1.50,
-    2.50,
-    "Bioswale zone",
-    fontsize=11,
-    ha="center",
-    va="center",
-    fontweight="bold",
-    zorder=10,
-)
-ax.text(
-    1.50,
-    2.18,
-    "Region 2\nbioswale media",
-    fontsize=8.4,
-    ha="center",
-    va="top",
-    zorder=10,
-)
-
-ax.text(
-    0.42,
-    0.92,
-    "Base soil",
-    fontsize=11,
-    ha="left",
-    va="center",
-    fontweight="bold",
-)
-ax.text(
-    0.42,
-    0.60,
-    "Region 1\nuniform IC\n$\\psi=-3$ m, $c=0$",
-    fontsize=8.8,
-    ha="left",
-    va="top",
-)
-
-ax.text(
-    3.56,
-    1.72,
-    "Internal drain\nno-flux wall",
-    fontsize=8.8,
-    color="#23323a",
-    ha="left",
-    va="center",
-)
-
-ax.text(
-    3.62,
-    4.25,
-    "No-flux top boundary\noutside ponding strip\n$\\mathbf{q}\\cdot\\mathbf{n}=0$",
-    fontsize=8.7,
-    ha="center",
-    va="center",
-    color="green",
-)
-
-ax.text(
-    3.66,
-    2.48,
-    "Lateral boundaries\nno-flow",
-    fontsize=8.7,
-    ha="center",
-    va="center",
-    color="#6d4c1a",
-)
-
-ax.text(
-    1.50,
-    -0.36,
-    "Impermeable base / no-flow bottom boundary",
-    fontsize=8.8,
-    ha="center",
-)
-
-# Axis arrows
-ax.annotate(
-    "",
-    xy=(4.18, 0.0),
-    xytext=(0.0, 0.0),
-    arrowprops=dict(arrowstyle="->", linewidth=1.3, color="black"),
-)
-ax.annotate(
-    "",
-    xy=(0.0, 5.82),
-    xytext=(0.0, 0.0),
-    arrowprops=dict(arrowstyle="->", linewidth=1.3, color="black"),
-)
-
-# -------------------------
-# Axis formatting
-# -------------------------
-ax.set_xlim(-0.08, 4.28)
-ax.set_ylim(-0.42, 5.72)
-ax.set_aspect("equal", adjustable="box")
-
-ax.set_xlabel("$x$ (m)", fontsize=11)
-ax.set_ylabel("$z$ (m)", fontsize=11)
-
-ax.set_xticks(np.arange(0.0, 3.1, 0.5))
-ax.set_yticks(np.arange(0.0, 5.1, 1.0))
+def rows(path):
+    # Triangle file: whitespace-separated numbers, '#' starts a comment
+    out = []
+    for line in Path(path).read_text().splitlines():
+        tok = line.split("#", 1)[0].split()
+        if tok:
+            out.append([float(t) for t in tok])
+    return out
 
 
-for spine in ax.spines.values():
-    spine.set_visible(False)
+node = rows(RUN / "bio2d_N.node")
+xy = np.array([r[1:3] for r in node[1:1 + int(node[0][0])]])
+ele = rows(RUN / "bio2d_N.ele")
+ne = int(ele[0][0])
+tris = np.array([r[1:4] for r in ele[1:1 + ne]], dtype=int) - 1
+region = np.array([int(r[4]) for r in ele[1:1 + ne]])
 
-ax.grid(False)
+poly = rows(RUN / "bio2d_N.poly")
+nv = int(poly[0][0])
+pv = np.array([r[1:3] for r in poly[1:1 + nv]])
+ns = int(poly[1 + nv][0])
+seg = np.array([r[1:3] for r in poly[2 + nv:2 + nv + ns]], dtype=int) - 1
+seg_mark = np.array([int(r[3]) for r in poly[2 + nv:2 + nv + ns]])
+k = 2 + nv + ns
+nh = int(poly[k][0])
+holes = np.array([r[1:3] for r in poly[k + 1:k + 1 + nh]])
 
-output_path = Path(__file__).resolve().with_name("bioswale_contamination_domain.png")
-plt.tight_layout()
-plt.savefig(output_path, dpi=300, bbox_inches="tight")
-plt.close()
+# boundaryTags of domain_rg.py: bottom 1, top 2, left 3, right 4, swale 5,
+# drain 6; region flags: 1 base soil, 2 bioswale zone, 3 storage zone
+DRAIN = 6
+LX, LZ = pv[:, 0].max(), pv[:, 1].max()
+print("elements per region:",
+      {r: int((region == r).sum()) for r in np.unique(region)})
+
+ZONE = {1: ("Base soil", "#e3cfae"),
+        2: ("Bioswale zone", "#cfe2bf"),
+        3: ("Storage zone", "#f2e6d2")}
+WATER = "#2a6fdb"
+
+fig_w = WIDTH_MM / 25.4
+fig, ax = plt.subplots(figsize=(fig_w, 1.25 * fig_w))
+
+tri = mtri.Triangulation(xy[:, 0], xy[:, 1], tris)
+ax.tripcolor(tri, facecolors=region, vmin=0.5, vmax=3.5,
+             cmap=matplotlib.colors.ListedColormap([ZONE[r][1] for r in (1, 2, 3)]),
+             edgecolors="face", linewidth=0.3, zorder=1)
+
+# PSLG segments: outer boundary, zone interfaces and the drain wall
+for (a, b), m in zip(seg, seg_mark):
+    ax.plot(pv[[a, b], 0], pv[[a, b], 1],
+            color=WATER if m == DRAIN else "k",
+            lw=1.2 if m == DRAIN else 0.7, zorder=3, solid_capstyle="round")
+# the drain is the PSLG hole: left unfilled (white)
+drain_v = pv[np.unique(seg[seg_mark == DRAIN])]
+centre = holes[0]
+order = np.argsort(np.arctan2(drain_v[:, 1] - centre[1], drain_v[:, 0] - centre[0]))
+ax.fill(drain_v[order, 0], drain_v[order, 1], color="white", zorder=2)
+
+# Ponded strip on the top boundary, L/3 <= x <= 2L/3 (Raingarden_p.py,
+# tranport_p.py): psi = 0.5 m, c = 1
+x0, x1 = LX / 3.0, 2.0 * LX / 3.0
+ax.fill([x0, x1, x1, x0], [LZ, LZ, LZ + 0.12, LZ + 0.12], color="#a9cdf2",
+        zorder=2, lw=0)
+ax.plot([x0, x1], [LZ, LZ], color=WATER, lw=2.0, zorder=4, solid_capstyle="butt")
+ax.text(0.5 * (x0 + x1), LZ + 0.2, "Ponding: ψ = 0.5 m, c = 1",
+        ha="center", va="bottom", color=WATER)
+
+# zone names in the open part of each zone, clear of the drain
+ax.text(0.5 * LX, 4.15, ZONE[3][0], ha="center", va="center")
+ax.text(0.5 * LX, 2.55, ZONE[2][0], ha="center", va="center")
+ax.text(0.5 * LX, 0.65, ZONE[1][0], ha="center", va="center")
+ax.text(0.5 * LX, 0.3, "Initial: ψ = −3 m, c = 0", ha="center", va="center")
+
+# drain label outside the domain, with a leader to the wall
+ax.annotate("Drain:\nseepage face", xy=(centre[0] + 0.25, centre[1]),
+            xytext=(LX + 0.12, centre[1]), ha="left", va="center", color=WATER,
+            arrowprops=dict(arrowstyle="-", color=WATER, lw=0.6),
+            annotation_clip=False)
+ax.text(LX + 0.12, 4.0, "Other\nboundaries:\nno flow", ha="left", va="center",
+        clip_on=False)
+
+ax.set_xlim(0.0, LX)
+ax.set_ylim(0.0, LZ + 0.75)
+ax.set_aspect("equal")
+ax.set_xticks(np.arange(0.0, LX + 0.01, 1.0))
+ax.set_yticks(np.arange(0.0, LZ + 0.01, 1.0))
+ax.set_xlabel("x (m)")
+ax.set_ylabel("z (m)")
+for s in ("top", "right"):
+    ax.spines[s].set_visible(False)
+ax.spines["left"].set_bounds(0.0, LZ)
+
+fig.savefig(OUT_PATH, dpi=600, bbox_inches="tight", pad_inches=0.02)
+print(f"wrote {OUT_PATH}")

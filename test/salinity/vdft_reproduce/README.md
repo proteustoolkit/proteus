@@ -105,11 +105,12 @@ Each run directory's `simmons_so.log` holds the solute created by the coupling
 ## 6. Bioswale (`bioswale/`)
 
 ```bash
-BIOSWALE_DENSITY=1 ./run.sh run_final     # density-coupled, drain wall impermeable
+./run.sh run_final     # density-coupled, seepage face on the drain wall (the manuscript's run)
 ```
 
-`BIOSWALE_DENSITY=0` runs the passive tracer, `BIOSWALE_SEEPAGE=1` makes the drain
-wall a seepage face, `BIOSWALE_NNX` sets the mesh (21), `BIOSWALE_NP` the ranks (2).
+`run.sh` sets `BIOSWALE_DENSITY=1` and `BIOSWALE_SEEPAGE=1` unless given:
+`BIOSWALE_DENSITY=0` runs the passive tracer, `BIOSWALE_SEEPAGE=0` makes the drain
+wall impermeable, `BIOSWALE_NNX` sets the mesh (21), `BIOSWALE_NP` the ranks (2).
 
 ## 7. Levee (`levee_density/`)
 
