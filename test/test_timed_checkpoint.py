@@ -152,7 +152,7 @@ def test_the_checkpoint_cost_is_estimated_until_a_state_write_has_been_timed(tmp
     of a checkpoint then includes an estimate (the frame's time times state bytes over dof bytes), so the margin
     is not frame-only. After --state-every writes it is the measured time."""
     from proteus.WallLimit import WallClock  # noqa: F401  (the margin itself is tested in test_wall_limit)
-    out = _run(tmp_path, FT=0.05, DTOUT=0.01, WALLSTEPS=3)
+    out = _run(tmp_path, FT=0.05, DTOUT=0.01, WALLSTEPS=3, WALLCOST="measured")
     assert out.returncode == 75
     cost = [float(m.group(1)) for m in re.finditer(r"and a checkpoint \(([\d.]+) s\)",
                                                     open(os.path.join(str(tmp_path), LOG)).read())]
@@ -167,16 +167,19 @@ def test_a_malformed_wall_limit_stops_parun_before_it_runs(tmp_path):
 FT, DTOUT = 0.1, 0.02
 
 
-def _legs(tmp_path, stop_after, ranks=1):
+def _legs(tmp_path, stop_after, ranks=1, **slow):
     """The uninterrupted run, and the same run in two legs: the first stopped by its wall limit after
     ``stop_after`` accepted system steps (exit status 75), the second a hot start of its archive to the end."""
     full = _run(tmp_path / "full", ranks=ranks, FT=FT, DTOUT=DTOUT)
     assert full.returncode == 0, full.stderr[-2000:]
-    first = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, WALLSTEPS=stop_after)
+    first = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, WALLSTEPS=stop_after, **slow)
     assert first.returncode == 75, first.stdout[-1500:] + first.stderr[-1500:]
+    # stopped after exactly the steps asked for, whatever the machine's speed (a hosted runner's archive writes
+    # made the measured checkpoint cost exceed the half step of slack, and the run stopped a step early)
+    assert len(_steps(tmp_path / "legs")) == stop_after
     # the next leg writes the same log file
     first.log = open(os.path.join(str(tmp_path / "legs"), LOG)).read()
-    second = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, HOTSTART="inf")
+    second = _run(tmp_path / "legs", ranks=ranks, FT=FT, DTOUT=DTOUT, HOTSTART="inf", **slow)
     assert second.returncode == 0, second.stderr[-2000:]
     assert not [l for l in second.stderr.splitlines() if "RuntimeWarning: hot start" in l], second.stderr[-3000:]
     return full, first, second
@@ -228,3 +231,23 @@ def test_the_next_leg_on_two_ranks_is_the_uninterrupted_run(tmp_path, where):
     stop_after = _stop_steps(tmp_path)[where]
     _legs(tmp_path, stop_after, ranks=2)
     _same_run(tmp_path, 2, stop_after)
+
+
+def test_the_next_leg_is_exact_however_slow_the_archive_is(tmp_path):
+    """Every archive write takes a second longer (a slow machine): the stop, driven by the test clock, is still
+    after the same step, and the continuation is still the uninterrupted run. Before the helper's clock fixed
+    the checkpoint cost, the measured cost (frame time x state/dof bytes: 216 s here) passed the half step of slack
+    and the run stopped at step 2 of 7, so the next leg repeated steps (hosted runners, proteustoolkit/proteus#1356)."""
+    stop_after = _stop_steps(tmp_path)["mid-interval"]
+    _legs(tmp_path, stop_after, SLOWARCHIVE=1.0)
+    _same_run(tmp_path, 1, stop_after)
+
+
+def test_a_checkpoint_that_costs_more_than_the_slack_stops_a_step_earlier(tmp_path):
+    """The margin is the longest step + the checkpoint's cost. Steps are one clock second each and the limit is
+    5.5 s: at no cost the run stops after 5 steps (5 + 1 > 5.5); with a checkpoint costing 1.5 s it stops after 4
+    (3 + 1 + 1.5 = 5.5 fits, 4 + 1 + 1.5 = 6.5 does not)."""
+    free = _run(tmp_path / "free", FT=FT, DTOUT=DTOUT, WALLSTEPS=5)
+    costly = _run(tmp_path / "costly", FT=FT, DTOUT=DTOUT, WALLSTEPS=5, WALLCOST=1.5)
+    assert free.returncode == costly.returncode == 75, costly.stderr[-1500:]
+    assert len(_steps(tmp_path / "free")) == 5 and len(_steps(tmp_path / "costly")) == 4
