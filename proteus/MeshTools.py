@@ -3954,7 +3954,7 @@ class TetrahedralMesh(Mesh):
         name the physical groups: "Cell Sets" are the element material types, "Face Sets" the
         element boundary tags (a box made with ``-dm_plex_separate_marker 0`` has only "marker"),
         "Vertex Sets" the node material types. An exterior face in no set is untagged, 0; a node
-        in no set takes the tag of the first tagged exterior face it is on (as msh2simplex flags
+        in no set takes the tag of the first tagged exterior face it is on (as the gmsh converter tags
         nodes from the boundary triangles). The mesh is then built as a ymf mesh is
         (generateFromArrays), so it partitions like any other.
 
@@ -8803,145 +8803,6 @@ def setMeshOptions(domain, meshOptions):
     return meshOptions
 
 
-def msh2simplex(fileprefix, nd):
-    """
-    Converts a .msh file (Gmsh) to .ele .edge .node files (triangle).
-    (!) Works only with triangle elements in 2D and tetrahedral elements in 3D.
-
-    Deprecated: proteus reads meshes as ymf, and ``ymf-import-gmsh`` converts a gmsh
-    ``.msh`` to one (:func:`gmshYmfMesh`), bit-equal to this function and the triangle/tetgen
-    readers. This path remains for ``-F`` partitioned reads of the triangle/tetgen files and
-    where ``ymf-import-gmsh`` is not installed.
-
-    Parameters
-    ----------
-    fileprefix: str
-        prefix of the .msh file (e.g. 'mesh' if file called 'mesh.msh')
-
-    """
-    warnings.warn("msh2simplex is deprecated: convert the .msh with ymf-import-gmsh "
-                  "(ymf-import-gmsh %s.msh), which proteus reads as a ymf mesh" % (fileprefix,),
-                  DeprecationWarning, stacklevel=2)
-    assert nd == 2 or nd == 3, 'nd must be 2 or 3'
-    mshfile = open(fileprefix+'.msh', 'r')
-    nodes = []
-    edges_msh = []
-    triangles = []
-    tetrahedra = []
-    tetrahedron_nb = 0
-    triangle_nb = 0
-    edge_nb = 0
-    switch = None
-    switch_count = -1
-    logEvent('msh2simplex: getting nodes and elements')
-    for i, line in enumerate(mshfile):
-        if 'Nodes' in line:
-            switch = 'nodes'
-            switch_count = -1
-        if 'Elements' in line:
-            switch = 'elements'
-            switch_count = -1
-        if switch == 'nodes' and switch_count >= 0:
-            words = line.split()
-            if switch_count == 0:
-                node_nb = int(words[0])
-            else:
-                nid = int(words[0])
-                if nd == 2:
-                    x, y, z = float(words[1]), float(words[2]), 0
-                elif nd == 3:
-                    x, y, z = float(words[1]), float(words[2]), float(words[3])
-                nodes += [[nid, x, y, z, 0]]
-        if switch == 'elements' and switch_count >= 0:
-            words = line.split()
-            if switch_count == 0:
-                el_nb = int(words[0])
-            else:
-                el_id = int(words[0])
-                el_type = int(words[1])
-                nb_tags = int(words[2])
-                if nb_tags == 2:
-                    flag = int(words[3])
-                else:
-                    flag = 0
-                s = 3+nb_tags # starting index on words for element info
-                if el_type == 1: # segment
-                    edge_nb += 1
-                    edges_msh += [[edge_nb, int(words[s]), int(words[s+1]), flag]]
-                elif el_type == 2: # triangle
-                    triangle_nb += 1
-                    triangles += [[triangle_nb, int(words[s]), int(words[s+1]), int(words[s+2]), flag]]
-                    # update nodes flags
-                    if nd == 3:
-                        for i in range(3):
-                            if nodes[int(words[s+i])-1][4] == 0:
-                                nodes[int(words[s+i])-1][4] = flag
-                elif el_type == 4: # tetrahedron 
-                    tetrahedron_nb += 1
-                    tetrahedra += [[tetrahedron_nb, int(words[s]), int(words[s+1]), int(words[s+2]), int(words[s+3]), flag]]
-                elif el_type == 15: # node
-                    nodes[el_id-1][4] = flag
-        switch_count += 1
-    mshfile.close()
-
-    # construct ALL edges with flags and add flags to nodes
-    edges_dict = {}
-    triangles = np.array(triangles)
-    edge_nb = 0
-    edges = []
-
-    logEvent('msh2simplex: constructing edges')
-    for triangle in triangles[:,1:4]:  # take only vertices index
-        for i in range(len(triangle)):
-            edge = Edge(edgeNumber=edge_nb, nodes=[triangle[i-1], triangle[i]])
-            edge_exist = bool(edges_dict.get(edge.nodes))
-            if not edge_exist:
-                edge_nb += 1
-                edges_dict[edge.nodes] = edge
-                edges += [[edge_nb, edge.nodes[0], edge.nodes[1], 0]]
-    logEvent('msh2simplex: updating edges and nodes flags')
-    edges = np.array(edges)
-    for edge in edges_msh:
-        edge_nodes = [edge[1], edge[2]]
-        edge_nodes.sort()
-        edge_nodes = tuple(edge_nodes)
-        edge_class = edges_dict.get(edge_nodes)
-        edges[edge_class.N, 3] = edge[3]
-        # ! edge nodes are indexed from 1 with gmsh
-        if nodes[edge[1]-1][-1] == 0:  # update node flags
-            nodes[edge[1]-1][-1] = edge[3]
-        if nodes[edge[2]-1][-1] == 0:  # update node flags
-            nodes[edge[2]-1][-1] = edge[3]
-
-    if nd == 2:
-        logEvent('msh2simplex: writing .node .ele .edge files')
-    elif nd == 3:
-        logEvent('msh2simplex: writing .node .ele .edge .face files')
-    header = '{0:d} {1:d} 0 1'.format(node_nb, nd)
-
-    # %.17g: the coordinates as gmsh wrote them (%f kept six decimals, moving nodes by up to 5e-7)
-    if nd == 2:
-        nodes = np.array(nodes)
-        nodes = np.delete(nodes, 3, 1)
-        fmt = ['%d', '%.17g', '%.17g', '%d']
-    elif nd == 3:
-       fmt = ['%d', '%.17g', '%.17g', '%.17g', '%d']
-    np.savetxt(fileprefix+'.node', nodes, fmt=fmt, header=header, comments='')
-
-    header = '{0:d} 1'.format(edge_nb)
-    np.savetxt(fileprefix+'.edge', edges, fmt='%d', header=header, comments='')
-
-    if nd == 2:
-        header = '{0:d} 3 1'.format(triangle_nb)
-        np.savetxt(fileprefix+'.ele', triangles, fmt='%d', header=header, comments='')
-    elif nd == 3:
-        header = '{0:d} 3 1'.format(triangle_nb)
-        np.savetxt(fileprefix+'.face', triangles, fmt='%d', header=header, comments='')
-        header = '{0:d} 4 1'.format(tetrahedron_nb)
-        np.savetxt(fileprefix+'.ele', tetrahedra, fmt='%d', header=header, comments='')
-
-    logEvent('msh2simplex: finished converting .msh to simplex files')
-
 def generateMesh(physics,numerics,generatePartitionedMeshFromFiles=False,restartArchive=None):
     """The multilevel mesh of a run: generated, read, and partitioned among the ranks.
 
@@ -9142,31 +9003,22 @@ def _gmshYmfCurrent(prefix):
                for f in files)
 
 def gmshYmfMesh(prefix):
-    """Make ``prefix.ymf`` and ``prefix.h5`` the conversion of ``prefix.msh``, and say whether they are.
+    """Make ``prefix.ymf`` and ``prefix.h5`` the conversion of ``prefix.msh``.
 
-    A current ymf mesh (:func:`_gmshYmfCurrent`) is kept. Otherwise ``ymf-import-gmsh`` converts
-    the ``.msh`` if it is installed. Returns False, and writes nothing, if neither holds: the caller
-    falls back to the deprecated :func:`msh2simplex`.
+    A current ymf mesh (:func:`_gmshYmfCurrent`) is kept, and needs no converter. Otherwise
+    ``ymf-import-gmsh`` converts the ``.msh``; without it this raises, naming the package.
     """
     if _gmshYmfCurrent(prefix):
-        return True
+        return
     try:
         from ymf_import_gmsh import convert
-    except ImportError:
-        return False
+    except ImportError as error:
+        raise ImportError(
+            "reading %s.msh needs the ymf-import-gmsh package, which converts a gmsh mesh to the ymf "
+            "mesh proteus reads, and it is not installed: pip install "
+            "git+https://github.com/proteustoolkit/ymf-import-gmsh.git" % (prefix,)) from error
     logEvent("Converting %s.msh to the ymf mesh %s.ymf with ymf-import-gmsh" % (prefix, prefix))
     convert(prefix)
-    return True
-
-def _gmshYmfAvailable(prefix):
-    """Whether a gmsh domain's ``.msh`` can be read as ymf: a current ymf mesh, or the converter"""
-    if _gmshYmfCurrent(prefix):
-        return True
-    try:
-        import ymf_import_gmsh
-    except ImportError:
-        return False
-    return True
 
 def meshFiles(domain, meshOptions):
     """What :func:`writeMeshFiles` would do for this domain, or None.
@@ -9182,9 +9034,9 @@ def meshFiles(domain, meshOptions):
         if domainMeshOptions.use_gmsh is True:
             prefix = domain.geofile
             return {"generator": "gmsh", "prefix": prefix,
-                    "command": "gmsh {0}.geo -2 -format msh2; msh2simplex nd=2".format(prefix),
+                    "command": "gmsh {0}.geo -2 -format msh2; ymf-import-gmsh {0}.msh".format(prefix),
                     "inputs": [prefix + ".geo"],
-                    "outputs": [prefix + e for e in (".msh", ".ele", ".node", ".edge")],
+                    "outputs": [prefix + e for e in (".msh", ".ymf", ".h5")],
                     "optional": []}
         prefix = domain.polyfile
         return {"generator": "triangle", "prefix": prefix,
@@ -9196,10 +9048,10 @@ def meshFiles(domain, meshOptions):
         if domainMeshOptions.use_gmsh is True:
             prefix = domain.geofile
             return {"generator": "gmsh", "prefix": prefix,
-                    "command": "gmsh {0}.geo -3 -format msh2; msh2simplex nd=3; tetgen -Vfeen {0}.ele".format(prefix),
+                    "command": "gmsh {0}.geo -3 -format msh2; ymf-import-gmsh {0}.msh".format(prefix),
                     "inputs": [prefix + ".geo"],
-                    "outputs": [prefix + e for e in (".msh", ".ele", ".node", ".face")],
-                    "optional": [prefix + e for e in (".neigh", ".edge")]}
+                    "outputs": [prefix + e for e in (".msh", ".ymf", ".h5")],
+                    "optional": []}
         prefix = domain.polyfile
         return {"generator": "tetgen", "prefix": prefix,
                 "command": "tetgen -{0} {1}.poly".format(meshOptions.triangleOptions, prefix),
@@ -9221,7 +9073,7 @@ def _runMesher(cmd):
                            % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
     return result.stdout
 
-def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed, ymf=False):
+def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
     """:func:`writeMeshFiles` on rank 0 when ``needed`` there; a failure raises on every rank.
 
     The other ranks go on to read rank 0's files, so an exception on rank 0
@@ -9230,7 +9082,7 @@ def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed, ymf=False):
     failure = None
     if comm.isMaster() and needed:
         try:
-            writeMeshFiles(domain, meshOptions, **({'ymf': True} if ymf else {}))
+            writeMeshFiles(domain, meshOptions)
         except Exception as error:
             failure = error
     message = comm.comm.tompi4py().bcast(
@@ -9240,12 +9092,12 @@ def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed, ymf=False):
     if message is not None:
         raise RuntimeError("mesh generation failed on rank 0: " + message)
 
-def writeMeshFiles(domain, meshOptions, ymf=False):
+def writeMeshFiles(domain, meshOptions):
     """Run the mesh generator for a PSLG or PLC domain.
 
-    With ``ymf`` a ``use_gmsh`` domain's ``.msh`` is made a ymf mesh (:func:`gmshYmfMesh`) when it can
-    be, and no triangle/tetgen files are written (no msh2simplex, no tetgen run); otherwise, and for
-    the other generators, the files below.
+    A ``use_gmsh`` domain's ``.msh`` (run through gmsh if absent) is made a ymf mesh,
+    ``prefix.ymf`` and ``prefix.h5`` (:func:`gmshYmfMesh`); no triangle or tetgen files are written.
+    The other generators write the files below.
 
     The serial step of :func:`_generateMesh`, which runs it on rank 0 and
     then reads the files collectively. Writes the files
@@ -9261,13 +9113,11 @@ def writeMeshFiles(domain, meshOptions, ymf=False):
                 gmsh_cmd = "time gmsh {0:s} -v 10 -2 -o {1:s} -format msh2".format(fileprefix+".geo", fileprefix+".msh")
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
                 run(gmsh_cmd, shell=True, check=True)
-                logEvent("Done running gmsh; converting to triangle")
+                logEvent("Done running gmsh; converting to the ymf mesh")
             else:
-                logEvent("Using "+fileprefix+".msh to convert to triangle")
-            if ymf and gmshYmfMesh(fileprefix):
-                return
-            # convert gmsh to triangle format
-            msh2simplex(fileprefix=fileprefix, nd=2)
+                logEvent("Using "+fileprefix+".msh to make the ymf mesh")
+            gmshYmfMesh(fileprefix)
+            return
         else:
             fileprefix = domain.polyfile
             logEvent("Calling Triangle to generate 2D mesh for "+name)
@@ -9289,13 +9139,11 @@ def writeMeshFiles(domain, meshOptions, ymf=False):
                 gmsh_cmd = "time gmsh {0:s} -v 10 -3 -o {1:s} -format msh2".format(fileprefix+'.geo', domain.geofile+'.msh')
                 logEvent("Calling gmsh on rank 0 with command %s" % (gmsh_cmd,))
                 run(gmsh_cmd, shell=True, check=True)
-                logEvent("Done running gmsh; converting to tetgen")
+                logEvent("Done running gmsh; converting to the ymf mesh")
             else:
-                logEvent("Using "+domain.geofile+".msh to convert to tetgen")
-            if ymf and gmshYmfMesh(fileprefix):
-                return
-            msh2simplex(fileprefix=fileprefix, nd=3)
-            logEvent(_runMesher("tetgen -Vfeen {0:s}.ele".format(fileprefix)))
+                logEvent("Using "+domain.geofile+".msh to make the ymf mesh")
+            gmshYmfMesh(fileprefix)
+            return
         else:
             logEvent("Running tetgen to generate 3D mesh for "+name, level=1)
             run("rm -f {0:s}.ele".format(fileprefix), shell=True)
@@ -9652,21 +9500,14 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
     elif isinstance(domain, Domain.PlanarStraightLineGraphDomain):
         fileprefix = None
         # run mesher
-        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh) unless the triangle files are asked for
-        # (-F) or neither the ymf mesh nor the converter is there: then msh2simplex, deprecated
+        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh), -F or not: with -F the ymf mesh is
+        # read whole on every rank and partitioned like any other, not read piecewise from files
         gmshYmf = False
         if domainMeshOptions.use_gmsh is True:
             fileprefix = domain.geofile
-            ymf = not generatePartitionedMeshFromFiles
             _writeMeshFilesOnMaster(comm, domain, meshOptions,
-                                    comm.isMaster() and (
-                                        (ymf and not _gmshYmfCurrent(fileprefix) and _gmshYmfAvailable(fileprefix)) or
-                                        not ((ymf and _gmshYmfCurrent(fileprefix)) or
-                                             (os.path.exists(fileprefix+".ele") and
-                                              os.path.exists(fileprefix+".node") and
-                                              os.path.exists(fileprefix+".edge")))),
-                                    ymf=ymf)
-            gmshYmf = ymf and _gmshYmfCurrent(fileprefix)
+                                    comm.isMaster() and not _gmshYmfCurrent(fileprefix))
+            gmshYmf = True
         else:
             fileprefix = domain.polyfile
             _writeMeshFilesOnMaster(comm, domain, meshOptions, comm.isMaster() and meshOptions.genMesh)
@@ -9702,17 +9543,17 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
             fileprefix = domain.geofile
         else:
             fileprefix = domain.polyfile
-        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh), with no tetgen run, unless the tetgen
-        # files are asked for (-F) or neither the ymf mesh nor the converter is there (msh2simplex, deprecated)
-        ymf = domainMeshOptions.use_gmsh is True and not generatePartitionedMeshFromFiles
-        _writeMeshFilesOnMaster(comm, domain, meshOptions,
-                                comm.rank() == 0 and (
-                                    (ymf and not _gmshYmfCurrent(fileprefix) and _gmshYmfAvailable(fileprefix)) or
-                                    (not (ymf and _gmshYmfCurrent(fileprefix)) and (meshOptions.genMesh or (
-                                        not (os.path.exists(fileprefix+".ele") and
-                                             os.path.exists(fileprefix+".node") and
-                                             os.path.exists(fileprefix+".face")))))),
-                                ymf=ymf)
+        # a gmsh .msh is read as a ymf mesh (ymf-import-gmsh), with no tetgen run, -F or not (with -F
+        # it is read whole on every rank and partitioned like any other)
+        ymf = domainMeshOptions.use_gmsh is True
+        if ymf:
+            needed = comm.rank() == 0 and not _gmshYmfCurrent(fileprefix)
+        else:
+            needed = comm.rank() == 0 and (meshOptions.genMesh or (
+                not (os.path.exists(fileprefix+".ele") and
+                     os.path.exists(fileprefix+".node") and
+                     os.path.exists(fileprefix+".face"))))
+        _writeMeshFilesOnMaster(comm, domain, meshOptions, needed)
         comm.barrier()
         logEvent("Initializing mesh and MultilevelMesh")
         nbase = 1
@@ -9720,7 +9561,7 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
         mlMesh = MultilevelTetrahedralMesh(0, 0,0,skipInit=True,
                                            nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                            parallelPartitioningType=meshOptions.parallelPartitioningType)
-        if ymf and _gmshYmfCurrent(fileprefix):
+        if ymf:
             logEvent("Reading coarse mesh from the ymf mesh %s.ymf" % (fileprefix,))
             mesh.generateFromYmfFile(fileprefix)
             mlMesh.generateFromExistingCoarseMesh(mesh, meshOptions.nLevels,

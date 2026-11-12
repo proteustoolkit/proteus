@@ -18,7 +18,15 @@ settings (paper=True in the driver; qOrder 6 for p=1, 8 for p=2):
     exact       test=1.0, piecewise-linear solution, refinement=1
 
 plus table1 with paper=False, which keeps the earlier driver defaults (no SCIFEM terms, the
-one-sided edge correction on every Gamma_f-cut edge) under test.
+one-sided edge correction on every Gamma_f-cut edge) under test, and the first rows of the
+unstructured and fitted-mesh columns of Table 1:
+
+    table1_unstructured  test=2.0, unstructured=True, refinement=1, mesh meshes/unstructured_r1
+    table1_fitted        ladr_fitted_2d_p.py, test=2.0, refinement=1, mesh meshes/fitted_r1
+
+Triangle can make a different mesh from the same .poly and options on another platform (114
+instead of 118 nodes for fitted_r1), so these two read the meshes behind the manuscript from
+test/IFEM/meshes (driver option meshFile) and check the node count.
 
 To regenerate the saved values after an intentional change, from the repository root:
 
@@ -41,6 +49,7 @@ Profiling.verbose = False
 
 CI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "ci")
 COMPARISON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comparison_files")
+MESH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "meshes")
 
 CASES = {
     "table1":        "paper=True test=2.0 nCells=10",
@@ -49,7 +58,17 @@ CASES = {
     "table4":        "paper=True test=3.0 refinement=1",
     "exact":         "paper=True test=1.0 refinement=1",
     "table1_legacy": "paper=False test=2.0 nCells=10",
+    "table1_unstructured": "paper=True test=2.0 unstructured=True refinement=1 meshFile='{0}'".format(
+        os.path.join(MESH_DIR, "unstructured_r1")),
+    "table1_fitted": "test=2.0 refinement=1 meshFile='{0}'".format(os.path.join(MESH_DIR, "fitted_r1")),
 }
+
+# (p module, n module); every other case runs the unfitted driver
+DRIVERS = {"table1_fitted": ("ladr_fitted_2d_p", "ladr_fitted_2d_n")}
+UNFITTED = ("ladr_3p_2d_p", "ladr_3p_2d_c0pk_n")
+
+# node count of each pinned mesh, so a case that ran triangle instead of reading it fails
+MESH_NODES = {"table1_unstructured": 125, "table1_fitted": 118}
 
 # Same tolerances as test_ifem.py: a change in the formulation moves these by percent.
 RTOL = 1.0e-8
@@ -63,17 +82,22 @@ def case_id(name, order):
 
 
 def run_case(opts, name, order):
-    """Solve one case; return array([L2, Linfty])."""
-    Context.contextOptionsString = "{0} pOrder={1} unstructured=False".format(CASES[name], order)
+    """Solve one case; return (array([L2, Linfty]), number of mesh nodes)."""
+    pname, nname = DRIVERS.get(name, UNFITTED)
+    structured = "" if (name in DRIVERS or "unstructured=" in CASES[name]) else " unstructured=False"
+    Context.contextOptionsString = "{0} pOrder={1}{2}".format(CASES[name], order, structured)
     try:
-        p = defaults.load_physics("ladr_3p_2d_p", CI_DIR)
-        n = defaults.load_numerics("ladr_3p_2d_c0pk_n", CI_DIR)
+        p = defaults.load_physics(pname, CI_DIR)
+        # The n module's own "from <p module> import *" is an ordinary import, cached in
+        # sys.modules with the first case's options; drop it so it re-executes with this case's.
+        sys.modules.pop(pname, None)
+        n = defaults.load_numerics(nname, CI_DIR)
     finally:
         Context.contextOptionsString = None
 
     so = defaults.System_base()
     so.name = p.name
-    so.pnList = [("ladr_3p_2d_p", "ladr_3p_2d_c0pk_n")]
+    so.pnList = [(pname, nname)]
     so.sList = [default_s]
     for attr in ("tnList", "systemStepControllerType", "systemStepExact", "archiveFlag"):
         if hasattr(n, attr):
@@ -83,7 +107,7 @@ def run_case(opts, name, order):
     ns.calculateSolution("ifem3p_" + case_id(name, order))
 
     lm = ns.modelList[0].levelModelList[-1]
-    return np.array([float(lm.L2_error[0] ** 0.5), float(lm.Linfty_error[0])])
+    return np.array([float(lm.L2_error[0] ** 0.5), float(lm.Linfty_error[0])]), int(lm.mesh.nNodes_global)
 
 
 PARAMS = [(c, o) for c in CASES for o in (1, 2)]
@@ -93,8 +117,11 @@ PARAMS = [(c, o) for c in CASES for o in (1, 2)]
 def test_ifem_3p(opts, name, order):
     """L2/Linfty errors must match the saved reference."""
     cid = case_id(name, order)
-    actual = run_case(opts, name, order)
+    actual, nodes = run_case(opts, name, order)
     assert np.all(np.isfinite(actual)), "{0}: non-finite error {1}".format(cid, actual)
+    if name in MESH_NODES:
+        assert nodes == MESH_NODES[name], "{0}: {1} nodes; the pinned mesh has {2}".format(
+            cid, nodes, MESH_NODES[name])
 
     expected_path = os.path.join(COMPARISON_DIR, "ifem3p_" + cid + ".csv")
     if SAVE:

@@ -678,7 +678,6 @@ def test_the_two_phase_machinery_maps_direct_and_iterative(dambreak, word, kind)
     ({"linear_solver": "mumps"}, "linear_solver mumps is a package the deck machinery does not select"),
     ({"linear_solver": "umfpack"}, "linear_solver umfpack is a package the deck machinery does not select"),
     ({"linear_solver": "cholmod"}, "linear_solver 'cholmod'; ymf knows"),
-    ({"linear_solver": "iterative", "petsc_options": {"ksp_type": "cg"}}, "petsc_options are not read"),
 ])
 def test_a_linear_solver_the_two_phase_machinery_cannot_honour_is_refused_before_anything_runs(dambreak, solver, message):
     from proteus.DispatchRun import RealizeError, precheck
@@ -709,3 +708,89 @@ def test_SWFlow_refuses_a_linear_solver_its_n_module_would_override(lake, word, 
     else:
         with pytest.raises(RealizeError, match="asks for a .* solve, and SWFlow's n module solves with"):
             precheck(doc, found, split, ranks=ranks)
+
+
+# ---- the projection scheme as a run (C5 step 4) ------------------------------------------------------------------
+
+def test_the_projection_scheme_dam_break_passes_the_precheck():
+    from proteus.DispatchRun import precheck
+    from ymf.symbolic.split import split_problem
+    doc = _spec("dambreak_short_projection.ymf")
+    precheck(doc, dispatch(doc, "clsvof_projection"), split_problem(doc, "clsvof_projection"), ranks=1)
+
+
+@pytest.mark.parametrize("name, sigma, accepted", [
+    ("clsvof_projection", 0.0728, True), ("clsvof_projection", 0.0, True),
+    ("level_set_five", 0.0728, False), ("level_set_five", 0.0, True),
+])
+def test_a_surface_tension_is_refused_where_the_flow_solver_computes_none(dambreak, name, sigma, accepted):
+    """RANS3PF's kernels read σ and RANS2P's do not: a nonzero σ with RANS2P would run without the force the spec
+    states, so it is refused. Without a coefficient of role surface_tension there is none (C42 D6)."""
+    from proteus.DispatchRun import RealizeError, _two_phase_values
+    doc = copy.deepcopy(dambreak)
+    doc["model"]["strong_form"]["coefficients"]["σ"] = {"value": sigma, "role": "surface_tension", "units": "N/m"}
+    found = dispatch(doc, name)
+    if accepted:
+        assert _two_phase_values(doc, 2, found)["surface_tension"] == sigma
+    else:
+        with pytest.raises(RealizeError, match="surface tension σ = 0.0728, and RANS2P computes none"):
+            _two_phase_values(doc, 2, found)
+    assert _two_phase_values(dambreak, 2, dispatch(dambreak, name))["surface_tension"] == 0.0
+
+
+# ---- per-model petsc_options (C5 step 4) --------------------------------------------------------------------------
+
+def _options_doc(name="level_set_five", linear_solver="iterative", options=None, sub_options=None):
+    doc = copy.deepcopy(_spec("dambreak_short.ymf" if name == "level_set_five" else "dambreak_short_clsvof.ymf"))
+    entry = _entry(doc, name)
+    entry["solver"] = dict(entry["solver"], linear_solver=linear_solver)
+    if options:
+        entry["solver"]["petsc_options"] = dict(options)
+    for sub, opts in (sub_options or {}).items():
+        target = next(s for s in entry["subproblems"] if s["name"] == sub)
+        target["solver"] = dict(target.get("solver") or {}, petsc_options=dict(opts))
+    return doc
+
+
+def test_each_models_petsc_options_reach_its_solver_prefix(tmp_path):
+    """The discretization's options reach every model and a sub-problem's its model alone: nothing the spec states is
+    dropped."""
+    from petsc4py import PETSc
+    from proteus import DispatchRun
+    from ymf.symbolic.split import split_problem
+    doc = _options_doc(options={"ksp_type": "cg"}, sub_options={"vof": {"pc_type": "jacobi", "ksp_rtol": "1e-9"}})
+    found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
+    assert DispatchRun.model_petsc_options(found, split) == {
+        "flow": {"ksp_type": "cg"}, "vof": {"ksp_type": "cg", "pc_type": "jacobi", "ksp_rtol": "1e-9"},
+        "ncls": {"ksp_type": "cg"}, "rdls": {"ksp_type": "cg"}, "mcorr": {"ksp_type": "cg"}}
+    before = PETSc.Options().getAll().get("ksp_type")        # another test in the process may have left one
+    with DispatchRun.petsc_options_restored():
+        realized = DispatchRun.realize(doc, found, split, {"h": 0.2576}, "opts", str(tmp_path), 1)
+        have = PETSc.Options().getAll()
+        assert have["rans2p_ksp_type"] == "cg" and have["vof_ksp_type"] == "cg" and have["mcorr_ksp_type"] == "cg"
+        assert have["vof_pc_type"] == "jacobi" and have["vof_ksp_rtol"] == "1e-9"
+        assert have.get("ncls_pc_type") != "jacobi" and have.get("rans2p_pc_type") != "jacobi"    # the vof sub-problem's alone
+        assert have.get("ksp_type") == before                # nothing leaked unprefixed
+    assert realized.record["system"]["petsc_options"]["vof"] == {
+        "vof_ksp_type": "cg", "vof_pc_type": "jacobi", "vof_ksp_rtol": "1e-9"}
+
+
+def test_options_for_a_sub_problem_the_discretization_does_not_have_are_refused_by_name():
+    from proteus.Dispatch import DispatchError
+    doc = _options_doc("level_set_clsvof")
+    _entry(doc, "level_set_clsvof")["subproblems"].append({"name": "vof", "solver": {"petsc_options": {"ksp_type": "cg"}}})
+    with pytest.raises(DispatchError, match="sub-problem vof .* has no role the table knows"):
+        dispatch(doc, "level_set_clsvof")
+
+
+def test_petsc_options_for_a_serial_direct_solve_are_warned_as_unused_not_dropped():
+    from proteus.DispatchRun import _check_petsc_options
+    from ymf.symbolic.split import split_problem
+    doc = _options_doc(linear_solver="direct", options={"ksp_type": "cg"})
+    found, split = dispatch(doc, "level_set_five"), split_problem(doc, "level_set_five")
+    entry = _entry(doc, "level_set_five")
+    with pytest.warns(RuntimeWarning, match="on one rank this discretization solves with LU"):
+        applied, unused = _check_petsc_options(found, split, entry, 1)
+    assert applied == {} and unused["flow"] == {"ksp_type": "cg"}
+    applied, unused = _check_petsc_options(found, split, entry, 2)    # SuperLU_DIST goes through PETSc: they are read
+    assert unused == {} and applied["flow"] == {"ksp_type": "cg"}
