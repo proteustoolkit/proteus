@@ -112,7 +112,11 @@ def _fields(archive, names=("p", "z")):
         y = f["nodesSpatial_Domain0"][:, 1]
         frames = sorted(int(k[len("p_t"):]) for k in f.keys()
                         if k.startswith("p_t") and k[len("p_t"):].isdigit())
-        fields = {name: {i: f["%s_t%d" % (name, i)][:] for i in frames}
+        # main's archiver names a derived scalar "Sg_t3", 1.9.x "Sg0_t3".
+        def key(name, i):
+            k = "%s_t%d" % (name, i)
+            return k if k in f else "%s_t%d" % (name.rstrip("0") or name, i)
+        fields = {name: {i: f[key(name, i)][:] for i in frames}
                   for name in names}
     return y, frames, fields
 
