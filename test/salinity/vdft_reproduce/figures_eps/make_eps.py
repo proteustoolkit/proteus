@@ -17,7 +17,7 @@ transparency, and matplotlib's own EPS writer turns translucent artists
 opaque (the levee overlays become white boxes over the sketch); pdftops
 flattens transparent regions into an image instead, and compresses images.
 
-Settings follow the Computational Geosciences artwork guidelines:
+Settings follow the target publisher's artwork guidelines:
 - Arial/Helvetica lettering.  Neither is installed here, so Liberation Sans
   (metric-compatible with Arial) is the fallback.
 - fonts embedded as TrueType, not Type 3.
