@@ -1,5 +1,6 @@
 #ifndef ADR_H
 #define ADR_H
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -1149,6 +1150,40 @@ namespace proteus
 			}
 		}
 
+		// Every cut-cell path below (the two-sided IFEM basis, the cut-face terms: Nitsche and ghost
+		// penalty, SCIFEM, the triply-cut edge correction, and the composite triply-cut fit) is written
+		// for triangles. assert() is compiled out (-DNDEBUG), so in 3D they would not stop, they would
+		// compute garbage. Refuse before any of it runs. The phase numbers are the C44 plan's.
+		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG)
+		{
+			if (nSpace == 2)
+				return;
+			std::string what;
+			int phase = 0;
+			auto need = [&](const char *name, int ph)
+			{
+				if (!what.empty())
+					what += "; ";
+				what += name;
+				phase = std::max(phase, ph);
+			};
+			if (embedded)
+				need("embeddedBoundary (Nitsche and ghost-penalty terms on cut faces, embedded-boundary quadrature)", 1);
+			if (robin)
+				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
+			if (immersed)
+				need("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2);
+			if (scifem_switch != 0.0 || scifem_penalty != 0.0)
+				need("immersedSCIFEM (consistency terms on cut faces)", 2);
+			if (PG)
+				need("PG (Petrov-Galerkin test with the IFEM basis)", 2);
+			if (embedded && immersed)
+				need("embeddedBoundary together with immersedBoundary (triply-cut elements: composite fit, edge correction)", 3);
+			if (!what.empty())
+				throw std::runtime_error("ADR: not implemented in " + std::to_string(nSpace) +
+										 "D (the cut-cell machinery is 2D only): " + what + ". Planned for C44 phase " +
+										 std::to_string(phase) + ". Plain ADR (no embedded or immersed boundary) runs in 3D.");
+		}
 		void calculateResidual(arguments_dict &args)
 		{
 			proteus::pyarray<double> &mesh_trial_ref = args.array<double>("mesh_trial_ref");
@@ -1222,6 +1257,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -3116,6 +3152,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -4046,6 +4083,11 @@ namespace proteus
 		if (nSpaceIn == 2 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 3 && nDOF_trial_elementIn == 6 &&
 			nDOF_test_elementIn == 6 && nQuadraturePoints_elementIn == 16 && nQuadraturePoints_elementBoundaryIn == 8)
 			return static_cast<cADR_base *>(new cADR<CompKernel<2, 3, 6, 6>, 2, 16, 3, 6, 6, 8>());
+		// 3D P2 on tetrahedra with the degree-5 (15-point) rule: ADR-only for the same reason, the
+		// shared ModelFactory has no P2 tetrahedron entry (commented out there).
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
 		if (nSpaceIn == 2)
 			return proteus::chooseAndAllocateDiscretization2D<cADR_base, cADR, CompKernel>(nSpaceIn,
 																						   nQuadraturePoints_elementIn,
@@ -4064,8 +4106,4 @@ namespace proteus
 																						 CompKernelFlag);
 	}
 } // proteus
-#endif		// 3D P2 on tetrahedra with the degree-5 (15-point) rule: ADR-only for the same reason, the
-		// shared ModelFactory has no P2 tetrahedron entry (commented out there).
-		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
-			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
-			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
+#endif

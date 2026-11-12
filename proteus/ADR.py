@@ -601,6 +601,37 @@ class Coefficients(TC_base):
                 evaluateAtPoints(self.fOfX[ci], c['x'], c[('r',ci)], -1.0)
                 evaluateAtPoints(self.aOfX[ci], c['x'], c[('a',ci,ci)])
 
+def _requireSupportedDimension(c, nSpace):
+    """Refuse a cut-cell feature in any dimension but 2.
+
+    The two-sided IFEM basis, the cut-face terms (Nitsche, ghost penalty, SCIFEM, the triply-cut edge
+    correction) and the composite triply-cut fit are triangle-only, and ADR.h's asserts are compiled out
+    (-DNDEBUG), so in 3D they would compute garbage, not stop. The C++ kernel makes the same check
+    (ADR.h, requireSupportedDimension); this one fails at setup with the same message. The phase numbers
+    are the C44 plan's (PROTEUS_CAMPAIGN_ROSTER.md).
+    """
+    if nSpace == 2:
+        return
+    needs = []
+    if c.embeddedBoundary:
+        needs.append(("embeddedBoundary (Nitsche and ghost-penalty terms on cut faces, embedded-boundary quadrature)", 1))
+    if c.embeddedBoundary_robin:
+        needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
+    if c.immersedBoundary:
+        needs.append(("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2))
+    if c.immersedSCIFEM_switch != 0.0 or c.immersedSCIFEM_penalty != 0.0:
+        needs.append(("immersedSCIFEM (consistency terms on cut faces)", 2))
+    if c.PG:
+        needs.append(("PG (Petrov-Galerkin test with the IFEM basis)", 2))
+    if c.embeddedBoundary and c.immersedBoundary:
+        needs.append(("embeddedBoundary together with immersedBoundary (triply-cut elements: composite fit, edge correction)", 3))
+    if needs:
+        raise NotImplementedError(
+            "ADR: not implemented in {0}D (the cut-cell machinery is 2D only): {1}. Planned for C44 phase {2}. "
+            "Plain ADR (no embedded or immersed boundary) runs in 3D.".format(
+                nSpace, "; ".join(n for n, _ in needs), max(p for _, p in needs)))
+
+
 class LevelModel(proteus.Transport.OneLevelTransport):
     """
     Optimized LevelModel for ADR equations
@@ -681,6 +712,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # other element is local too, which needs two layers of overlap; with one, the face looks
         # exterior on the rank that owns the row and its contribution is lost.
         _c = coefficients
+        _requireSupportedDimension(_c, self.u[0].femSpace.nSpace_global)
         _faceTerms = ((_c.embeddedBoundary and _c.embeddedBoundary_ghost_penalty != 0.0) or
                       (_c.immersedBoundary and (_c.immersedSCIFEM_switch != 0.0 or _c.immersedSCIFEM_penalty != 0.0)))
         _layers = getattr(self.mesh, 'nLayersOfOverlap', None)
