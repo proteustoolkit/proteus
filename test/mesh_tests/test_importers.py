@@ -10,8 +10,8 @@ run in proteustoolkit/ymf-import-sms against its converter.
   test, in the reader's own layout and in IFISS 3.7's.
 - NURBS (``MultilevelNURBSMesh``): deprecated (no function space uses it, it cannot build a mesh).
 - DMPlex is round-tripped in ``test_generate_mesh_errors.py`` (a proteus mesh through a cell
-  list), and here: ``gmsh_cube.msh`` read by PETSc, against the same file through msh2simplex.
-- gmsh (``use_gmsh`` PSLG/PLC domains: ``msh2simplex``, then the triangle/tetgen readers):
+  list), and here: ``gmsh_cube.msh`` read by PETSc, against the same file through the ymf mesh.
+- gmsh (``use_gmsh`` PSLG/PLC domains: the stored ymf mesh, ``ymf-import-gmsh``'s conversion):
   ``importer_meshes/gmsh_square.msh`` and ``gmsh_cube.msh``, written by gmsh 4.12.2 from the
   ``.geo`` files beside them (``Domain.writeGeo``, he_max 0.25 and 0.5). The stored ``.msh`` is
   the mesh the downstream tests read; meshing itself is checked on statistics.
@@ -267,52 +267,8 @@ def _gmsh_mesh(tmp_path, nd, name):
 
 
 @pytest.mark.parametrize("nd, name, he", GMSH_CASES)
-def test_msh2simplex_keeps_the_coordinates_gmsh_wrote(tmp_path, monkeypatch, nd, name, he):
-    """It wrote six decimals (%f), moving nodes by up to 5e-7 (4.94e-7 square, 4.98e-7 cube)."""
-    monkeypatch.chdir(tmp_path)
-    shutil.copy(os.path.join(MESHES, name + ".msh"), name + ".msh")
-    MeshTools.msh2simplex(name, nd=nd)
-    written = np.loadtxt(name + ".node", skiprows=1)
-    gmsh_nodes, _ = _read_msh2(name + ".msh")
-    np.testing.assert_array_equal(written[:, 1:1 + nd], gmsh_nodes[:, :nd])
-
-
-MSH_SEGMENTS_INTO_A_NODE = """$MeshFormat
-2.2 0 8
-$EndMeshFormat
-$Nodes
-4
-1 0 0 0
-2 1 0 0
-3 1 1 0
-4 0 1 0
-$EndNodes
-$Elements
-6
-1 1 2 7 1 1 2
-2 1 2 7 1 3 2
-3 1 2 8 2 3 4
-4 1 2 8 2 1 4
-5 2 2 1 1 1 2 3
-6 2 2 1 1 1 3 4
-$EndElements
-"""
-
-
-def test_msh2simplex_flags_a_node_that_only_ends_segments(tmp_path, monkeypatch):
-    """Nodes 2 and 4 are the second node of both their segments. The second node's flag
-    was written to the first node, so they kept flag 0 and nodes 1 and 3 were overwritten:
-    [8, 0, 8, 0]."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "into.msh").write_text(MSH_SEGMENTS_INTO_A_NODE)
-    MeshTools.msh2simplex("into", nd=2)
-    flags = np.loadtxt("into.node", skiprows=1)[:, -1].astype(int).tolist()
-    assert flags == [7, 7, 7, 8]
-
-
-@pytest.mark.parametrize("nd, name, he", GMSH_CASES)
 def test_a_gmsh_domain_reads_its_stored_mesh(tmp_path, monkeypatch, nd, name, he):
-    """A use_gmsh domain whose .msh exists: msh2simplex and the triangle/tetgen reader, no gmsh run."""
+    """A use_gmsh domain whose .msh exists: read as its stored ymf mesh, no gmsh run."""
     monkeypatch.chdir(tmp_path)
     mesh = _gmsh_mesh(tmp_path, nd, name)
     gmsh_nodes, counts = _read_msh2(name + ".msh")
@@ -479,7 +435,7 @@ def _faces_by_position(mesh):
             for c, t in zip(corners, mesh.elementBoundaryMaterialTypes)}
 
 
-def test_a_gmsh_file_read_by_petsc_is_the_mesh_msh2simplex_reads(tmp_path, monkeypatch):
+def test_a_gmsh_file_read_by_petsc_is_the_mesh_the_ymf_path_reads(tmp_path, monkeypatch):
     """The DMPlex importer took its material types from the plex's cell-type label (the kind
     of polytope), so every face had tag 3, interior or not, and every tetrahedron 6. They
     are the plex's "Face Sets" and "Cell Sets" (gmsh's physical groups)."""
