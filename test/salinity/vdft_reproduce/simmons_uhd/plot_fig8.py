@@ -61,9 +61,18 @@ def _load(run_dir):
     if not h5s:
         raise SystemExit("no non-empty archive in %s" % d)
     base = h5s[0].with_suffix("")
-    root = ET.parse(str(base) + ".xmf").getroot()
-    times = np.array([float(g.find("Time").attrib["Value"])
-                      for g in root.findall('.//Grid[@GridType="Uniform"]')])
+    if Path(str(base) + ".xmf").exists():
+        root = ET.parse(str(base) + ".xmf").getroot()
+        times = np.array([float(g.find("Time").attrib["Value"])
+                          for g in root.findall('.//Grid[@GridType="Uniform"]')])
+    else:
+        # archives without an XDMF file: output step s has its time as the
+        # Time attribute of the Mesh_Spatial_Domain_<s> group
+        with h5py.File(str(base) + ".h5", "r") as f:
+            steps = sorted(int(k.rsplit("_", 1)[1]) for k in f.keys()
+                           if k.startswith("Mesh_Spatial_Domain_"))
+            times = np.array([float(f["Mesh_Spatial_Domain_%d" % s].attrs["Time"])
+                              for s in steps])
     tmp = Path(tempfile.mkdtemp()) / "snapshot.h5"
     shutil.copy2(str(base) + ".h5", str(tmp))
     # Title columns by the RUN DIRECTORY, not the archive name: two runs of the
@@ -94,7 +103,8 @@ def _paper_panel(case_name):
 
 
 def _lab_outline(case_name, minutes):
-    """(x, z, plume) of the digitised lab dye mask at this time, if present.
+    """(x, z, plume, xc, zc, core) of the digitised lab dye mask and its dark
+    finger core at this time, if present.
 
     Written by digitize_uhd_photos.py at data/fig8_<case>_lab_photo_t<T>_mask.npz.
     Drawn on the run panels as the lab plume's border line.  Not x-shifted:
@@ -105,10 +115,10 @@ def _lab_outline(case_name, minutes):
     if not p.exists():
         return None
     m = np.load(str(p))
-    return m["x"], m["z"], m["plume"]
+    return m["x"], m["z"], m["plume"], m["xc"], m["zc"], m["core"]
 
 
-def main(run_dirs, case_name=None, style=None):
+def main(run_dirs, case_name=None, style=None, titles=None):
     case_name = (case_name or cases.CASES and
                  Path(run_dirs[0]).name.split("_")[1].upper())
     if case_name not in FIG_TIMES:
@@ -116,8 +126,12 @@ def main(run_dirs, case_name=None, style=None):
     want = [m * 60.0 for m in FIG_TIMES[case_name]]
 
     loaded = [_load(r) for r in run_dirs]
-    paper = _paper_panel(case_name)
-    ncol = len(loaded) + (1 if paper else 0)
+    labs = [_lab_outline(case_name, m) for m in FIG_TIMES[case_name]]
+    # --colormap is the manuscript figure: its lab column is the digitised dye
+    # extent, not the published photograph (which is not ours to reprint).
+    lab_col = style == "colormap" and all(l is not None for l in labs)
+    paper = None if lab_col else _paper_panel(case_name)
+    ncol = len(loaded) + (1 if paper or lab_col else 0)
     nrow = len(want)
 
     fig, axes = plt.subplots(nrow, ncol, squeeze=False,
@@ -125,7 +139,37 @@ def main(run_dirs, case_name=None, style=None):
                              constrained_layout=True)
 
     col0 = 0
-    if paper:
+    if lab_col:
+        col0 = 1
+        framed = True
+        for i, lab in enumerate(labs):
+            ax = axes[i][0]
+            ax.set_facecolor(DYE_CMAP(0.0))
+            # outlines only: visible-dye envelope, and the dye core, which
+            # shows the fingers
+            ax.contour(lab[0], lab[1], lab[2].astype(float), levels=[0.5],
+                       colors=[DYE_CMAP(0.75)], linewidths=1.0)
+            ax.contour(lab[3], lab[4], lab[5].astype(float), levels=[0.5],
+                       colors=[DYE_CMAP(1.0)], linewidths=1.0)
+            if i == 0:
+                ax.plot([], [], color=DYE_CMAP(0.75), lw=1.0, label="visible dye")
+                ax.plot([], [], color=DYE_CMAP(1.0), lw=1.0, label="dye core")
+                ax.legend(loc="lower left", fontsize=7, frameon=False)
+            ax.plot([cases.SOURCE_X0, cases.SOURCE_X1], [cases.LZ, cases.LZ],
+                    color="k", lw=3, solid_capstyle="butt")
+            ax.set_xlim(0.0, cases.LX)
+            ax.set_ylim(0.0, cases.LZ)
+            ax.set_aspect("equal")
+            ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.18])
+            if i == nrow - 1:
+                ax.set_xlabel("x [m]")
+            if i == 0:
+                ax.set_title("Laboratory (digitised dye extent)", fontsize=9)
+            # deepest dyed pixel, the photo's analogue of the run's depth label
+            dyed = lab[2].any(axis=1)
+            ax.text(0.985, 0.04, "%.3f m" % (cases.LZ - lab[1][dyed].min()),
+                    transform=ax.transAxes, fontsize=8, ha="right", color="0.25")
+    elif paper:
         col0 = 1
         paper, framed = paper
         img = plt.imread(str(paper))
@@ -218,8 +262,11 @@ def main(run_dirs, case_name=None, style=None):
                 if i == nrow - 1:
                     ax.set_xlabel("x [m]")
                 if i == 0:
-                    ax.set_title("Numerical" if style == "colormap" else label,
-                                 fontsize=9)
+                    if titles and titles[j]:
+                        ax.set_title(titles[j], fontsize=9)
+                    else:
+                        ax.set_title("Numerical" if style == "colormap" else label,
+                                     fontsize=9)
                 # white reads on turbo/rainbow; the beige ground needs grey
                 ax.text(0.985, 0.04, "%.3f m" % depth, transform=ax.transAxes,
                         fontsize=8, ha="right",
@@ -228,7 +275,7 @@ def main(run_dirs, case_name=None, style=None):
     if style:
         fig.colorbar(field, ax=[axes[i][col0 + j] for i in range(nrow)
                                 for j in range(len(loaded))],
-                     shrink=0.7, label=r"$u = \omega / \omega_{\max}$")
+                     shrink=0.7, label=r"$c = \omega / \omega_{\max}$")
     if style != "colormap":
         fig.suptitle("%s -- Fig. 8 comparison times" % case_name)
     out = Path(run_dirs[0]) / ("fig8_%s%s.png" % (case_name.lower(),
@@ -240,8 +287,18 @@ def main(run_dirs, case_name=None, style=None):
 
 if __name__ == "__main__":
     flags = {"--turbo": "turbo", "--rainbow": "rainbow", "--colormap": "colormap"}
-    dirs = [a for a in sys.argv[1:] if a not in flags]
-    if not dirs:
+    args = [a for a in sys.argv[1:] if a not in flags]
+    if not args:
         raise SystemExit(__doc__)
+    # a run may be given as Title=<run_dir>; the title heads its column
+    titles, dirs = [], []
+    for a in args:
+        t, sep, d = a.partition("=")
+        if sep and not Path(a).exists():
+            titles.append(t)
+            dirs.append(d)
+        else:
+            titles.append(None)
+            dirs.append(a)
     style = next((s for f, s in flags.items() if f in sys.argv), None)
-    main(dirs, style=style)
+    main(dirs, style=style, titles=titles)
