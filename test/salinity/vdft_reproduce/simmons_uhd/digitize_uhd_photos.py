@@ -11,7 +11,9 @@ box.  Per panel this writes
                                         dyed pixel in every pixel column)
     fig8_uhd_lab_photo_t<T>_mask.npz    x, z, plume (bool) -- the dye mask in
                                         physical coordinates, for finger
-                                        counting / overlays
+                                        counting / overlays; xc, zc, core
+                                        (bool) -- the dark dye core on a finer
+                                        grid, which separates the fingers
     fig8_uhd_lab_digitised_summary.csv  max depth, mean depth under the source,
                                         dyed area
     fig8_uhd_lab_digitisation_check.png what was read, drawn over the panels
@@ -21,6 +23,12 @@ threshold too, so the envelope mask is one connected lobe (1-3 "fingers"
 where the eye sees 6-8), and a darker-core threshold gives counts that move
 with the threshold at this 3.7 mm/px resolution.  Count on the saved mask by
 hand if a count is needed.
+
+The fingers are separated by brightness, not hue: the halo is as magenta as
+the core but bright pink, the cores dark purple.  The core mask is dye hue
+AND low red brightness, thresholded on a cubic-upsampled panel so its
+outline runs between pixel centres (smoother, not finer: the photo still
+resolves nothing below one pixel).
 
 Calibration is from the panel FRAMES, which are drawn at the axis limits
 x in [0, LX], z in [0, LZ]; the frames come out at LX/LZ aspect to 0.2%, so
@@ -52,9 +60,22 @@ import numpy as np
 from scipy import ndimage
 
 import cases
-from digitize_fig8 import mask_of, ruler_column
+from digitize_fig8 import LAB_DYE_T, mask_of, ruler_column
 
 ROW_MINUTES = [32, 40]
+
+#: Dark-core threshold on red brightness inside the dye.  Dyed pixels have
+#: red 0.39-0.70 (5-95 %, median 0.47): the cores sit at ~0.40-0.47, the pale
+#: inter-finger halo at 0.55-0.70.  Contours at 0.45-0.50 trace the same
+#: fingers, so the outline is not sensitive to the exact value.
+LAB_CORE_R = 0.48
+#: Upsampling factor of the cubic interpolation before thresholding the core.
+CORE_UP = 4
+#: Gaussian smoothing (source px) of the JPEG-blocked channels before the
+#: threshold; below one pixel, so it removes block speckle, not fingers.
+CORE_SIGMA = 0.7
+#: Core pieces smaller than ~1 cm^2 (about 7 source px) are speckle.
+CORE_MIN_AREA = 1e-4
 
 #: A frame line is black (grey below this) over at least this fraction of the
 #: image width (rows) or of the panel height (columns).
@@ -110,10 +131,31 @@ def main(fig_path, out_dir):
         # Pixel centres -> physical coordinates from the frame rectangle.
         x = (np.arange(sub.shape[1]) + 1.0) / (c1 - c0) * cases.LX
         z = cases.LZ - (np.arange(sub.shape[0]) + 1.0) / (r1 - r0) * cases.LZ
+
+        # Dark dye core: mask_of's dye hue AND low red, on the upsampled panel.
+        sm = ndimage.gaussian_filter(sub, (CORE_SIGMA, CORE_SIGMA, 0))
+        hue = ndimage.zoom((sm[:, :, 0] - sm[:, :, 1]) + (sm[:, :, 2] - sm[:, :, 1]),
+                           CORE_UP, order=3)
+        core = (hue > LAB_DYE_T) & (ndimage.zoom(sm[:, :, 0], CORE_UP, order=3)
+                                    < LAB_CORE_R)
+        # zoom's samples span the input's first to last pixel centre
+        xc = np.linspace(x[0], x[-1], core.shape[1])
+        zc = np.linspace(z[0], z[-1], core.shape[0])
+
         cut = ruler_column(sub.mean(axis=2))
         if cut is not None:
             x, plume = x[:cut], plume[:, :cut]
+            keep = xc <= x[-1]
+            xc, core = xc[keep], core[:, keep]
             print("   ruler at x = %.3f m, mask cut there" % x[-1])
+        # Opening by CORE_UP upsampled px drops slivers under ~2 source px
+        # (~7 mm) thick, e.g. the source bar's dark edge; fingers are 2-3 cm.
+        core = ndimage.binary_opening(core, iterations=CORE_UP)
+        pieces, n = ndimage.label(core)
+        area = ndimage.sum(core, pieces, np.arange(1, n + 1)) \
+            * (xc[1] - xc[0]) * (zc[0] - zc[1])
+        core = np.isin(pieces, 1 + np.nonzero(area >= CORE_MIN_AREA)[0])
+        core = ndimage.binary_fill_holes(core)
         # Paler patches inside the dyed region drop below the threshold; they
         # are inside the plume, so fill them and keep one outer border.
         plume = ndimage.binary_fill_holes(plume)
@@ -135,13 +177,15 @@ def main(fig_path, out_dir):
             w.writerow(["x_m", "penetration_depth_m"])
             for xv, fv in zip(x, front):
                 w.writerow(["%.4f" % xv, "" if not np.isfinite(fv) else "%.4f" % fv])
-        np.savez_compressed(out_dir / (name + "_mask.npz"), x=x, z=z, plume=plume)
+        np.savez_compressed(out_dir / (name + "_mask.npz"), x=x, z=z, plume=plume,
+                            xc=xc, zc=zc, core=core)
         summary.append((minutes, depth, mean_depth, area))
 
         ax = axes[0][i]
         ax.imshow(sub, extent=[x[0] - 0.5 * dx, cases.LX, 0.0, cases.LZ],
                   aspect="equal", origin="upper")
         ax.contour(x, z, plume, levels=[0.5], colors="cyan", linewidths=0.8)
+        ax.contour(xc, zc, core, levels=[0.5], colors="yellow", linewidths=0.8)
         ax.plot(x, cases.LZ - front, color="lime", lw=1.0)
         ax.set_xlim(0.0, cases.LX)
         ax.set_ylim(0.0, cases.LZ)
@@ -153,7 +197,7 @@ def main(fig_path, out_dir):
                 ha="right", fontsize=8, color="0.2")
 
     fig.suptitle("UHD lab photographs digitised -- cyan: dye mask, "
-                 "green: penetration front")
+                 "yellow: dark core, green: penetration front")
     qc = out_dir / "fig8_uhd_lab_digitisation_check.png"
     fig.savefig(str(qc), dpi=150, bbox_inches="tight")
 

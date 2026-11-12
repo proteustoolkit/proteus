@@ -23,6 +23,13 @@ constexpr double PA_PER_BAR = 1.0e5;
 // amplifies that by rho_a/rho_g (~1400x) into S_g.  At SI scale (Xeq~6e-4) the old
 // 5e-4 leaked S_g~0.10 at z=1e-5; 1e-5 keeps spurious S_g ~5e-5 while staying C1.
 constexpr double EPS_Z      = 1.0e-5;   // composition-clamp smoothing band
+// z is evaluated inside [Z_MIN, 1 - Z_MIN] (CO2-free brine starts at z = 0 and
+// Newton iterates can leave [0, 1]).  Outside it the flash returns the bound's
+// state with ZERO z-derivatives: the result does not change with z there, so a
+// nonzero dS_g/dz, dX/dz, ... would put a derivative in the Jacobian that the
+// residual does not have (FD probe of the 1D prototype: 515 vs 0 at CO2-free
+// nodes, test/m_comp_co2/verification/rock_interface_1d).  Callers pass the raw z.
+constexpr double Z_MIN      = 1.0e-8;
 
 // Immiscible / incompressible limit (verification only) -- must match
 // co2_brine_flash.py.  When enabled (flashPZ immiscible=true, set from the
@@ -98,7 +105,8 @@ inline FlashState flashPZ(double p_Pa, double z, double T_C,
     // Immiscible/incompressible verification limit (Xeq=0, Yeq=1, const
     // densities); driven by the Coefficients 'immiscible' option via argsDict.
     Jet2 p_jet = Jet2::var_p(p_Pa);
-    Jet2 z_jet = Jet2::var_z(z);
+    const double z_in = std::min(std::max(z, Z_MIN), 1.0 - Z_MIN);
+    Jet2 z_jet = (z_in == z) ? Jet2::var_z(z) : Jet2::cst(z_in);
 
     Jet2 X, Y, rho_a, rho_g;
     if (immiscible) {
