@@ -62,7 +62,7 @@ from math import pi, sqrt, sin, cos
 import numpy as np
 
 SEED = 20261112
-MAX_P = 4
+MAX_P = {"interval": 5, "triangle": 5, "tetrahedron": 4}  # the degrees CI supports
 
 # alpha table from cell 82 of the notebook, rows p=3..15 (column 0: triangle, column 1: tetrahedron)
 ALPHA = np.array([[1.4152, 0.0000],
@@ -451,7 +451,7 @@ def build(out):
     tables = {"meta/seed": np.array(SEED)}
     specs = []
     for cell in ("interval", "triangle", "tetrahedron"):
-        for p in range(1, MAX_P + 1):
+        for p in range(1, MAX_P[cell] + 1):
             for family in ("lagrange_equi", "lagrange_gll", "bernstein"):
                 specs.append((family, cell, p))
     for cell in ("quadrilateral", "hexahedron"):

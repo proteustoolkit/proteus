@@ -1768,6 +1768,66 @@ class P1P0BubblesWithNodalBasis(LocalFunctionSpace):
 Interpolation conditions.
 """
 
+class PolynomialOnSimplex(LocalFunctionSpace):
+    """
+    Polynomials of degree ``order`` on the unit nd-simplex (nd <= 3), any order.
+
+    Parameters
+    ----------
+    nd : int
+        Space dimension.
+    order : int
+        Polynomial degree p >= 1.
+    family : str
+        ``'lagrange'`` (nodal basis) or ``'bernstein'`` (Bernstein-Bezier basis: non-negative, sums to one;
+        the dofs are control-point coefficients, not point values).
+    nodes : str
+        For ``'lagrange'``: ``'gll'`` (default; warp-and-blend nodes with Gauss-Lobatto-Legendre points on
+        the edges, well conditioned for p >= 3) or ``'equispaced'`` (for comparison). They coincide for
+        p <= 2. Ignored by the Bernstein basis itself; its exact interpolation uses the ``'gll'`` points.
+
+    The local dofs are grouped by entity (vertices, edges, faces, interior) and for p = 1, 2 the numbering
+    and the values are those of :class:`LinearOnSimplexWithNodalBasis` and
+    :class:`QuadraticOnSimplexWithNodalBasis`. See :mod:`proteus.SimplexSpaces` for the layout
+    (``space.multi_index``, ``space.entity_dofs``, ``space.dof_points``) and the node sets.
+
+    ``tabulate`` and ``tabulate_trace`` evaluate all basis functions at arrays of points; ``basis``,
+    ``basisGradients``, ``basisHessians`` and the trace lists are the usual per-function callables on top
+    of them.
+    """
+    def __init__(self,nd=3,order=1,family='lagrange',nodes='gll'):
+        from . import SimplexSpaces
+        self.referenceElement = ReferenceSimplex(nd)
+        self.space = SimplexSpaces.SimplexSpace(nd,order,family,nodes)
+        LocalFunctionSpace.__init__(self,self.space.dim,self.referenceElement)
+        self.order = order
+        self.family = family
+        self.nodes = nodes
+        self.nonzeroHessians = order >= 2
+        self._lastPoint = None
+        self._lastTabulation = None
+        self.basis = [(lambda xi,i=i: self._tabulateAtPoint(xi).values[0,i]) for i in self.range_dim]
+        self.basisGradients = [(lambda xi,i=i: self._tabulateAtPoint(xi).grads[0,i].copy()) for i in self.range_dim]
+        self.basisHessians = [(lambda xi,i=i: self._tabulateAtPoint(xi).hessians[0,i].copy()) for i in self.range_dim]
+        self.defineTraceFunctions()
+    def _tabulateAtPoint(self,xi):
+        #the callers loop over the basis functions at one point, so keep the last point's tabulation
+        nd = self.referenceElement.dim
+        key = tuple(float(xi[I]) for I in range(nd))
+        if key != self._lastPoint:
+            self._lastTabulation = self.space.tabulate(numpy.array(key).reshape(1,nd),2)
+            self._lastPoint = key
+        return self._lastTabulation
+    def tabulate(self,points,derivatives=2):
+        """Values (nQ,dim), reference gradients (nQ,dim,nd) and Hessians (nQ,dim,nd,nd) at points (nQ,>=nd)."""
+        nd = self.referenceElement.dim
+        return self.space.tabulate(numpy.asarray(points,dtype='d').reshape(len(points),-1)[:,:nd],derivatives)
+    def tabulate_trace(self,face,points_bar,derivatives=1):
+        """The element tabulation at the points of local face ``face`` given in face coordinates (nQ,>=nd-1)."""
+        nd = self.referenceElement.dim
+        nbar = max(nd-1,1)
+        return self.space.tabulate_trace(face,numpy.asarray(points_bar,dtype='d').reshape(len(points_bar),-1)[:,:nbar],derivatives)
+
 class InterpolationConditions(object):
     """
     Base class for generalized interpolation conditions
