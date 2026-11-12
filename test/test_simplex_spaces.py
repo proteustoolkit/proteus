@@ -341,3 +341,36 @@ def test_triangle_p6_blend_parameter():
     pub = _lebesgue_of_nodes(2, 6, S.warp_blend_barycentric(2, 6)[:, 1:], 120)
     nb = _lebesgue_of_nodes(2, 6, S.warp_blend_barycentric(2, 6, alpha=0.9808)[:, 1:], 120)
     assert pub <= nb and nb - pub < 1.0e-3
+
+
+# ----------------------------------------------------------------------------------------------
+# the sub-cell view the archive writes
+# ----------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("d", [1, 2, 3])
+@pytest.mark.parametrize("p", range(1, GEN_MAX_P + 1))
+def test_subcells_tile_the_reference_simplex(d, p):
+    cells = S.subcells(d, p)
+    assert cells.shape == (p ** d, d + 1)
+    assert set(cells.ravel()) == set(range(factorial(p + d) // (factorial(p) * factorial(d))))  # every dof is a vertex
+    for nodes in ("equispaced", "gll"):
+        x = S.SimplexSpace(d, p, "lagrange", nodes).dof_points
+        vol = np.abs(np.linalg.det(x[cells[:, 1:]] - x[cells[:, :1]])) / factorial(d)
+        # no inverted or flat cell, and together they have the volume of the simplex (so they do not overlap)
+        assert vol.min() > 0.0
+        assert vol.sum() == pytest.approx(1.0 / factorial(d), abs=1.0e-13)
+        if nodes == "equispaced":
+            assert np.abs(vol - 1.0 / (factorial(d) * p ** d)).max() < 1.0e-14
+    # the control net of the Bernstein family is the equispaced lattice
+    assert np.abs(S.SimplexSpace(d, p, "bernstein").dof_points - S.SimplexSpace(d, p, "lagrange", "equispaced").dof_points).max() == 0.0
+
+
+def test_each_configuration_of_the_space_is_its_own_class():
+    """Transport groups archived fields by the class of their space; orders must not share a grid."""
+    a = FemTools.C0_AffinePolynomialOnSimplex.__new__(FemTools.C0_AffinePolynomialOnSimplex, None, 2, 3, "lagrange", "gll")
+    b = FemTools.C0_AffinePolynomialOnSimplex.__new__(FemTools.C0_AffinePolynomialOnSimplex, None, 2, 4, "lagrange", "gll")
+    c = FemTools.C0_AffinePolynomialOnSimplex.__new__(FemTools.C0_AffinePolynomialOnSimplex, None, 2, 3, "bernstein", "gll")
+    again = FemTools.C0_AffinePolynomialOnSimplex.__new__(FemTools.C0_AffinePolynomialOnSimplex, None, 2, 3, "lagrange", "gll")
+    assert type(a) is type(again)
+    assert len({type(a), type(b), type(c)}) == 3
+    assert all(isinstance(s, FemTools.C0_AffinePolynomialOnSimplex) for s in (a, b, c))
+    assert type(a).__name__ == "C0_AffinePolynomialOnSimplex_p3_lagrange_gll"

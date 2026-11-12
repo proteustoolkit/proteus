@@ -115,6 +115,45 @@ def multi_indices(d, p):
     return alpha, entity_dofs
 
 
+def subcells(d, p):
+    """The p^d linear sub-simplices of the degree-p lattice of the reference d-simplex, as local dof
+    indices (n, d+1) in the order of ``multi_indices``: the piecewise-linear view of the dofs that the
+    archive writes (the dof points are the vertices of the sub-cells).
+
+    Triangle: the "up" triangles (i,j),(i+1,j),(i,j+1) and the "down" ones. Tetrahedron: per lattice
+    cell a corner tetrahedron, an octahedron cut in four around one diagonal, and an inverted tetrahedron.
+    """
+    mi, _ = multi_indices(d, p)
+    index = {tuple(a[1:]): i for i, a in enumerate(mi.tolist())}
+
+    def at(*c):
+        return index[tuple(c)]
+    cells = []
+    if d == 1:
+        cells = [[at(i), at(i + 1)] for i in range(p)]
+    elif d == 2:
+        for i in range(p):
+            for j in range(p - i):
+                cells.append([at(i, j), at(i + 1, j), at(i, j + 1)])
+                if i + j <= p - 2:
+                    cells.append([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)])
+    else:
+        for i in range(p):
+            for j in range(p - i):
+                for k in range(p - i - j):
+                    cells.append([at(i, j, k), at(i + 1, j, k), at(i, j + 1, k), at(i, j, k + 1)])
+                    if i + j + k <= p - 2:
+                        A, B, C = at(i + 1, j, k), at(i, j + 1, k), at(i, j, k + 1)
+                        D, E, F = at(i + 1, j + 1, k), at(i + 1, j, k + 1), at(i, j + 1, k + 1)
+                        cells += [[A, F, B, D], [A, F, D, E], [A, F, E, C], [A, F, C, B]]
+                    if i + j + k <= p - 3:
+                        cells.append([at(i + 1, j + 1, k), at(i + 1, j, k + 1), at(i, j + 1, k + 1),
+                                      at(i + 1, j + 1, k + 1)])
+    cells = np.array(cells, dtype=int)
+    assert cells.shape == (p ** d, d + 1)
+    return cells
+
+
 def gll_points(p):
     """The p+1 Gauss-Lobatto-Legendre points on [-1, 1]: the end points and the roots of P_p'."""
     if p == 1:

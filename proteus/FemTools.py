@@ -5995,6 +5995,17 @@ class C0_AffinePolynomialOnSimplex(ParametricFiniteElementSpace):
     :class:`C0_AffineLinearOnSimplexWithNodalBasis` / :class:`C0_AffineQuadraticOnSimplexWithNodalBasis`
     with the same local and global numbering; those classes stay as they are.
     """
+    _configuredTypes = {}
+    def __new__(cls,mesh=None,nd=3,order=1,family='lagrange',nodes='gll',bernsteinOperator=False):
+        #Transport groups the fields it archives by the *class* of their space (one grid per class), so
+        #spaces of different order, family or nodes must be different classes: instantiate a subclass
+        #per configuration (isinstance(space, C0_AffinePolynomialOnSimplex) holds for all of them)
+        if cls is C0_AffinePolynomialOnSimplex:
+            key = (int(order),family,nodes)
+            if key not in cls._configuredTypes:
+                cls._configuredTypes[key] = type("C0_AffinePolynomialOnSimplex_p%d_%s_%s" % key,(cls,),{})
+            cls = cls._configuredTypes[key]
+        return super(C0_AffinePolynomialOnSimplex,cls).__new__(cls)
     def __init__(self,mesh,nd=3,order=1,family='lagrange',nodes='gll',bernsteinOperator=False):
         self.order = order
         self.family = family
@@ -6012,6 +6023,82 @@ class C0_AffinePolynomialOnSimplex(ParametricFiniteElementSpace):
         #for archiving
         from . import Archiver
         self.XdmfWriter=Archiver.XdmfWriter()
+    #archiving: the dofs on a piecewise-linear view of the space
+    def writeMeshXdmf(self,ar,name,t=0.0,init=False,meshChanged=False,arGrid=None,tCount=0):
+        """
+        Write the grid the fields of this space are attached to: every element split into order**nd linear
+        sub-cells whose vertices are the dof points (``dofMap.lagrangeNodesArray``), so a field is stored
+        as its complete dof vector (hot start reads it back exactly) and viewed as the piecewise-linear
+        interpolant of the dof values. For Lagrange spaces those are the nodal values; for Bernstein
+        spaces the picture is the control net (within O(h^2) of the function, inside its bounds).
+        """
+        from . import SimplexSpaces
+        mesh = self.mesh
+        dofMap = self.dofMap
+        nd = self.nSpace_global
+        mesh.writeMeshXdmf(ar,"Spatial_Domain",t,init,meshChanged,tCount=tCount)
+        spaceSuffix = "_c0p%d_%s_%s" % (self.order,self.family,self.nodes)
+        writer = self.XdmfWriter
+        gridName = writer.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
+        if writer._needsGrid(t):
+            subcells = SimplexSpaces.subcells(nd,self.order)
+            nSub = subcells.shape[0]
+            Xdmf_ElementTopology = {1:"Polyline",2:"Triangle",3:"Tetrahedron"}[nd]
+            if ar.global_sync:
+                n_elements       = mesh.globalMesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF_all_processes,3]
+                elements_dataset = 'elements'+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+            else:
+                n_elements       = mesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF,3]
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+            elements_dims = [n_elements,nd+1]
+            elements_stem = 'elements'+spaceSuffix+str(tCount)
+            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            writer.arGrid = ar.write_grid(writer.arGridCollection,gridName,t,tCount)
+            ar.write_topology(writer.arGrid,Xdmf_ElementTopology,n_elements,
+                              elements_dims,elements_dataset,elements_stem,
+                              dtype=(dofMap.subdomain2global if ar.global_sync else dofMap.l2g))
+            ar.write_geometry(writer.arGrid,nodes_dims,nodes_dataset,nodes_stem,
+                              dtype=dofMap.lagrangeNodesArray)
+            def subElements(nElements):
+                return dofMap.l2g[:nElements][:,subcells].reshape(-1,nd+1)
+            if not ar.writesDatasets:
+                assert not ar.global_sync, "global_sync is not implemented for text heavy data"
+                if init or meshChanged:
+                    numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",subElements(mesh.nElements_global),fmt='%d')
+                    numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",dofMap.lagrangeNodesArray)
+                return writer.arGrid
+            if init or meshChanged:
+                if ar.global_sync:
+                    owned = dofMap.dof_offsets_subdomain_owned
+                    ar.create_dataset_sync(elements_dataset,
+                                           offsets = nSub*numpy.asarray(mesh.globalMesh.elementOffsets_subdomain_owned),
+                                           data = dofMap.subdomain2global[subElements(mesh.nElements_owned)])
+                    ar.create_dataset_sync(nodes_dataset,
+                                           offsets = owned,
+                                           data = dofMap.lagrangeNodesArray[:owned[ar.rank+1]-owned[ar.rank]])
+                else:
+                    ar.create_dataset_async(elements_dataset,data = subElements(mesh.nElements_global))
+                    ar.create_dataset_async(nodes_dataset,data = dofMap.lagrangeNodesArray)
+        return writer.arGrid
+    def writeFunctionXdmf(self,ar,u,tCount=0,init=True):
+        #the complete dof vector as a nodal field on the grid of writeMeshXdmf (the writer is generic)
+        self.XdmfWriter.writeFunctionXdmf_C0P2Lagrange(ar,u,tCount=tCount,init=init)
+    def readFunctionXdmf(self,ar,u,tCount=0):
+        dataset = ar.field_dataset(u.name,tCount)
+        if ar.global_sync:
+            numbering = u.femSpace.dofMap.subdomain2global
+            permute = np.argsort(numbering)
+            u.dof[permute] = dataset[numbering[permute].tolist()]
+        else:
+            u.dof[:] = dataset[:]
+    def writeVectorFunctionXdmf(self,ar,uList,components,vectorName,tCount=0,init=True):
+        self.XdmfWriter.writeVectorFunctionXdmf_nodal(ar,uList,components,vectorName,
+                                                      "c0p%d_%s_%s" % (self.order,self.family,self.nodes),
+                                                      tCount=tCount,init=init)
     #tabulate all basis functions at once instead of one callable per function and point
     def getBasisValuesRef(self,xiArray):
         self.psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,0).values
