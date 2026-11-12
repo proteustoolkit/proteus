@@ -93,3 +93,4 @@ dependencies:
   # proteus ships imports ymf.units.
   - pip:
     - git+https://github.com/proteustoolkit/ymf.git@main
+    - git+https://github.com/proteustoolkit/ymf-import-gmsh.git@main

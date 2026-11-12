@@ -220,6 +220,11 @@ when `petsc4py`'s own install triggers a fresh PETSc build.
 If PyPI does not have gmsh and you want to use or run tests with gmsh, get
 it from elsewhere, (e.g. from the gmsh website or conda).
 
+A gmsh mesh (a `use_gmsh` domain, or a `.msh` file) is read through the ymf mesh that
+`ymf-import-gmsh` converts it to, so install that too:
+`pip install git+https://github.com/proteustoolkit/ymf-import-gmsh.git` (the dev environment files
+do). Without it, a `.msh` with no current `.ymf` beside it is an error that names the package.
+
 This path is new and less battle-tested than the conda/mamba route above and the PETSc BuildSystem/HPC routes below -- if something here breaks, those are
 the more mature fallbacks.
 

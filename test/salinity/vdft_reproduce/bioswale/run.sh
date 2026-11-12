@@ -2,13 +2,16 @@
 # usage: run.sh [run dir]   (default: ./run)
 #
 # Bioswale cross-section, 3 m x 5 m: storage zone, trapezoidal bioswale zone, base soil,
-# and a 0.25 m-radius drain pipe whose wall is impermeable (no seepage), domain_rg.py.
+# and a 0.25 m-radius drain pipe whose wall is a seepage face, domain_rg.py.
 #   flow    Richards STAB 2 + FCT, psi = -3 m uniform IC, 0.5 m ponding on the top for
-#           1 <= x <= 2 m, every other boundary no-flow
+#           1 <= x <= 2 m, seepage face on the drain wall, every other boundary no-flow;
+#           density rho(c) from transport (rho_s = 1.025, beta = 1e-4)
 #   trans   TADR STABILIZATION_TYPE 5 + FCT, advected with the reconstructed flow flux
 #           (EDGE_VELOCITY=True in the transport deck); c_in = 1, Dm = 1.886e-3 m^2/d, alpha_L = 0.1,
-#           alpha_T = 0.01, rho_s = 1.025 in TADR only (the flow deck has no
-#           density_model, so the flow sees no density feedback; beta = 1e-4)
+#           alpha_T = 0.01
+# BIOSWALE_SEEPAGE and BIOSWALE_DENSITY default to 1, the manuscript's run (443 steps on
+# 2 ranks); BIOSWALE_SEEPAGE=0 makes the drain wall impermeable, BIOSWALE_DENSITY=0 runs
+# the passive tracer.
 #   time    T = 0.5 d, nDTout = 201; the figure shows t = 0.1219, 0.2488, 0.5025 d
 # Outputs: u_three_times_bioswale.png, bioswale_contamination_domain.png,
 # vdft_metrics.json (conservation, bounds, cost).  The 2026-05 figure was made with
@@ -31,6 +34,8 @@ if [ -n "${PROTEUS_SRC:-}" ]; then export PYTHONPATH="$PROTEUS_SRC"; else unset 
 # TADR advects with the mass flux Richards reconstructs element by element from its
 # realized edge exchanges.  Without it STABILIZATION_TYPE 5 copies E_ij as the edge flux.
 export OMP_NUM_THREADS=1
+# the decks read these; their own defaults (0) are not the manuscript's run
+export BIOSWALE_SEEPAGE="${BIOSWALE_SEEPAGE:-1}" BIOSWALE_DENSITY="${BIOSWALE_DENSITY:-1}"
 
 {
   echo "date: $(date)"
@@ -39,7 +44,8 @@ export OMP_NUM_THREADS=1
   python -c "import proteus,os;print('proteus:', os.path.dirname(proteus.__file__))"
   echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)"
   echo "np: ${BIOSWALE_NP:-2}"
-  echo "BIOSWALE_DENSITY: ${BIOSWALE_DENSITY:-0}"
+  echo "BIOSWALE_DENSITY: $BIOSWALE_DENSITY"
+  echo "BIOSWALE_SEEPAGE: $BIOSWALE_SEEPAGE"
 } > provenance.txt
 # uncommitted source edits at run time; the installed build may still differ
 git -C "$(git -C "$DECK" rev-parse --show-toplevel)" diff HEAD -- proteus > source.diff

@@ -513,6 +513,10 @@ TWO_PHASE_BOUNDARY_SETTERS = [
              "value %(vof_air)s) is not imposed"},
 ]
 
+#: the roles of the projection scheme's own variables (the pressure increment, the pressure spin-up): the spec states no
+#: unknown for them, and a run starts them at zero as the decks do
+SCHEME_AUXILIARY_ROLES = ("pressure_increment", "pressure_spin_up")
+
 #: a regularization by name -> Proteus's own implementation, so that an initial condition such as heaviside(φ)
 #: under smoothed_heaviside of width ε is the value the decks compute (smoothedHeaviside(ε, φ)) bit for bit
 REGULARIZED_FUNCTIONS = {

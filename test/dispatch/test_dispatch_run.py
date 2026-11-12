@@ -84,23 +84,19 @@ CASES = {
                                 "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True interface=1",
                                 "dambreak_short_clsvof.ymf",
                                 "level_set_clsvof -- split, dispatched to flow RANS2P, clsvof CLSVOF", "velocity_t4"),
+    # the projection scheme: CLSVOF, RANS3PF, PresInc, Pres, PresInit (damBreak.py), the spec's atmosphere again
+    # setAtmosphere. The deck's initial level set is its characteristic function (disc_ICs), the spec's a distance
+    "damBreak_projection": ("TwoPhaseFlow", "damBreak.py", "--TwoPhaseFlow",
+                            "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short_projection.ymf",
+                            "clsvof_projection -- split, dispatched to clsvof CLSVOF, flow RANS3PF, pressureInc "
+                            "PresInc, pressure Pres, pressureInit PresInit", "velocity_t4"),
     "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0",
                   "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
 
 
-#: damBreakLevelSet.py interface=1 (RANS2P + CLSVOF) on two ranks is not run-to-run reproducible under load, deck
-#: alone: 2 of 20 runs of this test, and 1 of 16 decks run at once with nothing of the spec's, differ from the rest in
-#: 64-66 of ~215 datasets (macOS arm64, 2026-11-11). The spec's path is the deck's; the cause is in the model
-#: (C0's territory: HANDOFF_2026-11-11_c5-step3.md), so this one case is not asserted bitwise on two ranks.
-NONREPRODUCIBLE = {("damBreakLevelSet_clsvof", 2)}
-
-
 def _params():
-    return [pytest.param(case, ranks, marks=[pytest.mark.xfail(
-        strict=False, reason="the deck itself differs from run to run on two ranks with CLSVOF (see NONREPRODUCIBLE)")]
-        if (case, ranks) in NONREPRODUCIBLE else [], id="%s-%d" % (case, ranks))
-        for case in sorted(CASES) for ranks in (1, 2)]
+    return [pytest.param(case, ranks, id="%s-%d" % (case, ranks)) for case in sorted(CASES) for ranks in (1, 2)]
 
 
 @pytest.mark.parametrize("case, ranks", _params())

@@ -1,129 +1,73 @@
-#!/usr/bin/env python3
-"""
-Generate a minimal Henry-domain schematic in the style of the
-variable-density water-table figure.
+"""Henry problem domain sketch: boundary and initial conditions.
 
-This version avoids matplotlib so it can run in minimal environments.
-It writes a tiny LaTeX picture, renders it to PDF with pdflatex, and
-converts the result to PNG with pdftoppm.
-"""
+    python plot_domain_henry_minimal.py
 
+Domain size from domain_henry.py, boundary and initial conditions from
+flow_p.py and tranport_p.py: freshwater inflow q_n = -6.6e-5 m/s with c = 0
+on the left, saltwater hydrostatic head with c = 1 on the right, no flow on
+the top and bottom; initially fresh water at hydrostatic head.
+
+Drawn at the printed width (one 84 mm column) with 8 pt lettering, no
+transparency, so it stays vector in EPS.
+Writes domain_henry_minimal.png next to this script.
+"""
 from pathlib import Path
-import shutil
-import subprocess
-import tempfile
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 
 OUT_PATH = Path(__file__).resolve().parent / "domain_henry_minimal.png"
 
+WIDTH_MM = 84.0           # one column of the large-format layout
+LX, LZ = 2.0, 1.0         # domain_henry.py, L = (2.0, 1.0) m
 
-TEX_SOURCE = r"""
-\documentclass{article}
-\usepackage[paperwidth=340mm,paperheight=175mm,margin=0mm]{geometry}
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{xcolor}
-\pagestyle{empty}
-\setlength{\parindent}{0pt}
-\definecolor{henryblue}{RGB}{65,105,225}
-\begin{document}
-\setlength{\unitlength}{1mm}
-\noindent
-\begin{picture}(340,175)
-  % Main domain
-  \linethickness{0.6mm}
-  \put(50,45){\line(1,0){200}}
-  \put(50,145){\line(1,0){200}}
-  \put(50,45){\line(0,1){100}}
-  \put(250,45){\line(0,1){100}}
-  \linethickness{0.4mm}
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
+    "font.size": 8,
+    "axes.linewidth": 0.6,
+    "xtick.major.width": 0.6,
+    "ytick.major.width": 0.6,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 
-  % Top and bottom labels
-  \put(150,153){\makebox(0,0){no-flow}}
-  \put(150,40){\makebox(0,0){no-flow}}
+FRESH = "#2a6fdb"
+SALT = "#b23a48"
 
-  % Initial conditions in the middle of the domain
-  \put(150,103){\makebox(0,0){Flow IC: $h_0=L_y-y$}}
-  \put(150,93){\makebox(0,0){Transport IC: $c_0=0$}}
+fig_w = WIDTH_MM / 25.4
+fig, ax = plt.subplots(figsize=(fig_w, 0.62 * fig_w))
 
-  % Left inflow arrows
-  \color{henryblue}
-  \multiput(32,62)(0,16){5}{\vector(1,0){16}}
+ax.fill([0, LX, LX, 0], [0, 0, LZ, LZ], color="#eef3f8", lw=0, zorder=1)
+ax.plot([0, LX, LX, 0, 0], [0, 0, LZ, LZ, 0], color="k", lw=0.7, zorder=3)
+# the Dirichlet/flux boundaries, coloured by the water they carry
+ax.plot([0, 0], [0, LZ], color=FRESH, lw=2.0, zorder=4)
+ax.plot([LX, LX], [0, LZ], color=SALT, lw=2.0, zorder=4)
 
-  % Left boundary text
-  \color{black}
-  \put(8,126){\makebox(0,0)[l]{Freshwater inflow}}
-  \put(8,116){\makebox(0,0)[l]{$q_n=-6.6\times 10^{-5}\ \mathrm{m/s}$}}
-  \put(22,103){\makebox(0,0)[l]{$c=0$}}
+for z in np.linspace(0.15, 0.85, 4):
+    ax.annotate("", xy=(0.0, z), xytext=(-0.2, z),
+                arrowprops=dict(arrowstyle="-|>", color=FRESH, lw=0.8),
+                annotation_clip=False)
 
-  % Right boundary arrow and labels
-  \put(286,110){\vector(-1,0){28}}
-  \put(290,128){\makebox(0,0)[l]{Saltwater boundary}}
-  \put(290,117){\makebox(0,0)[l]{$h=\dfrac{\rho_s}{\rho_f}(L_y-y)$}}
-  \put(290,104){\makebox(0,0)[l]{$c=1$}}
+ax.text(0.5 * LX, LZ - 0.04, "No flow", ha="center", va="top")
+ax.text(0.5 * LX, 0.04, "No flow", ha="center", va="bottom")
+# \mathregular keeps the exponent in the text font, so every glyph is in the
+# one sans-serif font; L_z = 1 m and rho_s/rho_0 = 1.025 (tranport_p.py) are
+# written out.  Boundary labels sit inside the box beside their wall, so the
+# sketch fits one column.
+ax.text(0.06, 0.62, "Fresh water\nq = −6.6×10$^{\\mathregular{-5}}$ m/s\nc = 0",
+        ha="left", va="center", color=FRESH)
+ax.text(LX - 0.06, 0.62, "Seawater\nψ = 1.025 (1 m − z)\nc = 1",
+        ha="right", va="center", color=SALT)
+ax.text(0.5 * LX, 0.3, "Initial: ψ = 1 m − z, c = 0", ha="center", va="center")
+ax.text(0.5 * LX, -0.1, "2 m × 1 m", ha="center", va="top", color="0.35")
 
-  % Bottom dimension line
-  \put(50,20){\vector(1,0){100}}
-  \put(250,20){\vector(-1,0){100}}
-  \put(50,14){\line(0,1){12}}
-  \put(250,14){\line(0,1){12}}
-  \put(150,28){\makebox(0,0){$2.0~\mathrm{m}$}}
+ax.set_xlim(0.0, LX)
+ax.set_ylim(0.0, LZ)
+ax.set_aspect("equal")
+ax.set_axis_off()
 
-  % Left dimension line
-  \put(20,45){\vector(0,1){50}}
-  \put(20,145){\vector(0,-1){50}}
-  \put(14,45){\line(1,0){12}}
-  \put(14,145){\line(1,0){12}}
-  \put(14,95){\makebox(0,0){\rotatebox{90}{$1.0~\mathrm{m}$}}}
-
-\end{picture}
-\end{document}
-"""
-
-
-def require_tool(name: str) -> None:
-    if shutil.which(name) is None:
-        raise RuntimeError(f"required tool '{name}' was not found")
-
-
-def run(cmd, cwd):
-    subprocess.run(
-        cmd,
-        cwd=cwd,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-
-def main():
-    require_tool("pdflatex")
-    require_tool("pdftoppm")
-
-    with tempfile.TemporaryDirectory() as tmpdir_name:
-        tmpdir = Path(tmpdir_name)
-        tex_path = tmpdir / "domain_henry_minimal.tex"
-        pdf_path = tmpdir / "domain_henry_minimal.pdf"
-        ppm_prefix = tmpdir / "domain_henry_minimal"
-
-        tex_path.write_text(TEX_SOURCE, encoding="utf-8")
-
-        run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
-            cwd=tmpdir,
-        )
-
-        run(
-            ["pdftoppm", "-png", "-singlefile", "-r", "170", pdf_path.name, ppm_prefix.name],
-            cwd=tmpdir,
-        )
-
-        png_path = tmpdir / "domain_henry_minimal.png"
-        OUT_PATH.write_bytes(png_path.read_bytes())
-
-    print(f"wrote {OUT_PATH}")
-
-
-if __name__ == "__main__":
-    main()
+fig.savefig(OUT_PATH, dpi=600, bbox_inches="tight", pad_inches=0.02)
+print(f"wrote {OUT_PATH}")

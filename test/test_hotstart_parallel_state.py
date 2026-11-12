@@ -71,7 +71,7 @@ def test_hot_start_with_another_number_of_ranks_restarts_and_says_so(tmp_path):
     _run(tmp_path / "hot", 2, "stop", n)
     _run(tmp_path / "hot", 1, "hot", n, endn=end)
     log = (tmp_path / "hot" / "proteus_default.log").read_text()
-    assert re.search(r"Hot start: no solver state to restore at step \d+ for model \S+ \(none was archived, "
+    assert re.search(r"Hot start: no solver state to restore at step \d+ for model \S+ \(none was archived \(a frame carries the solution only[^)]*\), "
                      r"or it was written by a different number of ranks", log)
     with h5py.File(tmp_path / "hot" / "hs_be1.h5", "r") as f:
         assert "u_t%d" % end in f

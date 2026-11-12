@@ -1,4 +1,5 @@
 import unittest
+import pytest
 import numpy.testing as npt
 import numpy as np
 from subprocess import check_call
@@ -27,7 +28,24 @@ numEdges_reference_3D = 9384.0
 numFaces_reference_3D = 6256.0
 numElements_reference_3D = 37473.0
 
+def _ymf_mesh(domain):
+    """The mesh a use_gmsh domain reads from the .msh gmsh just wrote: converted by ymf-import-gmsh."""
+    options = MeshTools.getMeshOptions(domain)
+    options.use_gmsh = True
+    options.genMesh = False
+    return MeshTools._generateMesh(domain, options).meshList[0]
+
+
 class TestGMSH(unittest.TestCase):
+    """gmsh meshes a domain's .geo; its .msh is read through the ymf mesh (ymf-import-gmsh).
+
+    The counts were taken from the triangle/tetgen files msh2simplex wrote (removed in C7.1 round 5);
+    the 3D edge and face counts are the boundary's, as those files held them.
+    """
+    @classmethod
+    def setUpClass(cls):
+        pytest.importorskip("ymf_import_gmsh")
+
     def test_gmsh_generation_2D(self):
         domain = Domain.PlanarStraightLineGraphDomain()
         domain.vertices = [[0., 0., 0.],
@@ -42,23 +60,10 @@ class TestGMSH(unittest.TestCase):
         domain.writeGeo('gmsh_mesh_test_2D', he_max=0.1)
         gmsh_cmd = "gmsh {0:s} -v 10 -2 -o {1:s} -format msh2".format(domain.geofile+".geo", domain.geofile+".msh")
         check_call(gmsh_cmd, shell=True)
-        MeshTools.msh2simplex(domain.geofile, nd=2)
-        #with open('gmsh_mesh_test_2D.node', 'r') as nodefile:
-        #    npt.assert_equal(nodefile.readline(), '3433 2 0 1\n')
-        #with open('gmsh_mesh_test_2D.edge', 'r') as edgefile:
-        #    npt.assert_equal(edgefile.readline(), '10096 1\n')
-        #with open('gmsh_mesh_test_2D.ele', 'r') as elefile:
-        #    npt.assert_equal(elefile.readline(), '6664 3 1\n')
-        with open('gmsh_mesh_test_2D.node', 'r') as nodefile:
-            numNodes = int(nodefile.readline().split(' ', 1)[0]) 
-            assert abs(1.0-numNodes/numNodes_reference_2D) < THRESHOLD
-        with open('gmsh_mesh_test_2D.edge', 'r') as edgefile:
-            numEdges = int(edgefile.readline().split(' ', 1)[0]) 
-            assert abs(1.0-numEdges/numEdges_reference_2D) < THRESHOLD
-        with open('gmsh_mesh_test_2D.ele', 'r') as elefile:
-            numElements = int(elefile.readline().split(' ', 1)[0]) 
-            assert abs(1.0-numElements/numElements_reference_2D) < THRESHOLD
-
+        mesh = _ymf_mesh(domain)
+        assert abs(1.0-mesh.nNodes_global/numNodes_reference_2D) < THRESHOLD
+        assert abs(1.0-mesh.nEdges_global/numEdges_reference_2D) < THRESHOLD
+        assert abs(1.0-mesh.nElements_global/numElements_reference_2D) < THRESHOLD
 
     def test_gmsh_generation_3D(self):
         domain = Domain.PiecewiseLinearComplexDomain()
@@ -67,24 +72,14 @@ class TestGMSH(unittest.TestCase):
         domain.writeGeo('gmsh_mesh_test_3D', he_max=0.1)
         gmsh_cmd = "gmsh {0:s} -v 10 -3 -o {1:s} -format msh2".format(domain.geofile+".geo", domain.geofile+".msh")
         check_call(gmsh_cmd, shell=True)
-        MeshTools.msh2simplex(domain.geofile, nd=3)
-        # cek disabling exact tests due to cross-platform non-reproducibility
-        # with open('gmsh_mesh_test_3D.node', 'r') as nodefile:
-        #     npt.assert_equal(nodefile.readline(), '7674 3 0 1\n')
-        # with open('gmsh_mesh_test_3D.edge', 'r') as edgefile:
-        #     npt.assert_equal(edgefile.readline(), '9384 1\n')
-        # with open('gmsh_mesh_test_3D.face', 'r') as facefile:
-        #     npt.assert_equal(facefile.readline(), '6256 3 1\n')
-        # with open('gmsh_mesh_test_3D.ele', 'r') as elefile:
-        #     npt.assert_equal(elefile.readline(), '37473 4 1\n')
-        with open('gmsh_mesh_test_3D.node', 'r') as nodefile:
-            assert(abs(int(nodefile.readline().split()[0]) - numNodes_reference_3D )/numNodes_reference_3D < THRESHOLD)
-        with open('gmsh_mesh_test_3D.edge', 'r') as edgefile:
-            assert(abs(int(edgefile.readline().split()[0]) - numEdges_reference_3D )/numEdges_reference_3D < THRESHOLD)
-        with open('gmsh_mesh_test_3D.face', 'r') as facefile:
-            assert(abs(int(facefile.readline().split()[0]) - numFaces_reference_3D )/numFaces_reference_3D < THRESHOLD)
-        with open('gmsh_mesh_test_3D.ele', 'r') as elefile:
-            assert(abs(int(elefile.readline().split()[0]) - numElements_reference_3D )/numElements_reference_3D < THRESHOLD)
+        mesh = _ymf_mesh(domain)
+        exterior = mesh.elementBoundaryNodesArray[mesh.exteriorElementBoundariesArray]
+        boundaryEdges = {tuple(sorted(pair)) for face in exterior.tolist()
+                         for pair in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0]))}
+        assert(abs(mesh.nNodes_global - numNodes_reference_3D )/numNodes_reference_3D < THRESHOLD)
+        assert(abs(len(boundaryEdges) - numEdges_reference_3D )/numEdges_reference_3D < THRESHOLD)
+        assert(abs(len(exterior) - numFaces_reference_3D )/numFaces_reference_3D < THRESHOLD)
+        assert(abs(mesh.nElements_global - numElements_reference_3D )/numElements_reference_3D < THRESHOLD)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

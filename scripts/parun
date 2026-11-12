@@ -12,6 +12,9 @@
 #   \brief A driver for both single and mult-model simulations
 #
 #
+import time
+# the wall limit (--wall-limit) counts from here: importing proteus is part of the budget
+wallStart = time.time()
 import os
 import proteus
 
@@ -188,6 +191,17 @@ parser.add_option("--hotStartMode",
                   choices=["continue", "restart"],
                   default="continue",
                   help="""continue (the default): a hot start resumes the archived numerical state exactly, and stops, naming what differs, if the step policy (time integrator, step controllers, shock capturing, step-size settings) is not the archived run's; restart: continue the solution only and rebuild the history from it, so those settings may change""")
+parser.add_option("--state-every",
+                  dest="stateEvery",
+                  type="int",
+                  default=0,
+                  metavar="N",
+                  help="""write the solver state a continue hot start needs (the lagged shock capturing, subgrid error and time history; some 20 times the size of the solution) with every N-th archived frame, the initial one included. The default, 0, writes it at the final step and at a checkpoint (--wall-limit) only; the other frames carry the solution alone, and a hot start from one restarts from that solution""")
+parser.add_option("--wall-limit",
+                  dest="wallLimit",
+                  default=None,
+                  metavar="HH:MM:SS",
+                  help="""stop at a system step boundary, with room left to write a checkpoint, before this much wall time has passed since parun started (HH:MM:SS, or D-HH:MM:SS), and exit with status 75 (WallLimit.CHECKPOINT_EXIT_STATUS) so that a job script can continue with parun -H. "scheduler" uses the end time of the SLURM or PBS job. Inside a batch job a duration is cut at the job's end. Rank 0 decides at each step boundary whether another step, as long as the longest so far, and a checkpoint, as long as this run's own frame and solver state writes took, still fit, and the others follow, so the ranks stop at the same step""")
 parser.add_option("-t","--hotStartTime",
                   dest="hotStartTime",
                   action="store",
@@ -244,6 +258,13 @@ parser.add_option("--path",
                   default="")
 
 (opts,args) = parser.parse_args()
+opts.wallStart = wallStart
+if opts.wallLimit is not None and opts.wallLimit.strip().lower() != "scheduler":
+    from proteus import WallLimit
+    try:
+        WallLimit.parse_duration(opts.wallLimit)
+    except ValueError as e:
+        parser.error(str(e))
 
 if opts.debug:
     import pdb
@@ -620,6 +641,14 @@ while running:
             if comm.globalMax(int(bool(systemStepFailed))):
                 log("%s run number %i failed: system step failed" % (so.name, runNumber))
                 exitStatus = 1
+            elif ns.wallLimitStop:
+                # stopped at a step boundary for --wall-limit: the job script continues it with parun -H
+                from proteus import WallLimit
+                log("%s run number %i stopped for the wall limit: exit status %d" % (
+                    so.name, runNumber, WallLimit.CHECKPOINT_EXIT_STATUS), level=0)
+                exitStatus = WallLimit.CHECKPOINT_EXIT_STATUS
+                # the runs after it in a batch file are not started
+                running = False
 
         log("Completed %s run number %i" %(so.name,runNumber))
         import gc

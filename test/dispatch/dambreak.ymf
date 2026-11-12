@@ -150,7 +150,7 @@ solution_paths:
           proteus: {model: CLSVOF, disc_ICs: true}
         - name: flow
           solves: [momentum]
-          lags: {φ: {via: clsvof, at: current_step}, χ: {via: clsvof, at: current_step}}
+          lags: {φ: {via: clsvof, at: current_step}, χ: {via: clsvof, at: current_step}, p: {via: pressure, at: previous_step}}
           finite_element: {velocity: {family: CG, order: 2}}
           time_integration: bdf2
           solver: {max_iterations: 1}
@@ -161,6 +161,7 @@ solution_paths:
           proteus: {model: PresInc}
         - name: pressure
           solves: [continuity]
+          lags: {v: {via: flow, at: current_step}}
           proteus: {model: Pres}
         - name: pressureInit
           spin_up: true

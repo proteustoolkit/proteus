@@ -34,6 +34,10 @@ opts = Context.Options([
     ("solidRadius", 0.3, "radius of the solid circle"),
     ("solidCenterY", 1.0/3.0, "y-coordinate of the solid circle's centre (x = 0)"),
     ("fluxJump", 0.0, "test=2.0 only: constant flux jump [mu du/dn] = fluxJump across Gamma_f"),
+    ("meshFile", "", "read the mesh from the Triangle files <meshFile>.node, <meshFile>.ele and\n"
+     "        <meshFile>.edge instead of running triangle. Triangle can produce a different mesh on another\n"
+     "        platform from the same .poly and options; test/IFEM/meshes holds the meshes behind the\n"
+     "        manuscript tables"),
 ])
 
 nd = 2
@@ -182,6 +186,22 @@ domain = Domain.PlanarStraightLineGraphDomain(vertices=vertices, vertexFlags=ver
 domain.boundaryTags = bt
 domain.writePoly(name)
 domain.MeshOptions.triangleOptions = "VApq30Dena%8.8f" % (0.5*h_target**2,)
+
+
+def use_mesh_files(meshFile, fileprefix):
+    """Copy <meshFile>.node/.ele/.edge to <fileprefix>.* so Proteus reads them instead of running triangle."""
+    import shutil
+    from proteus import Comm
+    comm = Comm.get()
+    if comm.isMaster():
+        for ext in ("node", "ele", "edge"):
+            shutil.copyfile(meshFile + "." + ext, fileprefix + "." + ext)
+    comm.barrier()
+
+
+if opts.meshFile:
+    use_mesh_files(opts.meshFile, name)
+    domain.MeshOptions.genMesh = False
 
 # --- coefficients and boundary conditions ----------------------------------------------------
 coefficients = ADR.Coefficients(aOfX=aOfX, fOfX=fOfX, velocity=numpy.array([0.0, 0.0]), nc=1, nd=nd,

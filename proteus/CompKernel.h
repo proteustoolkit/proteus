@@ -1,6 +1,7 @@
 #ifndef COMPKERNEL_H
 #define COMPKERNEL_H
 #include <cmath>
+#include "index_type.h"
 /**
  *   A class to provide indexing into Euclidean vectors and tensors.
  */
@@ -97,10 +98,10 @@ template<int NSPACE, int NDOF_MESH_TRIAL_ELEMENT>
 class CompKernelSpaceMapping
 {
 public:
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -110,28 +111,28 @@ public:
 				       double& x,
 				       double& y,
 				       double& z);
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h);
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
 					       double& yt,
 					       double& zt);
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -146,12 +147,12 @@ public:
 					       double& x,
 					       double& y,
 					       double& z);
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -160,14 +161,14 @@ public:
 						       double* boundaryJac,						       
 						       double* metricTensor,
 						       double& metricTensorDetSqrt);
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
   
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<NSPACE;I++)
       grad[I] = 0.0;
@@ -176,7 +177,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j*NSPACE+I];
   }
   
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     const int NSPACE2=NSPACE*NSPACE;
     for(int I=0;I<NSPACE;I++)
@@ -225,10 +226,10 @@ public:
     HXHX(0),HXHY(1),
     HYHX(2),HYHY(3)
   {}
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -251,7 +252,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	//x += mesh_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_ref(k, j);
 	//y += mesh_dof[mesh_l2g[eN_j]*3+1]*mesh_trial_ref(k, j);
 	//z += mesh_dof[mesh_l2g[eN_j]*3+2]*mesh_trial_ref(k, j);	      
@@ -290,10 +291,10 @@ public:
     jacInv[ZZ] = oneOverJacDet*(jac[XX]*jac[YY] - jac[XY]*jac[YX]);
   }
   
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -301,16 +302,16 @@ public:
     h=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	//h += h_dof[mesh_l2g[eN_j]]*mesh_trial_ref(k, j);
         h += h_dof[mesh_l2g[eN_j]]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j];
       }
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -323,7 +324,7 @@ public:
     xt=0.0;yt=0.0;zt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	//xt += mesh_velocity_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_ref(k, j);
 	//yt += mesh_velocity_dof[mesh_l2g[eN_j]*3+1]*mesh_trial_ref(k, j);
 	//zt += mesh_velocity_dof[mesh_l2g[eN_j]*3+2]*mesh_trial_ref(k, j);	      
@@ -333,12 +334,12 @@ public:
       }
   }
 
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -370,7 +371,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j_nSpace = ebN_local_kb_j*3;
 	x += mesh_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_trace_ref[ebN_local_kb_j]; 
@@ -440,12 +441,12 @@ public:
     metricTensorDetSqrt=sqrt(metricTensor[HXHX]*metricTensor[HYHY]- metricTensor[HXHY]*metricTensor[HYHX]);
   }
 
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -463,7 +464,7 @@ public:
     xt=0.0;yt=0.0;zt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	xt += mesh_velocity_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_trace_ref[ebN_local_kb_j]; 
 	yt += mesh_velocity_dof[mesh_l2g[eN_j]*3+1]*mesh_trial_trace_ref[ebN_local_kb_j]; 
@@ -490,14 +491,14 @@ public:
 			      Gy_tr_Gy_21*Gy_tr_Gy_12*Gy_tr_Gy_00 -
 			      Gy_tr_Gy_22*Gy_tr_Gy_10*Gy_tr_Gy_01) / (1.0+xt_dot_n*xt_dot_n));
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
   
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<3;I++)
       grad[I] = 0.0;
@@ -506,7 +507,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j*3+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     for(int I=0;I<3;I++)
       for(int J=0;J<3;J++)
@@ -517,10 +518,10 @@ public:
 	  hess[I*3+J] += dof[l2g_element[j]]*hess_trial[j*9+I*3+J];
   }
   
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -544,10 +545,10 @@ public:
 			     0.0);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -562,12 +563,12 @@ public:
 				     yt,
 				     0.0);
   }
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -603,12 +604,12 @@ public:
 				     y,
 				     0.0);  
   }
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -661,10 +662,10 @@ public:
     YHX(1),
     HXHX(0)
   {}
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -686,7 +687,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	/* x += mesh_dof[mesh_l2g[eN_j]*2+0]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j]; */
 	/* y += mesh_dof[mesh_l2g[eN_j]*2+1]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j]; */
 	/* for (int I=0;I<2;I++) */
@@ -716,10 +717,10 @@ public:
     jacInv[YY] = oneOverJacDet*jac[XX];
   }
   
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -727,16 +728,16 @@ public:
     h=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	//h += h_dof[mesh_l2g[eN_j]]*mesh_trial_ref(k, j);
         h += h_dof[mesh_l2g[eN_j]]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j];
       }
   }
   
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -748,7 +749,7 @@ public:
     xt=0.0;yt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	/* xt += mesh_velocity_dof[mesh_l2g[eN_j]*2+0]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j]; */
 	/* yt += mesh_velocity_dof[mesh_l2g[eN_j]*2+1]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j]; */
 	//xt += mesh_velocity_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_ref(k, j);
@@ -758,12 +759,12 @@ public:
       }
   }
 
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -793,7 +794,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j_nSpace = ebN_local_kb_j*2;
 	/* x += mesh_dof[mesh_l2g[eN_j]*2+0]*mesh_trial_trace_ref[ebN_local_kb_j];  */
@@ -848,12 +849,12 @@ public:
     metricTensorDetSqrt=sqrt(metricTensor[HXHX]);
   }
 
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -870,7 +871,7 @@ public:
     xt=0.0;yt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	/* xt += mesh_velocity_dof[mesh_l2g[eN_j]*2+0]*mesh_trial_trace_ref[ebN_local_kb_j];  */
 	/* yt += mesh_velocity_dof[mesh_l2g[eN_j]*2+1]*mesh_trial_trace_ref[ebN_local_kb_j];  */
@@ -888,14 +889,14 @@ public:
       xt_dot_n = xt*normal[X]+yt*normal[Y];
     metricTensorDetSqrt=sqrt((Gy_tr_Gy_00*Gy_tr_Gy_11 - Gy_tr_Gy_01*Gy_tr_Gy_10) / (1.0+xt_dot_n*xt_dot_n));
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
   
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<2;I++)
       grad[I] = 0.0;
@@ -904,7 +905,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j*2+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     for(int I=0;I<2;I++)
       for(int J=0;J<2;J++)
@@ -915,10 +916,10 @@ public:
 	  hess[I*2+J] += dof[l2g_element[j]]*hess_trial[j*4+I*2+J];
   }
   
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -941,10 +942,10 @@ public:
 			     x,
 			     y);
   }
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -959,12 +960,12 @@ public:
 				     xt,
 				     yt);
   }
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -1004,12 +1005,12 @@ public:
     //stack slot happened to hold.
     z=0.0;
   }
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -1054,10 +1055,10 @@ public:
     XHX(0),
     HXHX(0)
   {}
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -1078,7 +1079,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
         x += mesh_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j];
 	for (int I=0;I<1;I++)
 	  {
@@ -1091,10 +1092,10 @@ public:
     jacInv[XX] = oneOverJacDet;
   }
   
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -1102,15 +1103,15 @@ public:
     h=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
         h += h_dof[mesh_l2g[eN_j]]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j];
       }
   }
   
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt)
@@ -1121,17 +1122,17 @@ public:
     xt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       {
-	int eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j=eN*NDOF_MESH_TRIAL_ELEMENT+j;
         xt += mesh_velocity_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_ref[k*NDOF_MESH_TRIAL_ELEMENT+j];
       }
   }
 
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -1158,7 +1159,7 @@ public:
       }
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j_nSpace = ebN_local_kb_j*1;
 	x += mesh_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_trace_ref[ebN_local_kb_j]; 
@@ -1197,12 +1198,12 @@ public:
     metricTensorDetSqrt=1.0;
   }
 
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double* normal,
@@ -1216,7 +1217,7 @@ public:
     xt=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++) 
       { 
-	int eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
+	proteus_index_t eN_j = eN*NDOF_MESH_TRIAL_ELEMENT+j;
 	int ebN_local_kb_j = ebN_local_kb*NDOF_MESH_TRIAL_ELEMENT+j;
 	xt += mesh_velocity_dof[mesh_l2g[eN_j]*3+0]*mesh_trial_trace_ref[ebN_local_kb_j]; 
       }
@@ -1231,14 +1232,14 @@ public:
       xt_dot_n = xt*normal[X];
     metricTensorDetSqrt=sqrt((Gy_tr_Gy_00*Gy_tr_Gy_11 - Gy_tr_Gy_01*Gy_tr_Gy_10) / (1.0+xt_dot_n*xt_dot_n));
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_MESH_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
   
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<1;I++)
       grad[I] = 0.0;
@@ -1247,7 +1248,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     for(int I=0;I<1;I++)
       for(int J=0;J<1;J++)
@@ -1258,10 +1259,10 @@ public:
 	  hess[I+J] += dof[l2g_element[j]]*hess_trial[j+I+J];
   }
   
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -1283,10 +1284,10 @@ public:
 			     jacInv,
 			     x);
   }
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* mesh_velocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -1300,12 +1301,12 @@ public:
 				     mesh_trial_ref,
 				     xt);
   }
-  inline void calculateMapping_elementBoundary(const int eN,
+  inline void calculateMapping_elementBoundary(const proteus_index_t eN,
 					       const int ebN_local,
 					       const int kb,
 					       const int ebN_local_kb,
 					       double* mesh_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       double* mesh_trial_trace_ref,
 					       double* mesh_grad_trial_trace_ref,
 					       double* boundaryJac_ref,
@@ -1344,12 +1345,12 @@ public:
     y=0.0;
     z=0.0;
   }
-  inline void calculateMappingVelocity_elementBoundary(const int eN,
+  inline void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						       const int ebN_local,
 						       const int kb,
 						       const int ebN_local_kb,
 						       double* mesh_velocity_dof,
-						       int* mesh_l2g,
+						       proteus_index_t* mesh_l2g,
 						       double* mesh_trial_trace_ref,
 						       double& xt,
 						       double& yt,
@@ -1442,14 +1443,14 @@ public:
 	h += v[I]*G[I*NSPACE+J]*v[J];
     h = 1.0/sqrt(h+1.0e-16);//cek hack
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
 
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<NSPACE;I++)
       grad[I] = 0.0;
@@ -1458,7 +1459,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j*NSPACE+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     const int NSPACE2=NSPACE*NSPACE;
     for(int I=0;I<NSPACE;I++)
@@ -1508,7 +1509,7 @@ public:
    *  @param val return value with the average DOF values
    */
 
-  inline void DOFaverage (const double* dof, const int* l2g_element, double& val)
+  inline void DOFaverage (const double* dof, const proteus_index_t* l2g_element, double& val)
   {
     val = 0.0;
 
@@ -1708,21 +1709,21 @@ public:
     return tmp;
   }
 
-  inline double Diffusion_weak(int* rowptr,
-			       int* colind,
+  inline double Diffusion_weak(proteus_csr_index_t* rowptr,
+			       proteus_csr_index_t* colind,
 			       double* a,
 			       const double grad_phi[NSPACE],
 			       const double grad_w_dV[NSPACE])
   {
     double tmp=0.0;
     for(int I=0;I<NSPACE;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += a[m]*grad_phi[colind[m]]*grad_w_dV[I];
     return tmp;
   }
 
-  inline double DiffusionJacobian_weak(int* rowptr,
-				       int* colind,
+  inline double DiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+				       proteus_csr_index_t* colind,
 				       double* a,
 				       double* da,
 				       const double grad_phi[NSPACE],
@@ -1733,7 +1734,7 @@ public:
   {
     double daProduct=0.0,dphiProduct=0.0;
     for (int I=0;I<NSPACE;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  daProduct += da[m]*grad_phi[colind[m]]*grad_w_dV[I];
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
@@ -1741,15 +1742,15 @@ public:
     return daProduct*v+dphiProduct*dphi;
   }
 
-  inline double SimpleDiffusionJacobian_weak(int* rowptr,
-					     int* colind,
+  inline double SimpleDiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+					     proteus_csr_index_t* colind,
 					     double* a,
 					     const double grad_v[NSPACE],
 					     const double grad_w_dV[NSPACE])
   {
     double dphiProduct=0.0;
     for (int I=0;I<NSPACE;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
 	}
@@ -1978,14 +1979,14 @@ public:
 							const double& u,
 							const double& bc_u,
 							const double normal[NSPACE],
-							int* rowptr,
-							int* colind,
+							proteus_csr_index_t* rowptr,
+							proteus_csr_index_t* colind,
 							double* a,
 							const double grad_w_dS[NSPACE])
   {
     double tmp=0.0;
     for(int I=0;I<NSPACE;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*(u-bc_u)*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
@@ -1995,22 +1996,22 @@ public:
 								const double& sigma,
 								const double& v,
 								const double normal[NSPACE],
-								int* rowptr,
-								int* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								double* a,
 								const double grad_w_dS[NSPACE])
   {
     double tmp=0.0;
     for(int I=0;I<NSPACE;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*v*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
 
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -2024,10 +2025,10 @@ public:
     mapping.calculateMapping_element(eN,k,mesh_dof,mesh_l2g,mesh_trial_ref,mesh_grad_trial_ref,jac,jacDet,jacInv,x,y,z);
   }
 
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -2040,10 +2041,10 @@ public:
 			       h);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* meshVelocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -2054,12 +2055,12 @@ public:
   }
 
   inline 
-  void calculateMapping_elementBoundary(const int eN,
+  void calculateMapping_elementBoundary(const proteus_index_t eN,
 					const int ebN_local,
 					const int kb,
 					const int ebN_local_kb,
 					double* mesh_dof,
-					int* mesh_l2g,
+					proteus_index_t* mesh_l2g,
 					double* mesh_trial_trace_ref,
 					double* mesh_grad_trial_trace_ref,
 					double* boundaryJac_ref,
@@ -2098,12 +2099,12 @@ public:
   }
 
   inline 
-    void calculateMappingVelocity_elementBoundary(const int eN,
+    void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						  const int ebN_local,
 						  const int kb,
 						  const int ebN_local_kb,
 						  double* mesh_velocity_dof,
-						  int* mesh_l2g,
+						  proteus_index_t* mesh_l2g,
 						  double* mesh_trial_trace_ref,
 						  double& xt,
 						  double& yt,
@@ -2271,14 +2272,14 @@ public:
 	h += v[I]*G[I*2+J]*v[J];
     h = 1.0/sqrt(h+1.0e-12);
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
 
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<2;I++)
       grad[I] = 0.0;
@@ -2287,7 +2288,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j*2+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     for(int I=0;I<2;I++)
       for(int J=0;J<2;J++)
@@ -2336,7 +2337,7 @@ public:
    *  @param val return value with the average DOF values
    */
 
-  inline void DOFaverage (const double* dof, const int* l2g_element, double& val)
+  inline void DOFaverage (const double* dof, const proteus_index_t* l2g_element, double& val)
   {
     val = 0.0;
 
@@ -2537,21 +2538,21 @@ public:
     return tmp;
   }
 
-  inline double Diffusion_weak(int* rowptr,
-			       int* colind,
+  inline double Diffusion_weak(proteus_csr_index_t* rowptr,
+			       proteus_csr_index_t* colind,
 			       double* a,
 			       const double grad_phi[2],
 			       const double grad_w_dV[2])
   {
     double tmp=0.0;
     for(int I=0;I<2;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += a[m]*grad_phi[colind[m]]*grad_w_dV[I];
     return tmp;
   }
 
-  inline double DiffusionJacobian_weak(int* rowptr,
-				       int* colind,
+  inline double DiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+				       proteus_csr_index_t* colind,
 				       double* a,
 				       double* da,
 				       const double grad_phi[2],
@@ -2562,7 +2563,7 @@ public:
   {
     double daProduct=0.0,dphiProduct=0.0;
     for (int I=0;I<2;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  daProduct += da[m]*grad_phi[colind[m]]*grad_w_dV[I];
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
@@ -2570,15 +2571,15 @@ public:
     return daProduct*v+dphiProduct*dphi;
   }
 
-  inline double SimpleDiffusionJacobian_weak(int* rowptr,
-					     int* colind,
+  inline double SimpleDiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+					     proteus_csr_index_t* colind,
 					     double* a,
 					     const double grad_v[2],
 					     const double grad_w_dV[2])
   {
     double dphiProduct=0.0;
     for (int I=0;I<2;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
 	}
@@ -2809,14 +2810,14 @@ public:
 							const double& u,
 							const double& bc_u,
 							const double normal[2],
-							int* rowptr,
-							int* colind,
+							proteus_csr_index_t* rowptr,
+							proteus_csr_index_t* colind,
 							double* a,
 							const double grad_w_dS[2])
   {
     double tmp=0.0;
     for(int I=0;I<2;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*(u-bc_u)*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
@@ -2826,22 +2827,22 @@ public:
 								const double& sigma,
 								const double& v,
 								const double normal[2],
-								int* rowptr,
-								int* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								double* a,
 								const double grad_w_dS[2])
   {
     double tmp=0.0;
     for(int I=0;I<2;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*v*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
 
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -2854,10 +2855,10 @@ public:
     mapping.calculateMapping_element(eN,k,mesh_dof,mesh_l2g,mesh_trial_ref,mesh_grad_trial_ref,jac,jacDet,jacInv,x,y);
   }
 
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -2870,10 +2871,10 @@ public:
 			       h);
   }
 
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -2887,10 +2888,10 @@ public:
     mapping.calculateMapping_element(eN,k,mesh_dof,mesh_l2g,mesh_trial_ref,mesh_grad_trial_ref,jac,jacDet,jacInv,x,y,z);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* meshVelocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -2899,10 +2900,10 @@ public:
     mapping.calculateMappingVelocity_element(eN,k,meshVelocity_dof,mesh_l2g,mesh_trial_ref,xt,yt);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* meshVelocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -2913,12 +2914,12 @@ public:
   }
 
   inline
-  void calculateMapping_elementBoundary(const int eN,
+  void calculateMapping_elementBoundary(const proteus_index_t eN,
 					const int ebN_local,
 					const int kb,
 					const int ebN_local_kb,
 					double* mesh_dof,
-					int* mesh_l2g,
+					proteus_index_t* mesh_l2g,
 					double* mesh_trial_trace_ref,
 					double* mesh_grad_trial_trace_ref,
 					double* boundaryJac_ref,
@@ -2955,12 +2956,12 @@ public:
   }
 
   inline
-  void calculateMapping_elementBoundary(const int eN,
+  void calculateMapping_elementBoundary(const proteus_index_t eN,
 					const int ebN_local,
 					const int kb,
 					const int ebN_local_kb,
 					double* mesh_dof,
-					int* mesh_l2g,
+					proteus_index_t* mesh_l2g,
 					double* mesh_trial_trace_ref,
 					double* mesh_grad_trial_trace_ref,
 					double* boundaryJac_ref,
@@ -2999,12 +3000,12 @@ public:
   }
 
   inline
-    void calculateMappingVelocity_elementBoundary(const int eN,
+    void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						  const int ebN_local,
 						  const int kb,
 						  const int ebN_local_kb,
 						  double* mesh_velocity_dof,
-						  int* mesh_l2g,
+						  proteus_index_t* mesh_l2g,
 						  double* mesh_trial_trace_ref,
 						  double& xt,
 						  double& yt,
@@ -3028,12 +3029,12 @@ public:
 						     metricTensorDetSqrt);
   }
   inline
-    void calculateMappingVelocity_elementBoundary(const int eN,
+    void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						  const int ebN_local,
 						  const int kb,
 						  const int ebN_local_kb,
 						  double* mesh_velocity_dof,
-						  int* mesh_l2g,
+						  proteus_index_t* mesh_l2g,
 						  double* mesh_trial_trace_ref,
 						  double& xt,
 						  double& yt,
@@ -3148,14 +3149,14 @@ public:
 	h += v[I]*G[I+J]*v[J];
     h = 1.0/sqrt(h+1.0e-12);
   }
-  inline void valFromDOF(const double* dof,const int* l2g_element,const double* trial_ref,double& val)
+  inline void valFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* trial_ref,double& val)
   {
     val=0.0;
     for (int j=0;j<NDOF_TRIAL_ELEMENT;j++)
       val+=dof[l2g_element[j]]*trial_ref[j];
   }
 
-  inline void gradFromDOF(const double* dof,const int* l2g_element,const double* grad_trial,double* grad)
+  inline void gradFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* grad_trial,double* grad)
   {
     for(int I=0;I<1;I++)
       grad[I] = 0.0;
@@ -3164,7 +3165,7 @@ public:
 	grad[I] += dof[l2g_element[j]]*grad_trial[j+I];
   }
 
-  inline void hessFromDOF(const double* dof,const int* l2g_element,const double* hess_trial,double* hess)
+  inline void hessFromDOF(const double* dof,const proteus_index_t* l2g_element,const double* hess_trial,double* hess)
   {
     for(int I=0;I<1;I++)
       for(int J=0;J<1;J++)
@@ -3213,7 +3214,7 @@ public:
    *  @param val return value with the average DOF values
    */
 
-  inline void DOFaverage (const double* dof, const int* l2g_element, double& val)
+  inline void DOFaverage (const double* dof, const proteus_index_t* l2g_element, double& val)
   {
     val = 0.0;
 
@@ -3414,21 +3415,21 @@ public:
     return tmp;
   }
 
-  inline double Diffusion_weak(int* rowptr,
-			       int* colind,
+  inline double Diffusion_weak(proteus_csr_index_t* rowptr,
+			       proteus_csr_index_t* colind,
 			       double* a,
 			       const double grad_phi[1],
 			       const double grad_w_dV[1])
   {
     double tmp=0.0;
     for(int I=0;I<1;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += a[m]*grad_phi[colind[m]]*grad_w_dV[I];
     return tmp;
   }
 
-  inline double DiffusionJacobian_weak(int* rowptr,
-				       int* colind,
+  inline double DiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+				       proteus_csr_index_t* colind,
 				       double* a,
 				       double* da,
 				       const double grad_phi[1],
@@ -3439,7 +3440,7 @@ public:
   {
     double daProduct=0.0,dphiProduct=0.0;
     for (int I=0;I<1;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  daProduct += da[m]*grad_phi[colind[m]]*grad_w_dV[I];
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
@@ -3447,15 +3448,15 @@ public:
     return daProduct*v+dphiProduct*dphi;
   }
 
-  inline double SimpleDiffusionJacobian_weak(int* rowptr,
-					     int* colind,
+  inline double SimpleDiffusionJacobian_weak(proteus_csr_index_t* rowptr,
+					     proteus_csr_index_t* colind,
 					     double* a,
 					     const double grad_v[1],
 					     const double grad_w_dV[1])
   {
     double dphiProduct=0.0;
     for (int I=0;I<1;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	{
 	  dphiProduct += a[m]*grad_v[colind[m]]*grad_w_dV[I];
 	}
@@ -3686,14 +3687,14 @@ public:
 							const double& u,
 							const double& bc_u,
 							const double normal[1],
-							int* rowptr,
-							int* colind,
+							proteus_csr_index_t* rowptr,
+							proteus_csr_index_t* colind,
 							double* a,
 							const double grad_w_dS[1])
   {
     double tmp=0.0;
     for(int I=0;I<1;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*(u-bc_u)*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
@@ -3703,22 +3704,22 @@ public:
 								const double& sigma,
 								const double& v,
 								const double normal[1],
-								int* rowptr,
-								int* colind,
+								proteus_csr_index_t* rowptr,
+								proteus_csr_index_t* colind,
 								double* a,
 								const double grad_w_dS[1])
   {
     double tmp=0.0;
     for(int I=0;I<1;I++)
-      for (int m=rowptr[I];m<rowptr[I+1];m++)
+      for (proteus_csr_index_t m=rowptr[I];m<rowptr[I+1];m++)
 	tmp += (1.0-isFluxBoundary)*isDOFBoundary*sigma*v*a[m]*normal[colind[m]]*grad_w_dS[I];
     return tmp;
   }
 
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -3731,10 +3732,10 @@ public:
     mapping.calculateMapping_element(eN,k,mesh_dof,mesh_l2g,mesh_trial_ref,mesh_grad_trial_ref,jac,jacDet,jacInv,x,y);
   }
 
-  inline void calculateH_element(const int eN,
+  inline void calculateH_element(const proteus_index_t eN,
 				 const int k,
 				 double* h_dof,
-				 int* mesh_l2g,
+				 proteus_index_t* mesh_l2g,
 				 //proteus::pyarray<double>& mesh_trial_ref,
 				 double* mesh_trial_ref,
 				 double& h)
@@ -3747,10 +3748,10 @@ public:
 			       h);
   }
 
-  inline void calculateMapping_element(const int eN,
+  inline void calculateMapping_element(const proteus_index_t eN,
 				       const int k,
 				       double* mesh_dof,
-				       int* mesh_l2g,
+				       proteus_index_t* mesh_l2g,
 				       //proteus::pyarray<double>& mesh_trial_ref,
 				       double* mesh_trial_ref,
 				       double* mesh_grad_trial_ref,
@@ -3764,10 +3765,10 @@ public:
     mapping.calculateMapping_element(eN,k,mesh_dof,mesh_l2g,mesh_trial_ref,mesh_grad_trial_ref,jac,jacDet,jacInv,x,y,z);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* meshVelocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -3776,10 +3777,10 @@ public:
     mapping.calculateMappingVelocity_element(eN,k,meshVelocity_dof,mesh_l2g,mesh_trial_ref,xt,yt);
   }
 
-  inline void calculateMappingVelocity_element(const int eN,
+  inline void calculateMappingVelocity_element(const proteus_index_t eN,
 					       const int k,
 					       double* meshVelocity_dof,
-					       int* mesh_l2g,
+					       proteus_index_t* mesh_l2g,
 					       //proteus::pyarray<double>& mesh_trial_ref,
 					       double* mesh_trial_ref,
 					       double& xt,
@@ -3790,12 +3791,12 @@ public:
   }
 
   inline
-  void calculateMapping_elementBoundary(const int eN,
+  void calculateMapping_elementBoundary(const proteus_index_t eN,
 					const int ebN_local,
 					const int kb,
 					const int ebN_local_kb,
 					double* mesh_dof,
-					int* mesh_l2g,
+					proteus_index_t* mesh_l2g,
 					double* mesh_trial_trace_ref,
 					double* mesh_grad_trial_trace_ref,
 					double* boundaryJac_ref,
@@ -3832,12 +3833,12 @@ public:
   }
 
   inline
-  void calculateMapping_elementBoundary(const int eN,
+  void calculateMapping_elementBoundary(const proteus_index_t eN,
 					const int ebN_local,
 					const int kb,
 					const int ebN_local_kb,
 					double* mesh_dof,
-					int* mesh_l2g,
+					proteus_index_t* mesh_l2g,
 					double* mesh_trial_trace_ref,
 					double* mesh_grad_trial_trace_ref,
 					double* boundaryJac_ref,
@@ -3876,12 +3877,12 @@ public:
   }
 
   inline
-    void calculateMappingVelocity_elementBoundary(const int eN,
+    void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						  const int ebN_local,
 						  const int kb,
 						  const int ebN_local_kb,
 						  double* mesh_velocity_dof,
-						  int* mesh_l2g,
+						  proteus_index_t* mesh_l2g,
 						  double* mesh_trial_trace_ref,
 						  double& xt,
 						  double& yt,
@@ -3905,12 +3906,12 @@ public:
 						     metricTensorDetSqrt);
   }
   inline
-    void calculateMappingVelocity_elementBoundary(const int eN,
+    void calculateMappingVelocity_elementBoundary(const proteus_index_t eN,
 						  const int ebN_local,
 						  const int kb,
 						  const int ebN_local_kb,
 						  double* mesh_velocity_dof,
-						  int* mesh_l2g,
+						  proteus_index_t* mesh_l2g,
 						  double* mesh_trial_trace_ref,
 						  double& xt,
 						  double& yt,

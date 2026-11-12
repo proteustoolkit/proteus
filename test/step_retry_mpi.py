@@ -19,7 +19,7 @@ system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its ow
 RAISERANK=r raises a ValueError on rank r only, at its first archive write (NS_base.archiveInitialSolution), as one
 rank's Archiver did in a 4096-rank run whose other ranks then waited in a collective until the wall time ran out.
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
-HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
+SLOWARCHIVE=s makes every archive write s seconds slower; WALLLIMIT=hh:mm:ss passes --wall-limit; STATEEVERY=n passes --state-every n; WALLSTEPS=n (WALLCOST=s: a checkpoint is taken to cost s of those seconds, default 0) stops the run at the step boundary after its n-th accepted system step, for its wall limit; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -248,6 +248,32 @@ else:
 if os.environ.get("HOTSTART"):
     # continue the archive in this directory from its latest step at or before HOTSTART
     sys.argv += ['-H', '-t', os.environ["HOTSTART"], '--hotStartMode', os.environ.get("HOTSTARTMODE", "continue")]
+if os.environ.get("WALLSTEPS"):
+    # WALLSTEPS=n: the run's wall clock is the number of system steps it has accepted (one second each) and its limit
+    # n + 0.5 s, so that it stops at the boundary after the n-th step, whatever the machine's speed (parun's own
+    # --wall-limit is given a value that is replaced)
+    from proteus import WallLimit
+    NS.NS_base._makeWallClock = staticmethod(lambda opts: WallLimit.WallClock(
+        float(os.environ["WALLSTEPS"]) + 0.5, "WALLSTEPS", clock=lambda: float(len(accepted))))
+    # the checkpoint's cost is the clock's too, not what the machine measured: WALLCOST=s (default 0) seconds, so the
+    # step the run stops after does not depend on how fast its archive writes are
+    # (WALLCOST=measured keeps NumericalSolution's own: the measured or estimated cost)
+    if os.environ.get("WALLCOST") != "measured":
+        NS.NS_base._checkpointCost = lambda self: float(os.environ.get("WALLCOST", "0"))
+    sys.argv += ['--wall-limit', '99:00:00']
+if os.environ.get("SLOWARCHIVE"):
+    # SLOWARCHIVE=s: every archive write (frame, solver state) takes s seconds longer, as on a slow machine
+    import time
+    _archiveSolution = NS.NS_base._archiveSolution
+    def slow_archive_solution(self, *args, **kwargs):
+        time.sleep(float(os.environ["SLOWARCHIVE"]))
+        return _archiveSolution(self, *args, **kwargs)
+    NS.NS_base._archiveSolution = slow_archive_solution
+if os.environ.get("WALLLIMIT"):
+    sys.argv += ['--wall-limit', os.environ["WALLLIMIT"]]
+if os.environ.get("STATEEVERY"):
+    # --state-every N: the solver state with every N-th frame (default: the final step and checkpoints only)
+    sys.argv += ['--state-every', os.environ["STATEEVERY"]]
 # the source tree's driver when there is one: an installed parun is a copy made at install time
 PARUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "scripts", "parun")
 runpy.run_path(PARUN if os.path.isfile(PARUN) else shutil.which('parun'), run_name='__main__')

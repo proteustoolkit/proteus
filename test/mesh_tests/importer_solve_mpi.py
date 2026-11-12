@@ -9,8 +9,8 @@ solve (redundant LU). Rank 0 writes OUT.npz: the owned nodes' coordinates and va
 every rank, and the nodes per rank. KIND picks the importer:
 
 - ``gmsh2d``, ``gmsh3d``: a PSLG/PLC domain with ``use_gmsh``, read from the stored
-  ``importer_meshes/gmsh_square.msh`` / ``gmsh_cube.msh`` (msh2simplex, then the
-  triangle/tetgen readers). The stored .msh is the mesh; gmsh does not run.
+  ``importer_meshes/gmsh_square.msh`` / ``gmsh_cube.msh`` (the stored ymf mesh,
+  ymf-import-gmsh's conversion of it). The stored .msh is the mesh; gmsh does not run.
 - ``regular2d``, ``regular3d``: a box, ``generatePartitionedMeshFromFiles`` (parun -F)
   when the environment has F=1; X0 shifts the box from the origin.
 - ``dmplex3d``: ``gmsh_cube.msh`` read by PETSc into a DMPlex, then the DMPlex importer.
