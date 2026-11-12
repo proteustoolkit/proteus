@@ -413,7 +413,7 @@ class Coefficients(TC_base):
                          useSparseDiffusion=True,
                          movingDomain=False)
     def initializeSDF(self,femSpace):
-        nodeArray = femSpace.mesh.nodeArray if (femSpace.max_nDOF_element==3) else femSpace.dofMap.lagrangeNodesArray
+        nodeArray = femSpace.mesh.nodeArray if (femSpace.order==1) else femSpace.dofMap.lagrangeNodesArray
         self.embeddedBoundary_sdf_nodes = 100*np.ones((nodeArray.shape[0],),'d')
         if self.embeddedBoundary:
             for nN in range(nodeArray.shape[0]):
@@ -1002,7 +1002,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         coordinates of other points (NaN residual on 2 ranks). Arrays the kernel reads through
         mesh_l2g must be in the same numbering (see _nodeDiameters).
         """
-        if self.u[0].femSpace.max_nDOF_element == 3:
+        if self.u[0].femSpace.order == 1:
             return self.mesh.elementNodesArray
         if getattr(self, '_mesh_l2g_vertices', None) is None:
             nV = self.mesh.elementNodesArray.shape[1]
@@ -1012,7 +1012,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
     def _nodeDiameters(self):
         """mesh.nodeDiametersArray in the numbering of _mesh_l2g, which the kernel reads it through
         (the Nitsche penalty length h_phi). For P2 that is the vertex dofs, not the nodes."""
-        if self.u[0].femSpace.max_nDOF_element == 3:
+        if self.u[0].femSpace.order == 1:
             return self.mesh.nodeDiametersArray
         if getattr(self, '_nodeDiameters_vertices', None) is None:
             d = np.zeros((self.u[0].femSpace.dim,), 'd')
@@ -1039,7 +1039,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
         # ToDo: Have lagrange nodes for all DOFmaps. 
-        argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
+        argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.order==1) else self.u[0].femSpace.dofMap.lagrangeNodesArray
         argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints
@@ -1179,7 +1179,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
-        argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.max_nDOF_element==3) else self.u[0].femSpace.dofMap.lagrangeNodesArray
+        argsDict["mesh_dof"] = self.mesh.nodeArray if (self.u[0].femSpace.order==1) else self.u[0].femSpace.dofMap.lagrangeNodesArray
         argsDict["mesh_l2g"] = self._mesh_l2g()
         argsDict["x_ref"] = self.elementQuadraturePoints
         argsDict["xB_ref"] = self.elementBoundaryQuadraturePoints

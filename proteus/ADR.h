@@ -54,7 +54,11 @@ namespace proteus
 		// element rule's degree. The Gamma_s Nitsche penalty / Robin terms are degree 2p. P1: k=3 with
 		// the 12-point (degree-6) rule. P2: k=4 needs the 16-point (degree-8) rule (qOrder=8); with
 		// the 12-point rule k=3 is kept, which is exact through degree 2p-1=3 and still rate-optimal.
-		static const int nP_fit = (nDOF_trial_element == 6 && nQuadraturePoints_element >= 16) ? 4 : 3;
+		// Polynomial order of the trial space, from the element's dof count in nSpace dimensions
+		// (simplex Lagrange: P1 has nSpace+1 dofs, P2 has (nSpace+1)(nSpace+2)/2). Not a triangle
+		// test: a 3D P1 tetrahedron has 4 dofs and a P2 one has 10.
+		static const int pOrder = (nDOF_trial_element == nSpace + 1) ? 1 : ((nDOF_trial_element == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
+		static const int nP_fit = (pOrder == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
 		using GfType = GeneralizedFunctions<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary>;
 		// Degree of the edge-restricted moment-fit Heaviside used by the edge terms (SCIFEM, the
 		// triply-cut correction). The consistency terms are degree 2p-1 and the interior penalty 2p;
@@ -1535,7 +1539,7 @@ namespace proteus
 							return s;
 						};
 						double Fj = 0.0;
-						if (nDOF_trial_element == 3)
+						if (pOrder == 1)
 							Fj = jhFluxJump(0); // P1: the branch gradients are constant on the cell
 						else
 						{
@@ -1672,7 +1676,7 @@ namespace proteus
 				// to add back. Without this check TC_EDGE still fires there (icase_f==0 alone
 				// doesn't rule it out), injecting a real, nonzero correction from a "dead" element
 				// into whichever physical dofs it shares with genuinely active neighbors.
-				if (embeddedBoundary && immersedBoundary && (nDOF_trial_element == 3 || nDOF_trial_element == 6) && icase_f == 0
+				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
 					// P1 and P2. Integrated on the two Gamma_f-cut (root-adjacent) faces with the element-boundary
@@ -3357,7 +3361,7 @@ namespace proteus
 				} // i
 				// Jacobian of the correction above: exact 3x3 block, linear in u_dof through
 				// the flux only. Same gate as the residual side, including the icase_s != -1 check.
-				if (embeddedBoundary && immersedBoundary && (nDOF_trial_element == 3 || nDOF_trial_element == 6) && icase_f == 0
+				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
 					// Same faces, quadrature and piece indicators as the residual side (P1 and P2).
@@ -4060,4 +4064,8 @@ namespace proteus
 																						 CompKernelFlag);
 	}
 } // proteus
-#endif
+#endif		// 3D P2 on tetrahedra with the degree-5 (15-point) rule: ADR-only for the same reason, the
+		// shared ModelFactory has no P2 tetrahedron entry (commented out there).
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
