@@ -613,8 +613,6 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
     if nSpace == 2:
         return
     needs = []
-    if c.embeddedBoundary and c.embeddedBoundary_ghost_penalty != 0.0:
-        needs.append(("embeddedBoundary with a ghost penalty (cut faces as triangles; set embeddedBoundary_ghost_penalty=0)", 1))
     if c.embeddedBoundary and pOrder != 1:
         needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:

@@ -100,10 +100,21 @@ PLANE_L2 = [3.90776936002934089e-02, 9.81589909475118899e-03, 2.5448878030333932
 
 def test_p1_plane_cut_embedded_boundary_converges_at_rate_two(tmp_path):
     """C44 phase 1, first piece: 3D CutFEM volume and Nitsche terms on P1 tetrahedra (fit degree 3)."""
-    l2 = [_run("refinement={0} pOrder=1 cut=\"plane\"".format(r), cwd=tmp_path)["L2"] for r in range(3)]
+    l2 = [_run("refinement={0} pOrder=1 cut=\"plane_nogp\"".format(r), cwd=tmp_path)["L2"] for r in range(3)]
     rates = [np.log2(l2[i] / l2[i + 1]) for i in range(2)]
     assert all(r >= 1.9 for r in rates), "L2 errors {0}, rates {1}".format(l2, rates)
     np.testing.assert_allclose(l2, PLANE_L2, rtol=1e-5)
+
+
+PLANE_GP_L2 = [4.01164436024943061e-02, 9.51733028228005963e-03, 2.45584691996369574e-03]
+
+
+def test_p1_plane_cut_with_ghost_penalty_converges_at_rate_two(tmp_path):
+    """The ghost penalty on triangular faces (default gamma 0.1), P1."""
+    l2 = [_run("refinement={0} pOrder=1 cut=\"plane\"".format(r), cwd=tmp_path)["L2"] for r in range(3)]
+    rates = [np.log2(l2[i] / l2[i + 1]) for i in range(2)]
+    assert all(r >= 1.9 for r in rates), "L2 errors {0}, rates {1}".format(l2, rates)
+    np.testing.assert_allclose(l2, PLANE_GP_L2, rtol=1e-5)
 
 
 def test_p2_reproduces_a_quadratic_with_advection(tmp_path):
@@ -126,6 +137,17 @@ def test_two_ranks_match_serial(order, tmp_path):
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
 @pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
 def test_plane_cut_two_ranks_match_serial(tmp_path):
+    serial = _run("refinement=1 pOrder=1 cut=\"plane_nogp\"", cwd=tmp_path)
+    petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+             "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
+    par = _run("refinement=1 pOrder=1 cut=\"plane_nogp\" usePetsc=True", ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
+    assert par["ranks"] == 2
+    np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_plane_cut_ghost_penalty_two_ranks_match_serial(tmp_path):
     serial = _run("refinement=1 pOrder=1 cut=\"plane\"", cwd=tmp_path)
     petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
              "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
@@ -134,7 +156,7 @@ def test_plane_cut_two_ranks_match_serial(tmp_path):
     np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
 
 
-CUT_PHASE = {"embedded": 1, "robin": 1, "immersed": 2, "scifem": 2, "pg": 2, "both": 3}
+CUT_PHASE = {"robin": 1, "immersed": 2, "scifem": 2, "pg": 2, "both": 3}
 
 
 def _setup(cut):

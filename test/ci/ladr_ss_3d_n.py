@@ -18,7 +18,7 @@ nny = nnx
 nnz = nnx
 genMesh = True
 nLevels = 1
-nLayersOfOverlapForParallel = 0  # no cut-face terms in this case
+nLayersOfOverlapForParallel = 2  # the ghost-penalty face terms need two layers
 
 subgridError = ADR.SubgridError(coefficients, nd)
 shockCapturing = ADR.ShockCapturing(coefficients, nd, shockCapturingFactor=0.0, lag=False)

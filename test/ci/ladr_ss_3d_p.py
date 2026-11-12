@@ -24,7 +24,7 @@ opts = Context.Options([
     ("name", "ladr_ss_3d", "name of the test"),
     ("cut", "none", "ask for a cut-cell feature, which must stop with a clear error in 3D (C44 phase 0): "
         "none, embedded, robin, immersed, scifem, pg or both; plane is a supported embedded boundary: "
-        "a planar solid boundary with Nitsche terms only"),
+        "plane / plane_nogp are a planar solid boundary (Nitsche, with / without the ghost penalty)"),
     ("exact", "smooth", "manufactured solution: 'smooth' (sin*cos*exp) or 'quadratic' (in P2's space, so P2 must reproduce it)"),
 ])
 
@@ -34,7 +34,7 @@ L = (1.0, 1.0, 1.0)
 x0 = (0.0, 0.0, 0.0)
 domain = Domain.RectangularDomain(L=L, x=x0, name="adr3d", units="m")
 from proteus import MeshTools
-MeshTools.getMeshOptions(domain).nLayersOfOverlapForParallel = 0
+MeshTools.getMeshOptions(domain).nLayersOfOverlapForParallel = 2
 
 kx, ky, kz, cx = 1.3, 0.7, 0.5, 0.4
 # 'smooth': pure diffusion with variable a(x), for the L2 rates. 'quadratic': advection with constant a,
@@ -97,14 +97,15 @@ def plane_sdf(x, t):
     return float(numpy.dot(_pn, x[:3])) - 0.37, tuple(_pn)
 
 cutOptions = {"none": {},
-              "plane": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
+              "plane": dict(embeddedBoundary=True),
+              "plane_nogp": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
               "embedded": dict(embeddedBoundary=True),
               "robin": dict(embeddedBoundary=True, embeddedBoundary_robin=True),
               "immersed": dict(immersedBoundary=True),
               "scifem": dict(immersedBoundary=True, immersedSCIFEM_switch=1.0),
               "pg": dict(immersedBoundary=True, PG=True),
               "both": dict(embeddedBoundary=True, immersedBoundary=True)}[opts.cut]
-if opts.cut == "plane":
+if opts.cut in ("plane", "plane_nogp"):
     cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
 elif cutOptions:
     cutOptions.update(embeddedBoundary_sdf=sphere_sdf, embeddedBoundary_u=interface_u,

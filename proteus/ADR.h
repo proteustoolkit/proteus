@@ -1176,8 +1176,7 @@ namespace proteus
 			};
 			// C44 phase 1 so far: the Nitsche terms of an embedded boundary on P1 tetrahedra. The ghost
 			// penalty (cut faces as triangles) and P2 are still to come.
-			if (embedded && ghost_penalty != 0.0)
-				need("embeddedBoundary with a ghost penalty (cut faces as triangles; set embeddedBoundary_ghost_penalty=0)", 1);
+			(void)ghost_penalty; // the P1 ghost penalty on triangular faces is implemented
 			if (embedded && pOrder != 1)
 				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
 			if (robin)
@@ -1396,7 +1395,7 @@ namespace proteus
 						// and drops the rest), so a face term has to be summed on every rank that has both
 						// of its elements; skipping the faces another rank owns lost their contribution to
 						// this rank's owned rows (2 ranks: 7 wrong rows, solution off by up to 3e-3).
-						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 && (nSpace == 2 || embeddedBoundary_ghost_penalty != 0.0))
+						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1)
 							cutfem_boundaries.insert(ebN);
 					}
 				}
@@ -1832,7 +1831,7 @@ namespace proteus
 							for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 							{
 								double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-									bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[2];
+									bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
 								ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
 																	ebN_local_g * nQuadraturePoints_elementBoundary + kb,
 																	mesh_dof.data(), mesh_l2g.data(),
@@ -1892,7 +1891,7 @@ namespace proteus
 								   u_test_dS[nDOF_test_element],
 								   u_grad_trial_trace[nDOF_trial_element * nSpace],
 								   u_grad_test_dS[nDOF_trial_element * nSpace],
-								   normal[2], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
+								   normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
 								   G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty,
 								   force_x, force_y, force_z, force_p_x, force_p_y, force_p_z, force_v_x, force_v_y, force_v_z, r_x, r_y, r_z;
 							// compute information about mapping from reference element to physical element
@@ -3498,7 +3497,7 @@ namespace proteus
 						for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 						{
 							double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-								bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[2];
+								bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
 							ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
 																ebN_local_g * nQuadraturePoints_elementBoundary + kb,
 																mesh_dof.data(), mesh_l2g.data(),
@@ -3559,7 +3558,7 @@ namespace proteus
 							u_test_dS[nDOF_test_element],
 							u_grad_trial_trace[nDOF_trial_element * nSpace],
 							u_grad_test_dS[nDOF_trial_element * nSpace],
-							normal[2], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
+							normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
 							G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty;
 						// compute information about mapping from reference element to physical element
 						ck.calculateMapping_elementBoundary(eN,
