@@ -1744,9 +1744,14 @@ inline void vgm_pc_from_Se(const double Se,
 // triple zero at S_e = 1.  Each is documented at its own definition.
 // =============================================================================
 
+// Below Se_min_pc bc_pc_from_Se continues the BC tangent linearly (gas-saturated
+// cap); bc_Se_from_pc inverts the same curve, so both take the same per-rock
+// Se_min_pc (m_comp_co2.py Coefficients.bc_Se_min_types sets it).
+
 inline void bc_pc_from_Se(const double Se,
                           const double alpha,
                           const double lam,
+                          const double Se_min_pc,
                           double &pc,
                           double &Dpc_DSe,
                           double &D2pc_DSe2)
@@ -1833,10 +1838,13 @@ inline void bc_pc_from_Se(const double Se,
   //
   // Tuning Se_min_pc: smaller = sharper cap (closer to true BC), larger
   // = more robust Newton but more physics distortion near the gas-sat
-  // endpoint.  1e-2 is a typical default; reduce to 1e-3 if the cap is
-  // active across an unacceptable fraction of the domain.
+  // endpoint.  The cap value is pc(0) = pc(Se_min_pc) * (1 + 1/lambda).
+  // Across rock interfaces every rock's pc(0) must exceed the entry
+  // pressures of its neighbours, otherwise a coarse rock saturates at
+  // S_e = 0 before the fine rock's entry pressure is reached and the
+  // per-rock closure can only store further gas in the fine rock; the
+  // caller therefore passes a per-rock Se_min_pc.
   // ----------------------------------------------------------------------
-  const double Se_min_pc = 1.0e-2;
   if (Se < Se_min_pc) {
     const double SemInvLam_min = pow(Se_min_pc, -1.0 / lam);
     const double pc_min        = SemInvLam_min / alpha;
@@ -1857,6 +1865,40 @@ inline void bc_pc_from_Se(const double Se,
   //            = (1/(alpha*lambda)) * (1/lambda + 1) * SemInvLam / S_e^2
   const double inv_lam = 1.0 / lam;
   D2pc_DSe2 = inv_lam * (inv_lam + 1.0) * (SemInvLam / (Se * Se)) / alpha;
+}
+
+// Exact inverse of bc_pc_from_Se on S_e in [0, 1], the range the m_comp_co2
+// kernel calls it on (it clamps S_e first): S_e(pc) and dS_e/dpc.
+//   pc <= p_d                      S_e = 1                 (no gas)
+//   p_d < pc <= pc(Se_min_pc)      S_e = (alpha pc)^(-lam)  (Brooks-Corey)
+//   up to pc(0)                    linear cap of bc_pc_from_Se
+//   beyond                         S_e = 0
+// Used by the per-rock nodal closure (Z_ACROSS_ROCK_INTERFACES.md Sec. 3.2).
+inline void bc_Se_from_pc(const double pc,
+                          const double alpha,
+                          const double lam,
+                          const double Se_min_pc,
+                          double &Se,
+                          double &DSe_Dpc)
+{
+  const double p_d = 1.0 / alpha;
+  const double s_min = pow(Se_min_pc, -1.0 / lam);
+  const double pc_min = s_min / alpha;                                   // pc(Se_min_pc)
+  const double slope_min = -(s_min / Se_min_pc) / (alpha * lam);         // dpc/dSe there
+  const double pc_0 = pc_min - slope_min * Se_min_pc;                    // pc(0)
+  if (pc <= p_d) {
+    Se = 1.0;
+    DSe_Dpc = 0.0;
+  } else if (pc <= pc_min) {
+    Se = pow(alpha * pc, -lam);
+    DSe_Dpc = -lam * Se / pc;
+  } else if (pc < pc_0) {
+    Se = Se_min_pc + (pc - pc_min) / slope_min;
+    DSe_Dpc = 1.0 / slope_min;
+  } else {
+    Se = 0.0;
+    DSe_Dpc = 0.0;
+  }
 }
 
 // =============================================================================
@@ -2023,9 +2065,10 @@ inline void bc_kr_nonwetting_from_Se(const double Se_w,
   //               pure BC k_rn (negligible compared to absolute magnitudes
   //               here ~1e-4).
   //
-  // For Se > 1 (Newton overshoot) the value clamps to 0 but the derivative
-  // continues at -s_min_brn so the chain rule has C^1 continuity across
-  // the seam.
+  // For Se >= 1 the value is identically 0, so the derivative is 0.  With
+  // residual trapping (Se_trap < 1) this branch is the physical trapped range
+  // 0 < S_g <= S_gr, not only Newton overshoot; a nonzero slope here would put
+  // a gas-mobility derivative in the Jacobian that the residual does not have.
   // ---------------------------------------------------------------------
   const double delta_brn = 5.0e-2;
   const double s_min_brn = 1.0e-3;
@@ -2038,10 +2081,9 @@ inline void bc_kr_nonwetting_from_Se(const double Se_w,
     return;
   }
   if (Se >= 1.0) {
-    // Beyond the wet endpoint: value clamps to 0, derivative continues at
-    // -s_min_brn for C^1 consistency with the bridge at Se = 1.
+    // Wet endpoint and trapped range: k_rn = 0 and its derivative is 0.
     KNr      = 0.0;
-    DKNr_DSe = -s_min_brn * inv_trap;
+    DKNr_DSe = 0.0;
     return;
   }
 
