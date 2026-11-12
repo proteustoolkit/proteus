@@ -1,5 +1,6 @@
 from numpy import dot, sum
 import numpy.testing as npt
+import pytest
 from proteus.EGeometry import (X,Y,Z)
 
 from proteus.Quadrature import (SimplexGaussQuadrature,
@@ -586,35 +587,22 @@ def test_lobatto_edgeAlt1():
     npt.assert_almost_equal(int3_f1,int3_f1)
 
 def test_lobatto_tri1():
-    print("1st Order Polynomial")
-    print("Triangle")
+    # the Lobatto triangle has orders 1..2; a larger order is an error, not the highest rule
     lobattoTriangle.setOrder(1)
-    int0_f1 = dot(f1(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int0_f1)
+    int1 = dot(f1(lobattoTriangle.points),lobattoTriangle.weights)
     lobattoTriangle.setOrder(2)
-    int1_f1 = dot(f1(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int1_f1)
-    lobattoTriangle.setOrder(3)
-    int2_f1 = dot(f1(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int1_f1)
-    npt.assert_almost_equal(int0_f1,int1_f1)
-    npt.assert_almost_equal(int1_f1,int2_f1)
+    int2 = dot(f1(lobattoTriangle.points),lobattoTriangle.weights)
+    npt.assert_almost_equal(int1,int2)
+    with pytest.raises(ValueError):
+        lobattoTriangle.setOrder(3)
 
 def test_lobatto_tet1():
-    print("1st Order Polynomial")
-    print("Tetrahedron")
+    # the Lobatto tetrahedron has orders 1..1; a larger order is an error, not the highest rule
     lobattoTetrahedron.setOrder(1)
-    int0_f1 = dot(f1(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int0_f1)
-    lobattoTetrahedron.setOrder(2)
-    int1_f1 = dot(f1(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int1_f1)
-    lobattoTetrahedron.setOrder(3)
-    int2_f1 = dot(f1(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int2_f1)
-    npt.assert_almost_equal(int0_f1,int1_f1)
-    npt.assert_almost_equal(int1_f1,int2_f1)
-    
+    int1 = dot(f1(lobattoTetrahedron.points),lobattoTetrahedron.weights)
+    with pytest.raises(ValueError):
+        lobattoTetrahedron.setOrder(2)
+
 def test_lobatto_edge0():
     print("0th Order Polynomial")
     print("Edge")
@@ -631,34 +619,21 @@ def test_lobatto_edge0():
     npt.assert_almost_equal(int1_f0,int2_f0)
 
 def test_lobatto_tri0():
-    print("0th Order Polynomial")
-    print("Triangle")
+    # the Lobatto triangle has orders 1..2; a larger order is an error, not the highest rule
     lobattoTriangle.setOrder(1)
-    int0_f0 = dot(f0(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int0_f0)
+    int1 = dot(f0(lobattoTriangle.points),lobattoTriangle.weights)
     lobattoTriangle.setOrder(2)
-    int1_f0 = dot(f0(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int1_f0)
-    lobattoTriangle.setOrder(3)
-    int2_f0 = dot(f0(lobattoTriangle.points),lobattoTriangle.weights)
-    print(int2_f0)
-    npt.assert_almost_equal(int0_f0,int1_f0)
-    npt.assert_almost_equal(int1_f0,int2_f0)
+    int2 = dot(f0(lobattoTriangle.points),lobattoTriangle.weights)
+    npt.assert_almost_equal(int1,int2)
+    with pytest.raises(ValueError):
+        lobattoTriangle.setOrder(3)
 
 def test_lobatto_tet0():
-    print("0th Order Polynomial")
-    print("Tetrahedron")
+    # the Lobatto tetrahedron has orders 1..1; a larger order is an error, not the highest rule
     lobattoTetrahedron.setOrder(1)
-    int0_f0 = dot(f0(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int0_f0)
-    lobattoTetrahedron.setOrder(2)
-    int1_f0 = dot(f0(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int1_f0)
-    lobattoTetrahedron.setOrder(3)
-    int2_f0 = dot(f0(lobattoTetrahedron.points),lobattoTetrahedron.weights)
-    print(int2_f0)
-    npt.assert_almost_equal(int0_f0,int1_f0)
-    npt.assert_almost_equal(int1_f0,int2_f0)
+    int1 = dot(f0(lobattoTetrahedron.points),lobattoTetrahedron.weights)
+    with pytest.raises(ValueError):
+        lobattoTetrahedron.setOrder(2)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
