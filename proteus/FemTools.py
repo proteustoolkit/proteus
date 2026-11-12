@@ -7191,6 +7191,9 @@ class DOFBoundaryConditions(object):
                 return hash(tuple(self.p))
             def __eq__(self,other):
                 return  enorm(self.p - other.p) <= self.h
+        #Bernstein spaces with exact conversion (PolynomialInterpolationConditions, nodal False): a boundary
+        #dof is a combination of the data at the sample points of its entity, not the value at one point
+        exactConversion = getattr(femSpace.referenceFiniteElement.interpolationConditions,'nodal',True) is False
         if getPointwiseBoundaryConditions is not None and femSpace.strongDirichletConditions and not weakDirichletConditions:
             for eN in range(femSpace.elementMaps.mesh.nElements_global):
             # mesh = femSpace.elementMaps.mesh
@@ -7230,6 +7233,8 @@ class DOFBoundaryConditions(object):
                                     else:
                                         self.periodicDOFDict[ptuple(p)] = set([dofN])
                                 elif g is not None:
+                                    if exactConversion:
+                                        g = self.exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions)
                                     self.DOFBoundaryConditionsDict[dofN] = g
                                     self.DOFBoundaryPointDict[dofN]=x
                                     self.DOFBoundaryMaterialFlag[dofN] = materialFlag
@@ -7371,6 +7376,38 @@ class DOFBoundaryConditions(object):
             self.global2freeGlobal_global_dofs[i] = dofN#map each of the unknown DOF's to the original node number
             self.global2freeGlobal_free_dofs[i] = self.global2freeGlobal[dofN]#map each of the unknown DOF's to the free unknown number
 
+
+    @staticmethod
+    def exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions):
+        """
+        The Dirichlet condition of local dof i of element eN for a space whose dofs are not point values
+        (Bernstein with exact conversion): ``sum_j weights[i,j] g_j(x_j,t)`` over the sample points of
+        the dof's entity, with g_j the condition the user gives at x_j for the same boundary flag. The
+        result is called like any other condition, ``g(x,t)``; x is ignored.
+
+        The weights of a dof on a vertex, edge or face vanish off that entity, so only data on the
+        boundary face is used. If the user gives no condition at one of those points (a condition that
+        ends inside the face), the dof falls back to the single value g at its own sample point, with a warning.
+        """
+        interpolation = femSpace.referenceFiniteElement.interpolationConditions
+        weights = interpolation.weights[i]
+        terms = []
+        for j in numpy.nonzero(numpy.abs(weights) > 1.0e-12)[0]:
+            if j == i:
+                g_j = g
+            else:
+                gReturn = getPointwiseBoundaryConditions(femSpace.interpolationPoints[eN,j],materialFlag)
+                try:
+                    g_j = gReturn[0]
+                except TypeError:
+                    g_j = gReturn
+            if g_j is None:
+                logEvent("WARNING DOFBoundaryConditions exact conversion: no Dirichlet condition at a sample point of a boundary dof; using the value at the dof's own sample point")
+                return g
+            terms.append((float(weights[j]),g_j,femSpace.interpolationPoints[eN,j].copy()))
+        if len(terms) == 1 and abs(terms[0][0]-1.0) < 1.0e-12: #a vertex: the dof is the value
+            return g
+        return lambda x,t,terms=terms: sum(w*g_j(x_j,t) for w,g_j,x_j in terms)
 
 class DOFBoundaryConditions_alt(object):
     """
