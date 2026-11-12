@@ -84,6 +84,12 @@ CASES = {
                                 "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True interface=1",
                                 "dambreak_short_clsvof.ymf",
                                 "level_set_clsvof -- split, dispatched to flow RANS2P, clsvof CLSVOF", "velocity_t4"),
+    # the projection scheme: CLSVOF, RANS3PF, PresInc, Pres, PresInit (damBreak.py), the spec's atmosphere again
+    # setAtmosphere. The deck's initial level set is its characteristic function (disc_ICs), the spec's a distance
+    "damBreak_projection": ("TwoPhaseFlow", "damBreak.py", "--TwoPhaseFlow",
+                            "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short_projection.ymf",
+                            "clsvof_projection -- split, dispatched to clsvof CLSVOF, flow RANS3PF, pressureInc "
+                            "PresInc, pressure Pres, pressureInit PresInit", "velocity_t4"),
     "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0",
                   "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
