@@ -103,3 +103,33 @@ def test_todays_p2_bernstein_space_uses_control_point_values(nd):
     difference = np.abs(values_old - values_new).max()
     assert 1.0e-3 < difference < 1.0, difference
     print("P2 Bernstein, nd=%d: today's Dirichlet edge dofs differ from the exact coefficients by %.3e" % (nd, difference))
+
+
+@pytest.mark.parametrize("nd", [2, 3])
+def test_todays_p2_bernstein_space_converts_exactly_on_request(nd):
+    """bernsteinOperator=False on C0_AffineBernsteinOnSimplex: the exact conversion, for Dirichlet data and
+    for interpolation; the default (True) is the unchanged behaviour pinned above."""
+    mesh = _mesh(nd)
+    assert FemTools.C0_AffineBernsteinOnSimplex(mesh, nd).bernsteinOperator is True
+    old = FemTools.C0_AffineBernsteinOnSimplex(mesh, nd, bernsteinOperator=False)
+    new = FemTools.C0_AffinePolynomialOnSimplex(mesh, nd, 2, "bernstein")
+    assert np.array_equal(np.asarray(old.dofMap.l2g), new.dofMap.l2g)
+    dofs_old, values_old = _dirichlet_values(old, 2, nd)
+    dofs_new, values_new = _dirichlet_values(new, 2, nd)
+    assert np.array_equal(dofs_old, dofs_new)
+    assert np.abs(values_old - values_new).max() < 1.0e-13
+    u = FemTools.FiniteElementFunction(old, name="u")
+    u.projectFromInterpolationConditions(_poly(old.interpolationPoints, 2, nd))
+    assert np.abs(values_old - u.dof[dofs_old]).max() < 1.0e-12
+    xi = np.random.RandomState(1).dirichlet(np.ones(nd + 1), size=5)[:, 1:]
+    en = np.asarray(mesh.elementNodesArray)
+    bary = np.column_stack([1.0 - xi.sum(axis=1), xi])
+    xq = np.einsum("qv,evc->eqc", bary, np.asarray(mesh.nodeArray)[en])
+    uh = np.einsum("qi,ei->eq", old.getBasisValuesRef(xi), u.dof[old.dofMap.l2g])
+    assert np.abs(uh - _poly(xq, 2, nd)).max() < 1.0e-12
+    # the default does not reproduce the quadratic: second order
+    default = FemTools.C0_AffineBernsteinOnSimplex(mesh, nd)
+    v = FemTools.FiniteElementFunction(default, name="v")
+    v.projectFromInterpolationConditions(_poly(default.interpolationPoints, 2, nd))
+    vh = np.einsum("qi,ei->eq", default.getBasisValuesRef(xi), v.dof[default.dofMap.l2g])
+    assert np.abs(vh - _poly(xq, 2, nd)).max() > 1.0e-3

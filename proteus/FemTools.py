@@ -5920,19 +5920,46 @@ P2 = C0_AffineQuadraticOnSimplexWithNodalBasis
 
 class C0_AffineBernsteinOnSimplex(C0_AffineQuadraticOnSimplexWithNodalBasis):
     """
-    A quadratic C0 space with Bernstein basis.
+    A quadratic C0 space with the Bernstein basis.
 
     Globally piecewise continuous.
     Each geometric element is the image of the reference simplex under
     a piecewise linear, continuous, affine mapping.
-    The nodal basis is used on the reference simplex.
-    """    
-    def __init__(self,mesh,nd=3):
+    The Bernstein basis is used on the reference simplex: non-negative, sums to one; the dofs are
+    control-point coefficients (values only at the vertices).
+
+    Parameters
+    ----------
+    mesh : the (subdomain) simplex mesh
+    nd : int
+    bernsteinOperator : bool
+        How data (initial conditions, strong Dirichlet values) becomes dofs.
+
+        True (default, the behaviour this class has always had): the dof of an edge is the value of the
+        data at the edge midpoint. The coefficients stay inside the range of the data, which the
+        bounds-preserving schemes rely on (CLSVOF, elliptic redistancing), but the result is only second
+        order: for data g with curvature along an edge (a, b) with midpoint m the exact coefficient is
+        2 g(m) - (g(a) + g(b))/2, so the dof is off by about h^2 g''/8. Data that is linear along the
+        edge (constants, zero) is reproduced exactly.
+
+        False: the exact conversion, as :class:`C0_AffinePolynomialOnSimplex` with ``family='bernstein'``
+        does by default: quadratic data is reproduced exactly (third order), but a coefficient can leave
+        the range of the data (g = 0, 1, 1 at a, m, b gives 1.5).
+
+    A numerics module passes ``(mesh, nd)``; to choose the exact conversion there use
+    ``lambda mesh, nd: C0_AffineBernsteinOnSimplex(mesh, nd, bernsteinOperator=False)``.
+    """
+    def __init__(self,mesh,nd=3,bernsteinOperator=True):
         self.order = 2
+        self.bernsteinOperator = bernsteinOperator
         localFunctionSpace = BernsteinOnSimplex(nd)
         localGeometricSpace= LinearOnSimplexWithNodalBasis(nd)
-        # NOTE: Bernstein polynomials ARE NOT INTERPOLATORY but we use them as control points to create a bezier curve.
-        interpolationConditions = QuadraticLagrangeNodalInterpolationConditions(localFunctionSpace.referenceElement)
+        if bernsteinOperator:
+            # NOTE: Bernstein polynomials ARE NOT INTERPOLATORY but we use them as control points to create a bezier curve.
+            interpolationConditions = QuadraticLagrangeNodalInterpolationConditions(localFunctionSpace.referenceElement)
+        else:
+            #the same dofs in the same order (PolynomialOnSimplex of order 2 equals BernsteinOnSimplex)
+            interpolationConditions = PolynomialInterpolationConditions(PolynomialOnSimplex(nd,2,'bernstein'))
         ParametricFiniteElementSpace.__init__(self,
                                               ReferenceFiniteElement(localFunctionSpace,
                                                                      interpolationConditions),
