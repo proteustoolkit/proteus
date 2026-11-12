@@ -94,6 +94,18 @@ def test_plain_3d_adr_converges_at_the_optimal_rate(smooth_runs, order):
     np.testing.assert_allclose(l2, SMOOTH_L2[order], rtol=1e-5)
 
 
+# L2 error with a planar embedded solid (n.x = 0.37, Nitsche terms, no ghost penalty), P1, nnx = 3, 5, 9
+PLANE_L2 = [3.90776936002934089e-02, 9.81589909475118899e-03, 2.54488780303339327e-03]
+
+
+def test_p1_plane_cut_embedded_boundary_converges_at_rate_two(tmp_path):
+    """C44 phase 1, first piece: 3D CutFEM volume and Nitsche terms on P1 tetrahedra (fit degree 3)."""
+    l2 = [_run("refinement={0} pOrder=1 cut=\"plane\"".format(r), cwd=tmp_path)["L2"] for r in range(3)]
+    rates = [np.log2(l2[i] / l2[i + 1]) for i in range(2)]
+    assert all(r >= 1.9 for r in rates), "L2 errors {0}, rates {1}".format(l2, rates)
+    np.testing.assert_allclose(l2, PLANE_L2, rtol=1e-5)
+
+
 def test_p2_reproduces_a_quadratic_with_advection(tmp_path):
     out = _run("refinement=1 pOrder=2 exact=\"quadratic\"", cwd=tmp_path)
     assert out["L2"] < 1e-10 and out["Linfty"] < 1e-10, out
@@ -107,6 +119,17 @@ def test_two_ranks_match_serial(order, tmp_path):
     petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
              "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
     par = _run("refinement=1 pOrder={0} usePetsc=True".format(order), ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
+    assert par["ranks"] == 2
+    np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_plane_cut_two_ranks_match_serial(tmp_path):
+    serial = _run("refinement=1 pOrder=1 cut=\"plane\"", cwd=tmp_path)
+    petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+             "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
+    par = _run("refinement=1 pOrder=1 cut=\"plane\" usePetsc=True", ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
     assert par["ranks"] == 2
     np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
 
@@ -143,7 +166,7 @@ def test_kernel_refuses_cut_cell_features_in_3d(cut, tmp_path, monkeypatch):
     """The C++ kernel makes the same check, for a caller that skips the Python one."""
     from proteus import ADR
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda c, nSpace: None)
+    monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda *a: None)
     so, p, n, opts = _setup(cut)
     with pytest.raises(RuntimeError, match=r"2D only.*C44 phase {0}".format(CUT_PHASE[cut])):
         ns = NumericalSolution.NS_base(so, [p], [n], so.sList, opts)

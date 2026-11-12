@@ -601,7 +601,7 @@ class Coefficients(TC_base):
                 evaluateAtPoints(self.fOfX[ci], c['x'], c[('r',ci)], -1.0)
                 evaluateAtPoints(self.aOfX[ci], c['x'], c[('a',ci,ci)])
 
-def _requireSupportedDimension(c, nSpace):
+def _requireSupportedDimension(c, nSpace, pOrder=1):
     """Refuse a cut-cell feature in any dimension but 2.
 
     The two-sided IFEM basis, the cut-face terms (Nitsche, ghost penalty, SCIFEM, the triply-cut edge
@@ -613,8 +613,10 @@ def _requireSupportedDimension(c, nSpace):
     if nSpace == 2:
         return
     needs = []
-    if c.embeddedBoundary:
-        needs.append(("embeddedBoundary (Nitsche and ghost-penalty terms on cut faces, embedded-boundary quadrature)", 1))
+    if c.embeddedBoundary and c.embeddedBoundary_ghost_penalty != 0.0:
+        needs.append(("embeddedBoundary with a ghost penalty (cut faces as triangles; set embeddedBoundary_ghost_penalty=0)", 1))
+    if c.embeddedBoundary and pOrder != 1:
+        needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
     if c.immersedBoundary:
@@ -712,7 +714,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # other element is local too, which needs two layers of overlap; with one, the face looks
         # exterior on the rank that owns the row and its contribution is lost.
         _c = coefficients
-        _requireSupportedDimension(_c, self.u[0].femSpace.nSpace_global)
+        _requireSupportedDimension(_c, self.u[0].femSpace.nSpace_global, self.u[0].femSpace.order)
         _faceTerms = ((_c.embeddedBoundary and _c.embeddedBoundary_ghost_penalty != 0.0) or
                       (_c.immersedBoundary and (_c.immersedSCIFEM_switch != 0.0 or _c.immersedSCIFEM_penalty != 0.0)))
         _layers = getattr(self.mesh, 'nLayersOfOverlap', None)

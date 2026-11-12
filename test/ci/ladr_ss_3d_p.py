@@ -23,7 +23,8 @@ opts = Context.Options([
     ("usePetsc", False, "Use PETSc linear solvers (required in parallel)"),
     ("name", "ladr_ss_3d", "name of the test"),
     ("cut", "none", "ask for a cut-cell feature, which must stop with a clear error in 3D (C44 phase 0): "
-        "none, embedded, robin, immersed, scifem, pg or both"),
+        "none, embedded, robin, immersed, scifem, pg or both; plane is a supported embedded boundary: "
+        "a planar solid boundary with Nitsche terms only"),
     ("exact", "smooth", "manufactured solution: 'smooth' (sin*cos*exp) or 'quadratic' (in P2's space, so P2 must reproduce it)"),
 ])
 
@@ -88,14 +89,24 @@ def sphere_sdf(x, t):
 def interface_u(x, t):
     return ans.uOfX(x)
 
+_pn = numpy.array([1.0, 0.6, 0.3])
+_pn /= numpy.linalg.norm(_pn)
+
+def plane_sdf(x, t):
+    """Signed distance to the plane n.x = 0.37, positive on the fluid side (the solid is n.x < 0.37)."""
+    return float(numpy.dot(_pn, x[:3])) - 0.37, tuple(_pn)
+
 cutOptions = {"none": {},
+              "plane": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
               "embedded": dict(embeddedBoundary=True),
               "robin": dict(embeddedBoundary=True, embeddedBoundary_robin=True),
               "immersed": dict(immersedBoundary=True),
               "scifem": dict(immersedBoundary=True, immersedSCIFEM_switch=1.0),
               "pg": dict(immersedBoundary=True, PG=True),
               "both": dict(embeddedBoundary=True, immersedBoundary=True)}[opts.cut]
-if cutOptions:
+if opts.cut == "plane":
+    cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
+elif cutOptions:
     cutOptions.update(embeddedBoundary_sdf=sphere_sdf, embeddedBoundary_u=interface_u,
                       immersedBoundary_sdf=sphere_sdf, immersedBoundary_u=interface_u)
 

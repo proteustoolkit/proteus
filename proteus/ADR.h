@@ -2,6 +2,7 @@
 #define ADR_H
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <iomanip>
 #include <iostream>
 #include <set>
@@ -61,6 +62,11 @@ namespace proteus
 		static const int pOrder = (nDOF_trial_element == nSpace + 1) ? 1 : ((nDOF_trial_element == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
 		static const int nP_fit = (pOrder == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
 		using GfType = GeneralizedFunctions<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary>;
+		// The solid level set only needs the H/D moment fits, never the two-sided IFEM basis. In 2D it
+		// shares GfType (kept bit-for-bit). In 3D the basis solve is 2D-only, so the solid uses the
+		// basis-free type (C44 phase 1).
+		using GfTypeS = typename std::conditional<nSpace == 2, GfType,
+			equivalent_polynomials::GeneralizedFunctions_mix<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary, false>>::type;
 		// Degree of the edge-restricted moment-fit Heaviside used by the edge terms (SCIFEM, the
 		// triply-cut correction). The consistency terms are degree 2p-1 and the interior penalty 2p;
 		// the 1D boundary rule (qOrder points) is exact far beyond nP_edge + 2p.
@@ -76,7 +82,8 @@ namespace proteus
 		// Interior (isBoundary=false) and boundary (isBoundary=true) evaluations
 		// populate different internal storage within the same GfType object, so
 		// they are tracked with separate generation/icase arrays.
-		std::vector<GfType> gf_f_cache, gf_s_cache;
+		std::vector<GfType> gf_f_cache;
+		std::vector<GfTypeS> gf_s_cache;
 		std::vector<int> gf_s_interior_gen, gf_f_interior_gen, gf_f_boundary_gen;
 		std::vector<int> gf_s_interior_icase, gf_f_interior_icase, gf_f_boundary_icase;
 		// Composite equivalent polynomials for elements cut by BOTH level sets. The product
@@ -112,7 +119,7 @@ namespace proteus
 			if ((int)gf_f_cache.size() == nElements_global)
 				return;
 			gf_f_cache.assign(nElements_global, GfType());
-			gf_s_cache.assign(nElements_global, GfType());
+			gf_s_cache.assign(nElements_global, GfTypeS());
 			fluxLiftAmp.assign(nElements_global, 0.0);
 			gf_s_interior_gen.assign(nElements_global, -1);
 			gf_f_interior_gen.assign(nElements_global, -1);
@@ -536,7 +543,7 @@ namespace proteus
 			// per-element cached equivalent-polynomial/IFEM reconstruction
 			// (see ensureIFEMCacheSized / ifemGeometryGeneration)
 			GfType &gf_f = gf_f_cache[eN];
-			GfType &gf_s = gf_s_cache[eN];
+			GfTypeS &gf_s = gf_s_cache[eN];
 			for (int i = 0; i < nDOF_test_element; i++)
 				elementResidual_u.data()[i] = 0.0;
 			// loop over quadrature points and compute integrands
@@ -1154,7 +1161,7 @@ namespace proteus
 		// penalty, SCIFEM, the triply-cut edge correction, and the composite triply-cut fit) is written
 		// for triangles. assert() is compiled out (-DNDEBUG), so in 3D they would not stop, they would
 		// compute garbage. Refuse before any of it runs. The phase numbers are the C44 plan's.
-		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG)
+		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG, double ghost_penalty)
 		{
 			if (nSpace == 2)
 				return;
@@ -1167,8 +1174,12 @@ namespace proteus
 				what += name;
 				phase = std::max(phase, ph);
 			};
-			if (embedded)
-				need("embeddedBoundary (Nitsche and ghost-penalty terms on cut faces, embedded-boundary quadrature)", 1);
+			// C44 phase 1 so far: the Nitsche terms of an embedded boundary on P1 tetrahedra. The ghost
+			// penalty (cut faces as triangles) and P2 are still to come.
+			if (embedded && ghost_penalty != 0.0)
+				need("embeddedBoundary with a ghost penalty (cut faces as triangles; set embeddedBoundary_ghost_penalty=0)", 1);
+			if (embedded && pOrder != 1)
+				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
 			if (robin)
 				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
 			if (immersed)
@@ -1257,7 +1268,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
-			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG);
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -1385,7 +1396,7 @@ namespace proteus
 						// and drops the rest), so a face term has to be summed on every rank that has both
 						// of its elements; skipping the faces another rank owns lost their contribution to
 						// this rank's owned rows (2 ranks: 7 wrong rows, solution off by up to 3e-3).
-						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1)
+						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 && (nSpace == 2 || embeddedBoundary_ghost_penalty != 0.0))
 							cutfem_boundaries.insert(ebN);
 					}
 				}
@@ -2624,7 +2635,7 @@ namespace proteus
 			// per-element cached equivalent-polynomial/IFEM reconstruction
 			// (see ensureIFEMCacheSized / ifemGeometryGeneration)
 			GfType &gf_f = gf_f_cache[eN];
-			GfType &gf_s = gf_s_cache[eN];
+			GfTypeS &gf_s = gf_s_cache[eN];
 			for (int i = 0; i < nDOF_test_element; i++)
 				for (int j = 0; j < nDOF_trial_element; j++)
 				{
@@ -3152,7 +3163,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
-			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG);
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
