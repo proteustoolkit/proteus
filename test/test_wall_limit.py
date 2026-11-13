@@ -149,3 +149,17 @@ def test_no_deadline_is_never_due():
     wc = WallClock(None, clock=Clock())
     wc.stepBoundary()
     assert not wc.due() and wc.left() is None
+
+
+def test_the_stop_marker_is_written_whole_read_back_and_cleared(tmp_path):
+    path = WallLimit.marker_path("flume", str(tmp_path))
+    assert path.endswith("flume.checkpoint") and WallLimit.read_marker(path) is None
+    WallLimit.write_marker(path, 0.0030000000000000005, 7, 1536, now=lambda: 1700000000.4)
+    assert WallLimit.read_marker(path) == {"t": 0.0030000000000000005, "frame": 7, "ranks": 1536,
+                                           "exit_status": 75, "written": 1700000000}
+    assert [p.name for p in tmp_path.iterdir()] == ["flume.checkpoint"]  # no temporary file left
+    WallLimit.write_marker(path, 0.5, 9, 4)  # a later stop replaces it
+    assert WallLimit.read_marker(path)["frame"] == 9
+    WallLimit.clear_marker(path)
+    WallLimit.clear_marker(path)  # already gone: not an error
+    assert WallLimit.read_marker(path) is None

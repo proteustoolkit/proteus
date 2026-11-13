@@ -143,6 +143,44 @@ def resolve_deadline(limit, start, environ=None, run=subprocess.run, now=time.ti
     return deadline, source
 
 
+def marker_path(name, directory="."):
+    """Where the run called ``name`` leaves its stop marker: ``<name>.checkpoint``."""
+    return os.path.join(directory, "%s.checkpoint" % (name,))
+
+
+def write_marker(path, t, frame, ranks, now=time.time):
+    """Record that a run stopped for its wall limit, for a job script to test (``[ -f name.checkpoint ]``): the
+    launcher's exit status cannot be relied on (aprun under Cray PALS reports 143, SIGTERM, when the ranks do not
+    all exit at once, whatever status they exit with). The file is written whole and renamed into place, so a
+    reader never sees half of it. Rank 0 writes it, after the archives are closed."""
+    text = "t=%.17g\nframe=%d\nranks=%d\nexit_status=%d\nwritten=%d\n" % (
+        t, frame, ranks, CHECKPOINT_EXIT_STATUS, int(now()))
+    tmp = "%s.tmp%d" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def read_marker(path):
+    """The marker's fields as a dict (``t`` a float, the rest ints), or None when there is none."""
+    try:
+        with open(path) as f:
+            fields = dict(line.strip().split("=", 1) for line in f if "=" in line)
+    except OSError:
+        return None
+    return {k: (float(v) if k == "t" else int(v)) for k, v in fields.items()}
+
+
+def clear_marker(path):
+    """Remove a marker left by an earlier leg (a run that starts, or finishes, is not stopped)."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 class WallClock:
     """The budget of one run and what it has measured of itself; ``due()`` is the decision.
 

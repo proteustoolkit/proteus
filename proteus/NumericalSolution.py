@@ -236,6 +236,9 @@ class NS_base(object):  # (HasTraits):
         from . import Comm
         comm=Comm.get()
         self.comm=comm
+        #a marker left by the previous leg says that leg stopped, not this one; this run rewrites it if it stops
+        if self.wallClock is not None and self.comm.isMaster():
+            WallLimit.clear_marker(WallLimit.marker_path(so.name))
         # before any model opens its history or gauge files: a hot start keeps them (proteus.Gauges)
         Gauges.reset_history_files(opts.hotStart)
         message = "Initializing NumericalSolution for "+so.name+"\n System includes: \n"
@@ -1311,7 +1314,23 @@ class NS_base(object):  # (HasTraits):
         for index, model in enumerate(self.modelList):
             self.finalizeViewSolution(model)
             self.closeArchive(model, index)
+        self._writeCheckpointMarker(t)
         return False
+
+    def _writeCheckpointMarker(self, t):
+        """``<name>.checkpoint`` in the working directory, written by rank 0 once every rank has closed its archive:
+        the file a job script tests (the launcher's exit status can be 143 where the ranks exit 75). A barrier
+        after the write keeps every rank from exiting, and the launcher from killing rank 0, before the file is there.
+        Collective. Not written when the run has no archive: there is nothing to continue from."""
+        if self.archiveFlag == ArchiveFlags.UNDEFINED:
+            return
+        self.comm.barrier()
+        if self.comm.isMaster():
+            path = WallLimit.marker_path(self.so.name)
+            WallLimit.write_marker(path, t, self.tCount, self.comm.size())
+            logEvent("Wall limit: wrote %s (t=%g, frame %d); a job script can test for it, whatever the launcher's "
+                     "exit status" % (path, t, self.tCount), level=0)
+        self.comm.barrier()
 
     #
     #try to make preStep and postStep just manipulate "current values" and let the step controllers manage the history setting
