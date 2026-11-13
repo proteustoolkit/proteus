@@ -72,9 +72,28 @@ def slurm_deadline(environ=None, run=subprocess.run, now=time.time):
         return None
 
 
+def _pbs_start(out, now):
+    """The epoch time ``qstat -f`` says the job started (``stime``, PBS Pro; ``start_time``, Torque), read as local
+    time (the server's and the node's clocks and zone agree on a cluster), or None when it is absent, unreadable
+    or implausible (in the future, or over a year ago)."""
+    m = re.search(r"^\s*(?:stime|start_time)\s*=\s*(.+?)\s*$", out, re.MULTILINE)
+    if m is None:
+        return None
+    try:
+        start = time.mktime(time.strptime(" ".join(m.group(1).split()), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
+    current = now()
+    return start if current - 366 * 86400 < start <= current + 60 else None
+
+
 def pbs_deadline(environ=None, run=subprocess.run, now=time.time):
-    """The epoch time the PBS job ends, or None: the walltime ``qstat -f`` lists for the job less what it has used
-    (the same fields in PBS Pro and Torque)."""
+    """The epoch time the PBS job ends, or None: the job's start (``stime``) plus its ``Resource_List.walltime``,
+    both from ``qstat -f`` (the same fields in PBS Pro and Torque).
+
+    Not the walltime less ``resources_used.walltime``: PBS refreshes the used walltime only every so often (it read
+    00:00:05 at 14-22 s into a job on Carpenter), which put the end 12-17 s too late. That difference is the
+    fallback only, for a ``qstat`` that lists no usable start time."""
     environ = os.environ if environ is None else environ
     job = environ.get("PBS_JOBID")
     if not job:
@@ -84,8 +103,14 @@ def pbs_deadline(environ=None, run=subprocess.run, now=time.time):
         return None
     fields = dict(re.findall(r"^\s*([\w.]+)\s*=\s*(\S+)\s*$", out, re.MULTILINE))
     try:
-        return now() + parse_duration(fields["Resource_List.walltime"]) - parse_duration(
-            fields["resources_used.walltime"])
+        walltime = parse_duration(fields["Resource_List.walltime"])
+    except (KeyError, ValueError):
+        return None
+    start = _pbs_start(out, now)
+    if start is not None:
+        return start + walltime
+    try:
+        return now() + walltime - parse_duration(fields["resources_used.walltime"])
     except (KeyError, ValueError):
         return None
 

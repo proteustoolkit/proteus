@@ -1,5 +1,6 @@
 """The wall-clock budget (proteus.WallLimit): parsing, the scheduler's end time, and the decision to stop."""
 import subprocess
+import time
 
 import pytest
 
@@ -52,14 +53,47 @@ QSTAT = """Job Id: 4242.pbs01
     Resource_List.walltime = 24:00:00
     Resource_List.select = 32:ncpus=48
 """
+#a job that started at 01:02:03 and has used 00:00:05 of its walltime according to PBS, which refreshes the figure only
+#every so often: the figure read 12-17 s short of the time since the start on Carpenter
+STIME = "Fri Nov 13 01:02:03 2026"
+QSTAT_STIME = QSTAT.replace("01:30:00", "00:00:05") + "    stime = %s\n" % STIME
 
 
-def test_pbs_end_time_is_the_requested_walltime_less_the_used():
+def _epoch(text):
+    return time.mktime(time.strptime(text, "%a %b %d %H:%M:%S %Y"))
+
+
+def test_pbs_end_time_is_the_start_plus_the_requested_walltime():
+    start = _epoch(STIME)
+    now = start + 19.0  # parun is 19 s into the job, qstat says 5 s were used
     seen = []
-    deadline = WallLimit.pbs_deadline({"PBS_JOBID": "4242.pbs01"}, _run(QSTAT, seen=seen), lambda: 100.0)
-    assert deadline == 100.0 + (24 - 1.5) * 3600 and seen == [["qstat", "-f", "4242.pbs01"]]
+    deadline = WallLimit.pbs_deadline({"PBS_JOBID": "4242.pbs01"}, _run(QSTAT_STIME, seen=seen), lambda: now)
+    assert deadline == start + 24 * 3600 and seen == [["qstat", "-f", "4242.pbs01"]]
+    # the stale used-walltime rule would have put the end 14 s late
+    assert now + (24 - 5 / 3600.0) * 3600 - deadline == pytest.approx(14.0)
     assert WallLimit.pbs_deadline({}, _no_run, lambda: 0.0) is None
     assert WallLimit.pbs_deadline({"PBS_JOBID": "1"}, _run("Job Id: 1\n"), lambda: 0.0) is None
+
+
+@pytest.mark.parametrize("stime", ["Thu Nov  5 01:02:03 2026", "Thu Nov 5 01:02:03 2026"])
+def test_pbs_start_time_with_a_padded_or_plain_day(stime):
+    start = _epoch("Thu Nov 5 01:02:03 2026")
+    out = QSTAT.replace("01:30:00", "00:10:00") + "    stime = %s\n" % stime
+    assert WallLimit.pbs_deadline({"PBS_JOBID": "7"}, _run(out), lambda: start + 600.0) == start + 24 * 3600
+
+
+def test_pbs_torque_start_time_field():
+    start = _epoch(STIME)
+    out = QSTAT + "    start_time = %s\n" % STIME
+    assert WallLimit.pbs_deadline({"PBS_JOBID": "7"}, _run(out), lambda: start + 30.0) == start + 24 * 3600
+
+
+@pytest.mark.parametrize("stime", ["", "    stime = not a date\n", "    stime = Fri Nov 13 01:02:03 2036\n",
+                                   "    stime = Fri Nov 13 01:02:03 2020\n"])
+def test_pbs_falls_back_to_the_used_walltime_without_a_plausible_start(stime):
+    now = _epoch(STIME) + 100.0
+    deadline = WallLimit.pbs_deadline({"PBS_JOBID": "4242.pbs01"}, _run(QSTAT + stime), lambda: now)
+    assert deadline == now + (24 - 1.5) * 3600
 
 
 def test_the_limit_is_cut_at_the_schedulers_end_and_a_typo_is_not_swallowed():
