@@ -306,12 +306,12 @@ def test_femtools_hessians_on_simplices(name, cell, p, make):
     assert np.abs(hess[:, perm] - T(space, "hess")).max() < ATOL
 
 
-@pytest.mark.xfail(strict=True, reason="LinearOnCubeWithNodalBasis / LagrangeOnCubeWithNodalBasis do not define "
-                                       "Hessians: basisHessians are the zero default (nonzeroHessians False), but the "
-                                       "Q1 mixed derivative and the Q2 second derivatives are not zero")
 @pytest.mark.parametrize("name,cell,p,make", [f for f in FEMTOOLS if f[1] not in SIMPLEX], ids=[f[0] for f in FEMTOOLS if f[1] not in SIMPLEX])
 def test_femtools_hessians_on_cubes(name, cell, p, make):
+    """Q1 has a nonzero mixed derivative and Q2 nonzero second derivatives; until C8 round 3 both classes
+    returned the zero default."""
     lfs = make()
+    assert lfs.nonzeroHessians
     space = _oracle_space(cell, p)
     perm = _match(lfs, space)
     hess = _ReferenceOnlySpace(lfs).getBasisHessianValuesRef(T(space, "x"))

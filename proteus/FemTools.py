@@ -450,12 +450,23 @@ class LinearOnCubeWithNodalBasis(LocalFunctionSpace):
             self.gradientList.append(numpy.array([0.5]))
             self.basisGradients.append(lambda xi: self.gradientList[1])
         elif nd == 2:
+            #the mixed second derivative of a bilinear function is not zero
+            self.basisHessians=[]
+            self.nonzeroHessians=True
             for node in self.referenceElement.nodeList:
                 self.basis.append(lambda xi, n0=node[0],n1=node[1]:0.25*(1.0+n0*xi[0])*(1.0+n1*xi[1]))
                 self.basisGradients.append(lambda xi, n0=node[0],n1=node[1]: numpy.array([0.25*     n0       *(1.0+n1*xi[1]),
                                                                                           0.25*(1.0+n0*xi[0])*     n1       ]))
+                self.basisHessians.append(lambda xi, n0=node[0],n1=node[1]: numpy.array([[0.0       ,0.25*n0*n1],
+                                                                                         [0.25*n0*n1,0.0       ]]))
         elif nd == 3:
+            self.basisHessians=[]
+            self.nonzeroHessians=True
             for node in self.referenceElement.nodeList:
+                self.basisHessians.append(lambda xi, n0=node[0],n1=node[1],n2=node[2]: 0.125*numpy.array(
+                    [[0.0                 ,n0*n1*(1.0+n2*xi[2]),n0*n2*(1.0+n1*xi[1])],
+                     [n0*n1*(1.0+n2*xi[2]),0.0                 ,n1*n2*(1.0+n0*xi[0])],
+                     [n0*n2*(1.0+n1*xi[1]),n1*n2*(1.0+n0*xi[0]),0.0                 ]]))
                 self.basis.append         (lambda xi, n0=node[0],n1=node[1],n2=node[2]:              0.125*(1.0+n0*xi[0])*(1.0+n1*xi[1])*(1.0+n2*xi[2]))
                 self.basisGradients.append(lambda xi, n0=node[0],n1=node[1],n2=node[2]: numpy.array([0.125*     n0       *(1.0+n1*xi[1])*(1.0+n2*xi[2]),
                                                                                                      0.125*(1.0+n0*xi[0])*     n1       *(1.0+n2*xi[2]),
@@ -516,12 +527,36 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
             self. fun.append(lambda xi,fc=fc, den=den:   fun[fc](xi)/den)
             self.dfun.append(lambda xi,fc=fc, den=den:  dfun[fc](xi)/den)
 
+        # Second derivatives of the 1D Lagrange polynomials:
+        # l_a'' = sum_{b != a} sum_{c != a,b} prod_{e != a,b,c} (xi - x_e) / prod_{b != a} (x_a - x_b)
+        nodes1d = self.nodes
+        def d2Lagrange(xi,a):
+            n = len(nodes1d)
+            total = 0.0
+            for b in range(n):
+                if b == a: continue
+                for c in range(n):
+                    if c == a or c == b: continue
+                    term = 1.0
+                    for e in range(n):
+                        if e != a and e != b and e != c:
+                            term *= (xi - nodes1d[e])
+                    total += term
+            den = 1.0
+            for b in range(n):
+                if b != a:
+                    den *= (nodes1d[a]-nodes1d[b])
+            return total/den
+        self.d2fun = [(lambda xi,a=a: d2Lagrange(xi,a)) for a in range(order+1)]
+
         # Define multi-dimensional stuff
         basis= []
         basisGradients = []
+        basisHessians = []
         if nd == 1:
             basis = self.fun
             basisGradients = self.dfun
+            basisHessians = [(lambda xi,a=a: numpy.array([[self.d2fun[a](xi[0])]])) for a in range(order+1)]
             funMap=[0,2,1]
         elif nd == 2:
             for j in range(order+1):
@@ -529,6 +564,9 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
                     basis.append(lambda xi,i=i,j=j:self.fun[i](xi[0])*self.fun[j](xi[1]))
                     basisGradients.append(lambda xi,i=i,j=j:numpy.array([self.dfun[i](xi[0])*self. fun[j](xi[1]),
                                                                               self. fun[i](xi[0])*self.dfun[j](xi[1])]))
+                    basisHessians.append(lambda xi,i=i,j=j:numpy.array(
+                        [[self.d2fun[i](xi[0])*self.  fun[j](xi[1]),self.dfun[i](xi[0])*self. dfun[j](xi[1])],
+                         [self. dfun[i](xi[0])*self. dfun[j](xi[1]),self. fun[i](xi[0])*self.d2fun[j](xi[1])]]))
             funMap=[0,7,3,  4,8,6,   1,5,2]
         elif nd == 3:
             for k in range(order+1):
@@ -540,6 +578,14 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
                             lambda xi,i=i,j=j,k=k: numpy.array([self.dfun[i](xi[0])*self. fun[j](xi[1])*self. fun[k](xi[2]),
                                                                 self. fun[i](xi[0])*self.dfun[j](xi[1])*self. fun[k](xi[2]),
                                                                 self. fun[i](xi[0])*self. fun[j](xi[1])*self.dfun[k](xi[2])]))
+                        def hessian(xi,i=i,j=j,k=k):
+                            f  = (self.  fun[i](xi[0]),self.  fun[j](xi[1]),self.  fun[k](xi[2]))
+                            d  = (self. dfun[i](xi[0]),self. dfun[j](xi[1]),self. dfun[k](xi[2]))
+                            d2 = (self.d2fun[i](xi[0]),self.d2fun[j](xi[1]),self.d2fun[k](xi[2]))
+                            return numpy.array([[d2[0]*f[1]*f[2],d[0]*d[1]*f[2] ,d[0]*f[1]*d[2] ],
+                                                [d[0]*d[1]*f[2] ,f[0]*d2[1]*f[2],f[0]*d[1]*d[2] ],
+                                                [d[0]*f[1]*d[2] ,f[0]*d[1]*d[2] ,f[0]*f[1]*d2[2]]])
+                        basisHessians.append(hessian)
 
             #funMap=numpy.array([0,3,6,8,18,19,24,26])
             funMap = [ 0, 8, 1,
@@ -557,9 +603,12 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
         for i in range(self.dim):
             invMap[funMap[i]] = i
 
+        self.basisHessians = []
+        self.nonzeroHessians = True
         for i in range(self.dim):
             self.basis.append(basis[invMap[i]])
             self.basisGradients.append(basisGradients[invMap[i]])
+            self.basisHessians.append(basisHessians[invMap[i]])
         # Get boundary data
         self.defineTraceFunctions()
 
