@@ -1404,6 +1404,183 @@ inline void surfaceMoments(const SurfaceRule &r, int degree, std::vector<double>
   }
 }
 
+
+// ------------------------------------------------------------------------------------------------ the fits
+// Equivalent polynomials of degree k from the moments (the curved-cut counterpart of equivalent_polynomials.h):
+//   H   in P_k(K):  int_K H q  = int_{K cap {u>0}} q          for every q in P_k      (so ImH = 1 - H)
+//   D   in P_k(K):  int_K D q  = int_Gamma q dS / |J|
+//   Dn_i in P_k(K): int_K Dn_i q = int_Gamma q n_i dS / |J|   (n the unit normal into {u>0}, physical when J is given)
+// The element kernel multiplies each quadrature weight by |J| and by H, ImH, D or Dn_i at the point, so dividing the surface
+// moments by |det J| here makes the Dirac fits integrate to the physical surface measure. A flux term
+// int_Gamma (a grad v.n) w dS = sum_q |J| w_q sum_I Dn_I(x_q) (a d_I v w)(x_q) then needs no normal off the surface and is
+// exact for polynomial integrands of degree <= k.
+namespace detail
+{
+// Cholesky factor and Gram matrix G_ab = int_K x^(a+b) = (a+b)! / (|a+b|+3)! componentwise, monomial order
+struct Gram
+{
+  int n = 0;
+  std::vector<double> G, L;
+};
+inline const Gram &gram(int k)
+{
+  static std::map<int, Gram> cache;
+  static std::mutex mtx;
+  std::lock_guard<std::mutex> lock(mtx);
+  auto it = cache.find(k);
+  if (it != cache.end())
+    return it->second;
+  const auto idx = monomialIndex(k);
+  Gram g;
+  g.n = (int)idx.size();
+  g.G.assign(g.n * g.n, 0.0);
+  auto fact = [](int m) {
+    double f = 1.0;
+    for (int i = 2; i <= m; ++i)
+      f *= i;
+    return f;
+  };
+  for (int a = 0; a < g.n; ++a)
+    for (int b = 0; b < g.n; ++b)
+    {
+      const int p = idx[a][0] + idx[b][0], q = idx[a][1] + idx[b][1], r = idx[a][2] + idx[b][2];
+      g.G[a * g.n + b] = fact(p) * fact(q) * fact(r) / fact(p + q + r + 3);
+    }
+  g.L.assign(g.n * g.n, 0.0);
+  for (int i = 0; i < g.n; ++i)
+    for (int j = 0; j <= i; ++j)
+    {
+      double sum = g.G[i * g.n + j];
+      for (int m = 0; m < j; ++m)
+        sum -= g.L[i * g.n + m] * g.L[j * g.n + m];
+      if (i == j)
+      {
+        if (sum <= 0.0)
+          throw std::runtime_error("cutquadric: Gram matrix is not positive definite");
+        g.L[i * g.n + i] = std::sqrt(sum);
+      }
+      else
+        g.L[i * g.n + j] = sum / g.L[j * g.n + j];
+    }
+  return cache.emplace(k, std::move(g)).first->second;
+}
+// solve G c = m (Cholesky, then one step of iterative refinement: the monomial Gram matrix is ill-conditioned)
+inline std::vector<double> gramSolve(int k, const std::vector<double> &m)
+{
+  const Gram &g = gram(k);
+  const int n = g.n;
+  auto solve = [&](const std::vector<double> &rhs) {
+    std::vector<double> y(n), x(n);
+    for (int i = 0; i < n; ++i)
+    {
+      double s = rhs[i];
+      for (int j = 0; j < i; ++j)
+        s -= g.L[i * n + j] * y[j];
+      y[i] = s / g.L[i * n + i];
+    }
+    for (int i = n - 1; i >= 0; --i)
+    {
+      double s = y[i];
+      for (int j = i + 1; j < n; ++j)
+        s -= g.L[j * n + i] * x[j];
+      x[i] = s / g.L[i * n + i];
+    }
+    return x;
+  };
+  std::vector<double> c = solve(m);
+  std::vector<double> res(n);
+  for (int i = 0; i < n; ++i)
+  {
+    double s = m[i];
+    for (int j = 0; j < n; ++j)
+      s -= g.G[i * n + j] * c[j];
+    res[i] = s;
+  }
+  const std::vector<double> dc = solve(res);
+  for (int i = 0; i < n; ++i)
+    c[i] += dc[i];
+  return c;
+}
+}  // namespace detail
+
+struct QuadricFit
+{
+  int degree = 0;
+  std::vector<double> cH, cD, cDn[3];  // monomial coefficients in monomialIndex(degree) order
+  // quadrature-point accessors of the kernel (set_quad, then H(), ImH(), D(), Dn(I)), as GeneralizedFunctions_mix
+  std::vector<std::array<double, 3>> points;
+  std::vector<double> qH, qD, qDn[3];
+  unsigned int q = 0;
+
+  // u: P2 nodal values (proteus order); J: row-major 3x3 or nullptr (identity: reference measure)
+  void calculate(const P2Tet &u, int k, const Options &opt = Options(), int axis = -1, const double *J = nullptr)
+  {
+    degree = k;
+    const Coef3 c = p2ToMonomial(u);
+    cH = detail::gramSolve(k, volumeMoments(c, k, opt));
+    const SurfaceRule rule = surfaceRule(c, opt, axis, J);
+    std::vector<double> S, Sn[3];
+    surfaceMoments(rule, k, S, Sn);
+    double detJ = 1.0;
+    if (J)
+    {
+      double Ji[9];
+      detail::invert3(J, Ji, detJ);
+      detJ = std::fabs(detJ);
+    }
+    for (double &v : S)
+      v /= detJ;
+    cD = detail::gramSolve(k, S);
+    for (int i = 0; i < 3; ++i)
+    {
+      for (double &v : Sn[i])
+        v /= detJ;
+      cDn[i] = detail::gramSolve(k, Sn[i]);
+    }
+  }
+  static double eval(const std::vector<double> &coef, int k, const double x[3])
+  {
+    const auto idx = monomialIndex(k);
+    double px[8], py[8], pz[8];
+    px[0] = py[0] = pz[0] = 1.0;
+    for (int i = 1; i <= k; ++i)
+    {
+      px[i] = px[i - 1] * x[0];
+      py[i] = py[i - 1] * x[1];
+      pz[i] = pz[i - 1] * x[2];
+    }
+    double s = 0.0;
+    for (std::size_t n = 0; n < idx.size(); ++n)
+      s += coef[n] * px[idx[n][0]] * py[idx[n][1]] * pz[idx[n][2]];
+    return s;
+  }
+  double evalH(const double x[3]) const { return eval(cH, degree, x); }
+  double evalImH(const double x[3]) const { return 1.0 - eval(cH, degree, x); }
+  double evalD(const double x[3]) const { return eval(cD, degree, x); }
+  double evalDn(int I, const double x[3]) const { return eval(cDn[I], degree, x); }
+  void setPoints(const std::vector<std::array<double, 3>> &pts)
+  {
+    points = pts;
+    qH.resize(pts.size());
+    qD.resize(pts.size());
+    for (int i = 0; i < 3; ++i)
+      qDn[i].resize(pts.size());
+    for (std::size_t p = 0; p < pts.size(); ++p)
+    {
+      qH[p] = evalH(pts[p].data());
+      qD[p] = evalD(pts[p].data());
+      for (int i = 0; i < 3; ++i)
+        qDn[i][p] = evalDn(i, pts[p].data());
+    }
+    q = 0;
+  }
+  void set_quad(unsigned int qq) { q = qq; }
+  double H() const { return qH[q]; }
+  double ImH() const { return 1.0 - qH[q]; }
+  double D() const { return qD[q]; }
+  double Dn(int I) const { return qDn[I][q]; }
+};
+
 }  // namespace cutquadric
 }  // namespace proteus
 #endif

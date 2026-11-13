@@ -735,3 +735,126 @@ def test_u7_all_axes_agree_on_random_quadrics():
             assert np.max(np.abs(S - ref[0])) <= 1e-6 and np.max(np.abs(Sn - ref[1])) <= 1e-6
         checked += 1
     assert checked >= 20
+
+
+# ================================================================================================== A5: QuadricFit
+def collapsed_gauss_tet(n=7):
+    """Positive Gauss rule on the reference tet, exact to degree 2n - 1 (collapsed coordinates)."""
+    from numpy.polynomial.legendre import leggauss
+    x, w = leggauss(n)
+    x, w = 0.5 * (x + 1), 0.5 * w
+    P, W = [], []
+    for a, wa in zip(x, w):
+        for b, wb in zip(x, w):
+            for c, wc in zip(x, w):
+                l1, l2, l3 = a, b * (1 - a), c * (1 - a) * (1 - b)
+                P.append((l1, l2, l3))
+                W.append(wa * wb * wc * (1 - a) ** 2 * (1 - b))
+    return np.array(P), np.array(W)
+
+
+QX, QW = collapsed_gauss_tet(7)
+
+
+def mono_matrix(deg, pts=QX):
+    return np.array([pts[:, 0] ** p * pts[:, 1] ** q * pts[:, 2] ** r for p, q, r in cutclip.monomials(deg)])
+
+
+def fit_moments(fit, deg):
+    """sum_q w_q f(x_q) x_q^alpha for the four fits."""
+    M = mono_matrix(deg)
+    H, D = fit.H(QX), fit.D(QX)
+    out = {"H": M @ (QW * H), "ImH": M @ (QW * fit.ImH(QX)), "D": M @ (QW * D)}
+    Dn = fit.Dn(QX)
+    out["Dn"] = np.array([M @ (QW * Dn[:, i]) for i in range(3)])
+    return out
+
+
+def test_a5_gram_matrix_is_exact():
+    # the monomial Gram matrix of the reference tet: int x^a y^b z^c = a! b! c! / (a+b+c+3)!
+    M = mono_matrix(4)
+    G = (M * QW) @ M.T
+    mono = cutclip.monomials(4)
+    G_exact = np.array([[math.factorial(a[0] + b[0]) * math.factorial(a[1] + b[1]) * math.factorial(a[2] + b[2])
+                         / math.factorial(sum(a) + sum(b) + 3) for b in mono] for a in mono])
+    assert np.max(np.abs(G - G_exact)) <= 1e-15
+
+
+@pytest.mark.parametrize("k", [1, 2, 3, 4])
+def test_u9_fits_reproduce_the_moments_for_every_polynomial_of_degree_k(k):
+    rng = np.random.default_rng(90 + k)
+    cases = [sphere_u([0, 0, 0], 0.4), sphere_u(INCENTRE, 0.15), sphere_u([-0.1, 0.3, 0.3], 0.2), generic_sphere_cut(),
+             linear_p2([0.31, -0.62, 0.45, -0.27]), linear_p2([0.5, 0.2, -0.3, -0.9])]
+    while len(cases) < 14:
+        u = rng.standard_normal(10) * rng.choice([0.3, 1.0]) + rng.choice([-0.3, 0.0, 0.3])
+        if cutquadric.classify(u)["cut"]:
+            cases.append(u)
+    full = full_moments(k)
+    for u in cases:
+        fit = cutquadric.QuadricFit(u, k, 24)
+        vol = np.array(cutquadric.volume_moments(u, k, 24))
+        S, Sn = surf(u, k, 24)
+        got = fit_moments(fit, k)
+        scale = max(1.0, np.max(np.abs(vol)))
+        assert np.max(np.abs(got["H"] - vol)) <= 1e-11 * scale
+        assert np.max(np.abs(got["ImH"] - (full - vol))) <= 1e-11 * scale
+        assert np.max(np.abs(got["D"] - S)) <= 1e-11 * max(1.0, np.max(np.abs(S)))
+        assert np.max(np.abs(got["Dn"] - Sn)) <= 1e-11 * max(1.0, np.max(np.abs(Sn)))
+
+
+def test_u9_fits_against_closed_forms_and_the_documented_miss():
+    r, k = 0.4, 3
+    fit = cutquadric.QuadricFit(sphere_u([0, 0, 0], r), k, 24)
+    got = fit_moments(fit, k + 1)
+    wantV = ball_volume_moments(np.zeros(3), r, k + 1, octant=True)
+    wantS = sphere_surface_moments(np.zeros(3), r, k + 1, octant=True)
+    wantN = np.array([sphere_surface_moments(np.zeros(3), r, k + 1, octant=True, normal_comp=i) for i in range(3)])
+    deg = np.array([sum(m) for m in cutclip.monomials(k + 1)])
+    ok = deg <= k
+    assert np.max(np.abs(got["H"] - wantV)[ok]) <= 1e-12
+    assert np.max(np.abs(got["D"] - wantS)[ok]) <= 1e-12
+    assert np.max(np.abs(got["Dn"] - wantN)[:, ok]) <= 1e-12
+    # a degree-(k+1) integrand is outside the fit: the miss is real
+    assert np.max(np.abs(got["H"] - wantV)[~ok]) > 1e-7
+    assert np.max(np.abs(got["D"] - wantS)[~ok]) > 1e-7
+
+
+def test_u9_planar_data_reproduces_the_equivalent_polynomial_fits():
+    from proteus import equivalent_polynomials as eqp
+    k = 3
+    X3, _ = collapsed_gauss_tet(3)                    # eqp.Simplex holds at most 50 points
+    gf = eqp.Simplex(nSpace=3, nP=k, nQ=len(X3))
+    for phi in ([-0.3, 0.8, 0.5, -0.4], [-0.3, 0.8, 0.5, 0.4], [0.9, -0.2, -0.5, -0.7], [0.31, -0.62, 0.45, -0.27]):
+        gf.calculate(np.array(phi), ref_tet, X3)
+        fit = cutquadric.QuadricFit(linear_p2(phi), k, 16)
+        H, D, ImH = fit.H(X3), fit.D(X3), fit.ImH(X3)
+        for q in range(len(X3)):
+            gf.set_quad(q)
+            assert H[q] == pytest.approx(gf.H, abs=1e-9)
+            assert ImH[q] == pytest.approx(gf.ImH, abs=1e-9)
+            assert D[q] == pytest.approx(gf.D, abs=1e-9)
+
+
+def test_u9_physical_scaling_of_the_dirac_fits():
+    rng = np.random.default_rng(91)
+    J = 3.0 * np.eye(3) + 0.3 * rng.standard_normal((3, 3))
+    x0 = np.array([0.2, -0.1, 0.4])
+    r = 0.15
+    c_phys = x0 + J @ np.full(3, 0.25)
+    u = nodal(lambda x, y, z: r * r - np.sum((x0 + J @ np.array([x, y, z]) - c_phys) ** 2))
+    k = 3
+    fit = cutquadric.QuadricFit(u, k, 24, J=J)
+    detJ = abs(np.linalg.det(J))
+    M = mono_matrix(0)
+    # the kernel multiplies each weight by |J|: |J| sum_q w_q D(x_q) = physical area, |J| sum w Dn dS = physical int n dS = 0
+    assert detJ * (QW @ fit.D(QX)) == pytest.approx(4 * np.pi * r * r, rel=1e-11)
+    assert np.max(np.abs(detJ * (QW @ fit.Dn(QX)))) <= 1e-11
+    vol = 4 * np.pi * r ** 3 / 3
+    assert detJ * (QW @ fit.H(QX)) == pytest.approx(vol, rel=1e-11)
+    # int n_j x_k dS = -V delta_jk physical; in reference coordinates xi: int xi_k n_j dS = -V Jinv[k, j]
+    Jinv = np.linalg.inv(J)
+    Xi = QX
+    for j in range(3):
+        for kk in range(3):
+            val = detJ * np.sum(QW * fit.Dn(QX)[:, j] * Xi[:, kk])
+            assert val == pytest.approx(-vol * Jinv[kk, j], abs=1e-11)

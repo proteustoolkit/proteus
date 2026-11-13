@@ -20,6 +20,19 @@ static P2Tet toP2Tet(const Arr &a)
   return u;
 }
 
+static Arr evalMany(const QuadricFit &f, const Arr &x, int kind)
+{
+  if (x.ndim() != 2 || x.shape(1) != 3)
+    throw std::invalid_argument("points must be (n,3)");
+  Arr out(x.shape(0));
+  for (py::ssize_t i = 0; i < x.shape(0); ++i)
+  {
+    const double p[3] = {x.at(i, 0), x.at(i, 1), x.at(i, 2)};
+    out.mutable_at(i) = kind == 0 ? f.evalH(p) : (kind == 1 ? f.evalImH(p) : f.evalD(p));
+  }
+  return out;
+}
+
 PYBIND11_MODULE(cutquadric, m)
 {
   m.doc() = "Curved cuts of a tetrahedron by a quadratic level set (C44 phase 1b)";
@@ -167,4 +180,47 @@ PYBIND11_MODULE(cutquadric, m)
         },
         py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("axis") = -1, py::arg("J") = py::none(),
         py::arg("planar_tol") = 1e-12, py::arg("deflate_tol") = 1e-10);
+
+  py::class_<QuadricFit>(m, "QuadricFit")
+      .def(py::init([](Arr u, int degree, int order, int axis, py::object J, double planar_tol, double deflate_tol) {
+             Options opt;
+             opt.order = order;
+             opt.planarTol = planar_tol;
+             opt.deflateTol = deflate_tol;
+             double Jm[9];
+             const bool hasJ = !J.is_none();
+             if (hasJ)
+             {
+               Arr a = J.cast<Arr>();
+               if (a.ndim() != 2 || a.shape(0) != 3 || a.shape(1) != 3)
+                 throw std::invalid_argument("J must be (3,3)");
+               for (int i = 0; i < 3; ++i)
+                 for (int j = 0; j < 3; ++j)
+                   Jm[3 * i + j] = a.at(i, j);
+             }
+             auto f = std::make_unique<QuadricFit>();
+             f->calculate(toP2Tet(u), degree, opt, axis, hasJ ? Jm : nullptr);
+             return f;
+           }),
+           py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("axis") = -1, py::arg("J") = py::none(),
+           py::arg("planar_tol") = 1e-12, py::arg("deflate_tol") = 1e-10)
+      .def_readonly("degree", &QuadricFit::degree)
+      .def_readonly("coef_H", &QuadricFit::cH)
+      .def_readonly("coef_D", &QuadricFit::cD)
+      .def("coef_Dn", [](const QuadricFit &f, int i) { return f.cDn[i]; })
+      .def("H", [](const QuadricFit &f, Arr x) { return evalMany(f, x, 0); })
+      .def("ImH", [](const QuadricFit &f, Arr x) { return evalMany(f, x, 1); })
+      .def("D", [](const QuadricFit &f, Arr x) { return evalMany(f, x, 2); })
+      .def("Dn", [](const QuadricFit &f, Arr x) {
+        if (x.ndim() != 2 || x.shape(1) != 3)
+          throw std::invalid_argument("points must be (n,3)");
+        Arr out({x.shape(0), (py::ssize_t)3});
+        for (py::ssize_t i = 0; i < x.shape(0); ++i)
+        {
+          const double p[3] = {x.at(i, 0), x.at(i, 1), x.at(i, 2)};
+          for (int I = 0; I < 3; ++I)
+            out.mutable_at(i, I) = f.evalDn(I, p);
+        }
+        return out;
+      });
 }
