@@ -599,7 +599,7 @@ EXTENSIONS_TO_BUILD = [
         'cADR',
         sources=['proteus/ADR.cpp'],
         depends=['proteus/ADR.h', 'proteus/mprans/ArgumentsDict.h', 'proteus/pyarray.h', 'proteus/ModelFactory.h', 'proteus/CompKernel.h',
-                 'proteus/equivalent_polynomials.h',
+                 'proteus/equivalent_polynomials.h', 'proteus/cutquadric.h', 'proteus/cutclip.h',
                  'proteus/equivalent_polynomials_utils.h',
                  'proteus/equivalent_polynomials_coefficients.h',
                  'proteus/equivalent_polynomials_coefficients_quad.h'],

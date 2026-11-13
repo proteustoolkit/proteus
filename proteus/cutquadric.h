@@ -1581,6 +1581,58 @@ struct QuadricFit
   double Dn(int I) const { return qDn[I][q]; }
 };
 
+
+// The embedded solid of one P2 tetrahedron as the ADR kernel reads it (C44 phase 1b, B2): classification from the
+// exact range test (not the vertex signs), then, on a cut element, the degree-k fits of the Heaviside of {u > 0},
+// the Dirac of {u = 0} and the three normal-weighted Diracs at the element's quadrature points. u > 0 is the fluid.
+// The element is affine, so the Jacobian comes from its four vertices (`nodes`: 3 doubles per node, vertices first).
+// An uncut element stores nothing: H is 1 or 0, D and Dn are 0.
+struct SolidFit
+{
+  int icase = 0;                      // +1 uncut, u > 0; -1 uncut, u < 0; 0 cut
+  CutLabel label = CutLabel::UncutPositive;
+  int nQ = 0;
+  std::vector<double> qH, qD, qDn;    // per point; qDn has 3 per point
+
+  int calculate(const double *phi, const double *nodes, const double *xRef, int nPoints, int k, const Options &opt = Options())
+  {
+    P2Tet u;
+    for (int i = 0; i < 10; ++i)
+      u[i] = phi[i];
+    const Classification cl = classify(u);
+    label = cl.label;
+    nQ = nPoints;
+    if (cl.label == CutLabel::UncutPositive || cl.label == CutLabel::UncutNegative)
+    {
+      icase = (cl.label == CutLabel::UncutPositive) ? 1 : -1;
+      qH.clear();
+      qD.clear();
+      qDn.clear();
+      return icase;
+    }
+    icase = 0;
+    double J[9];
+    for (int i = 0; i < 3; ++i)
+      for (int I = 0; I < 3; ++I)
+        J[I * 3 + i] = nodes[(i + 1) * 3 + I] - nodes[I];
+    QuadricFit fit;
+    fit.calculate(u, k, opt, -1, J);
+    std::vector<std::array<double, 3>> pts(nPoints);
+    for (int p = 0; p < nPoints; ++p)
+      pts[p] = {xRef[3 * p], xRef[3 * p + 1], xRef[3 * p + 2]};
+    fit.setPoints(pts);
+    qH = fit.qH;
+    qD = fit.qD;
+    qDn.resize(3 * nPoints);
+    for (int p = 0; p < nPoints; ++p)
+      for (int I = 0; I < 3; ++I)
+        qDn[3 * p + I] = fit.qDn[I][p];
+    return icase;
+  }
+  double H(int p) const { return icase == 0 ? qH[p] : (icase > 0 ? 1.0 : 0.0); }
+  double D(int p) const { return icase == 0 ? qD[p] : 0.0; }
+  double Dn(int p, int I) const { return icase == 0 ? qDn[3 * p + I] : 0.0; }
+};
 }  // namespace cutquadric
 }  // namespace proteus
 #endif

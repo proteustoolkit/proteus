@@ -858,3 +858,56 @@ def test_u9_physical_scaling_of_the_dirac_fits():
         for kk in range(3):
             val = detJ * np.sum(QW * fit.Dn(QX)[:, j] * Xi[:, kk])
             assert val == pytest.approx(-vol * Jinv[kk, j], abs=1e-11)
+
+
+# --- G1: area and volume of a sphere over a structured tetrahedral mesh, planar against curved cuts --------------
+# (C44 phase 1b, B2). The planar cut puts the interface by linear interpolation of the vertex values (the P2 mid-edge
+# values replaced by the edge averages, so u is linear and cutquadric takes its planar path); the curved cut uses the
+# P2 interpolant of the signed distance. Sphere r = 0.3 at the centre of the unit cube, fluid outside.
+_G1_EDGES = [(0, 1), (1, 2), (2, 3), (0, 2), (1, 3), (0, 3)]
+
+
+def _g1_mesh(n):
+    xs = np.linspace(0.0, 1.0, n)
+    h = xs[1] - xs[0]
+    tets = []
+    for i, j, k in itertools.product(range(n - 1), repeat=3):
+        o = np.array([xs[i], xs[j], xs[k]])
+        for perm in itertools.permutations(range(3)):
+            v, cur = [o.copy()], o.copy()
+            for a in perm:
+                cur = cur.copy()
+                cur[a] += h
+                v.append(cur)
+            tets.append(np.array(v))
+    return tets
+
+
+def _g1_errors(n, planar):
+    c, r = np.full(3, 0.5), 0.3
+    d = lambda x: np.linalg.norm(x - c) - r
+    vol = area = 0.0
+    for X in _g1_mesh(n):
+        uv = [d(x) for x in X]
+        um = [0.5 * (uv[a] + uv[b]) for a, b in _G1_EDGES] if planar else [d(0.5 * (X[a] + X[b])) for a, b in _G1_EDGES]
+        u = np.array(uv + um)
+        J = (X[1:] - X[0]).T
+        det = abs(np.linalg.det(J))
+        if u.min() > 0:
+            vol += det / 6.0
+        elif u.max() >= 0:
+            vol += det * cutquadric.volume_moments(u, 0)[0]
+            area += cutquadric.surface_rule(u, 16, -1, J)[1].sum()
+    return vol - (1.0 - 4.0 / 3.0 * math.pi * r ** 3), area - 4.0 * math.pi * r ** 2
+
+
+def test_g1_sphere_area_and_volume_planar_against_curved():
+    """Measured 2026-11-13, n = 5, 9, 17 nodes per side: planar dV 4.15e-2, 9.96e-3, 2.43e-3 and dA -2.18e-1, -5.16e-2,
+    -1.27e-2 (rate 2); curved dV 1.13e-4, 3.64e-5, -7.5e-7 and dA 1.0e-3, -1.2e-4, 1.5e-5 (rate >= 3)."""
+    planar = [_g1_errors(n, True) for n in (9, 17)]
+    curved = [_g1_errors(n, False) for n in (9, 17)]
+    for q in (0, 1):
+        assert abs(planar[0][q] / planar[1][q]) > 3.5 and abs(planar[0][q] / planar[1][q]) < 4.6   # rate 2
+        assert abs(curved[0][q] / curved[1][q]) > 7.0                                              # rate >= 3
+        assert abs(curved[1][q]) < abs(planar[1][q]) / 100.0
+    np.testing.assert_allclose([curved[1][0], curved[1][1]], [-7.453e-7, 1.455e-5], rtol=2e-3)

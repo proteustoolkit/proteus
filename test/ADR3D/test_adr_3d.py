@@ -172,6 +172,65 @@ def test_p2_plane_cut_two_ranks_match_serial(tmp_path):
     np.testing.assert_allclose([par["L2"], par["Linfty"], par["H1"]], [serial["L2"], serial["Linfty"], serial["H1"]], rtol=1e-8)
 
 
+# --- embeddedBoundary_curved (C44 phase 1b, B2): the P2 level set as a quadric, normal-weighted Dirac fits -------
+def test_p2_curved_option_on_a_plane_equals_the_planar_cut(tmp_path):
+    """M1: a planar level set embedded as P2 gives the planar numbers (nnx = 5, ghost penalty on)."""
+    planar = _run("refinement=1 pOrder=2 qOrder=7 cut=\"plane\"", cwd=tmp_path)
+    curved = _run("refinement=1 pOrder=2 qOrder=7 cut=\"plane_curved\"", cwd=tmp_path)
+    np.testing.assert_allclose([curved["L2"], curved["H1"]], [planar["L2"], planar["H1"]], rtol=1e-9)
+    np.testing.assert_allclose(curved["Linfty"], planar["Linfty"], rtol=1e-8)
+
+
+# sphere r = 0.3, curved option on, nnx = 3, 5, 9 (nnx = 17: L2 3.434e-6, planar 3.454e-6, measured 2026-11-13)
+P2_SPHERE_CURVED_L2 = [1.82308412890091944e-03, 2.26200547410589781e-04, 2.73392335838159319e-05]
+P2_SPHERE_CURVED_H1 = [2.61823564524925854e-02, 6.60653974069556026e-03, 1.62571821190217567e-03]
+
+
+def test_p2_sphere_with_curved_cuts_converges_at_rate_three(tmp_path):
+    """M2. With this manufactured solution the curved and the planar cut give the same L2 error to about 1% up to
+    nnx = 17 (the P2 interpolation error dominates; the cut geometry itself differs by 100x in volume and area, see
+    test_cutquadric.py::test_g1...), so the pins are the curved option's own numbers, not a planar/curved gap."""
+    runs = [_run("refinement={0} pOrder=2 qOrder=7 cut=\"sphere_curved\"".format(r), cwd=tmp_path) for r in range(3)]
+    l2 = [r["L2"] for r in runs]
+    h1 = [r["H1"] for r in runs]
+    assert all(np.log2(l2[i] / l2[i + 1]) >= 2.9 for i in range(2)), l2
+    assert all(np.log2(h1[i] / h1[i + 1]) >= 1.95 for i in range(2)), h1
+    np.testing.assert_allclose(l2, P2_SPHERE_CURVED_L2, rtol=1e-5)
+    np.testing.assert_allclose(h1, P2_SPHERE_CURVED_H1, rtol=1e-5)
+    # the elements the vertex signs do not see as cut are integrated and counted (decision P1)
+    assert runs[2]["nSimple"] == 480 and runs[2]["nEdgeTwice"] == 48 and runs[2]["nSubNodal"] == 0, runs[2]
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_p2_sphere_curved_two_ranks_match_serial(tmp_path):
+    serial = _run("refinement=1 pOrder=2 qOrder=7 cut=\"sphere_curved\"", cwd=tmp_path)
+    petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+             "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
+    par = _run("refinement=1 pOrder=2 qOrder=7 cut=\"sphere_curved\" usePetsc=True", ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
+    assert par["ranks"] == 2
+    np.testing.assert_allclose([par["L2"], par["Linfty"], par["H1"]], [serial["L2"], serial["Linfty"], serial["H1"]], rtol=1e-8)
+    # owned elements only: each rank counts its own, so the two ranks add up to the serial count
+    assert par["nSimple"] == serial["nSimple"]
+
+
+def test_curved_option_needs_p2(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    so, p, n, o = _setup("plane_curved", "pOrder=1")
+    with pytest.raises(NotImplementedError, match="needs a P2 space"):
+        NumericalSolution.NS_base(so, [p], [n], so.sList, o)
+
+
+def test_kernel_refuses_the_curved_option_on_p1(tmp_path, monkeypatch):
+    from proteus import ADR
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda *a: None)
+    so, p, n, o = _setup("plane_curved", "pOrder=1")
+    with pytest.raises(RuntimeError, match="needs a P2 space"):
+        ns = NumericalSolution.NS_base(so, [p], [n], so.sList, o)
+        ns.calculateSolution("adr3d_cut")
+
+
 def test_p2_robin_still_stops_in_3d(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     so, p, n, opts = _setup("robin", "pOrder=2 qOrder=7")

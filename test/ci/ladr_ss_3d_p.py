@@ -25,6 +25,7 @@ opts = Context.Options([
     ("cut", "none", "ask for a cut-cell feature, which must stop with a clear error in 3D (C44 phase 0): "
         "none, embedded, robin, immersed, scifem, pg or both; plane is a supported embedded boundary: "
         "plane / plane_nogp are a planar solid boundary (Nitsche, with / without the ghost penalty); "
+        "plane_curved / sphere_curved use the P2 level set as a quadric (embeddedBoundary_curved, P2 only, C44 phase 1b); "
         "ifem_plane (manufactured two-material solution across a plane), ifem_pwl (piecewise linear: in the "
         "IFE space, so P1 reproduces it) and ifem_sphere (radial, curved interface) use the two-sided P1 "
         "IFEM basis, immersedBoundary alone (C44 phase 2); scifem, pg and both still stop"),
@@ -207,6 +208,8 @@ if opts.cut in _ifem:
 cutOptions = {"none": {},
               "plane": dict(embeddedBoundary=True),
               "plane_nogp": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
+              "plane_curved": dict(embeddedBoundary=True, embeddedBoundary_curved=True),
+              "sphere_curved": dict(embeddedBoundary=True, embeddedBoundary_curved=True),
               "embedded": dict(embeddedBoundary=True),
               "robin": dict(embeddedBoundary=True, embeddedBoundary_robin=True),
               "immersed": dict(immersedBoundary=True),
@@ -218,7 +221,7 @@ cutOptions = {"none": {},
                                  immersedBoundary_solutionJump=(lambda x, t: opts.solJump) if opts.solJump != 0.0 else None),
               "ifem_pwl": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0),
               "ifem_sphere": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0)}[opts.cut]
-if opts.cut in ("plane", "plane_nogp"):
+if opts.cut in ("plane", "plane_nogp", "plane_curved"):
     cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
 elif opts.cut in _ifem:
     cutOptions.update(immersedBoundary_sdf=_ifem[opts.cut][1], immersedBoundary_u=interface_u,
