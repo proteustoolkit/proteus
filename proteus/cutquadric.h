@@ -433,7 +433,16 @@ inline void polyRoots(double c0, double c1, double c2, double lo, double hi, dou
   if (c2 == 0.0 && std::fabs(c1) < deflate * scale)
     return;
   double r[2];
-  const int n = quadRoots(c2, c1, c0, 1e-13 * scale, r);
+  int n;
+  if (c2 != 0.0 && c1 * c1 - 4.0 * c2 * c0 > 0.0 && c1 * c1 - 4.0 * c2 * c0 <= 1e-13 * (c1 * c1 + std::fabs(4.0 * c2 * c0)))
+  {
+    // a double root computed from sqrt(discriminant) is only good to ~1e-8 and shows up as two events 1e-8 apart, which
+    // leaves an outer segment of that width next to a singular end. Report one event.
+    r[0] = -c1 / (2.0 * c2);
+    n = 1;
+  }
+  else
+    n = quadRoots(c2, c1, c0, 1e-13 * scale, r);
   for (int i = 0; i < n; ++i)
     if (lo - eps < r[i] && r[i] < hi + eps)
       out.push_back(r[i]);
@@ -459,11 +468,43 @@ inline std::vector<double> segments(std::vector<double> crit, double hiEnd, doub
   return segs;
 }
 
-// cubic smoothstep t -> s(t), with ds/dt
+// cubic smoothstep t -> s(t) = t^2 (3 - 2t), with ds/dt = 6 t (1 - t): contact of order 2 at both ends turns an end
+// singularity (z - a)^(-1/2) or (z - a)^(1/2) of the outer integrand into an analytic one. Gauss-Legendre nodes then lie at
+// distances O(t^2) from the end, far above the resolution of z, so an inverse-square-root end loses nothing.
 inline void smooth(double t, double &s, double &j)
 {
   s = t * t * (3.0 - 2.0 * t);
   j = 6.0 * t * (1.0 - t);
+}
+
+// Double-exponential (tanh-sinh) nodes on [0,1] for segment ends where the outer integrand is logarithmic (the turning
+// points of the silhouette curve, where two silhouettes merge: a run that ends on one of them integrates 1/sqrt(disc) to
+// log(1/R) with R^2 proportional to the distance to the turning point). The cubic map gives only n^-4 there, tanh-sinh
+// converges exponentially. It cannot be used at an inverse-square-root end: it truncates the tail at the resolution of z
+// and loses sqrt(ulp) ~ 1e-8. Step h = 2/order. frac is the distance from the nearest end as a fraction of the segment.
+struct TSNode
+{
+  double frac, w;
+  bool left;
+};
+inline const std::vector<TSNode> &tanhSinh(int order)
+{
+  static std::map<int, std::vector<TSNode>> cache;
+  static std::mutex mtx;
+  std::lock_guard<std::mutex> lock(mtx);
+  auto it = cache.find(order);
+  if (it != cache.end())
+    return it->second;
+  std::vector<TSNode> nodes;
+  const double h = 2.0 / std::max(order, 1), tmax = 3.2;
+  const int K = (int)std::floor(tmax / h);
+  for (int k = -K; k <= K; ++k)
+  {
+    const double t = k * h, e = std::exp(-M_PI * std::fabs(std::sinh(t)));
+    const double frac = e / (1.0 + e);
+    nodes.push_back({frac, h * M_PI * std::cosh(t) * frac * (1.0 - frac), k <= 0});
+  }
+  return cache.emplace(order, std::move(nodes)).first->second;
 }
 
 inline double maxAbs(const Coef3 &c)
@@ -474,12 +515,294 @@ inline double maxAbs(const Coef3 &c)
   return m;
 }
 
-// Visit every outer Gauss point (y, z) of the sweep with its weight (segment length, Gauss weight and smoothstep
-// Jacobian in both outer directions) and the inner polynomial a2 x^2 + a1 x + a0 on x in [0, L], L = 1 - y - z.
+// Integrate a root term over one run [A, B] of an outer line. Along the line the root is r = (-a1 +- sqrt(disc))/(2 a2)
+// with disc(y) = al y^2 + be y + ga (the x-discriminant, a quadratic in the outer coordinate) and the only non-analytic
+// dependence on y is sqrt(disc). Substituting y = m + R sin(phi) (al < 0), y = m +- R cosh(psi) (al > 0) or
+// y = y1 + sigma tau^2 (al ~ 0) makes sqrt(disc) analytic on the whole natural domain of the branch, so a run that is
+// truncated near a silhouette by some other critical value (a kink) is still integrated to round-off by plain
+// Gauss-Legendre: no clustering of nodes toward its end can resolve a singularity that sits just outside it.
+// emit(y, w, wOverRoot): w is the weight dy-measure x outer weight, wOverRoot = w / sqrt(disc(y)) formed analytically
+// (the surface weight |grad u| / |du/dx| = |grad u| / sqrt(disc) needs it without a division of two small numbers).
+template <class Emit>
+inline void integrateRootRun(double A, double B, const GL &g, double al, double be, double ga, double wOuter, Emit &&emit)
+{
+  const int n = (int)g.x.size();
+  const double S = std::max({std::fabs(al), std::fabs(be), std::fabs(ga)});
+  if (S == 0.0 || B <= A)
+    return;
+  auto plain = [&]() {
+    const double h = B - A;
+    for (int i = 0; i < n; ++i)
+    {
+      const double y = A + h * g.x[i];
+      const double d = (al * y + be) * y + ga;
+      if (d <= 0.0)
+        continue;
+      const double w = wOuter * g.w[i] * h;
+      emit(y, w, w / std::sqrt(d));
+    }
+  };
+  if (std::fabs(al) <= 1e-10 * S)
+  {
+    if (std::fabs(be) <= 1e-14 * S)
+    {
+      plain();
+      return;
+    }
+    // disc = be (y - y1): y = y1 + sigma tau^2
+    const double y1 = -ga / be, sigma = be > 0.0 ? 1.0 : -1.0;
+    if (std::fabs(y1 - 0.5 * (A + B)) > 20.0)
+    {
+      plain();  // the silhouette is far outside the unit range
+      return;
+    }
+    const double tA = std::sqrt(std::max(sigma * (A - y1), 0.0)), tB = std::sqrt(std::max(sigma * (B - y1), 0.0));
+    const double lo = std::min(tA, tB), hi = std::max(tA, tB), d = hi - lo, sb = std::sqrt(std::fabs(be));
+    for (int i = 0; i < n; ++i)
+    {
+      const double tau = lo + d * g.x[i];
+      emit(y1 + sigma * tau * tau, wOuter * g.w[i] * d * 2.0 * tau, wOuter * g.w[i] * d * 2.0 / sb);
+    }
+    return;
+  }
+  const double D2 = be * be - 4.0 * al * ga;
+  if (al > 0.0 && D2 < 0.0)
+  {
+    // disc = al ((y - m)^2 + R^2) > 0 on the whole line, but the complex silhouettes m +- iR can lie close to the real
+    // axis (near a turning point of the silhouette curve): y = m + R sinh(psi) makes sqrt(disc) = sqrt(al) R cosh(psi)
+    const double m = -be / (2.0 * al), R = std::sqrt(-D2) / (2.0 * al);
+    if (R <= 20.0)
+    {
+      const double pA = std::asinh((A - m) / R), pB = std::asinh((B - m) / R);
+      const int pieces = std::max(1, (int)std::ceil(std::fabs(pB - pA)));
+      const double d = (pB - pA) / pieces, sa = std::sqrt(al);
+      for (int pc = 0; pc < pieces; ++pc)
+        for (int i = 0; i < n; ++i)
+        {
+          const double psi = pA + d * (pc + g.x[i]);
+          const double wp = wOuter * g.w[i] * std::fabs(d);
+          emit(m + R * std::sinh(psi), wp * R * std::cosh(psi), wp / sa);
+        }
+      return;
+    }
+  }
+  double r[2];
+  const int nr = D2 > 0.0 ? quadRoots(al, be, ga, 1e-14 * S, r) : 0;
+  if (nr < 2)
+  {
+    plain();  // disc keeps one sign on the line, no silhouette in play
+    return;
+  }
+  const double y1 = r[0], y2 = r[1], m = 0.5 * (y1 + y2), R = 0.5 * (y2 - y1);
+  const double tol = 1e-13 * std::max(1.0, std::fabs(R));
+  if (R > 20.0)
+  {
+    // the other silhouette is far outside the unit range: one-sided map at the near root, disc = al (y - yn)(y - yf) with
+    // the second factor analytic over the run
+    const double ym = 0.5 * (A + B);
+    const bool nearLow = std::fabs(ym - y1) < std::fabs(ym - y2);
+    const double yn = nearLow ? y1 : y2, yf = nearLow ? y2 : y1, sigma = ym > yn ? 1.0 : -1.0;
+    if (std::fabs(ym - yn) > 20.0)
+    {
+      plain();
+      return;
+    }
+    const double tA = std::sqrt(std::max(sigma * (A - yn), 0.0)), tB = std::sqrt(std::max(sigma * (B - yn), 0.0));
+    const double lo = std::min(tA, tB), hi = std::max(tA, tB), d = hi - lo;
+    for (int i = 0; i < n; ++i)
+    {
+      const double tau = lo + d * g.x[i];
+      const double y = yn + sigma * tau * tau;
+      emit(y, wOuter * g.w[i] * d * 2.0 * tau, wOuter * g.w[i] * d * 2.0 / std::sqrt(std::fabs(al * (y - yf))));
+    }
+    return;
+  }
+  if (al < 0.0)
+  {
+    const double sa = std::sqrt(-al);
+    const bool atLo = A <= y1 + tol, atHi = B >= y2 - tol;
+    const double pA = atLo ? -M_PI / 2 : std::asin(std::min(1.0, std::max(-1.0, (A - m) / R)));
+    const double pB = atHi ? M_PI / 2 : std::asin(std::min(1.0, std::max(-1.0, (B - m) / R)));
+    const double d = pB - pA;
+    for (int i = 0; i < n; ++i)
+    {
+      const double phi = pA + d * g.x[i];
+      double cs;  // cos(phi), accurate at an end that sits on the silhouette
+      if (atHi && g.x[i] > 0.5)
+        cs = std::sin(d * g.x[n - 1 - i] + (M_PI / 2 - pB));
+      else if (atLo && g.x[i] <= 0.5)
+        cs = std::sin(d * g.x[i] + (pA + M_PI / 2));
+      else
+        cs = std::cos(phi);
+      const double wp = wOuter * g.w[i] * d;
+      emit(m + R * std::sin(phi), wp * R * cs, wp / sa);
+    }
+    return;
+  }
+  // al > 0: the run lies outside [y1, y2]
+  const double sa = std::sqrt(al);
+  const bool lower = 0.5 * (A + B) < m;
+  const double ya = lower ? m - B : A - m, yb = lower ? m - A : B - m;  // distances from the centre, ya < yb
+  const bool atRoot = ya <= R + tol;
+  const double pA = atRoot ? 0.0 : std::acosh(std::max(1.0, ya / R)), pB = std::acosh(std::max(1.0, yb / R));
+  // y - m = R cosh(psi) grows like e^psi: when the two silhouettes are close (R small) the run is long in psi and the
+  // integrand is a polynomial in e^psi, so integrate in pieces of length <= 1 (each analytic and mild)
+  const int pieces = std::max(1, (int)std::ceil(pB - pA));
+  const double d = (pB - pA) / pieces;
+  for (int pc = 0; pc < pieces; ++pc)
+    for (int i = 0; i < n; ++i)
+    {
+      const double psi = pA + d * (pc + g.x[i]);
+      const bool nearRoot = atRoot && pc == 0 && g.x[i] <= 0.5;
+      const double sh = nearRoot ? std::sinh(d * g.x[i]) : std::sinh(psi);
+      const double wp = wOuter * g.w[i] * d, ch = std::cosh(psi);
+      emit(lower ? m - R * ch : m + R * ch, wp * R * sh, wp / sa);
+    }
+}
+
+// Inner structure of one outer line. The indicator of {q > 0} on [0, L], q = a2 x^2 + a1 x + a0, integrates any x^m as
+//   sum over roots r in (0,L) of s_r r^(m+1)/(m+1)  +  [q(L) > 0] L^(m+1)/(m+1)       (the x = 0 end contributes nothing)
+// with s_r = +1 where q goes from positive to negative at r. Each term (term 0: the smaller root, 1: the larger root,
+// 2: the end x = L) is smooth along the outer line except where its own validity changes, so it is integrated over its own
+// maximal runs of validity (integrateRootRun for the roots, the smoothstep map for the end term). Splitting at the
+// breakpoints of the *other* branches would leave runs whose integrand is singular just outside an end.
+// coeffs(y, a1, a0, L) gives the inner polynomial at outer point y; disc = (al, be, ga) is the discriminant a1^2 - 4 a2 a0
+// as a quadratic in y; emit(term, y, w, wOverD, r, s, a1, a0, L) receives the weight (times wOuter), w / |dq/dx(r)| for
+// the root terms, and for term 2 r = L, s = 1.
+template <class Coeffs, class Emit>
+inline void integrateTerms(const std::vector<double> &segs, const GL &g, double a2, double eps, bool withL, double wOuter,
+                           double al, double be, double ga, Coeffs &&coeffs, Emit &&emit)
+{
+  struct Seg
+  {
+    double a, b;
+    bool v[3];
+  };
+  std::vector<Seg> sg;
+  for (std::size_t k = 0; k + 1 < segs.size(); ++k)
+  {
+    Seg q;
+    q.a = segs[k];
+    q.b = segs[k + 1];
+    if (q.b - q.a < 1e-14)
+      continue;
+    double a1, a0, L, r[2];
+    coeffs(0.5 * (q.a + q.b), a1, a0, L);
+    const int n = quadRoots(a2, a1, a0, eps, r);
+    q.v[0] = n >= 1 && r[0] > 0.0 && r[0] < L;
+    q.v[1] = n == 2 && r[1] > 0.0 && r[1] < L;
+    q.v[2] = withL && (a2 * L + a1) * L + a0 > 0.0;
+    sg.push_back(q);
+  }
+  for (int term = 0; term < (withL ? 3 : 2); ++term)
+  {
+    bool open = false;
+    double start = 0.0, end = 0.0;
+    auto point = [&](double y, double w, double wOverRoot) {
+      double a1, a0, L, r[2];
+      coeffs(y, a1, a0, L);
+      if (L <= eps)
+        return;
+      const int n = quadRoots(a2, a1, a0, eps, r);
+      if (term >= n)
+        return;
+      double s, wod = wOverRoot;
+      if (std::fabs(a2) <= eps)
+      {
+        s = a1 > 0.0 ? -1.0 : 1.0;
+        wod = w / std::fabs(a1);
+      }
+      else if (n == 2)
+        s = (a2 > 0.0) == (term == 0) ? 1.0 : -1.0;
+      else
+        s = 0.0;  // tangential double root: the two ends cancel
+      emit(term, y, w, wod, r[term], s, a1, a0, L);
+    };
+    auto flush = [&]() {
+      if (term == 2)
+      {
+        const double h = end - start;  // L^(m+1) y^b z^c is analytic: only the run ends are kinks
+        for (std::size_t i = 0; i < g.x.size(); ++i)
+        {
+          const double y = start + h * g.x[i];
+          double a1, a0, L;
+          coeffs(y, a1, a0, L);
+          if (L > eps)
+            emit(2, y, wOuter * g.w[i] * h, 0.0, L, 1.0, a1, a0, L);
+        }
+      }
+      else if (std::fabs(a2) <= eps)
+      {
+        // linear inner polynomial: the root is analytic in y wherever it is valid
+        const double h = end - start;
+        for (std::size_t i = 0; i < g.x.size(); ++i)
+          point(start + h * g.x[i], wOuter * g.w[i] * h, 0.0);
+      }
+      else
+        integrateRootRun(start, end, g, al, be, ga, wOuter, point);
+    };
+    for (const Seg &q : sg)
+    {
+      if (q.v[term])
+      {
+        if (!open)
+        {
+          open = true;
+          start = q.a;
+        }
+        end = q.b;
+      }
+      else if (open)
+      {
+        flush();
+        open = false;
+      }
+    }
+    if (open)
+      flush();
+  }
+}
+
+// z-values at which the line p y + q z + r = 0 meets the conic alpha y^2 + (beta0 + beta1 z) y + gamma0 + gamma1 z + gamma2 z^2 = 0
+// inside the outer range [0,1]. The conic families of the sweep are the curves in the outer (y,z) plane on which the
+// interval structure of {u > 0} changes; where two of them cross, the outer integrand has a corner or a square-root
+// singularity that Gauss-Legendre on a smooth segment cannot resolve, so the crossing z must be a segment boundary.
+inline void lineConicCrossings(double p, double q, double r, double alpha, double beta0, double beta1, double gamma0,
+                               double gamma1, double gamma2, double eps, double deflate, std::vector<double> &zOut)
+{
+  const double ls = std::max({std::fabs(p), std::fabs(q), std::fabs(r)});
+  if (ls == 0.0)
+    return;
+  if (std::fabs(p) >= std::fabs(q) && std::fabs(p) > 1e-13 * ls)
+  {
+    // y = e0 + e1 z
+    const double e0 = -r / p, e1 = -q / p;
+    polyRoots(alpha * e0 * e0 + beta0 * e0 + gamma0, 2 * alpha * e0 * e1 + beta0 * e1 + beta1 * e0 + gamma1,
+              alpha * e1 * e1 + beta1 * e1 + gamma2, 0.0, 1.0, eps, deflate, zOut);
+  }
+  else if (std::fabs(q) > 1e-13 * ls)
+  {
+    // z = e0 + e1 y: solve for y, report z
+    const double e0 = -r / q, e1 = -p / q;
+    std::vector<double> ys;
+    polyRoots(gamma0 + gamma1 * e0 + gamma2 * e0 * e0, beta0 + beta1 * e0 + gamma1 * e1 + 2 * gamma2 * e0 * e1,
+              alpha + beta1 * e1 + gamma2 * e1 * e1, -1.0, 2.0, eps, deflate, ys);
+    for (double y : ys)
+    {
+      const double z = e0 + e1 * y;
+      if (z > -eps && z < 1.0 + eps)
+        zOut.push_back(z);
+    }
+  }
+}
+
+// Visit every term of every outer Gauss point (y, z) of the sweep, visit(term, y, z, w, wOverD, r, s, a2, a1, a0, L): w is the
+// weight (segment length, Gauss weight and smoothstep Jacobian in both outer directions), the inner polynomial is
+// a2 x^2 + a1 x + a0 on x in [0, L], L = 1 - y - z, and the term is as in integrateTerms.
 // The outer partition is by the critical values of the level set (the x-discriminant, the two facet restrictions, the
 // branch line) so that every outer integrand is smooth on a segment up to the endpoint square roots the map removes.
 template <class Visitor>
-inline void sweepOuter(const Coef3 &c, const Options &opt, Visitor &&visit)
+inline void sweepOuter(const Coef3 &c, const Options &opt, bool withL, Visitor &&visit)
 {
   const double scale = maxAbs(c);
   if (scale == 0.0)
@@ -506,89 +829,99 @@ inline void sweepOuter(const Coef3 &c, const Options &opt, Visitor &&visit)
   if (std::fabs(cxy) > eps)
     fams.push_back({0.0, {cxy, 0.0}, {cx, cxz, 0.0}});
 
-  std::vector<double> zcrit = {0.0, 1.0};
+  std::vector<double> zcrit = {0.0, 1.0}, zlog;
   for (const Fam &F : fams)
   {
     // beta^2 - 4 alpha gamma = 0 (birth/death), gamma = 0 (exit through y = 0), value at y = 1 - z (exit through the facet)
-    polyRoots(F.be[0] * F.be[0] - 4 * F.al * F.ga[0], 2 * F.be[0] * F.be[1] - 4 * F.al * F.ga[1],
-              F.be[1] * F.be[1] - 4 * F.al * F.ga[2], 0.0, 1.0, eps, opt.deflateTol, zcrit);
+    {
+      const std::size_t before = zcrit.size();
+      polyRoots(F.be[0] * F.be[0] - 4 * F.al * F.ga[0], 2 * F.be[0] * F.be[1] - 4 * F.al * F.ga[1],
+                F.be[1] * F.be[1] - 4 * F.al * F.ga[2], 0.0, 1.0, eps, opt.deflateTol, zcrit);
+      if (&F == &fams[0])  // turning points of the silhouette curve: logarithmic ends of the outer integrand
+        zlog.insert(zlog.end(), zcrit.begin() + before, zcrit.end());
+    }
     polyRoots(F.ga[0], F.ga[1], F.ga[2], 0.0, 1.0, eps, opt.deflateTol, zcrit);
     polyRoots(F.al + F.be[0] + F.ga[0], -2 * F.al + F.be[1] - F.be[0] + F.ga[1], F.al - F.be[1] + F.ga[2], 0.0, 1.0, eps,
               opt.deflateTol, zcrit);
+  }
+  // crossings of the curves with each other: silhouette x* = 0 (a0 = 0 and a1 = 0), root at both ends (a0 = 0, a1 + a2 L = 0)
+  // and silhouette on the facet (u(L) = 0, a1 + 2 a2 L = 0)
+  {
+    const Fam &F1 = fams[1], &F2 = fams[2];
+    lineConicCrossings(cxy, cxz, cx, F1.al, F1.be[0], F1.be[1], F1.ga[0], F1.ga[1], F1.ga[2], eps, opt.deflateTol, zcrit);
+    lineConicCrossings(cxy - a2, cxz - a2, cx + a2, F1.al, F1.be[0], F1.be[1], F1.ga[0], F1.ga[1], F1.ga[2], eps,
+                       opt.deflateTol, zcrit);
+    lineConicCrossings(cxy - 2 * a2, cxz - 2 * a2, cx + 2 * a2, F2.al, F2.be[0], F2.be[1], F2.ga[0], F2.ga[1], F2.ga[2], eps,
+                       opt.deflateTol, zcrit);
   }
 
   const GL &g = gauss01(opt.order);
   const std::vector<double> zsegs = segments(zcrit, 1.0, eps);
   std::vector<double> ycrit;
-  for (std::size_t zs = 0; zs + 1 < zsegs.size(); ++zs)
-  {
-    const double za = zsegs[zs], zh = zsegs[zs + 1] - za;
-    if (zh < 1e-14)
-      continue;
+  // the whole inner problem at one outer value z, with outer weight wz
+  auto atZ = [&](double z, double wz) {
+    const double Ly = 1.0 - z;
+    ycrit.clear();
+    for (const Fam &F : fams)
+    {
+      double r[2];
+      const int n = quadRoots(F.al, F.be[0] + F.be[1] * z, F.ga[0] + z * (F.ga[1] + z * F.ga[2]), eps, r);
+      for (int i = 0; i < n; ++i)
+        if (eps < r[i] && r[i] < Ly - eps)
+          ycrit.push_back(r[i]);
+    }
+    const std::vector<double> ysegs = segments(ycrit, Ly, eps);
+    auto coeffs = [&](double y, double &a1, double &a0, double &L) {
+      L = 1.0 - y - z;
+      a1 = cxy * y + cxz * z + cx;
+      a0 = cyy * y * y + czz * z * z + cyz * y * z + cy * y + cz * z + c1;
+    };
+    const Fam &S0 = fams[0];
+    integrateTerms(ysegs, g, a2, eps, withL, wz, S0.al, S0.be[0] + S0.be[1] * z, S0.ga[0] + z * (S0.ga[1] + z * S0.ga[2]),
+                   coeffs, [&](int term, double y, double w, double wod, double r, double s, double a1, double a0, double L) {
+                     visit(term, y, z, w, wod, r, s, a2, a1, a0, L);
+                   });
+  };
+  auto smoothRun = [&](double a, double b) {
+    const double h = b - a;
     for (int zi = 0; zi < opt.order; ++zi)
     {
       double sz, jz;
       smooth(g.x[zi], sz, jz);
-      const double z = za + zh * sz;
-      const double wz = g.w[zi] * zh * jz;
-      const double Ly = 1.0 - z;
-      ycrit.clear();
-      for (const Fam &F : fams)
-      {
-        double r[2];
-        const int n = quadRoots(F.al, F.be[0] + F.be[1] * z, F.ga[0] + z * (F.ga[1] + z * F.ga[2]), eps, r);
-        for (int i = 0; i < n; ++i)
-          if (eps < r[i] && r[i] < Ly - eps)
-            ycrit.push_back(r[i]);
-      }
-      const std::vector<double> ysegs = segments(ycrit, Ly, eps);
-      for (std::size_t ys = 0; ys + 1 < ysegs.size(); ++ys)
-      {
-        const double ya = ysegs[ys], yh = ysegs[ys + 1] - ya;
-        if (yh < 1e-14)
-          continue;
-        for (int yi = 0; yi < opt.order; ++yi)
-        {
-          double sy, jy;
-          smooth(g.x[yi], sy, jy);
-          const double y = ya + yh * sy;
-          const double L = 1.0 - y - z;
-          if (L <= eps)
-            continue;
-          const double b1 = cxy * y + cxz * z + cx;
-          const double b0 = cyy * y * y + czz * z * z + cyz * y * z + cy * y + cz * z + c1;
-          visit(y, z, wz * g.w[yi] * yh * jy, a2, b1, b0, L, eps);
-        }
-      }
+      atZ(a + h * sz, g.w[zi] * h * jz);
     }
-  }
-}
-
-// intervals of [0, L] where a2 x^2 + a1 x + a0 > 0 (at most two); returns their count
-inline int positiveIntervals(double a2, double a1, double a0, double L, double eps, double lo[2], double hi[2])
-{
-  double r[2];
-  const int n = quadRoots(a2, a1, a0, eps, r);
-  double pts[4] = {0.0, L, L, L};
-  int np = 1;
-  for (int i = 0; i < n; ++i)
-    if (eps < r[i] && r[i] < L - eps)
-      pts[np++] = r[i];
-  pts[np++] = L;
-  int count = 0;
-  for (int k = 0; k + 1 < np; ++k)
-  {
-    if (pts[k + 1] - pts[k] < 1e-15)
-      continue;
-    const double xm = 0.5 * (pts[k] + pts[k + 1]);
-    if ((a2 * xm + a1) * xm + a0 > 0.0)
+  };
+  auto logRun = [&](double a, double b) {
+    const double h = b - a;
+    for (const TSNode &tn : tanhSinh(opt.order))
     {
-      lo[count] = pts[k];
-      hi[count] = pts[k + 1];
-      ++count;
+      const double z = tn.left ? a + h * tn.frac : b - h * tn.frac;
+      if (z > a && z < b)  // nodes closer to an end than z can resolve carry negligible weight
+        atZ(z, tn.w * h);
+    }
+  };
+  auto isLog = [&](double z) {
+    for (double q : zlog)
+      if (std::fabs(q - z) <= 1e-9)
+        return true;
+    return false;
+  };
+  for (std::size_t zs = 0; zs + 1 < zsegs.size(); ++zs)
+  {
+    const double za = zsegs[zs], zb = zsegs[zs + 1];
+    if (zb - za < 1e-14)
+      continue;
+    const bool ll = isLog(za), lr = isLog(zb);
+    if (!ll && !lr)
+      smoothRun(za, zb);
+    else
+    {
+      // split so that each half has at most one special end; the middle is a regular point where clustering is harmless
+      const double c = 0.5 * (za + zb);
+      ll ? logRun(za, c) : smoothRun(za, c);
+      lr ? logRun(c, zb) : smoothRun(c, zb);
     }
   }
-  return count;
 }
 
 inline bool isPlanar(const Coef3 &c, double planarTol)
@@ -623,31 +956,23 @@ inline std::vector<double> volumeMoments(const Coef3 &c, int degree, const Optio
     return cutclip::moments(cutclip::clipTet(detail::refTet(), std::vector<cutclip::Plane>{detail::planeOf(c)}), degree);
   const auto idx = monomialIndex(degree);
   std::vector<double> m(idx.size(), 0.0);
-  std::vector<double> yp(degree + 1), zp(degree + 1), lp(degree + 2), hp(degree + 2);
-  detail::sweepOuter(c, opt, [&](double y, double z, double w, double a2, double a1, double a0, double L, double eps) {
-    double lo[2], hi[2];
-    const int ni = detail::positiveIntervals(a2, a1, a0, L, eps, lo, hi);
-    if (ni == 0)
+  std::vector<double> yp(degree + 1), zp(degree + 1), rp(degree + 2);
+  detail::sweepOuter(c, opt, true, [&](int, double y, double z, double w, double, double r, double s, double, double, double, double) {
+    if (s == 0.0)
       return;
-    yp[0] = zp[0] = 1.0;
+    yp[0] = zp[0] = rp[0] = 1.0;
     for (int k = 1; k <= degree; ++k)
     {
       yp[k] = yp[k - 1] * y;
       zp[k] = zp[k - 1] * z;
     }
-    for (int i = 0; i < ni; ++i)
+    for (int k = 1; k <= degree + 1; ++k)
+      rp[k] = rp[k - 1] * r;
+    const double ws = w * s;
+    for (std::size_t n = 0; n < idx.size(); ++n)
     {
-      lp[0] = hp[0] = 1.0;
-      for (int k = 1; k <= degree + 1; ++k)
-      {
-        lp[k] = lp[k - 1] * lo[i];
-        hp[k] = hp[k - 1] * hi[i];
-      }
-      for (std::size_t n = 0; n < idx.size(); ++n)
-      {
-        const int a = idx[n][0];
-        m[n] += w * (hp[a + 1] - lp[a + 1]) / (a + 1) * yp[idx[n][1]] * zp[idx[n][2]];
-      }
+      const int a = idx[n][0];
+      m[n] += ws * rp[a + 1] / (a + 1) * yp[idx[n][1]] * zp[idx[n][2]];
     }
   });
   return m;
@@ -816,38 +1141,24 @@ inline std::vector<double> triMoments(const Coef2 &c, int degree, const Options 
     crit.push_back(-D / B);                                                                                            // branch
   const detail::GL &g = detail::gauss01(opt.order);
   const std::vector<double> segs = detail::segments(crit, 1.0, eps);
-  std::vector<double> tp(degree + 1), lp(degree + 2), hp(degree + 2);
-  for (std::size_t sg = 0; sg + 1 < segs.size(); ++sg)
-  {
-    const double a = segs[sg], h = segs[sg + 1] - a;
-    if (h < 1e-14)
-      continue;
-    for (int i = 0; i < opt.order; ++i)
-    {
-      double sm, j;
-      detail::smooth(g.x[i], sm, j);
-      const double t = a + h * sm, w = g.w[i] * h * j;
-      const double L = 1.0 - t;
-      if (L <= eps)
-        continue;
-      double lo[2], hi[2];
-      const int ni = detail::positiveIntervals(A, B * t + D, (C * t + E) * t + F, L, eps, lo, hi);
-      tp[0] = 1.0;
-      for (int k = 1; k <= degree; ++k)
-        tp[k] = tp[k - 1] * t;
-      for (int q = 0; q < ni; ++q)
-      {
-        lp[0] = hp[0] = 1.0;
-        for (int k = 1; k <= degree + 1; ++k)
-        {
-          lp[k] = lp[k - 1] * lo[q];
-          hp[k] = hp[k - 1] * hi[q];
-        }
-        for (std::size_t n = 0; n < idx.size(); ++n)
-          m[n] += w * (hp[idx[n][0] + 1] - lp[idx[n][0] + 1]) / (idx[n][0] + 1) * tp[idx[n][1]];
-      }
-    }
-  }
+  std::vector<double> tp(degree + 1), rp(degree + 2);
+  auto coeffs = [&](double t, double &a1, double &a0, double &L) {
+    L = 1.0 - t;
+    a1 = B * t + D;
+    a0 = (C * t + E) * t + F;
+  };
+  detail::integrateTerms(segs, g, A, eps, true, 1.0, B * B - 4 * A * C, 2 * B * D - 4 * A * E, D * D - 4 * A * F, coeffs,
+                         [&](int, double t, double w, double, double r, double sg, double, double, double) {
+                           if (sg == 0.0)
+                             return;
+                           tp[0] = rp[0] = 1.0;
+                           for (int k = 1; k <= degree; ++k)
+                             tp[k] = tp[k - 1] * t;
+                           for (int k = 1; k <= degree + 1; ++k)
+                             rp[k] = rp[k - 1] * r;
+                           for (std::size_t n = 0; n < idx.size(); ++n)
+                             m[n] += w * sg * rp[idx[n][0] + 1] / (idx[n][0] + 1) * tp[idx[n][1]];
+                         });
   return m;
 }
 inline std::vector<double> triMomentsNodal(const P2Tri &u, int degree, const Options &opt = Options())
@@ -903,6 +1214,194 @@ inline std::vector<double> faceMoments(const P2Tet &u, int k, int degree, const 
     out[i] = s;
   }
   return out;
+}
+
+
+// ------------------------------------------------------------------------------------------------ surface rule
+// A point rule on Gamma cap K = {u = 0} with positive weights and the discrete normal grad u / |grad u| (pointing into
+// {u > 0}) at every point, from the same slicing as the volume sweep. With the inner coordinate x' along a chosen axis,
+// Gamma cap K is a graph over the two outer coordinates: each root of a2 x'^2 + a1 x' + a0 is a point, with the weight
+//   dS = |grad u| / |du/dx'| dy dz.
+// 1/|du/dx'| blows up like an inverse square root at the x'-discriminant (the silhouette); the smoothstep map in the
+// sweep regularises it. A surface with du/dx' == 0 has no x'-roots at all, so the axis is chosen as the coordinate with the
+// largest mean |du/dx_i| over the element (the reference tet is symmetric under permutation of the coordinates).
+struct SurfaceRule
+{
+  std::vector<std::array<double, 3>> x;  // points on Gamma, reference coordinates
+  std::vector<double> w;                 // weights (reference measure, or physical measure when a Jacobian was given)
+  std::vector<std::array<double, 3>> n;  // unit normals (reference, or physical when a Jacobian was given)
+};
+
+// coordinate with the largest mean |du/dx_i| over the ten P2 nodes
+inline int chooseAxis(const Coef3 &c)
+{
+  static const double nodes[10][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {.5, 0, 0},
+                                      {.5, .5, 0}, {0, .5, .5}, {0, .5, 0}, {.5, 0, .5}, {0, 0, .5}};
+  double sum[3] = {0, 0, 0};
+  for (const auto &p : nodes)
+  {
+    sum[0] += std::fabs(c[1] + 2 * c[4] * p[0] + c[5] * p[1] + c[6] * p[2]);
+    sum[1] += std::fabs(c[2] + c[5] * p[0] + 2 * c[7] * p[1] + c[8] * p[2]);
+    sum[2] += std::fabs(c[3] + c[6] * p[0] + c[8] * p[1] + 2 * c[9] * p[2]);
+  }
+  return (sum[0] >= sum[1] && sum[0] >= sum[2]) ? 0 : (sum[1] >= sum[2] ? 1 : 2);
+}
+
+namespace detail
+{
+// u'(x') = u(x) with x_{perm[k]} = x'_k
+inline Coef3 permuteQuadric(const Coef3 &c, const int perm[3])
+{
+  int inv[3];
+  for (int k = 0; k < 3; ++k)
+    inv[perm[k]] = k;
+  // symmetric storage: pair (i,j), i <= j -> index
+  static const int pairIdx[3][3] = {{4, 5, 6}, {5, 7, 8}, {6, 8, 9}};
+  Coef3 r{};
+  r[0] = c[0];
+  for (int i = 0; i < 3; ++i)
+    r[1 + inv[i]] = c[1 + i];
+  for (int i = 0; i < 3; ++i)
+    for (int j = i; j < 3; ++j)
+    {
+      const int a = std::min(inv[i], inv[j]), b = std::max(inv[i], inv[j]);
+      r[pairIdx[a][b]] += c[pairIdx[i][j]];
+    }
+  return r;
+}
+
+inline void invert3(const double J[9], double Ji[9], double &det)
+{
+  det = J[0] * (J[4] * J[8] - J[5] * J[7]) - J[1] * (J[3] * J[8] - J[5] * J[6]) + J[2] * (J[3] * J[7] - J[4] * J[6]);
+  Ji[0] = (J[4] * J[8] - J[5] * J[7]) / det;
+  Ji[1] = (J[2] * J[7] - J[1] * J[8]) / det;
+  Ji[2] = (J[1] * J[5] - J[2] * J[4]) / det;
+  Ji[3] = (J[5] * J[6] - J[3] * J[8]) / det;
+  Ji[4] = (J[0] * J[8] - J[2] * J[6]) / det;
+  Ji[5] = (J[2] * J[3] - J[0] * J[5]) / det;
+  Ji[6] = (J[3] * J[7] - J[4] * J[6]) / det;
+  Ji[7] = (J[1] * J[6] - J[0] * J[7]) / det;
+  Ji[8] = (J[0] * J[4] - J[1] * J[3]) / det;
+}
+
+// reference point, reference weight and the reference gradient of u there -> stored point, weight, normal; with a
+// Jacobian J (x = x0 + J xi, row-major) the weight is w |det J| |J^{-T} n| and the normal J^{-T} grad / |J^{-T} grad|
+struct Scaling
+{
+  bool physical = false;
+  double Ji[9], det = 1.0;
+  void add(SurfaceRule &out, const double xr[3], double wRef, const double g[3]) const
+  {
+    const double ng = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+    if (ng == 0.0)
+      return;
+    double nn[3] = {g[0] / ng, g[1] / ng, g[2] / ng};
+    double w = wRef;
+    if (physical)
+    {
+      double gp[3];
+      for (int i = 0; i < 3; ++i)
+        gp[i] = Ji[0 * 3 + i] * g[0] + Ji[1 * 3 + i] * g[1] + Ji[2 * 3 + i] * g[2];
+      const double ngp = std::sqrt(gp[0] * gp[0] + gp[1] * gp[1] + gp[2] * gp[2]);
+      w = wRef * std::fabs(det) * ngp / ng;
+      for (int i = 0; i < 3; ++i)
+        nn[i] = gp[i] / ngp;
+    }
+    out.x.push_back({xr[0], xr[1], xr[2]});
+    out.w.push_back(w);
+    out.n.push_back({nn[0], nn[1], nn[2]});
+  }
+};
+}  // namespace detail
+
+// axis < 0: choose automatically. J (row-major 3x3, J[i][j] = dx_i/dxi_j) or nullptr for reference measure.
+inline SurfaceRule surfaceRule(const Coef3 &c, const Options &opt = Options(), int axis = -1, const double *J = nullptr)
+{
+  SurfaceRule out;
+  if (detail::maxAbs(c) == 0.0)
+    return out;
+  detail::Scaling sc;
+  if (J)
+  {
+    sc.physical = true;
+    detail::invert3(J, sc.Ji, sc.det);
+  }
+  if (detail::isPlanar(c, opt.planarTol))
+  {
+    // the cut is a plane: triangles from cutclip, a collapsed Gauss rule on each (positive weights, exact to degree 7)
+    const double gn = std::sqrt(c[1] * c[1] + c[2] * c[2] + c[3] * c[3]);
+    if (gn == 0.0)
+      return out;
+    const auto tris = cutclip::cutSurface(detail::refTet(), detail::planeOf(c), std::vector<cutclip::Plane>{});
+    const int ng = std::min(std::max(opt.order, 4), 8);
+    const detail::GL &g = detail::gauss01(ng);
+    const double grad[3] = {c[1], c[2], c[3]};
+    for (const cutclip::Tri &t : tris)
+    {
+      const double area2 = 2.0 * cutclip::triArea(t);
+      for (int i = 0; i < ng; ++i)
+        for (int j = 0; j < ng; ++j)
+        {
+          const double u1 = g.x[i], v1 = g.x[j];
+          const double l1 = u1, l2 = v1 * (1.0 - u1), l0 = 1.0 - l1 - l2;
+          double x[3];
+          for (int k = 0; k < 3; ++k)
+            x[k] = l0 * t[0][k] + l1 * t[1][k] + l2 * t[2][k];
+          sc.add(out, x, g.w[i] * g.w[j] * (1.0 - u1) * area2, grad);
+        }
+    }
+    return out;
+  }
+  if (axis < 0)
+    axis = chooseAxis(c);
+  const int perm[3] = {axis, (axis + 1) % 3, (axis + 2) % 3};
+  const Coef3 cp = detail::permuteQuadric(c, perm);
+  detail::sweepOuter(cp, opt, false, [&](int, double y, double z, double, double wod, double r, double, double, double, double, double) {
+    double x[3];
+    x[perm[0]] = r;
+    x[perm[1]] = y;
+    x[perm[2]] = z;
+    const double g[3] = {c[1] + 2 * c[4] * x[0] + c[5] * x[1] + c[6] * x[2], c[2] + c[5] * x[0] + 2 * c[7] * x[1] + c[8] * x[2],
+                         c[3] + c[6] * x[0] + c[8] * x[1] + 2 * c[9] * x[2]};
+    const double ng = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+    sc.add(out, x, wod * ng, g);  // wod = w / |du/dx'|
+  });
+  return out;
+}
+inline SurfaceRule surfaceRuleNodal(const P2Tet &u, const Options &opt = Options(), int axis = -1, const double *J = nullptr)
+{
+  return surfaceRule(p2ToMonomial(u), opt, axis, J);
+}
+
+// Scalar and normal-weighted monomial moments of the rule, in reference monomials (cutclip order):
+//   S[a]    = sum_q w_q x_q^a               = int_Gamma x^a dS            (Dirac fit, penalty, Robin, data on Gamma)
+//   Sn[i][a] = sum_q w_q n_i,q x_q^a        = int_Gamma x^a n_i dS        (consistency terms through three Dirac fits)
+inline void surfaceMoments(const SurfaceRule &r, int degree, std::vector<double> &S, std::vector<double> Sn[3])
+{
+  if (degree < 0 || degree > 7)
+    throw std::invalid_argument("cutquadric: moments are supported to degree 7 (cutclip's limit)");
+  const auto idx = monomialIndex(degree);
+  S.assign(idx.size(), 0.0);
+  for (int i = 0; i < 3; ++i)
+    Sn[i].assign(idx.size(), 0.0);
+  std::vector<double> px(degree + 1), py(degree + 1), pz(degree + 1);
+  for (std::size_t q = 0; q < r.w.size(); ++q)
+  {
+    px[0] = py[0] = pz[0] = 1.0;
+    for (int k = 1; k <= degree; ++k)
+    {
+      px[k] = px[k - 1] * r.x[q][0];
+      py[k] = py[k - 1] * r.x[q][1];
+      pz[k] = pz[k - 1] * r.x[q][2];
+    }
+    for (std::size_t n = 0; n < idx.size(); ++n)
+    {
+      const double mono = r.w[q] * px[idx[n][0]] * py[idx[n][1]] * pz[idx[n][2]];
+      S[n] += mono;
+      for (int i = 0; i < 3; ++i)
+        Sn[i][n] += mono * r.n[q][i];
+    }
+  }
 }
 
 }  // namespace cutquadric

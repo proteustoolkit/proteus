@@ -527,3 +527,211 @@ def test_a3_face_moments_curved_closed_form():
     assert cutquadric.classify_face(cutquadric.face_nodal(u, 1))["cut"]
     for k in (0, 2, 3):
         assert not cutquadric.classify_face(cutquadric.face_nodal(u, k))["cut"]
+
+
+# ================================================================================================== A4: surface rule
+def sphere_surface_moments(c, r, deg, octant=False, normal_comp=None):
+    """integral over the sphere about c (octant: the first octant of the sphere about 0) of x^alpha, or of x^alpha n_i with
+    n the inward unit normal (the direction of grad(r^2 - |x - c|^2)), for every monomial of degree <= deg."""
+    out = []
+    for alpha in cutclip.monomials(deg):
+        tot = 0.0
+        for beta in itertools.product(*[range(a + 1) for a in alpha]):
+            coef = np.prod([math.comb(a, b) * c[i] ** (a - b) for i, (a, b) in enumerate(zip(alpha, beta))])
+            beta = list(beta)
+            if normal_comp is None:
+                tot += coef * r ** (sum(beta) + 2) * gam_sphere(beta, octant)
+            else:
+                beta[normal_comp] += 1                    # n_i = -y_i / r
+                tot += -coef * r ** (sum(beta) + 1) * gam_sphere(beta, octant)
+        out.append(tot)
+    return np.array(out)
+
+
+def surf(u, degree, order=16, **kw):
+    S, Sn = cutquadric.surface_moments(u, degree, order, **kw)
+    return np.array(S), np.array(Sn)
+
+
+def test_u6_octant_of_a_sphere_closed_forms():
+    r = 0.4
+    u = sphere_u([0, 0, 0], r)
+    P, W, N = cutquadric.surface_rule(u, 16)
+    assert np.all(W > 0) and len(W) > 0
+    assert np.allclose(np.linalg.norm(N, axis=1), 1.0, atol=1e-14)
+    assert np.all(np.linalg.norm(P, axis=1) == pytest.approx(r, abs=1e-12))
+    wantS = sphere_surface_moments(np.zeros(3), r, 4, octant=True)
+    assert wantS[0] == pytest.approx(np.pi * r * r / 2, rel=1e-14)
+    wantN = np.array([sphere_surface_moments(np.zeros(3), r, 4, octant=True, normal_comp=i) for i in range(3)])
+    res = {}
+    for order in (8, 16, 32):
+        S, Sn = surf(u, 4, order)
+        res[order] = max(np.max(np.abs(S - wantS)), np.max(np.abs(Sn - wantN)))
+    assert res[8] <= 1e-8 and res[16] <= 1e-12 and res[32] <= 1e-12
+
+
+def test_u6_closed_sphere_inside_the_tet_closed_forms():
+    r = 0.15
+    u = sphere_u(INCENTRE, r)
+    wantS = sphere_surface_moments(INCENTRE, r, 4)
+    wantN = np.array([sphere_surface_moments(INCENTRE, r, 4, normal_comp=i) for i in range(3)])
+    assert wantS[0] == pytest.approx(4 * np.pi * r * r)
+    for order in (16, 24):
+        S, Sn = surf(u, 4, order)
+        assert np.max(np.abs(S - wantS)) <= 1e-12 and np.max(np.abs(Sn - wantN)) <= 1e-12
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_u6_every_inner_axis(axis):
+    for u, want in ((sphere_u([0, 0, 0], 0.4), sphere_surface_moments(np.zeros(3), 0.4, 3, octant=True)),
+                    (sphere_u(INCENTRE, 0.15), sphere_surface_moments(INCENTRE, 0.15, 3))):
+        S, _ = surf(u, 3, 24, axis=axis)
+        assert np.max(np.abs(S - want)) <= 1e-12
+
+
+def test_u6_axis_choice_cylinder_along_x():
+    # u does not depend on x: no x-roots at all, so the inner axis must be chosen by the gradient
+    u = nodal(lambda x, y, z: 0.04 - (y - 0.3) ** 2 - (z - 0.3) ** 2)
+    assert cutquadric.choose_axis(u) in (1, 2)
+    assert len(cutquadric.surface_rule(u, 16, axis=0)[1]) == 0
+    S, Sn = surf(u, 3, 24)                                            # automatic
+    for axis in (1, 2):
+        S1, Sn1 = surf(u, 3, 24, axis=axis)
+        assert np.max(np.abs(S - S1)) <= 1e-12 and np.max(np.abs(Sn - Sn1)) <= 1e-12
+    assert S[0] > 0.05
+
+
+def test_u6_planar_surface_equals_cutclip_with_and_without_fast_path():
+    rng = np.random.default_rng(55)
+    for planar_tol in (1e-12, 0.0):
+        worst = 0.0
+        for _ in range(30):
+            phi = rng.uniform(-1, 1, 4)
+            if not (phi.min() < 0 < phi.max()):
+                continue
+            pl = plane_of(phi)
+            want = np.array(cutclip.surface_moments(ref_tet, pl, np.zeros((0, 4)), 4))
+            nrm = pl[:3] / np.linalg.norm(pl[:3])
+            S, Sn = surf(linear_p2(phi), 4, 24, planar_tol=planar_tol)
+            worst = max(worst, np.max(np.abs(S - want)), np.max(np.abs(Sn - nrm[:, None] * want[None, :])))
+        assert worst <= 1e-13
+
+
+def test_u6_physical_scaling():
+    rng = np.random.default_rng(56)
+    J = 3.0 * np.eye(3) + 0.3 * rng.standard_normal((3, 3))
+    Jinv = np.linalg.inv(J)
+    x0 = np.array([0.2, -0.1, 0.4])
+    c_ref = np.full(3, 0.25)
+    c_phys = x0 + J @ c_ref
+    r = 0.15
+    u = nodal(lambda x, y, z: r * r - np.sum((x0 + J @ np.array([x, y, z]) - c_phys) ** 2))
+    S, Sn = surf(u, 1, 24, J=J)
+    area, vol = 4 * np.pi * r * r, 4 * np.pi * r ** 3 / 3
+    assert S[0] == pytest.approx(area, rel=1e-12)
+    assert np.max(np.abs(Sn[:, 0])) <= 1e-12                               # integral of n dS = 0
+    # reference coordinate moments with physical weights: int xi dS = Jinv (c - x0) area, int xi_k n_j dS = -V Jinv[k, j]
+    assert np.max(np.abs(S[1:4] - Jinv @ (c_phys - x0) * area)) <= 1e-12
+    for j in range(3):
+        assert np.max(np.abs(Sn[j, 1:4] + vol * Jinv[:, j])) <= 1e-12
+    # without J the weights are reference weights and differ
+    S0, _ = surf(u, 1, 24)
+    assert abs(S0[0] - area) > 1e-3
+
+
+# the divergence theorem ties volume, face and surface moments together: for q a polynomial, K+ = K cap {u > 0}, whose
+# outward normal on Gamma is -n (n = grad u / |grad u|):   int_Gamma q n_i = sum_faces int_{F+} q nu_i - int_{K+} d_i q
+FACE_NU = np.array([[1., 1, 1], [-1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+
+def divergence_residual(u, degree, order):
+    idx = [tuple(m) for m in cutclip.monomials(degree)]
+    pos = {m: i for i, m in enumerate(idx)}
+    vol = np.array(cutquadric.volume_moments(u, max(degree - 1, 0), order))
+    pos_v = {tuple(m): i for i, m in enumerate(cutclip.monomials(max(degree - 1, 0)))}
+    faces = sum(FACE_NU[k][:, None] * np.array(cutquadric.face_moments(u, k, degree, order))[None, :] for k in range(4))
+    _, Sn = surf(u, degree, order)
+    res = np.zeros((3, len(idx)))
+    for i, alpha in enumerate(idx):
+        for comp in range(3):
+            dv = 0.0
+            if alpha[comp] > 0:
+                beta = list(alpha)
+                beta[comp] -= 1
+                dv = alpha[comp] * vol[pos_v[tuple(beta)]]
+            res[comp, i] = Sn[comp, i] - (faces[comp, i] - dv)
+    return np.max(np.abs(res))
+
+
+def test_u7_divergence_identity_named_cases():
+    cases = {
+        "octant": sphere_u([0, 0, 0], 0.4),
+        "closed": sphere_u(INCENTRE, 0.15),
+        "cap": sphere_u([-0.1, 0.3, 0.3], 0.2),
+        "generic": generic_sphere_cut(),
+        "edge twice": nodal(lambda x, y, z: (x - .5) ** 2 + 0.3 * y - 0.01),
+    }
+    for name, u in cases.items():
+        assert divergence_residual(u, 3, 32) <= 1e-12, name
+
+
+def test_u7_divergence_identity_random_quadrics_all_labels():
+    rng = np.random.default_rng(77)
+    seen = {}
+    worst = 0.0
+    tries = 0
+    while tries < 300 and len(seen) < 3:
+        tries += 1
+        u = rng.standard_normal(10) * rng.choice([0.3, 1.0]) + rng.choice([-0.3, 0.0, 0.3])
+        lab = cutquadric.classify(u)["label"]
+        if lab.startswith("uncut"):
+            continue
+        seen.setdefault(lab, 0)
+        if seen[lab] >= 6:
+            continue
+        seen[lab] += 1
+        worst = max(worst, divergence_residual(u, 3, 48))
+    assert "simple" in seen and "edge_cut_twice" in seen
+    assert worst <= 1e-12
+
+
+# Two random quadrics that exposed the slow cases of the slicing scheme as ported from July: with the cubic smoothstep on
+# the outer coordinate and clustering only at the segment ends the divergence residual fell like n^-3 (2e-10 at order 48).
+# The causes, each pinned by the converged residual below: (1) a silhouette pair that has become complex but lies close to
+# the real axis near a turning point of the silhouette curve (the y-integrand 1/sqrt(disc) is nearly singular inside the run),
+# (2) a run truncated just short of a silhouette by a kink (singularity just outside the end), (3) the logarithm F ~ ln(dz)
+# at the turning point itself. All three are removed by changing variables so that sqrt(disc) is analytic (integrateRootRun)
+# and by double-exponential nodes at the logarithmic ends.
+HARD_QUADRICS = [
+    [0.7277699642047284, -0.27083755688644556, 2.954460689730097, -1.3085449528642095, 0.9617156616641691,
+     0.15657405602100335, -0.054506388471426914, 1.3663588121198411, -1.5179220006075487, -0.6846762100886532],
+    [-1.1508209949401316, -0.707676270095551, -0.6026114888058611, 0.40130571326444403, -2.4298908888000788,
+     0.9893576133847783, -1.4491045549445354, 0.7378197272566023, -1.559569515328055, -0.5053469074759236],
+]
+
+
+@pytest.mark.parametrize("case", [0, 1])
+def test_u5_slow_converging_random_quadrics_regression(case):
+    u = np.array(HARD_QUADRICS[case])
+    assert cutquadric.classify(u)["cut"]
+    assert divergence_residual(u, 3, 24) <= 1e-12
+    assert divergence_residual(u, 3, 32) <= 1e-12
+
+
+def test_u7_all_axes_agree_on_random_quadrics():
+    rng = np.random.default_rng(88)
+    checked = 0
+    for _ in range(60):
+        u = rng.standard_normal(10) * rng.choice([0.3, 1.0]) + rng.choice([-0.3, 0.0, 0.3])
+        if not cutquadric.classify(u)["cut"]:
+            continue
+        ref = surf(u, 2, 32, axis=-1)
+        for axis in range(3):
+            S, Sn = surf(u, 2, 32, axis=axis)
+            if len(cutquadric.surface_rule(u, 8, axis=axis)[1]) == 0:
+                continue
+            # rare near-coincident critical values (three events within 1e-7 of each other) leave an axis at ~1e-8 at
+            # order 32; the automatic axis is a heuristic, the divergence tests above use it
+            assert np.max(np.abs(S - ref[0])) <= 1e-6 and np.max(np.abs(Sn - ref[1])) <= 1e-6
+        checked += 1
+    assert checked >= 20

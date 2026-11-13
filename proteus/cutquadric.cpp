@@ -109,4 +109,62 @@ PYBIND11_MODULE(cutquadric, m)
         },
         py::arg("u"), py::arg("face"), py::arg("degree"), py::arg("order") = 16, py::arg("planar_tol") = 1e-12,
         py::arg("deflate_tol") = 1e-10);
+  m.def("choose_axis", [](Arr u) { return chooseAxis(p2ToMonomial(toP2Tet(u))); });
+  m.def("surface_rule",
+        [](Arr u, int order, int axis, py::object J, double planar_tol, double deflate_tol) {
+          Options opt;
+          opt.order = order;
+          opt.planarTol = planar_tol;
+          opt.deflateTol = deflate_tol;
+          double Jm[9];
+          const bool hasJ = !J.is_none();
+          if (hasJ)
+          {
+            Arr a = J.cast<Arr>();
+            if (a.ndim() != 2 || a.shape(0) != 3 || a.shape(1) != 3)
+              throw std::invalid_argument("J must be (3,3)");
+            for (int i = 0; i < 3; ++i)
+              for (int j = 0; j < 3; ++j)
+                Jm[3 * i + j] = a.at(i, j);
+          }
+          const SurfaceRule r = surfaceRuleNodal(toP2Tet(u), opt, axis, hasJ ? Jm : nullptr);
+          const py::ssize_t n = (py::ssize_t)r.w.size();
+          Arr P({n, (py::ssize_t)3}), W(n), N({n, (py::ssize_t)3});
+          for (py::ssize_t i = 0; i < n; ++i)
+          {
+            W.mutable_at(i) = r.w[i];
+            for (int c = 0; c < 3; ++c)
+            {
+              P.mutable_at(i, c) = r.x[i][c];
+              N.mutable_at(i, c) = r.n[i][c];
+            }
+          }
+          return py::make_tuple(P, W, N);
+        },
+        py::arg("u"), py::arg("order") = 16, py::arg("axis") = -1, py::arg("J") = py::none(), py::arg("planar_tol") = 1e-12,
+        py::arg("deflate_tol") = 1e-10);
+  m.def("surface_moments",
+        [](Arr u, int degree, int order, int axis, py::object J, double planar_tol, double deflate_tol) {
+          Options opt;
+          opt.order = order;
+          opt.planarTol = planar_tol;
+          opt.deflateTol = deflate_tol;
+          double Jm[9];
+          const bool hasJ = !J.is_none();
+          if (hasJ)
+          {
+            Arr a = J.cast<Arr>();
+            if (a.ndim() != 2 || a.shape(0) != 3 || a.shape(1) != 3)
+              throw std::invalid_argument("J must be (3,3)");
+            for (int i = 0; i < 3; ++i)
+              for (int j = 0; j < 3; ++j)
+                Jm[3 * i + j] = a.at(i, j);
+          }
+          const SurfaceRule r = surfaceRuleNodal(toP2Tet(u), opt, axis, hasJ ? Jm : nullptr);
+          std::vector<double> S, Sn[3];
+          surfaceMoments(r, degree, S, Sn);
+          return py::make_tuple(S, std::vector<std::vector<double>>{Sn[0], Sn[1], Sn[2]});
+        },
+        py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("axis") = -1, py::arg("J") = py::none(),
+        py::arg("planar_tol") = 1e-12, py::arg("deflate_tol") = 1e-10);
 }
