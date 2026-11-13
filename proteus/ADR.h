@@ -114,6 +114,25 @@ namespace proteus
 		cADR() : nDOF_test_X_trial_element(nDOF_test_element * nDOF_trial_element), ck()
 		{
 		}
+		// gf_f.calculate() for the interior quadrature points, naming the element if the two-sided P1 basis
+		// on a tetrahedron does not exist there (obtuse tetrahedron at a particular contrast, C44 decision C4).
+		// Only that error is rethrown; the rank that throws stops, so run such a mesh in serial to read it.
+		inline int calculateGfF(int eN, const double *element_phi_f, const double *element_nodes, const double *x_ref, double mua, double mub, double jf)
+		{
+			try
+			{
+				return gf_f_cache[eN].calculate(element_phi_f, element_nodes, x_ref, mua, mub, jf, false, false);
+			}
+			catch (const equivalent_polynomials::ifem_singular_error &e)
+			{
+				double c[3] = {0.0, 0.0, 0.0};
+				for (int j = 0; j < nSpace + 1; j++)
+					for (int I = 0; I < nSpace; I++)
+						c[I] += element_nodes[j * 3 + I] / (nSpace + 1.0);
+				throw std::runtime_error("ADR immersedBoundary: element " + std::to_string(eN) + " (local number, centroid " +
+										 std::to_string(c[0]) + ", " + std::to_string(c[1]) + ", " + std::to_string(c[2]) + "): " + e.what());
+			}
+		}
 		inline void ensureIFEMCacheSized(int nElements_global)
 		{
 			if ((int)gf_f_cache.size() == nElements_global)
@@ -712,6 +731,11 @@ namespace proteus
 						vb[i] = gf_f.VB(i);
 						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
 						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
+						if constexpr (nSpace == 3)
+						{
+							va_grad_trial[i * nSpace + 2] = gf_f.VA_z(i);
+							vb_grad_trial[i * nSpace + 2] = gf_f.VB_z(i);
+						}
 					}	
 					
 					
@@ -731,6 +755,11 @@ namespace proteus
 					grad_uja[1] += fluxLiftJ * gf_f.PSIA_y();
 					grad_ujb[0] += fluxLiftJ * gf_f.PSIB_x();
 					grad_ujb[1] += fluxLiftJ * gf_f.PSIB_y();
+					if constexpr (nSpace == 3)
+					{
+						grad_uja[2] += fluxLiftJ * gf_f.PSIA_z();
+						grad_ujb[2] += fluxLiftJ * gf_f.PSIB_z();
+					}
 					for (int i = 0; i < nDOF_test_element; i++)
 					{
 						ua_test_dV[i] = va[i] * dV;
@@ -1225,8 +1254,9 @@ namespace proteus
 				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
 			if (robin)
 				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
-			if (immersed)
-				need("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2);
+			// C44 phase 2, P1: the two-sided IFEM basis and the flux-jump lift on P1 tetrahedra
+			if (immersed && pOrder != 1)
+				need("immersedBoundary with P2 (the two-sided P2 basis on tetrahedra)", 2);
 			if (scifem_switch != 0.0 || scifem_penalty != 0.0)
 				need("immersedSCIFEM (consistency terms on cut faces)", 2);
 			if (PG)
@@ -1448,7 +1478,7 @@ namespace proteus
 				}
 				if (gf_f_interior_gen[eN] != ifemGeometryGeneration)
 				{
-					gf_f_interior_icase[eN] = gf_f_cache[eN].calculate(element_phi_f, element_nodes, x_ref.data(), mua, mub, jf, false, false);
+					gf_f_interior_icase[eN] = calculateGfF(eN, element_phi_f, element_nodes, x_ref.data(), mua, mub, jf);
 					gf_f_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_f = gf_f_interior_icase[eN];
@@ -1545,7 +1575,7 @@ namespace proteus
 						// is out of bounds. test=8's circle lies wholly inside the domain so this
 						// never triggered; test=12's diagonal interface exits through the boundary
 						// and segfaulted on arm64. Only interior faces belong in this set.
-						if (elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 &&
+						if (nSpace == 2 && elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1 &&
 							element_phi_f[(ebN_element + 1) % 3] * element_phi_f[(ebN_element + 2) % 3] < 0.0)
 						{
 							// This should give just the cut edges for simplices.
@@ -1597,7 +1627,7 @@ namespace proteus
 				bool liftCell = false;
 				{
 					int nneg = 0, npos = 0, nzero = 0;
-					for (int i = 0; i < 3; i++)
+					for (int i = 0; i < nSpace + 1; i++)
 					{
 						if (element_phi_f[i] < 0.0) nneg++;
 						else if (element_phi_f[i] > 0.0) npos++;
@@ -1605,7 +1635,7 @@ namespace proteus
 					}
 					liftCell = (nneg > 0 && npos > 0 && nzero == 0);
 				}
-				if (icase_f == 0 && fluxJumpLift && liftCell && nSpace == 2)
+				if (icase_f == 0 && fluxJumpLift && liftCell)
 				{
 					bool jumpVaries = false;
 					const double jump0 = immersedBoundary_solutionJump_nodes.data()[u_l2g.data()[eN * nDOF_trial_element]];
@@ -1614,21 +1644,53 @@ namespace proteus
 							jumpVaries = true;
 					if (jumpVaries)
 					{
-						const double ex0 = element_nodes[3] - element_nodes[0], ey0 = element_nodes[4] - element_nodes[1];
-						const double ex1 = element_nodes[6] - element_nodes[0], ey1 = element_nodes[7] - element_nodes[1];
-						const double dp0 = element_phi_f[1] - element_phi_f[0], dp1 = element_phi_f[2] - element_phi_f[0];
-						const double det = ex0 * ey1 - ex1 * ey0;
-						double nf[2] = {(dp0 * ey1 - dp1 * ey0) / det, (ex0 * dp1 - ex1 * dp0) / det};
-						const double nnorm = std::sqrt(nf[0] * nf[0] + nf[1] * nf[1]);
+						// unit normal of Gamma_f in the cell, from phi_f < 0 to phi_f > 0: grad of the linear interpolant
+						double nf[3] = {0.0, 0.0, 0.0};
+						if constexpr (nSpace == 2)
+						{
+							const double ex0 = element_nodes[3] - element_nodes[0], ey0 = element_nodes[4] - element_nodes[1];
+							const double ex1 = element_nodes[6] - element_nodes[0], ey1 = element_nodes[7] - element_nodes[1];
+							const double dp0 = element_phi_f[1] - element_phi_f[0], dp1 = element_phi_f[2] - element_phi_f[0];
+							const double det = ex0 * ey1 - ex1 * ey0;
+							nf[0] = (dp0 * ey1 - dp1 * ey0) / det;
+							nf[1] = (ex0 * dp1 - ex1 * dp0) / det;
+						}
+						else
+						{
+							// E g = dp with E's rows the edge vectors from node 0: g = E^{-1} dp by cofactors
+							double E[3][3], dp[3];
+							for (int k = 0; k < 3; k++)
+							{
+								dp[k] = element_phi_f[k + 1] - element_phi_f[0];
+								for (int I = 0; I < 3; I++)
+									E[k][I] = element_nodes[(k + 1) * 3 + I] - element_nodes[I];
+							}
+							const double det = E[0][0] * (E[1][1] * E[2][2] - E[1][2] * E[2][1]) -
+											   E[0][1] * (E[1][0] * E[2][2] - E[1][2] * E[2][0]) +
+											   E[0][2] * (E[1][0] * E[2][1] - E[1][1] * E[2][0]);
+							for (int I = 0; I < 3; I++)
+							{
+								// Cramer: replace column I of E by dp
+								double M[3][3];
+								for (int k = 0; k < 3; k++)
+									for (int J = 0; J < 3; J++)
+										M[k][J] = (J == I) ? dp[k] : E[k][J];
+								nf[I] = (M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+										 M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+										 M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0])) / det;
+							}
+						}
+						const double nnorm = std::sqrt(nf[0] * nf[0] + nf[1] * nf[1] + nf[2] * nf[2]);
 						nf[0] /= nnorm;
 						nf[1] /= nnorm;
+						nf[2] /= nnorm;
 						GfType &gfj = gf_f_cache[eN];
 						auto jhFluxJump = [&](int k) {
 							gfj.set_quad(k);
 							double s = 0.0;
 							for (int i = 0; i < nDOF_trial_element; i++)
-								s += mub * JB[i] * (gfj.VB_x(i) * nf[0] + gfj.VB_y(i) * nf[1]) -
-									 mua * JA[i] * (gfj.VA_x(i) * nf[0] + gfj.VA_y(i) * nf[1]);
+								s += mub * JB[i] * (gfj.VB_x(i) * nf[0] + gfj.VB_y(i) * nf[1] + gfj.VB_z(i) * nf[2]) -
+									 mua * JA[i] * (gfj.VA_x(i) * nf[0] + gfj.VA_y(i) * nf[1] + gfj.VA_z(i) * nf[2]);
 							return s;
 						};
 						double Fj = 0.0;
@@ -2795,6 +2857,11 @@ namespace proteus
 						vb[i] = gf_f.VB(i);
 						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
 						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
+						if constexpr (nSpace == 3)
+						{
+							va_grad_trial[i * nSpace + 2] = gf_f.VA_z(i);
+							vb_grad_trial[i * nSpace + 2] = gf_f.VB_z(i);
+						}
 					}
 					ck.valFromElementDOF(element_u.data(), va, ua);
 					ck.gradFromElementDOF(element_u.data(), va_grad_trial, grad_ua);
@@ -3312,7 +3379,7 @@ namespace proteus
 				int icase_s = gf_s_interior_icase[eN];
 				if (gf_f_interior_gen[eN] != ifemGeometryGeneration)
 				{
-					gf_f_interior_icase[eN] = gf_f_cache[eN].calculate(element_phi_f, element_nodes, x_ref.data(), mua, mub, jf, false, false);
+					gf_f_interior_icase[eN] = calculateGfF(eN, element_phi_f, element_nodes, x_ref.data(), mua, mub, jf);
 					gf_f_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_f = gf_f_interior_icase[eN];

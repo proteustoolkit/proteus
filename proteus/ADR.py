@@ -450,24 +450,50 @@ class Coefficients(TC_base):
         if (self.immersedBoundary and self.immersedBoundary_fluxJumpLift and
                 (self.immersedBoundary_fluxJump is not None or self.immersedBoundary_fluxJumpVector is not None)):
             l2g_f = femSpace.dofMap.l2g
+            nd = femSpace.nSpace_global
+            nv = nd + 1
             for eN in range(nElements_f):
-                g = l2g_f[eN,:3]
+                g = l2g_f[eN,:nv]
                 phi = self.immersedBoundary_sdf_nodes[g]
                 if not ((phi < 0.0).any() and (phi > 0.0).any()):
                     continue
                 X = nodeArray[g]
-                cuts = [X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
-                        for i, j in ((0, 1), (1, 2), (2, 0)) if phi[i]*phi[j] < 0.0]
-                if len(cuts) != 2:
-                    continue
-                xm = 0.5*(cuts[0] + cuts[1])
+                if nd == 2:
+                    cuts = [X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
+                            for i, j in ((0, 1), (1, 2), (2, 0)) if phi[i]*phi[j] < 0.0]
+                    if len(cuts) != 2:
+                        continue
+                    xm = 0.5*(cuts[0] + cuts[1])
+                else:
+                    # Gamma_f in a tetrahedron is a triangle (1-3 split) or a quadrilateral (2-2); xm is the
+                    # area centroid of the polygon of cut points (vertices on Gamma_f count as cut points).
+                    # J_f is exact for a constant jump and for the mean value over the cut to first order.
+                    neg = [i for i in range(4) if phi[i] < 0.0]
+                    pos = [i for i in range(4) if phi[i] > 0.0]
+                    def _cut(i, j):
+                        return X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
+                    if len(neg) == 2 and len(pos) == 2:
+                        poly = [_cut(neg[0], pos[0]), _cut(neg[0], pos[1]), _cut(neg[1], pos[1]), _cut(neg[1], pos[0])]
+                    else:
+                        poly = [_cut(i, j) for i in neg for j in pos]
+                        poly += [X[i] for i in range(4) if phi[i] == 0.0]
+                    if len(poly) < 3:
+                        continue
+                    xm = np.zeros(3); area = 0.0
+                    for t in range(1, len(poly) - 1):
+                        ar = 0.5*np.linalg.norm(np.cross(poly[t] - poly[0], poly[t + 1] - poly[0]))
+                        xm += ar*(poly[0] + poly[t] + poly[t + 1])/3.0
+                        area += ar
+                    if area <= 0.0:
+                        continue
+                    xm /= area
                 J = 0.0
                 if self.immersedBoundary_fluxJump is not None:
                     J += self.immersedBoundary_fluxJump(t=0.0,x=xm)
                 if self.immersedBoundary_fluxJumpVector is not None:
-                    A = np.array([[X[1,0]-X[0,0], X[1,1]-X[0,1]], [X[2,0]-X[0,0], X[2,1]-X[0,1]]])
-                    grad = np.linalg.solve(A, np.array([phi[1]-phi[0], phi[2]-phi[0]]))
-                    n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
+                    A = (X[1:nv, :nd] - X[0, :nd])
+                    grad = np.linalg.solve(A, phi[1:nv] - phi[0])
+                    n = np.zeros(3); n[:nd] = grad/np.linalg.norm(grad)
                     J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
                 self.immersedBoundary_fluxJump_element[eN] = J
     def _diffusionDivergence(self, aOfX, x, out):
@@ -636,8 +662,8 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
         needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
-    if c.immersedBoundary:
-        needs.append(("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2))
+    if c.immersedBoundary and pOrder != 1:
+        needs.append(("immersedBoundary with P2 (the two-sided P2 basis on tetrahedra)", 2))
     if c.immersedSCIFEM_switch != 0.0 or c.immersedSCIFEM_penalty != 0.0:
         needs.append(("immersedSCIFEM (consistency terms on cut faces)", 2))
     if c.PG:
