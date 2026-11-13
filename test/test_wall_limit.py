@@ -163,3 +163,50 @@ def test_the_stop_marker_is_written_whole_read_back_and_cleared(tmp_path):
     WallLimit.clear_marker(path)
     WallLimit.clear_marker(path)  # already gone: not an error
     assert WallLimit.read_marker(path) is None
+
+
+class _Model:
+    def __init__(self, name):
+        self.name = name
+
+
+def _ns(frames, ratio=20.0, state=None, read=None):
+    """The part of a NumericalSolution _checkpointCost looks at: per model its frame write times, the state's size
+    over the dofs' (``ratio``), the state writes timed so far, the state reads a hot start timed."""
+    from types import SimpleNamespace
+    from proteus.NumericalSolution import NS_base
+    ns = SimpleNamespace(modelList=[_Model(n) for n in frames],
+                         _frameSamples={n: list(t) for n, t in frames.items()},
+                         _frameTimes={n: max(t) for n, t in frames.items()},
+                         _stateTimes=state or {}, _stateReadTimes=read or {},
+                         _stateToFrameRatio=lambda model: ratio,
+                         _STATE_WRITE_PER_READ=NS_base._STATE_WRITE_PER_READ)
+    return NS_base._checkpointCost(ns)
+
+
+def test_one_slow_frame_does_not_set_the_state_estimate():
+    """Torino part B: rans2p frames took 0.10-0.12 s except one of 1.57 s. The state estimate was that frame time
+    times the state/dof bytes (here 20): 31 s for a state that takes ~2 s to write. The median frame is 0.11 s."""
+    frames = {"rans2p": [0.11, 0.10, 1.57, 0.12, 0.11]}
+    cost = _ns(frames)
+    assert cost == pytest.approx(1.57 + 0.11 * 20.0)
+    assert 3.0 < cost < 5.0  # against 1.57 * 21 = 33 s with the longest frame
+
+
+def test_a_timed_state_write_replaces_the_estimate():
+    assert _ns({"vof": [0.1, 5.0]}, state={"vof": 1.3}) == pytest.approx(5.0 + 1.3)
+
+
+def test_a_hot_starts_state_read_is_the_estimate_in_a_continued_leg():
+    frames = {"ncls": [0.05, 0.04, 0.9]}
+    assert _ns(frames, read={"ncls": 0.6}) == pytest.approx(0.9 + 2.0 * 0.6)
+    # a state write timed in this leg beats the read
+    assert _ns(frames, read={"ncls": 0.6}, state={"ncls": 0.7}) == pytest.approx(0.9 + 0.7)
+
+
+def test_no_frame_written_yet_costs_nothing():
+    from types import SimpleNamespace
+    from proteus.NumericalSolution import NS_base
+    ns = SimpleNamespace(modelList=[_Model("rdls")], _frameSamples={}, _frameTimes={}, _stateTimes={},
+                         _stateReadTimes={}, _STATE_WRITE_PER_READ=2.0)
+    assert NS_base._checkpointCost(ns) == 0.0
