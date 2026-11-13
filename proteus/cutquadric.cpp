@@ -50,4 +50,63 @@ PYBIND11_MODULE(cutquadric, m)
         },
         py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("planar_tol") = 1e-12,
         py::arg("deflate_tol") = 1e-10);
+  m.def("monomials2", [](int degree) { return monomialIndex2(degree); });
+  m.def("p2_tri_to_monomial", [](Arr u) {
+    if (u.ndim() != 1 || u.shape(0) != 6)
+      throw std::invalid_argument("P2 triangle values must be (6,)");
+    P2Tri t;
+    for (int i = 0; i < 6; ++i)
+      t[i] = u.at(i);
+    const Coef2 c = p2TriToMonomial(t);
+    return std::vector<double>(c.begin(), c.end());
+  });
+  m.def("face_nodal", [](Arr u, int k) {
+    if (k < 0 || k > 3)
+      throw std::invalid_argument("face must be 0..3");
+    const P2Tri f = faceNodal(toP2Tet(u), k);
+    return std::vector<double>(f.begin(), f.end());
+  });
+  m.def("classify_face", [](Arr u) {
+    if (u.ndim() != 1 || u.shape(0) != 6)
+      throw std::invalid_argument("P2 triangle values must be (6,)");
+    P2Tri t;
+    for (int i = 0; i < 6; ++i)
+      t[i] = u.at(i);
+    const FaceClassification c = classifyTri(t);
+    py::dict d;
+    d["label"] = faceLabelName(c.label);
+    d["cut"] = c.cut;
+    d["bernstein_min"] = c.bernsteinMin;
+    d["bernstein_max"] = c.bernsteinMax;
+    d["range_min"] = c.rangeMin;
+    d["range_max"] = c.rangeMax;
+    return d;
+  });
+  m.def("tri_moments",
+        [](Arr u, int degree, int order, double planar_tol, double deflate_tol) {
+          if (u.ndim() != 1 || u.shape(0) != 6)
+            throw std::invalid_argument("P2 triangle values must be (6,)");
+          P2Tri t;
+          for (int i = 0; i < 6; ++i)
+            t[i] = u.at(i);
+          Options opt;
+          opt.order = order;
+          opt.planarTol = planar_tol;
+          opt.deflateTol = deflate_tol;
+          return triMomentsNodal(t, degree, opt);
+        },
+        py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("planar_tol") = 1e-12,
+        py::arg("deflate_tol") = 1e-10);
+  m.def("face_moments",
+        [](Arr u, int face, int degree, int order, double planar_tol, double deflate_tol) {
+          if (face < 0 || face > 3)
+            throw std::invalid_argument("face must be 0..3");
+          Options opt;
+          opt.order = order;
+          opt.planarTol = planar_tol;
+          opt.deflateTol = deflate_tol;
+          return faceMoments(toP2Tet(u), face, degree, opt);
+        },
+        py::arg("u"), py::arg("face"), py::arg("degree"), py::arg("order") = 16, py::arg("planar_tol") = 1e-12,
+        py::arg("deflate_tol") = 1e-10);
 }

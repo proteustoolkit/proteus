@@ -658,6 +658,253 @@ inline std::vector<double> volumeMomentsNodal(const P2Tet &u, int degree, const 
   return volumeMoments(p2ToMonomial(u), degree, opt);
 }
 
+
+// ------------------------------------------------------------------------------------------------ triangles and faces
+// 2D monomial order of a triangle's moments: degree ascending, s power descending.
+inline std::vector<std::array<int, 2>> monomialIndex2(int degree)
+{
+  std::vector<std::array<int, 2>> idx;
+  for (int n = 0; n <= degree; ++n)
+    for (int p = n; p >= 0; --p)
+      idx.push_back({p, n - p});
+  return idx;
+}
+inline int numMonomials2(int degree) { return (degree + 1) * (degree + 2) / 2; }
+inline int index2(int p, int q) { return (p + q) * (p + q + 1) / 2 + q; }
+
+// P2 values of face k (opposite vertex k) from the element's ten: (v0, v1, v2, (v0,v1), (v1,v2), (v0,v2)) with v the
+// other three vertices in increasing order. Depends only on the six nodal values the two neighbours share.
+inline P2Tri faceNodal(const P2Tet &u, int k)
+{
+  int v[3], n = 0;
+  for (int m = 0; m < 4; ++m)
+    if (m != k)
+      v[n++] = m;
+  auto mid = [&](int a, int b) {
+    for (int e = 0; e < 6; ++e)
+      if (kEdge[e][0] == a && kEdge[e][1] == b)
+        return u[4 + e];
+    return 0.0;
+  };
+  return {u[v[0]], u[v[1]], u[v[2]], mid(v[0], v[1]), mid(v[1], v[2]), mid(v[0], v[2])};
+}
+
+enum class FaceLabel
+{
+  UncutPositive,
+  UncutNegative,
+  Cut
+};
+inline const char *faceLabelName(FaceLabel l)
+{
+  return l == FaceLabel::UncutPositive ? "uncut_positive" : (l == FaceLabel::UncutNegative ? "uncut_negative" : "cut");
+}
+struct FaceClassification
+{
+  FaceLabel label = FaceLabel::UncutNegative;
+  bool cut = false;
+  double bernsteinMin = 0, bernsteinMax = 0, rangeMin = 0, rangeMax = 0;
+};
+
+// Exact range of a P2 triangle function: 3 vertices, 3 edge critical points, the interior critical point.
+inline void rangeOfP2Tri(const P2Tri &u, double &lo, double &hi)
+{
+  const Coef2 q = p2TriToMonomial(u);
+  lo = hi = u[0];
+  auto take = [&](double v) {
+    lo = std::min(lo, v);
+    hi = std::max(hi, v);
+  };
+  for (int i = 1; i < 6; ++i)
+    take(u[i]);
+  double scale = 0.0;
+  for (double v : q)
+    scale = std::max(scale, std::fabs(v));
+  const double tiny = 1e-14 * scale;
+  const int ed[3][2] = {{0, 1}, {1, 2}, {0, 2}};
+  for (int e = 0; e < 3; ++e)
+  {
+    const double ua = u[ed[e][0]], ub = u[ed[e][1]], um = u[3 + e];
+    const double A = 2 * ua + 2 * ub - 4 * um, B = 4 * um - 3 * ua - ub;
+    if (std::fabs(A) > tiny)
+    {
+      const double t = -B / (2 * A);
+      if (t > 0.0 && t < 1.0)
+        take(ua + t * (B + t * A));
+    }
+  }
+  const double det = 4 * q[3] * q[5] - q[4] * q[4];
+  if (std::fabs(det) > 1e-14 * scale * scale)
+  {
+    const double s = (-q[1] * 2 * q[5] + q[2] * q[4]) / det;
+    const double t = (-q[2] * 2 * q[3] + q[1] * q[4]) / det;
+    if (s > 0.0 && t > 0.0 && s + t < 1.0)
+      take(evalQuadric(q, s, t));
+  }
+}
+
+inline FaceClassification classifyTri(const P2Tri &u)
+{
+  FaceClassification r;
+  r.bernsteinMin = r.bernsteinMax = u[0];
+  auto bern = [&](double b) {
+    r.bernsteinMin = std::min(r.bernsteinMin, b);
+    r.bernsteinMax = std::max(r.bernsteinMax, b);
+  };
+  bern(u[1]);
+  bern(u[2]);
+  const int ed[3][2] = {{0, 1}, {1, 2}, {0, 2}};
+  for (int e = 0; e < 3; ++e)
+    bern(2.0 * u[3 + e] - 0.5 * (u[ed[e][0]] + u[ed[e][1]]));
+  rangeOfP2Tri(u, r.rangeMin, r.rangeMax);
+  if ((r.bernsteinMin >= 0.0 && r.bernsteinMax > 0.0) || r.rangeMin >= 0.0)
+    r.label = FaceLabel::UncutPositive;
+  else if (r.bernsteinMax <= 0.0 || r.rangeMax <= 0.0)
+    r.label = FaceLabel::UncutNegative;
+  else
+  {
+    r.label = FaceLabel::Cut;
+    r.cut = true;
+  }
+  return r;
+}
+
+namespace detail
+{
+inline bool isPlanar(const Coef2 &c, double planarTol)
+{
+  if (planarTol <= 0.0)
+    return false;
+  double scale = 0.0;
+  for (double v : c)
+    scale = std::max(scale, std::fabs(v));
+  return std::max({std::fabs(c[3]), std::fabs(c[4]), std::fabs(c[5])}) <= planarTol * scale;
+}
+}  // namespace detail
+
+// Monomial moments s^p t^q of {u > 0} over the reference triangle, in monomialIndex2 order. Same slicing as the tet:
+// inner coordinate s integrated exactly, outer t by Gauss-Legendre between the critical values with the smoothstep map.
+inline std::vector<double> triMoments(const Coef2 &c, int degree, const Options &opt = Options())
+{
+  if (degree < 0 || degree > 7)
+    throw std::invalid_argument("cutquadric: moments are supported to degree 7 (cutclip's limit)");
+  const auto idx = monomialIndex2(degree);
+  std::vector<double> m(idx.size(), 0.0);
+  double scale = 0.0;
+  for (double v : c)
+    scale = std::max(scale, std::fabs(v));
+  if (scale == 0.0)
+    return m;
+  if (detail::isPlanar(c, opt.planarTol))
+  {
+    // plane c0 + c1 s + c2 t in the z = 0 embedding of the reference triangle
+    const cutclip::Tri tri = {cutclip::Vec3{0, 0, 0}, cutclip::Vec3{1, 0, 0}, cutclip::Vec3{0, 1, 0}};
+    const auto m3 = cutclip::moments(cutclip::clipTri(tri, std::vector<cutclip::Plane>{{c[1], c[2], 0.0, c[0]}}), degree);
+    const auto idx3 = monomialIndex(degree);
+    for (std::size_t i = 0; i < idx3.size(); ++i)
+      if (idx3[i][2] == 0)
+        m[index2(idx3[i][0], idx3[i][1])] = m3[i];
+    return m;
+  }
+  const double eps = 1e-12 * scale;
+  const double F = c[0], D = c[1], E = c[2], A = c[3], B = c[4], C = c[5];
+  std::vector<double> crit = {0.0, 1.0};
+  detail::polyRoots(D * D - 4 * A * F, 2 * B * D - 4 * A * E, B * B - 4 * A * C, 0.0, 1.0, eps, opt.deflateTol, crit);  // discriminant
+  detail::polyRoots(F, E, C, 0.0, 1.0, eps, opt.deflateTol, crit);                                                      // s = 0
+  detail::polyRoots(A + D + F, -2 * A + B - D + E, A - B + C, 0.0, 1.0, eps, opt.deflateTol, crit);                       // s = 1 - t
+  if (std::fabs(B) > eps)
+    crit.push_back(-D / B);                                                                                            // branch
+  const detail::GL &g = detail::gauss01(opt.order);
+  const std::vector<double> segs = detail::segments(crit, 1.0, eps);
+  std::vector<double> tp(degree + 1), lp(degree + 2), hp(degree + 2);
+  for (std::size_t sg = 0; sg + 1 < segs.size(); ++sg)
+  {
+    const double a = segs[sg], h = segs[sg + 1] - a;
+    if (h < 1e-14)
+      continue;
+    for (int i = 0; i < opt.order; ++i)
+    {
+      double sm, j;
+      detail::smooth(g.x[i], sm, j);
+      const double t = a + h * sm, w = g.w[i] * h * j;
+      const double L = 1.0 - t;
+      if (L <= eps)
+        continue;
+      double lo[2], hi[2];
+      const int ni = detail::positiveIntervals(A, B * t + D, (C * t + E) * t + F, L, eps, lo, hi);
+      tp[0] = 1.0;
+      for (int k = 1; k <= degree; ++k)
+        tp[k] = tp[k - 1] * t;
+      for (int q = 0; q < ni; ++q)
+      {
+        lp[0] = hp[0] = 1.0;
+        for (int k = 1; k <= degree + 1; ++k)
+        {
+          lp[k] = lp[k - 1] * lo[q];
+          hp[k] = hp[k - 1] * hi[q];
+        }
+        for (std::size_t n = 0; n < idx.size(); ++n)
+          m[n] += w * (hp[idx[n][0] + 1] - lp[idx[n][0] + 1]) / (idx[n][0] + 1) * tp[idx[n][1]];
+      }
+    }
+  }
+  return m;
+}
+inline std::vector<double> triMomentsNodal(const P2Tri &u, int degree, const Options &opt = Options())
+{
+  return triMoments(p2TriToMonomial(u), degree, opt);
+}
+
+// Moments of the 3D monomials x^p y^q z^r over F cap {u > 0}, F = face k of the reference tet, with respect to the face's
+// parameter measure ds dt (full face: 1/2). The physical area element is |(x1-x0) x (x2-x0)| ds dt, the outward normal
+// times it is the (outward) cross product: for the reference tet (1,1,1), (-1,0,0), (0,-1,0), (0,0,-1) for faces 0..3.
+inline std::vector<double> faceMoments(const P2Tet &u, int k, int degree, const Options &opt = Options())
+{
+  const std::vector<double> m2 = triMomentsNodal(faceNodal(u, k), degree, opt);
+  static const double X[4][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  int v[3], n = 0;
+  for (int m = 0; m < 4; ++m)
+    if (m != k)
+      v[n++] = m;
+  const auto idx = monomialIndex(degree);
+  std::vector<double> out(idx.size(), 0.0);
+  const int D = degree + 1;
+  for (std::size_t i = 0; i < idx.size(); ++i)
+  {
+    // x_c = X0 + s (X1 - X0) + t (X2 - X0), as a polynomial in (s,t): product of (a + b s + c t)^e_c
+    std::vector<double> poly(D * D, 0.0), tmp(D * D);
+    poly[0] = 1.0;
+    for (int comp = 0; comp < 3; ++comp)
+    {
+      const double a = X[v[0]][comp], b = X[v[1]][comp] - X[v[0]][comp], c = X[v[2]][comp] - X[v[0]][comp];
+      for (int rep = 0; rep < idx[i][comp]; ++rep)
+      {
+        std::fill(tmp.begin(), tmp.end(), 0.0);
+        for (int p = 0; p < D; ++p)
+          for (int q = 0; q + p < D; ++q)
+          {
+            const double cur = poly[p * D + q];
+            if (cur == 0.0)
+              continue;
+            tmp[p * D + q] += a * cur;
+            if (p + 1 < D)
+              tmp[(p + 1) * D + q] += b * cur;
+            if (q + 1 < D)
+              tmp[p * D + q + 1] += c * cur;
+          }
+        poly.swap(tmp);
+      }
+    }
+    double s = 0.0;
+    for (int p = 0; p < D; ++p)
+      for (int q = 0; q + p < D; ++q)
+        if (poly[p * D + q] != 0.0)
+          s += poly[p * D + q] * m2[index2(p, q)];
+    out[i] = s;
+  }
+  return out;
+}
+
 }  // namespace cutquadric
 }  // namespace proteus
 #endif

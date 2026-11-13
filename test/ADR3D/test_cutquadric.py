@@ -330,3 +330,200 @@ def test_u8_partition_i_of_u_plus_i_of_minus_u_is_the_full_tet(seed):
         minus = np.array(cutquadric.volume_moments(-u, 4, 24))
         assert np.max(np.abs(plus + minus - full)) <= 1e-13
     assert len(labels) >= 3
+
+
+# ================================================================================================== A3: faces
+# face k is opposite vertex k; its vertices are the other three in increasing order, its P2 values are
+# (v0, v1, v2, (v0,v1), (v1,v2), (v0,v2)) taken from the element's ten.
+FACE_VERTS = [[m for m in range(4) if m != k] for k in range(4)]
+
+
+def face_points(k):
+    v = FACE_VERTS[k]
+    a, b, c = ref_tet[v[0]], ref_tet[v[1]], ref_tet[v[2]]
+    st = np.array([[0, 0], [1, 0], [0, 1], [.5, 0], [.5, .5], [0, .5]])
+    return a + st[:, :1] * (b - a) + st[:, 1:] * (c - a)
+
+
+TRI_NODES = np.array([[0, 0], [1, 0], [0, 1], [.5, 0], [.5, .5], [0, .5]])
+IDX2D = cutquadric.monomials2(3)
+
+
+def nodal2(f):
+    return np.array([f(s, t) for s, t in TRI_NODES])
+
+
+@pytest.mark.parametrize("k", range(4))
+def test_a3_face_nodal_values(k):
+    rng = np.random.default_rng(20 + k)
+    c = rng.standard_normal(10)
+    u = mono_eval(c, NODES)
+    want = mono_eval(c, face_points(k))
+    assert np.max(np.abs(np.array(cutquadric.face_nodal(u, k)) - want)) <= 1e-13
+
+
+def test_a3_monomials2_order():
+    assert cutquadric.monomials2(2) == [[0, 0], [1, 0], [0, 1], [2, 0], [1, 1], [0, 2]]
+
+
+def test_a3_face_classification():
+    f = cutquadric.classify_face
+    assert f(nodal2(lambda s, t: 1 + s * t))["label"] == "uncut_positive"
+    assert f(nodal2(lambda s, t: -1 - s))["label"] == "uncut_negative"
+    c = f(nodal2(lambda s, t: s - 0.3))                                  # a line
+    assert c["label"] == "cut" and c["cut"]
+    c = f(nodal2(lambda s, t: (s - .5) ** 2 + (t - .5) ** 2 - 0.1))     # vertices (0,0): .4 > 0 ... mids inside: cut twice
+    assert c["cut"]
+    # all six nodal values negative but a disc pokes into the face (no node inside it)
+    u = nodal2(lambda s, t: 0.04 - (s + 0.1) ** 2 - (t - 0.3) ** 2)
+    assert np.all(u < 0)
+    c = f(u)
+    assert c["cut"] and c["range_max"] > 0
+    # the closed component: disc at the centroid, r = 0.15
+    u = nodal2(lambda s, t: 0.0225 - (s - 1 / 3) ** 2 - (t - 1 / 3) ** 2)
+    assert np.all(u < 0) and f(u)["cut"]
+
+
+def test_a3_shared_face_gives_the_same_answer_from_both_elements():
+    """The same face seen with its three vertices in another order (the neighbour's local numbering)."""
+    rng = np.random.default_rng(7)
+    ed = [(0, 1), (1, 2), (0, 2)]
+    for _ in range(300):
+        u = rng.standard_normal(6) * rng.choice([0.2, 1.0]) + rng.choice([-0.4, 0.0, 0.4])
+        base = cutquadric.classify_face(u)
+        for perm in itertools.permutations(range(3)):
+            # new local vertex i is old vertex perm[i]; the mid-edge value of (i,j) is the old mid of (perm[i], perm[j])
+            def mid(i, j):
+                a, b = sorted((perm[i], perm[j]))
+                return u[3 + ed.index((a, b))]
+            up = np.array([u[perm[0]], u[perm[1]], u[perm[2]], mid(0, 1), mid(1, 2), mid(0, 2)])
+            c = cutquadric.classify_face(up)
+            assert c["label"] == base["label"]
+            assert c["range_min"] == pytest.approx(base["range_min"], abs=1e-13)
+            assert c["range_max"] == pytest.approx(base["range_max"], abs=1e-13)
+
+
+def test_a3_face_range_against_sampling():
+    rng = np.random.default_rng(8)
+    n = 60
+    pts = np.array([(i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)])
+    for _ in range(80):
+        u = rng.standard_normal(6) * rng.choice([0.3, 1.0]) + rng.choice([-1.0, 0.0, 1.0])
+        c = cutquadric.classify_face(u)
+        coef = np.array(cutquadric.p2_tri_to_monomial(u))
+        vals = sum(cc * pts[:, 0] ** p * pts[:, 1] ** q for cc, (p, q) in zip(coef, IDX2D_FULL))
+        sc = max(1.0, np.max(np.abs(u)))
+        assert c["range_min"] <= vals.min() + 1e-12 * sc and c["range_max"] >= vals.max() - 1e-12 * sc
+        assert vals.min() - c["range_min"] <= 0.02 * sc and c["range_max"] - vals.max() <= 0.02 * sc
+        assert c["bernstein_min"] <= c["range_min"] + 1e-12 * sc and c["bernstein_max"] >= c["range_max"] - 1e-12 * sc
+        if vals.min() < 0 < vals.max():
+            assert c["cut"]
+
+
+IDX2D_FULL = cutquadric.monomials2(2)
+
+
+def disc_sphere_moments(c, r, deg, quarter=False):
+    """integral of s^p t^q over the disc of radius r about c (quarter: the first quadrant of the disc about 0)."""
+    out = []
+    for (p, q) in cutquadric.monomials2(deg):
+        tot = 0.0
+        for beta in itertools.product(range(p + 1), range(q + 1)):
+            coef = math.comb(p, beta[0]) * c[0] ** (p - beta[0]) * math.comb(q, beta[1]) * c[1] ** (q - beta[1])
+            nb = sum(beta)
+            if quarter:
+                g = 0.5 * np.prod([math.gamma((b + 1) / 2) for b in beta]) / math.gamma((nb + 2) / 2)
+            else:
+                g = 0.0 if any(b % 2 for b in beta) else 2 * np.prod([math.gamma((b + 1) / 2) for b in beta]) / math.gamma((nb + 2) / 2)
+            tot += coef * r ** (nb + 2) / (nb + 2) * g
+        out.append(tot)
+    return np.array(out)
+
+
+def full_tri_moments(deg):
+    return np.array([math.factorial(p) * math.factorial(q) / math.factorial(p + q + 2) for p, q in cutquadric.monomials2(deg)])
+
+
+def test_a3_tri_moments_closed_forms():
+    r = 0.4
+    want = disc_sphere_moments((0, 0), r, 5, quarter=True)
+    assert want[0] == pytest.approx(np.pi * r * r / 4)
+    u = nodal2(lambda s, t: r * r - s * s - t * t)
+    errs = [np.max(np.abs(np.array(cutquadric.tri_moments(u, 5, o)) - want)) for o in (6, 8, 12, 16, 24)]
+    assert errs[-1] <= 1e-13 and errs[2] < errs[1] < errs[0]
+    c, r = (1 / 3, 1 / 3), 0.15
+    u = nodal2(lambda s, t: r * r - (s - c[0]) ** 2 - (t - c[1]) ** 2)
+    assert np.all(u < 0)
+    want = disc_sphere_moments(c, r, 5)
+    assert np.max(np.abs(np.array(cutquadric.tri_moments(u, 5, 24)) - want)) <= 1e-13
+    assert np.max(np.abs(np.array(cutquadric.tri_moments(-u, 5, 24)) - (full_tri_moments(5) - want))) <= 1e-13
+
+
+@pytest.mark.parametrize("planar_tol", [1e-12, 0.0])
+def test_a3_tri_linear_embedded_equals_cutclip(planar_tol):
+    rng = np.random.default_rng(31)
+    tri3 = np.array([[0., 0, 0], [1., 0, 0], [0., 1, 0]])
+    worst = 0.0
+    for _ in range(60):
+        phi = rng.uniform(-1, 1, 3)
+        pl = np.array([phi[1] - phi[0], phi[2] - phi[0], 0.0, phi[0]])
+        u = nodal2(lambda s, t: phi[0] * (1 - s - t) + phi[1] * s + phi[2] * t)
+        full3 = np.array(cutclip.tri_moments(tri3, pl[None], 4))
+        want = np.array([full3[i] for i, (p, q, r) in enumerate(cutclip.monomials(4)) if r == 0])
+        got = np.array(cutquadric.tri_moments(u, 4, 24, planar_tol=planar_tol))
+        worst = max(worst, np.max(np.abs(got - want)))
+    assert worst <= 1e-13
+
+
+def test_a3_tri_partition_and_order_sweep():
+    rng = np.random.default_rng(32)
+    full = full_tri_moments(4)
+    for _ in range(80):
+        u = rng.standard_normal(6) * rng.choice([0.2, 1.0]) + rng.choice([-0.3, 0.0, 0.3])
+        plus = np.array(cutquadric.tri_moments(u, 4, 32))
+        minus = np.array(cutquadric.tri_moments(-u, 4, 32))
+        assert np.max(np.abs(plus + minus - full)) <= 1e-12
+
+
+def test_a3_tri_nearly_planar_across_threshold():
+    base = nodal2(lambda s, t: 0.2 - s + 0.3 * t)
+    bump = nodal2(lambda s, t: s * s - 0.5 * s * t + 0.3 * t * t)
+    for kappa in (1e-1, 1e-6, 1e-11, 1e-12, 1e-13, 0.0):
+        u = base + kappa * bump
+        ref = np.array(cutquadric.tri_moments(u, 4, 40, planar_tol=0.0))
+        got = np.array(cutquadric.tri_moments(u, 4, 16))
+        assert np.max(np.abs(got - ref)) <= 1e-12
+
+
+@pytest.mark.parametrize("k", range(4))
+def test_a3_face_moments_linear_u_against_cutclip(k):
+    rng = np.random.default_rng(40 + k)
+    v = FACE_VERTS[k]
+    tri3 = ref_tet[v]
+    jac = np.linalg.norm(np.cross(tri3[1] - tri3[0], tri3[2] - tri3[0]))     # dA = jac ds dt
+    for _ in range(20):
+        phi = rng.uniform(-1, 1, 4)
+        u = linear_p2(phi)
+        want = np.array(cutclip.tri_moments(tri3, plane_of(phi)[None], 4)) / jac
+        got = np.array(cutquadric.face_moments(u, k, 4, 24))
+        assert np.max(np.abs(got - want)) <= 1e-13
+
+
+def test_a3_face_moments_curved_closed_form():
+    # ball about (-0.1, 0.3, 0.3), r = 0.2 pokes through face 1 (x = 0, vertices 0,2,3; (s,t) = (y,z)): a disc about
+    # (0.3, 0.3) of radius sqrt(0.04 - 0.01); no nodal value of the element is positive
+    u = sphere_u([-0.1, 0.3, 0.3], 0.2)
+    assert np.all(u < 0)
+    rho = math.sqrt(0.04 - 0.01)
+    disc = disc_sphere_moments((0.3, 0.3), rho, 4)
+    d2 = {tuple(m): disc[i] for i, m in enumerate(cutquadric.monomials2(4))}
+    got = np.array(cutquadric.face_moments(u, 1, 4, 24))
+    for i, (p, q, r) in enumerate(cutclip.monomials(4)):
+        want = d2[(q, r)] if p == 0 else 0.0
+        assert got[i] == pytest.approx(want, abs=1e-13)
+    # the other three faces are not touched by the ball
+    for k in (0, 2, 3):
+        assert np.max(np.abs(np.array(cutquadric.face_moments(u, k, 4, 24)))) == 0.0
+    assert cutquadric.classify_face(cutquadric.face_nodal(u, 1))["cut"]
+    for k in (0, 2, 3):
+        assert not cutquadric.classify_face(cutquadric.face_nodal(u, k))["cut"]
