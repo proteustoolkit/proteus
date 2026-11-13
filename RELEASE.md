@@ -2,119 +2,89 @@
 
 ## Where the code lives
 
-**`cekees/proteus`** is the live primary repository. Development happens on
-its `main`, and all contributions are pull requests into it — that is how
-work from `nathawani`, `abarua-ce` and `linojr` has been arriving.
+**`proteustoolkit/proteus`** is the one repository. Its `main` is the development line (currently `2.0.x`), the
+issue tracker and wiki are there, and the GitHub release is drawn from it. Patch releases are cut from a **line
+branch** (`1.9.x`, `1.8.x`, ...): a release is a **tag on the line branch's final commit**. A release never moves
+`main`.
 
-**`erdc/proteus`** is the publishing target. The `erdc` organization is not
-actively maintained, so nothing is reviewed or merged there; its `main` is
-moved forward only when a release is cut, and the GitHub release is drawn
-from it.
+Contributor forks, including `cekees/proteus`, remain forks of the same network. Do not create a repository named
+`erdc/proteus`: that would end the redirect from the old name.
 
-Every contributor fork — including `cekees/proteus` itself — is a fork of
-`erdc/proteus`, so they all share one fork network and cross-repository pull
-requests into `cekees/proteus` work without any special setup. Do not detach
-`cekees/proteus` from that network: it would break the pull-request path for
-every other fork.
+## Contributing
 
-Review and CI therefore happen on `cekees/proteus`, on that account's
-resources, and the release step is a push rather than a review.
+* Fork `proteustoolkit/proteus`, or keep using an existing fork of it.
+* Pull requests that change the code go to the fork `cekees/proteus` first (review and CI run there), then reach
+  `proteustoolkit/proteus` in a "train": one pull request per release line that merges the reviewed fork pull
+  requests with one merge commit each. Merge trains with "Create a merge commit", never squash or rebase, so the
+  commits keep their hashes.
+* Qualify every reference that could be read in another repository: `proteustoolkit/proteus#1274`. History from the
+  two-repository era contains bare `#NNN` references that resolve to the wrong thing.
 
-## Contributing (for everyone else)
+## Versions
 
-* Fork `erdc/proteus`, or keep using an existing fork of it
-* Open the pull request against **`cekees/proteus`'s `main`**, not `erdc`'s
+Exactly three files carry the version, and all must agree:
 
-### Referring to issues from a commit
+* `proteus/__init__.py` — `__version__`
+* `setup.py` — `version=`
+* `docs/Doxyfile` — `PROJECT_NUMBER`
 
-The issue tracker is on `erdc/proteus`, but the pull requests are on
-`cekees/proteus`, and the two have separate numbering. A bare `#1274` is
-therefore ambiguous: GitHub resolves it against whichever repository you are
-viewing it in, which silently produces the wrong link about half the time.
+(`pyproject.toml` does not.) A development version has a bare `.dev` suffix (`2.0.0.dev`, `1.9.2.dev`), not `.dev0`.
+A release candidate is a PEP 440 `rcN` (`1.9.1rc1`). Always set a new version **outright**. Past clean-ups appended
+`.dev` to the released value instead of incrementing it, so never assume the file is one step from what you want.
 
-Always qualify the repository:
+## Release procedure (patch release on a line branch)
 
-    Fixes erdc/proteus#1274
+1. **Gate.** Agree what must be reproducible before the release (for a release that a publication will cite: the
+   results are reproducible from the line branch and the articles are in review).
+2. **Release candidate.** Set the three files to `X.Y.Zrc1` in a pull request against the line branch, let CI pass
+   (every leg of `sdist.yml`, read at job level, not only the run's conclusion), and merge it. Co-authors review the
+   candidate; their findings arrive as ordinary pull requests on the line branch.
+3. **Release notes.** Draft them from the range `<previous tag>..<line branch>`: every entry cites its pull request,
+   breaking changes are marked, the dependency floors are stated. Count commits and files with `git rev-list --count`
+   and `git diff --name-only`. Do not name journals or unpublished venues in public text.
+4. **Final version.** One commit, in its own pull request against the line branch, sets the three files to `X.Y.Z`;
+   merge it through the train and let CI pass on the merged commit.
+5. **Hook check.** Before tagging, confirm the Zenodo hook exists and is active:
+   `gh api repos/proteustoolkit/proteus/hooks --jq '.[]|{id,active,events}'`. Do not print its URL: it contains a token.
+   The concept DOI is 10.5281/zenodo.1004620; note how many versions it has now.
+6. **Tag and publish, once.** Create the tag (a bare number, `1.9.1`, not `v1.9.1`) on the final line-branch commit and
+   publish the GitHub release in the same step, directly, never as a draft that is toggled later:
 
-This matters more than it sounds. Across the 377 commits in the 1.9.0
-release, every bare `#NNN` in a commit message turned out to be a false
-positive when resolved against the tracker — a merge subject's `(#14)`
-referred to a pull request on the fork but resolves against `erdc` to an
-unrelated 2013 issue. The result is that the release's fixed issues had to
-be found by reading code rather than by following references.
+       gh release create X.Y.Z -R proteustoolkit/proteus --target <full sha> --title "proteus X.Y.Z" --notes-file <notes> --latest
 
-## Cut the release candidate
+   Publishing fires the Zenodo webhook. The hook never backfills, and publishing an already-received release again
+   fails with 409, because Zenodo keys on the release id.
+7. **Verify.** The tag points at the commit, the release is not a draft, and the concept DOI has gained one version
+   (the three `release` deliveries show one 202 and two 409s: that is normal). Add the version DOI badge to the top of
+   the release body with `gh release edit`; editing is safe, it produces another `edited` delivery that Zenodo accepts
+   without creating a version. If no version appears: back up the body (`gh api repos/proteustoolkit/proteus/releases/<id>`),
+   `gh release delete X.Y.Z --cleanup-tag=false`, and recreate it.
 
-* Create the release candidate branch on `cekees/proteus`, from `main` (e.g. `rc1.9.0`)
-* Set the version in the three places that carry it, dropping the `.dev` suffix:
-  * `proteus/__init__.py` — `__version__`
-  * `setup.py` — `version=`
-  * `docs/Doxyfile` — `PROJECT_NUMBER`
-* Open the PR against **`cekees/proteus`'s `main`** and request two reviewers
-* This is the last review before release; merge it when it passes
+## After the release
 
-The version strings carry a bare `.dev` suffix (`1.8.3.dev`), not `.dev0`.
-Note also that the clean-up step below has in practice set the version back to
-the *released* value with `.dev` appended rather than incrementing it, so
-`main` may still read `1.8.3.dev` when you come to release 1.9.0. Set the new
-version outright; do not assume it is one increment away.
-
-## Publish on erdc
-
-* Move `erdc/proteus`'s `main` to the release commit:
-
-      git push upstream main
-
-  **Check first that this is a fast-forward** — it has been so far, since
-  `erdc/main` has only ever been moved by releases:
-
-      git merge-base --is-ancestor upstream/main main && echo fast-forward
-
-  If that fails, `erdc/main` has commits that `cekees/main` does not, and
-  something was pushed or edited there directly. Find out what it is before
-  going further; do not reach for `--force` to make the message go away.
-  `erdc/main` is a protected branch with force pushes disallowed, so a
-  genuinely diverged state needs a deliberate settings change, not a flag.
-
-* `erdc/main`'s protection also requires one approving review and restricts
-  pushes to the `proteus-maintainers` team. "Do not allow bypassing the above
-  settings" is off, so an org admin can push directly — worth confirming at
-  the time rather than discovering mid-release.
-
-* Draft the release on `erdc/proteus` from the GitHub web UI
-  * Tag the release commit. Tags are bare version numbers — `1.8.3`, not `v1.8.3`
-  * List significant changes and contributors since the last release
+* **Clean up the line.** One commit sets the three files to `X.Y.(Z+1).dev` outright, through the train. The line
+  branch is not renamed or recreated.
+* **conda-forge.** The bot opens a feedstock pull request for the new version; check it keeps the dependency floors
+  and read every file under `recipe/`, not only `meta.yaml`. A fork branch with the same change is the fallback.
+* **Spack.** Bump the pinned version in `py-proteus` and update the open pull request.
+* **Documentation** (below).
+* **HPC modules.** Rebuild the `proteus-modules` stacks against the tag so that runs can cite the release.
 
 ## Documentation
 
-No longer generated by CI, so check it by hand.
+Not generated by CI; build it from the **tag**, and check it by hand.
 
-* Clone `erdc/proteus-docs`
-* Check out `main`
-* Run `make docs` in proteus
-* Open `proteus-docs/index.html` in a browser and check the site — version numbers, math and diagram rendering
-* Merge `main` into `gh-pages` in the proteus-docs repo; `gh-pages` is the branch the site serves
-
-## Clean up
-
-* Create the next `devX.Y.Z` branch — or branches, if more than one line of
-  work continues from this release
-* Set the version numbers in the three files above back to `X.Y.Z.dev`
+* Use a fresh clone of the tag (it has no vendored xtensor: install `xtensor`, `xtensor-python` and `xtl` from
+  conda-forge, plus `sphinx`, `sphinx_rtd_theme`, `breathe`, `doxygen` and `graphviz`), build the extensions in place,
+  and run `make docs` with `PYTHONPATH` set to the clone. An environment that also has another proteus installed
+  editable will otherwise document that one; the file paths in the Sphinx warnings show which source was used.
+* Clone `proteustoolkit/proteus-docs` on `gh-pages`, replace its contents with `docs/build` (keep `CNAME` and
+  `.nojekyll`), commit, check version numbers, math and diagram rendering, and push `gh-pages`.
 
 ## A note on Git LFS
 
-Test comparison data was tracked in Git LFS until `c75eb6c9` (2026-08-11),
-which converted those 218 files back to ordinary git objects. Two
-consequences are worth knowing when a release is being cut:
-
-* GitHub bills LFS **bandwidth** against the fork-network root —
-  `erdc/proteus` — no matter which fork is cloned or who owns it. Pushing a
-  fork's own copy of the objects does not change this, and neither does
-  paying for the fork's own account. So an exhausted quota affects every
-  consumer of every fork at once.
-* Nothing at `main`'s tip is LFS-tracked any more, so a plain clone of the
-  default branch transfers no LFS objects at all. Older tags still do: `1.8.3`
-  has 210 LFS-tracked files. Checking out a pre-1.9.0 tag, or running
-  `git lfs fetch --all`, still draws on the quota. The objects also remain in
-  LFS **storage**, a separate quota from bandwidth that removing the pointers
-  does not reclaim.
+Test comparison data was tracked in Git LFS until `c75eb6c9` (2026-08-11), which converted those 218 files back to
+ordinary git objects. GitHub bills LFS **bandwidth** against the fork-network root, `proteustoolkit/proteus`, no matter
+which fork is cloned. Nothing at the tip of `main` or `1.9.x` is LFS-tracked, so a plain clone transfers no LFS objects.
+Older tags still do: `1.8.3` has 210 LFS-tracked files, so checking out a pre-1.9.0 tag or running `git lfs fetch --all`
+draws on the quota. The objects also remain in LFS **storage**, a separate quota that removing the pointers does not reclaim.
