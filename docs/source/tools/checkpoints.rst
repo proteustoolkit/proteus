@@ -37,22 +37,32 @@ A batch job is killed when its wall time runs out, in the middle of a step or of
 instead, at a system step boundary, with room left to write a checkpoint:
 
 * the budget counts from the start of parun (``import proteus`` included). ``--wall-limit scheduler`` reads the end
-  of the SLURM or PBS job instead (``SLURM_JOB_END_TIME``, else ``squeue -o %L``; ``qstat -f``'s walltime less the
-  walltime used), and a duration given inside a batch job is cut at the job's end. Leave slack for the job's own
+  of the SLURM or PBS job instead (``SLURM_JOB_END_TIME``, else ``squeue -o %L``; PBS: ``qstat -f``'s start time
+  ``stime`` plus ``Resource_List.walltime``, not the walltime less ``resources_used.walltime``, which PBS refreshes
+  only every so often and which put the end 12-17 s late on Carpenter), and a duration given inside a batch job is cut at the job's end. Leave slack for the job's own
   start and exit: ``--wall-limit 23:45:00`` in a 24 h job.
 * at the end of each system step rank 0 decides whether the next step and a checkpoint still fit:
   ``now + margin > limit``, with ``margin`` = the longest system step so far (archive writes not counted) + the
   time one checkpoint takes to write (for each model, its longest frame and solver-state write so far, measured by
   the run itself). One scalar broadcast hands the answer to every rank, so all stop at the same step. Nothing relies
   on scheduler signals. The limit adds no write: until a solver-state write has been timed (the initial frame's and
-  every N-th frame's with ``--state-every N``; the default writes it at the end only) the state's time is estimated,
-  as the frame's time times the state's bytes over the dofs' bytes, which errs on the long side. The writes are on
+  every N-th frame's with ``--state-every N``; the default writes it at the end only) the state's time is, in a
+  leg continued with ``-H``, twice the time the hot start took to read it, and in the first leg the median frame
+  time times the state's bytes over the dofs' bytes (the median, so that one stalled write does not set it; it
+  was the longest frame, 18-77x too long at 1,536 ranks). The writes are on
   the log at ``-l2`` and above (``Archive: frame 11 of model mcorr at t=0.05 written in ... s,
   solver state in ... s``).
 * the stop writes **one frame at that time, with the solver state**, closes the archives and exits with status
   **75** (``WallLimit.CHECKPOINT_EXIT_STATUS``, sysexits' ``EX_TEMPFAIL``). The frame is off the ``dt_output`` grid
   when the stop is mid-interval; that is the frame the next leg reads. The end-of-simulation work (``runAtEOS``) is
   not run, as the run is not over.
+* it also writes **``<name>.checkpoint``** (``name`` is the case's name; the file is in the working directory) with
+  ``t``, ``frame``, ``ranks`` and ``exit_status=75`` lines. Rank 0 writes it once every rank has closed its
+  archive, and no rank exits before it is there. A run under ``--wall-limit`` removes a leftover one when it starts,
+  so a leg that finishes leaves none. **Test this file, not only ``$?``:** under Cray's aprun (PALS) the ranks exit
+  75 at slightly different times, the launcher takes the first as a failure, SIGTERMs the rest and returns **143**,
+  though the checkpoint is complete (Carpenter, 1,536 ranks). Under SLURM's ``srun`` the status is the highest
+  rank's, so 75 comes through unless ``--kill-on-bad-exit`` is set.
 * the next leg is ``parun -H`` of the same case on the **same number of ranks and partition** (pin it as for any
   continue hot start). It continues from the checkpoint exactly: the steps, dofs and force and moment histories
   are those of the run that was never stopped (tested at 1 and 2 ranks, mid-interval and at an output time:
@@ -64,7 +74,8 @@ status meaning
 0      the run reached its final time
 1      the run failed (a system step failed after its retries, or a time went non-finite)
 2      a usage error, a malformed ``--wall-limit`` among them (stops before anything runs)
-75     stopped for the wall limit with a checkpoint: continue it with ``parun -H``
+75     stopped for the wall limit with a checkpoint: continue it with ``parun -H`` (a launcher may return another
+       status, 143 under aprun: look for ``<name>.checkpoint``)
 ====== =========================================================================================
 
 Not supported: PUMI mesh adaptivity (it has its own checkpoint frequency; the limit is dropped with a warning) and
@@ -82,3 +93,19 @@ A SLURM script that runs a leg and, on exit 75, submits the next one (``rc`` is 
     HOT=""; [ -f flume.h5 ] && HOT="-H"
     srun parun $HOT --wall-limit 23:45:00 flume_so.py; rc=$?
     if [ $rc -eq 75 ]; then sbatch --dependency=afterok:$SLURM_JOB_ID "$0"; rc=0; fi; exit $rc
+
+Under PBS with aprun the exit status is not dependable, so chain on the marker (``flume`` is the case's name;
+remove the marker before the run so that a leftover from an earlier job is not mistaken for this one, and say
+``--wall-limit scheduler`` or a duration inside the job's walltime):
+
+.. code-block:: bash
+
+    #PBS -l walltime=24:00:00
+    rm -f flume.checkpoint
+    HOT=""; [ -f flume.h5 ] && HOT="-H"
+    aprun -n $NRANKS parun $HOT --wall-limit 23:45:00 flume_so.py; rc=$?
+    if [ -f flume.checkpoint ]; then qsub -W depend=afterany:$PBS_JOBID "$0"; rc=0; fi; exit $rc
+
+``afterany`` because the launcher's status may not be 0 (``afterok`` would hold the next job forever). The script
+can read ``t`` and ``frame`` from the marker for its log. Not tested against a live PALS here: the status 143 and
+the missing marker-less chain are from the Torino test of 2026-11-13, and the marker is the fix for them.

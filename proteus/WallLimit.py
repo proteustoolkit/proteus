@@ -72,9 +72,28 @@ def slurm_deadline(environ=None, run=subprocess.run, now=time.time):
         return None
 
 
+def _pbs_start(out, now):
+    """The epoch time ``qstat -f`` says the job started (``stime``, PBS Pro; ``start_time``, Torque), read as local
+    time (the server's and the node's clocks and zone agree on a cluster), or None when it is absent, unreadable
+    or implausible (in the future, or over a year ago)."""
+    m = re.search(r"^\s*(?:stime|start_time)\s*=\s*(.+?)\s*$", out, re.MULTILINE)
+    if m is None:
+        return None
+    try:
+        start = time.mktime(time.strptime(" ".join(m.group(1).split()), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
+    current = now()
+    return start if current - 366 * 86400 < start <= current + 60 else None
+
+
 def pbs_deadline(environ=None, run=subprocess.run, now=time.time):
-    """The epoch time the PBS job ends, or None: the walltime ``qstat -f`` lists for the job less what it has used
-    (the same fields in PBS Pro and Torque)."""
+    """The epoch time the PBS job ends, or None: the job's start (``stime``) plus its ``Resource_List.walltime``,
+    both from ``qstat -f`` (the same fields in PBS Pro and Torque).
+
+    Not the walltime less ``resources_used.walltime``: PBS refreshes the used walltime only every so often (it read
+    00:00:05 at 14-22 s into a job on Carpenter), which put the end 12-17 s too late. That difference is the
+    fallback only, for a ``qstat`` that lists no usable start time."""
     environ = os.environ if environ is None else environ
     job = environ.get("PBS_JOBID")
     if not job:
@@ -84,8 +103,14 @@ def pbs_deadline(environ=None, run=subprocess.run, now=time.time):
         return None
     fields = dict(re.findall(r"^\s*([\w.]+)\s*=\s*(\S+)\s*$", out, re.MULTILINE))
     try:
-        return now() + parse_duration(fields["Resource_List.walltime"]) - parse_duration(
-            fields["resources_used.walltime"])
+        walltime = parse_duration(fields["Resource_List.walltime"])
+    except (KeyError, ValueError):
+        return None
+    start = _pbs_start(out, now)
+    if start is not None:
+        return start + walltime
+    try:
+        return now() + walltime - parse_duration(fields["resources_used.walltime"])
     except (KeyError, ValueError):
         return None
 
@@ -116,6 +141,44 @@ def resolve_deadline(limit, start, environ=None, run=subprocess.run, now=time.ti
     if scheduled is not None and scheduled < deadline:
         deadline, source = scheduled, "the scheduler's end time (before --wall-limit %s)" % (limit,)
     return deadline, source
+
+
+def marker_path(name, directory="."):
+    """Where the run called ``name`` leaves its stop marker: ``<name>.checkpoint``."""
+    return os.path.join(directory, "%s.checkpoint" % (name,))
+
+
+def write_marker(path, t, frame, ranks, now=time.time):
+    """Record that a run stopped for its wall limit, for a job script to test (``[ -f name.checkpoint ]``): the
+    launcher's exit status cannot be relied on (aprun under Cray PALS reports 143, SIGTERM, when the ranks do not
+    all exit at once, whatever status they exit with). The file is written whole and renamed into place, so a
+    reader never sees half of it. Rank 0 writes it, after the archives are closed."""
+    text = "t=%.17g\nframe=%d\nranks=%d\nexit_status=%d\nwritten=%d\n" % (
+        t, frame, ranks, CHECKPOINT_EXIT_STATUS, int(now()))
+    tmp = "%s.tmp%d" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def read_marker(path):
+    """The marker's fields as a dict (``t`` a float, the rest ints), or None when there is none."""
+    try:
+        with open(path) as f:
+            fields = dict(line.strip().split("=", 1) for line in f if "=" in line)
+    except OSError:
+        return None
+    return {k: (float(v) if k == "t" else int(v)) for k, v in fields.items()}
+
+
+def clear_marker(path):
+    """Remove a marker left by an earlier leg (a run that starts, or finishes, is not stopped)."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 class WallClock:
