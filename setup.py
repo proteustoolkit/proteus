@@ -609,7 +609,7 @@ EXTENSIONS_TO_BUILD = [
     ),
     Extension('cutclip',
               sources=['proteus/cutclip.cpp'],
-              depends=['proteus/cutclip.h'],
+              depends=['proteus/cutclip.h', 'proteus/equivalent_polynomials.h', 'proteus/ifemBasisCoefficients_wrapper.h'],
               include_dirs=get_pybind_include_dirs(),
               extra_compile_args=PROTEUS_OPT+['-std=c++20'],
               language='c++'),
