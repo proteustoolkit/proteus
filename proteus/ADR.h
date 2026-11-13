@@ -1,6 +1,8 @@
 #ifndef ADR_H
 #define ADR_H
+#include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <iomanip>
 #include <iostream>
 #include <set>
@@ -54,8 +56,17 @@ namespace proteus
 		// element rule's degree. The Gamma_s Nitsche penalty / Robin terms are degree 2p. P1: k=3 with
 		// the 12-point (degree-6) rule. P2: k=4 needs the 16-point (degree-8) rule (qOrder=8); with
 		// the 12-point rule k=3 is kept, which is exact through degree 2p-1=3 and still rate-optimal.
-		static const int nP_fit = (nDOF_trial_element == 6 && nQuadraturePoints_element >= 16) ? 4 : 3;
+		// Polynomial order of the trial space, from the element's dof count in nSpace dimensions
+		// (simplex Lagrange: P1 has nSpace+1 dofs, P2 has (nSpace+1)(nSpace+2)/2). Not a triangle
+		// test: a 3D P1 tetrahedron has 4 dofs and a P2 one has 10.
+		static const int pOrder = (nDOF_trial_element == nSpace + 1) ? 1 : ((nDOF_trial_element == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
+		static const int nP_fit = (pOrder == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
 		using GfType = GeneralizedFunctions<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary>;
+		// The solid level set only needs the H/D moment fits, never the two-sided IFEM basis. In 2D it
+		// shares GfType (kept bit-for-bit). In 3D the basis solve is 2D-only, so the solid uses the
+		// basis-free type (C44 phase 1).
+		using GfTypeS = typename std::conditional<nSpace == 2, GfType,
+			equivalent_polynomials::GeneralizedFunctions_mix<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary, false>>::type;
 		// Degree of the edge-restricted moment-fit Heaviside used by the edge terms (SCIFEM, the
 		// triply-cut correction). The consistency terms are degree 2p-1 and the interior penalty 2p;
 		// the 1D boundary rule (qOrder points) is exact far beyond nP_edge + 2p.
@@ -71,7 +82,8 @@ namespace proteus
 		// Interior (isBoundary=false) and boundary (isBoundary=true) evaluations
 		// populate different internal storage within the same GfType object, so
 		// they are tracked with separate generation/icase arrays.
-		std::vector<GfType> gf_f_cache, gf_s_cache;
+		std::vector<GfType> gf_f_cache;
+		std::vector<GfTypeS> gf_s_cache;
 		std::vector<int> gf_s_interior_gen, gf_f_interior_gen, gf_f_boundary_gen;
 		std::vector<int> gf_s_interior_icase, gf_f_interior_icase, gf_f_boundary_icase;
 		// Composite equivalent polynomials for elements cut by BOTH level sets. The product
@@ -107,7 +119,7 @@ namespace proteus
 			if ((int)gf_f_cache.size() == nElements_global)
 				return;
 			gf_f_cache.assign(nElements_global, GfType());
-			gf_s_cache.assign(nElements_global, GfType());
+			gf_s_cache.assign(nElements_global, GfTypeS());
 			fluxLiftAmp.assign(nElements_global, 0.0);
 			gf_s_interior_gen.assign(nElements_global, -1);
 			gf_f_interior_gen.assign(nElements_global, -1);
@@ -531,7 +543,7 @@ namespace proteus
 			// per-element cached equivalent-polynomial/IFEM reconstruction
 			// (see ensureIFEMCacheSized / ifemGeometryGeneration)
 			GfType &gf_f = gf_f_cache[eN];
-			GfType &gf_s = gf_s_cache[eN];
+			GfTypeS &gf_s = gf_s_cache[eN];
 			for (int i = 0; i < nDOF_test_element; i++)
 				elementResidual_u.data()[i] = 0.0;
 			// loop over quadrature points and compute integrands
@@ -1145,6 +1157,43 @@ namespace proteus
 			}
 		}
 
+		// Every cut-cell path below (the two-sided IFEM basis, the cut-face terms: Nitsche and ghost
+		// penalty, SCIFEM, the triply-cut edge correction, and the composite triply-cut fit) is written
+		// for triangles. assert() is compiled out (-DNDEBUG), so in 3D they would not stop, they would
+		// compute garbage. Refuse before any of it runs. The phase numbers are the C44 plan's.
+		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG, double ghost_penalty)
+		{
+			if (nSpace == 2)
+				return;
+			std::string what;
+			int phase = 0;
+			auto need = [&](const char *name, int ph)
+			{
+				if (!what.empty())
+					what += "; ";
+				what += name;
+				phase = std::max(phase, ph);
+			};
+			// C44 phase 1 so far: the Nitsche terms of an embedded boundary on P1 tetrahedra. The ghost
+			// penalty (cut faces as triangles) and P2 are still to come.
+			(void)ghost_penalty; // the P1 ghost penalty on triangular faces is implemented
+			if (embedded && pOrder != 1)
+				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
+			if (robin)
+				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
+			if (immersed)
+				need("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2);
+			if (scifem_switch != 0.0 || scifem_penalty != 0.0)
+				need("immersedSCIFEM (consistency terms on cut faces)", 2);
+			if (PG)
+				need("PG (Petrov-Galerkin test with the IFEM basis)", 2);
+			if (embedded && immersed)
+				need("embeddedBoundary together with immersedBoundary (triply-cut elements: composite fit, edge correction)", 3);
+			if (!what.empty())
+				throw std::runtime_error("ADR: not implemented in " + std::to_string(nSpace) +
+										 "D (the cut-cell machinery is 2D only): " + what + ". Planned for C44 phase " +
+										 std::to_string(phase) + ". Plain ADR (no embedded or immersed boundary) runs in 3D.");
+		}
 		void calculateResidual(arguments_dict &args)
 		{
 			proteus::pyarray<double> &mesh_trial_ref = args.array<double>("mesh_trial_ref");
@@ -1218,6 +1267,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -1535,7 +1585,7 @@ namespace proteus
 							return s;
 						};
 						double Fj = 0.0;
-						if (nDOF_trial_element == 3)
+						if (pOrder == 1)
 							Fj = jhFluxJump(0); // P1: the branch gradients are constant on the cell
 						else
 						{
@@ -1672,7 +1722,7 @@ namespace proteus
 				// to add back. Without this check TC_EDGE still fires there (icase_f==0 alone
 				// doesn't rule it out), injecting a real, nonzero correction from a "dead" element
 				// into whichever physical dofs it shares with genuinely active neighbors.
-				if (embeddedBoundary && immersedBoundary && (nDOF_trial_element == 3 || nDOF_trial_element == 6) && icase_f == 0
+				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
 					// P1 and P2. Integrated on the two Gamma_f-cut (root-adjacent) faces with the element-boundary
@@ -1781,7 +1831,7 @@ namespace proteus
 							for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 							{
 								double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-									bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[2];
+									bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
 								ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
 																	ebN_local_g * nQuadraturePoints_elementBoundary + kb,
 																	mesh_dof.data(), mesh_l2g.data(),
@@ -1841,7 +1891,7 @@ namespace proteus
 								   u_test_dS[nDOF_test_element],
 								   u_grad_trial_trace[nDOF_trial_element * nSpace],
 								   u_grad_test_dS[nDOF_trial_element * nSpace],
-								   normal[2], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
+								   normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
 								   G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty,
 								   force_x, force_y, force_z, force_p_x, force_p_y, force_p_z, force_v_x, force_v_y, force_v_z, r_x, r_y, r_z;
 							// compute information about mapping from reference element to physical element
@@ -2584,7 +2634,7 @@ namespace proteus
 			// per-element cached equivalent-polynomial/IFEM reconstruction
 			// (see ensureIFEMCacheSized / ifemGeometryGeneration)
 			GfType &gf_f = gf_f_cache[eN];
-			GfType &gf_s = gf_s_cache[eN];
+			GfTypeS &gf_s = gf_s_cache[eN];
 			for (int i = 0; i < nDOF_test_element; i++)
 				for (int j = 0; j < nDOF_trial_element; j++)
 				{
@@ -3112,6 +3162,7 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -3357,7 +3408,7 @@ namespace proteus
 				} // i
 				// Jacobian of the correction above: exact 3x3 block, linear in u_dof through
 				// the flux only. Same gate as the residual side, including the icase_s != -1 check.
-				if (embeddedBoundary && immersedBoundary && (nDOF_trial_element == 3 || nDOF_trial_element == 6) && icase_f == 0
+				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
 					// Same faces, quadrature and piece indicators as the residual side (P1 and P2).
@@ -3446,7 +3497,7 @@ namespace proteus
 						for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 						{
 							double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-								bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[2];
+								bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
 							ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
 																ebN_local_g * nQuadraturePoints_elementBoundary + kb,
 																mesh_dof.data(), mesh_l2g.data(),
@@ -3507,7 +3558,7 @@ namespace proteus
 							u_test_dS[nDOF_test_element],
 							u_grad_trial_trace[nDOF_trial_element * nSpace],
 							u_grad_test_dS[nDOF_trial_element * nSpace],
-							normal[2], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
+							normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
 							G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty;
 						// compute information about mapping from reference element to physical element
 						ck.calculateMapping_elementBoundary(eN,
@@ -4042,6 +4093,11 @@ namespace proteus
 		if (nSpaceIn == 2 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 3 && nDOF_trial_elementIn == 6 &&
 			nDOF_test_elementIn == 6 && nQuadraturePoints_elementIn == 16 && nQuadraturePoints_elementBoundaryIn == 8)
 			return static_cast<cADR_base *>(new cADR<CompKernel<2, 3, 6, 6>, 2, 16, 3, 6, 6, 8>());
+		// 3D P2 on tetrahedra with the degree-5 (15-point) rule: ADR-only for the same reason, the
+		// shared ModelFactory has no P2 tetrahedron entry (commented out there).
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
 		if (nSpaceIn == 2)
 			return proteus::chooseAndAllocateDiscretization2D<cADR_base, cADR, CompKernel>(nSpaceIn,
 																						   nQuadraturePoints_elementIn,
