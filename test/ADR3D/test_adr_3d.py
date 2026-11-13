@@ -187,7 +187,7 @@ P2_SPHERE_CURVED_H1 = [2.61823564524925854e-02, 6.60653974069556026e-03, 1.62571
 
 
 def test_p2_sphere_with_curved_cuts_converges_at_rate_three(tmp_path):
-    """M2. With this manufactured solution the curved and the planar cut give the same L2 error to about 1% up to
+    """M2 on the smooth manufactured solution (qOrder 7, fit degree 3): the curved and the planar cut give the same L2 error to about 1% up to
     nnx = 17 (the P2 interpolation error dominates; the cut geometry itself differs by 100x in volume and area, see
     test_cutquadric.py::test_g1...), so the pins are the curved option's own numbers, not a planar/curved gap."""
     runs = [_run("refinement={0} pOrder=2 qOrder=7 cut=\"sphere_curved\"".format(r), cwd=tmp_path) for r in range(3)]
@@ -229,6 +229,49 @@ def test_kernel_refuses_the_curved_option_on_p1(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="needs a P2 space"):
         ns = NumericalSolution.NS_base(so, [p], [n], so.sList, o)
         ns.calculateSolution("adr3d_cut")
+
+
+# --- B3: is the second-derivative ghost penalty needed at p = 2? Measured: no (2026-11-13) --------------------------
+def test_p2_small_cuts_are_stable_with_the_gradient_ghost_penalty(tmp_path):
+    """The plane n.x = d moved to delta*h from the mesh vertex (0.5, 0.5, 0.5) at nnx = 9 (h = 1/8). With the existing
+    gradient-jump ghost penalty (gamma 0.1) the L2 error stays within 20% of its mean for delta/h = 1e-1 .. 1e-6
+    (1.79e-5, 2.13e-5, 2.08e-5, 2.07e-5, 2.07e-5); without it there is a bump at 1e-2 (3.12e-5, Linfty 1.6e-3). So the
+    second-derivative jump that the design note listed as B3 is not implemented: nothing it would stabilise shows up."""
+    n = np.array([1.0, 0.6, 0.3]) / np.linalg.norm([1.0, 0.6, 0.3])
+    d0 = float(n @ np.array([0.5, 0.5, 0.5]))
+    l2 = []
+    for delta in (1e-1, 1e-3, 1e-6):
+        out = _run("refinement=2 pOrder=2 qOrder=7 cut=\"plane\" planeD={0!r}".format(d0 + delta * 0.125), cwd=tmp_path)
+        l2.append(out["L2"])
+        assert out["Linfty"] < 3.0e-4, out
+    assert max(l2) / min(l2) < 1.25, l2
+
+
+# --- B4: a case the cut geometry decides ----------------------------------------------------------------------
+# u = rho^2 - R^2 (R = 0.3) lies in P2 and is 0 on the sphere, so the constant datum is exact there and the error is
+# the geometry's. qOrder 8: fit degree 4 against the degree-4 Nitsche penalty (fit degree 3, qOrder 7, stalls: the
+# curved H1 error is flat from nnx = 9 to 17). nnx = 3, 5, 9, 17 measured 2026-11-13:
+#   planar  L2 8.40e-3, 5.16e-3, 1.32e-3, 3.76e-4 (rates 0.7, 2.0, 1.8)   H1 7.18e-2, 5.77e-2, 1.72e-2, 5.04e-3
+#   curved  L2 5.11e-3, 3.72e-4, 2.80e-5, 2.84e-6 (rates 3.8, 3.7, 3.3)   H1 4.24e-2, 5.98e-3, 1.03e-3, 2.37e-4
+RADIAL_PLANAR_L2 = [8.39525587366737706e-03, 5.15915318087624419e-03, 1.32497501040441360e-03]
+RADIAL_CURVED_L2 = [5.10754955436927907e-03, 3.71577949823461578e-04, 2.80345863262404174e-05]
+RADIAL_CURVED_H1 = [4.23660488093643706e-02, 5.98485858686872985e-03, 1.03108569034684951e-03]
+
+
+def test_p2_radial_case_curved_cuts_beat_planar_cuts(tmp_path):
+    """M2/M3: the curved option reaches L2 rate 3.5+ and H1 rate 2+; planar cuts stay at rate about 2."""
+    planar = [_run("refinement={0} pOrder=2 qOrder=8 exact=\"radial\" cut=\"embedded\"".format(r), cwd=tmp_path) for r in range(3)]
+    curved = [_run("refinement={0} pOrder=2 qOrder=8 exact=\"radial\" cut=\"sphere_curved\"".format(r), cwd=tmp_path) for r in range(3)]
+    pl2 = [r["L2"] for r in planar]
+    cl2 = [r["L2"] for r in curved]
+    ch1 = [r["H1"] for r in curved]
+    assert np.log2(pl2[1] / pl2[2]) < 2.1, pl2
+    assert all(np.log2(cl2[i] / cl2[i + 1]) >= 3.5 for i in range(2)), cl2
+    assert all(np.log2(ch1[i] / ch1[i + 1]) >= 2.4 for i in range(2)), ch1
+    assert cl2[2] < pl2[2] / 40.0
+    np.testing.assert_allclose(pl2, RADIAL_PLANAR_L2, rtol=1e-5)
+    np.testing.assert_allclose(cl2, RADIAL_CURVED_L2, rtol=1e-5)
+    np.testing.assert_allclose(ch1, RADIAL_CURVED_H1, rtol=1e-5)
 
 
 def test_p2_robin_still_stops_in_3d(tmp_path, monkeypatch):
