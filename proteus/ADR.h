@@ -216,9 +216,39 @@ namespace proteus
 			return tmp;
 		}
 
+		// Strong diffusion residual -div(a grad u) at a point: a_IJ u_IJ + (d_I a_IJ) u_J,
+		// with the sparse tensor a (sd_rowptr/sd_colind) and a_div[J] = sum_I d_I a_IJ.
+		inline double diffusionStrong(const int *rowptr, const int *colind, const double *a, const double *a_div,
+									  const double *hess, const double *grad)
+		{
+			double tmp = 0.0;
+			for (int I = 0; I < nSpace; I++)
+			{
+				for (int m = rowptr[I]; m < rowptr[I + 1]; m++)
+					tmp += a[m] * hess[I * nSpace + colind[m]];
+				tmp += a_div[I] * grad[I];
+			}
+			return -tmp;
+		}
+
+		// inverse-estimate constant of the diffusive time scale tau^-1 = 2|b|/h + c a/h^2 + 1/dt (Codina; measured
+		// on P1 and P2: c = 4 and 16 give the same rates, test/ADR_SGS)
+		static constexpr double sgeDiffusiveConstant = 4.0;
+		// largest diagonal entry of the diffusion tensor: the scale of its stabilization time
+		inline double diffusionScale(const int *rowptr, const int *colind, const double *a)
+		{
+			double amax = 0.0;
+			for (int I = 0; I < nSpace; I++)
+				for (int m = rowptr[I]; m < rowptr[I + 1]; m++)
+					if (colind[m] == I)
+						amax = std::max(amax, std::fabs(a[m]));
+			return amax;
+		}
+
 		inline void calculateSubgridError_tau(const double &elementDiameter,
 											  const double &dmt,
 											  const double dH[nSpace],
+											  const double &diffusiveScale, // c_inv * |a|: 0 turns the diffusive time scale off
 											  double &cfl,
 											  double &tau)
 		{
@@ -232,7 +262,7 @@ namespace proteus
 			nrm_v = sqrt(nrm_v);
 			cfl = nrm_v / h;
 			oneByAbsdt = fabs(dmt);
-			tau = 1.0 / (2.0 * nrm_v / h + oneByAbsdt + 1.0e-8);
+			tau = 1.0 / (2.0 * nrm_v / h + diffusiveScale / (h * h) + oneByAbsdt + 1.0e-8);
 		}
 
 		inline void calculateSubgridError_tau(const double &Ct_sge,
@@ -464,6 +494,9 @@ namespace proteus
 											 double sc_uref,
 											 double sc_alpha,
 											 double useMetrics,
+											 double sgeDiffusion,
+											 proteus::pyarray<double> &u_hess_trial_ref,
+											 proteus::pyarray<double> &q_a_div,
 											 // element boundary
 											 proteus::pyarray<double> &mesh_trial_trace_ref,
 											 proteus::pyarray<double> &mesh_grad_trial_trace_ref,
@@ -603,6 +636,8 @@ namespace proteus
 				double jacDet;
 				double jacInv[nSpace * nSpace];
 				double u_grad_trial[nDOF_trial_element * nSpace];
+				double u_hess_trial[nDOF_trial_element * nSpace * nSpace];
+				double hess_u[nSpace * nSpace];
 				double u_test_dV[nDOF_trial_element];
 				double u_grad_test_dV[nDOF_test_element * nSpace];
 				double ua_grad_trial[nDOF_trial_element * nSpace];
@@ -649,6 +684,13 @@ namespace proteus
 				ck.valFromElementDOF(element_u.data(), &u_trial_ref.data()[k * nDOF_trial_element], u);
 				// get the solution gradients
 				ck.gradFromElementDOF(element_u.data(), u_grad_trial, grad_u);
+				ck.hessTrialFromRef(&u_hess_trial_ref.data()[k * nDOF_trial_element * nSpace * nSpace], jacInv, u_hess_trial);
+				for (int IJ = 0; IJ < nSpace * nSpace; IJ++)
+				{
+					hess_u[IJ] = 0.0;
+					for (int j = 0; j < nDOF_trial_element; j++)
+						hess_u[IJ] += element_u.data()[j] * u_hess_trial[j * nSpace * nSpace + IJ];
+				}
 				// precalculate test function products with integration weights
 				for (int j = 0; j < nDOF_trial_element; j++)
 				{
@@ -957,7 +999,8 @@ namespace proteus
 				// calculate subgrid error (strong residual and adjoint)
 				//
 				// calculate strong residual
-				pdeResidual_u = ck.Advection_strong(df, grad_u) + ck.Reaction_strong(r); // ck.Mass_strong(m_t) + ck.Advection_strong(df,grad_u) + ck.Reaction_strong(r);
+				pdeResidual_u = ck.Advection_strong(df, grad_u) + ck.Reaction_strong(r) +
+								 sgeDiffusion * diffusionStrong(sd_rowptr.data(), sd_colind.data(), a, &q_a_div.data()[eN_k * nSpace], hess_u, grad_u); // ck.Mass_strong(m_t) + ck.Advection_strong(df,grad_u) + ck.Reaction_strong(r);
 				// calculate adjoint
 				for (int i = 0; i < nDOF_test_element; i++)
 				{
@@ -967,7 +1010,8 @@ namespace proteus
 					Lstar_u[i] = ck.Advection_adjoint(df, &u_grad_test_dV[i_nSpace]);
 				}
 				// calculate tau and tau*Res
-				calculateSubgridError_tau(elementDiameter.data()[eN], dm_t, df, cfl.data()[eN_k], tau0);
+				calculateSubgridError_tau(elementDiameter.data()[eN], dm_t, df,
+										  sgeDiffusion * sgeDiffusiveConstant * diffusionScale(sd_rowptr.data(), sd_colind.data(), a), cfl.data()[eN_k], tau0);
 				calculateSubgridError_tau(Ct_sge,
 										  G,
 										  dm_t,
@@ -1211,6 +1255,9 @@ namespace proteus
 			double sc_uref = args.scalar<double>("sc_uref");
 			double sc_alpha = args.scalar<double>("sc_alpha");
 			double useMetrics = args.scalar<double>("useMetrics");
+			double sgeDiffusion = args.scalar<double>("sgeDiffusion");
+			proteus::pyarray<double> &u_hess_trial_ref = args.array<double>("u_hess_trial_ref");
+			proteus::pyarray<double> &q_a_div = args.array<double>("q_a_div");
 			proteus::pyarray<double> &mesh_trial_trace_ref = args.array<double>("mesh_trial_trace_ref");
 			proteus::pyarray<double> &mesh_grad_trial_trace_ref = args.array<double>("mesh_grad_trial_trace_ref");
 			proteus::pyarray<double> &dS_ref = args.array<double>("dS_ref");
@@ -1626,6 +1673,9 @@ namespace proteus
 										 sc_uref,
 										 sc_alpha,
 										 useMetrics,
+										 sgeDiffusion,
+										 u_hess_trial_ref,
+										 q_a_div,
 										 mesh_trial_trace_ref,
 										 mesh_grad_trial_trace_ref,
 										 dS_ref,
@@ -2575,6 +2625,9 @@ namespace proteus
 											 double sc_uref,
 											 double sc_alpha,
 											 double useMetrics,
+											 double sgeDiffusion,
+											 proteus::pyarray<double> &u_hess_trial_ref,
+											 proteus::pyarray<double> &q_a_div,
 											 // element boundary
 											 proteus::pyarray<double> &mesh_trial_trace_ref,
 											 proteus::pyarray<double> &mesh_grad_trial_trace_ref,
@@ -2676,6 +2729,7 @@ namespace proteus
 					   jacDet,
 					   jacInv[nSpace * nSpace],
 					   u_grad_trial[nDOF_trial_element * nSpace],
+					   u_hess_trial[nDOF_trial_element * nSpace * nSpace],
 					   ua_grad_trial[nDOF_trial_element * nSpace],
 					   ub_grad_trial[nDOF_trial_element * nSpace],
 					   dV,
@@ -2718,6 +2772,7 @@ namespace proteus
 				ck.valFromElementDOF(element_u.data(), &u_trial_ref.data()[k * nDOF_trial_element], u);
 				// get the solution gradients
 				ck.gradFromElementDOF(element_u.data(), u_grad_trial, grad_u);
+				ck.hessTrialFromRef(&u_hess_trial_ref.data()[k * nDOF_trial_element * nSpace * nSpace], jacInv, u_hess_trial);
 				// precalculate test function products with integration weights
 				for (int j = 0; j < nDOF_trial_element; j++)
 				{
@@ -2985,12 +3040,14 @@ namespace proteus
 					// int eN_k_j_nSpace = eN_k_j*nSpace;
 					int j_nSpace = j * nSpace;
 					dpdeResidual_u_u[j] = ck.MassJacobian_strong(dm_t, u_trial_ref.data()[k * nDOF_trial_element + j]) +
-										  ck.AdvectionJacobian_strong(df, &u_grad_trial[j_nSpace]);
+										  ck.AdvectionJacobian_strong(df, &u_grad_trial[j_nSpace]) +
+										  sgeDiffusion * diffusionStrong(sd_rowptr.data(), sd_colind.data(), a, &q_a_div.data()[eN_k * nSpace], &u_hess_trial[j * nSpace * nSpace], &u_grad_trial[j_nSpace]);
 				}
 				// tau and tau*Res
 				calculateSubgridError_tau(elementDiameter.data()[eN],
 										  dm_t,
 										  df,
+										  sgeDiffusion * sgeDiffusiveConstant * diffusionScale(sd_rowptr.data(), sd_colind.data(), a),
 										  cfl.data()[eN_k],
 										  tau0);
 
@@ -3105,6 +3162,9 @@ namespace proteus
 			double sc_uref = args.scalar<double>("sc_uref");
 			double sc_alpha = args.scalar<double>("sc_alpha");
 			double useMetrics = args.scalar<double>("useMetrics");
+			double sgeDiffusion = args.scalar<double>("sgeDiffusion");
+			proteus::pyarray<double> &u_hess_trial_ref = args.array<double>("u_hess_trial_ref");
+			proteus::pyarray<double> &q_a_div = args.array<double>("q_a_div");
 			proteus::pyarray<double> &mesh_trial_trace_ref = args.array<double>("mesh_trial_trace_ref");
 			proteus::pyarray<double> &mesh_grad_trial_trace_ref = args.array<double>("mesh_grad_trial_trace_ref");
 			proteus::pyarray<double> &dS_ref = args.array<double>("dS_ref");
@@ -3341,6 +3401,9 @@ namespace proteus
 										 sc_uref,
 										 sc_alpha,
 										 useMetrics,
+										 sgeDiffusion,
+										 u_hess_trial_ref,
+										 q_a_div,
 										 mesh_trial_trace_ref,
 										 mesh_grad_trial_trace_ref,
 										 dS_ref,

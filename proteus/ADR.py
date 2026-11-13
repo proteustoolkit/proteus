@@ -239,7 +239,7 @@ class Coefficients(TC_base):
         ``uOfX_inner`` and ``uOfX_outer`` if the object has them. If it also provides the exact
         gradient (``duOfX_inner`` and ``duOfX_outer``, or ``duOfX``), the broken :math:`H^1`
         seminorm and the :math:`H^1` error are logged too.
-    l2proj, timeVaryingCoefficients, forceStrongDirichlet, useMetrics, sc_uref, sc_beta
+    l2proj, timeVaryingCoefficients, forceStrongDirichlet, useMetrics, sge_diffusion, sc_uref, sc_beta
         Options of the standard ADR model, unrelated to the interfaces.
     test : float
         Not used.
@@ -251,6 +251,7 @@ class Coefficients(TC_base):
                  timeVaryingCoefficients=False,
                  forceStrongDirichlet=False,
                  useMetrics=0.0,
+                 sge_diffusion=1.0,
                  sc_uref=1.0,
                  sc_beta=1.0,
                  mua=1.0,
@@ -374,6 +375,7 @@ class Coefficients(TC_base):
             assert(self.immersedBoundary_sdf is not None)
             assert(self.immersedBoundary_u is not None)
         self.useMetrics = useMetrics
+        self.sge_diffusion = float(sge_diffusion)
         self.forceStrongDirichlet=forceStrongDirichlet
         self.aOfX = aOfX
         self.fOfX = fOfX
@@ -468,6 +470,22 @@ class Coefficients(TC_base):
                     n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
                     J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
                 self.immersedBoundary_fluxJump_element[eN] = J
+    def _diffusionDivergence(self, aOfX, x, out):
+        """out[..., J] = sum_I d(a_IJ)/dx_I by central differences of aOfX: the diffusion term of the
+        strong residual of the subgrid error, -div(a grad u) = -(a_IJ u_IJ + out_J u_J)."""
+        rowptr, colind = self.sdInfo[(0,0)]
+        colind = np.ravel(colind)
+        a_plus = np.zeros(x.shape[:-1] + (rowptr[-1],), 'd')
+        a_minus = np.zeros_like(a_plus)
+        out[...] = 0.0
+        for I in range(self.nd):
+            h = 1.0e-6*max(1.0, float(np.max(np.abs(x[..., I]))))
+            xp = x.copy(); xp[..., I] += h
+            xm = x.copy(); xm[..., I] -= h
+            evaluateAtPoints(aOfX, xp, a_plus)
+            evaluateAtPoints(aOfX, xm, a_minus)
+            for m in range(rowptr[I], rowptr[I+1]):
+                out[..., colind[m]] += (a_plus[..., m] - a_minus[..., m])/(2.0*h)
     def initializeElementQuadrature(self,t,cq):
         nd = self.nd
         for ci in range(self.nc):
@@ -478,6 +496,7 @@ class Coefficients(TC_base):
                     cq[('df',ci,ci)].flat[:] = 0.0
             evaluateAtPoints(self.fOfX[ci], cq['x'], cq[('r',ci)], -1.0)
             evaluateAtPoints(self.aOfX[ci], cq['x'], cq[('a',ci,ci)])
+            self._diffusionDivergence(self.aOfX[ci], cq['x'], cq['a_div'])
         cq['embeddedBoundary_sdf'] = 100*np.ones_like(cq[('u',0)])
         cq['embeddedBoundary_normal'] = np.ones_like(cq['x'])
         cq['embeddedBoundary_u'] = np.ones_like(cq[('u',0)])
@@ -881,6 +900,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.q[('u',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element),'d')
         self.q[('grad(u)',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
         self.q[('a',0,0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.coefficients.sdInfo[(0,0)][0][-1]),'d')
+        self.q['a_div'] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
         self.q[('df',0,0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element,self.nSpace_global),'d')
         self.q[('r',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element),'d')
         self.q[('cfl',0)] = np.zeros((self.mesh.nElements_global,self.nQuadraturePoints_element),'d')
@@ -1051,6 +1071,17 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             d[self._mesh_l2g()] = self.mesh.nodeDiametersArray[self.mesh.elementNodesArray]
             self._nodeDiameters_vertices = d
         return self._nodeDiameters_vertices
+    def _u_hess_trial_ref(self):
+        """Reference-element Hessians of the trial basis at the element quadrature points,
+        shape (nQ, nDOF, nd, nd); the subgrid error's strong residual needs them for P2 and up."""
+        if not hasattr(self, '_hess_psi'):
+            lfs = self.u[0].femSpace.referenceFiniteElement.localFunctionSpace
+            nd = self.nSpace_global
+            self._hess_psi = np.zeros(self.u[0].femSpace.psi.shape + (nd, nd), 'd')
+            for k in range(self._hess_psi.shape[0]):
+                for j in range(self._hess_psi.shape[1]):
+                    self._hess_psi[k, j] = np.asarray(lfs.basisHessians[j](self.elementQuadraturePoints[k]))[:nd, :nd]
+        return self._hess_psi
     def getResidual(self,u,r):
         import pdb
         import copy
@@ -1088,6 +1119,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["sc_uref"] = self.coefficients.sc_uref
         argsDict["sc_alpha"] = self.coefficients.sc_beta
         argsDict["useMetrics"] = self.coefficients.useMetrics
+        argsDict["sgeDiffusion"] = self.coefficients.sge_diffusion
+        argsDict["u_hess_trial_ref"] = self._u_hess_trial_ref()
+        argsDict["q_a_div"] = self.q['a_div']
         argsDict["mesh_trial_trace_ref"] = self.u[0].femSpace.elementMaps.psi_trace
         argsDict["mesh_grad_trial_trace_ref"] = self.u[0].femSpace.elementMaps.grad_psi_trace
         argsDict["dS_ref"] = self.elementBoundaryQuadratureWeights[('u',0)]
@@ -1228,6 +1262,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["sc_uref"] = self.coefficients.sc_uref
         argsDict["sc_alpha"] = self.coefficients.sc_beta
         argsDict["useMetrics"] = self.coefficients.useMetrics
+        argsDict["sgeDiffusion"] = self.coefficients.sge_diffusion
+        argsDict["u_hess_trial_ref"] = self._u_hess_trial_ref()
+        argsDict["q_a_div"] = self.q['a_div']
         argsDict["mesh_trial_trace_ref"] = self.u[0].femSpace.elementMaps.psi_trace
         argsDict["mesh_grad_trial_trace_ref"] = self.u[0].femSpace.elementMaps.grad_psi_trace
         argsDict["dS_ref"] = self.elementBoundaryQuadratureWeights[('u',0)]
