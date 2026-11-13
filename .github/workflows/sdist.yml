@@ -13,7 +13,6 @@ on:
   push:
     branches: [main, 1.9.x]
   pull_request:
-  # The macOS Intel legs do not run on pull requests (see matrix.exclude below); a manual run has them.
   workflow_dispatch:
 
 # Why: the standard macOS runners are the bottleneck. Measured over the last ~80 runs, Linux jobs start at once
@@ -32,14 +31,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS Intel is the slowest leg (89 min, 54 with the FSI tests) and the scarcest runner. It failed alone, with
-        # Apple Silicon passing, in 3 of 118 comparable job pairs (Apple Silicon failed alone in 3 as well), so a break
-        # that only Intel sees now shows up after the merge instead of before it: the legs run on every push to main
-        # (and on a manual run), not on pull requests. They are excluded here, not with a job-level `if`, because the
-        # matrix context is not available in one.
-        # TODO: drop the macOS Intel legs altogether after the 1.9.1 release (cekees, 2026-10-28); the platform is kept
-        # until then because 1.9.1 is meant to build on it (the 1.9.x line still runs it on pull requests).
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"leg":{"os":"macos-15-intel"}}]' || '[]') }}
         # Each leg runs twice: the suite without the two FSI IBM tests
         # (suite: main), and those two tests alone (suite: fsi). Each of the
         # two is a full 1 s simulation, 200 steps in serial; serially on these
@@ -61,7 +52,7 @@ jobs:
           # there, so the >=4.2.1 floor in the environment files is what makes
           # the openmpi file solvable on Apple Silicon.
           #
-          # Runner labels: use macos-15-intel for x86_64 and macos-15 for arm64.
+          # Runner labels: use macos-15 for arm64.
           # macos-13 is retired and macos-14 is deprecated; a job whose runs-on
           # label no runner satisfies does not fail fast -- it sits queued until
           # GitHub's 24h ceiling kills it, and because one queued job keeps the
@@ -89,16 +80,6 @@ jobs:
             os: ubuntu-latest
             python: "3.13.15"
             env_file: environment-openmpi-dev.yml
-          - name: macos-15 (Intel) / py3.12
-            os: macos-15-intel
-            python: "3.12.5"
-            env_file: environment-openmpi-dev.yml
-            # This runner is shared and slow: a suite that takes 15 min on
-            # Linux has taken 2 h 15 min here, and the tests' subprocess
-            # timeouts (sized for a workstation) then report hangs that were
-            # not. A fixed scale, since the load average on a shared VM says
-            # little about the slice this job gets.
-            timeout_scale: "3"
           # These two ran without PUMI/Chrono while conda-forge lacked the binaries
           # and while pychrono crashed on osx-arm64. Both reasons are gone: scorec
           # 4.2.1 and pychrono 10.0.0 are published for linux-64, osx-64,
