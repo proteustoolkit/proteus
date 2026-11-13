@@ -164,6 +164,13 @@ class Coefficients(TC_base):
     embeddedBoundary_penalty : float
         Nitsche parameter :math:`\gamma_N`; the penalty term is scaled by :math:`\mu/h`. The paper
         uses :math:`10p^2`.
+    embeddedBoundary_curved : bool
+        Use the P2 level set as it is (a quadric on each tetrahedron) for the cut of the embedded solid, not the
+        plane through the vertex values (C44 phase 1b). The Heaviside, the Dirac and the three normal-weighted
+        Diracs of the cut come from the exact moments of the quadric (cutquadric.h), the elements are
+        classified by the exact range of the quadric (so a cap through a face, an edge cut twice and a closed
+        component are integrated, and counted in the log), and the Nitsche flux terms use the normal-weighted
+        Dirac. Default off: the planar cut, as before. 3D P2 with ``embeddedBoundary`` alone.
     embeddedBoundary_ghost_penalty : float
         Ghost-penalty parameter :math:`\gamma_g`. The paper uses 0.15. In parallel, the ghost
         penalty and the SCIFEM edge terms need two layers of mesh overlap.
@@ -260,6 +267,7 @@ class Coefficients(TC_base):
                  embeddedBoundary=False,
                  embeddedBoundary_penalty=100.0,
                  embeddedBoundary_ghost_penalty=0.1,
+                 embeddedBoundary_curved=False,
                  embeddedBoundary_sdf=None,
                  embeddedBoundary_u=None,
                  embeddedBoundary_u_inner=None,
@@ -290,6 +298,7 @@ class Coefficients(TC_base):
         self.embeddedBoundary=embeddedBoundary
         self.embeddedBoundary_penalty=embeddedBoundary_penalty
         self.embeddedBoundary_ghost_penalty=embeddedBoundary_ghost_penalty
+        self.embeddedBoundary_curved=embeddedBoundary_curved
         self.embeddedBoundary_sdf=embeddedBoundary_sdf
         self.embeddedBoundary_u=embeddedBoundary_u
         # Per-phase weak-Dirichlet targets on the solid surface. On a triply-cut element the
@@ -655,11 +664,21 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
     (ADR.h, requireSupportedDimension); this one fails at setup with the same message. The phase numbers
     are the C44 plan's (PROTEUS_CAMPAIGN_ROSTER.md).
     """
+    if getattr(c, 'embeddedBoundary_curved', False):
+        if not c.embeddedBoundary:
+            raise NotImplementedError("ADR: embeddedBoundary_curved needs embeddedBoundary")
+        if nSpace != 3:
+            raise NotImplementedError("ADR: embeddedBoundary_curved is implemented on tetrahedra only (curved cuts in 2D "
+                                      "are not part of C44 phase 1b)")
+        if pOrder != 2:
+            raise NotImplementedError("ADR: embeddedBoundary_curved needs a P2 space (the level set is the P2 "
+                                      "interpolant; P1 cuts are planar)")
+        if c.immersedBoundary or c.embeddedBoundary_robin:
+            raise NotImplementedError("ADR: embeddedBoundary_curved is implemented for the embedded solid alone (not "
+                                      "with immersedBoundary or embeddedBoundary_robin)")
     if nSpace == 2:
         return
     needs = []
-    if c.embeddedBoundary and pOrder != 1:
-        needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
     if c.immersedBoundary and pOrder != 1:
@@ -746,6 +765,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
         ## Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh #assume the same mesh for  all components for now
+        # class of the solid cut in each element (cutquadric.CutLabel), written by the kernel when
+        # embeddedBoundary_curved is on; counted in the log whenever the geometry is recomputed
+        self.embeddedBoundary_cut_label = np.zeros((self.mesh.nElements_global,), 'i')
         self.testSpace = testSpaceDict
         self.dirichletConditions = dofBoundaryConditionsDict
         self.dirichletNodeSetList=None #explicit Dirichlet  conditions for now, no Dirichlet BC constraints
@@ -1190,6 +1212,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary"] = self.coefficients.embeddedBoundary
         argsDict["embeddedBoundary_penalty"] = self.coefficients.embeddedBoundary_penalty
         argsDict["embeddedBoundary_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
+        argsDict["embeddedBoundary_curved"] = int(bool(self.coefficients.embeddedBoundary_curved))
+        argsDict["embeddedBoundary_cut_label"] = self.embeddedBoundary_cut_label
         argsDict["embedded_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
         argsDict["embeddedBoundary_sdf_nodes"] = self.coefficients.embeddedBoundary_sdf_nodes
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']
@@ -1232,6 +1256,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["q_grad_u_exact_inner"] = self.q[('grad_u_exact_inner',0)]
         argsDict["q_grad_u_exact_outer"] = self.q[('grad_u_exact_outer',0)]
         argsDict["recomputeIFEMGeometry"] = int(self.recompute_ifem_geometry)
+        _geometryRecomputed = self.recompute_ifem_geometry
         self.recompute_ifem_geometry = False
         self.L2_error = np.array((0.0,),'d')
         argsDict["L2_error"] = self.L2_error
@@ -1243,6 +1268,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 self.u[0].dof[dofN] = g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
         self.adr.calculateResidual(argsDict)
+        if _geometryRecomputed and self.coefficients.embeddedBoundary_curved:
+            self._logCutLabels()
         self.L2_error[0] = globalSum(self.L2_error[0])
         self.Linfty_error[0] = globalMax(self.Linfty_error[0])
         self.H1_error[0] = globalSum(self.H1_error[0])
@@ -1261,6 +1288,16 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         log("Global residual",level=9,data=r)
         #log("   Mass Conservation Error",level=3,data=self.coefficients.massConservationError)
         self.nonlinear_function_evaluations += 1
+    def _logCutLabels(self):
+        """Count the elements by the class of the solid cut (C44 phase 1b, decision P1: the elements the vertex
+        signs do not see as cut are integrated, and counted here)."""
+        names = ("uncut (fluid)", "uncut (solid)", "simple cut", "edge cut twice", "sub-nodal")
+        owned = self.embeddedBoundary_cut_label[:self.mesh.nElements_owned]
+        counts = [int(globalSum(float(np.count_nonzero(owned == i)))) for i in range(len(names))]
+        log("ADR embeddedBoundary_curved: elements by the class of the solid cut: " +
+            ", ".join("{0} {1}".format(n, c) for n, c in zip(names, counts)), level=1)
+        self.cut_label_counts = dict(zip(names, counts))
+
     def getJacobian(self,jacobian):
         #import superluWrappers
         #import numpy
@@ -1333,6 +1370,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary"] = self.coefficients.embeddedBoundary
         argsDict["embeddedBoundary_penalty"] = self.coefficients.embeddedBoundary_penalty
         argsDict["embeddedBoundary_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
+        argsDict["embeddedBoundary_curved"] = int(bool(self.coefficients.embeddedBoundary_curved))
+        argsDict["embeddedBoundary_cut_label"] = self.embeddedBoundary_cut_label
         argsDict["embedded_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
         argsDict["embeddedBoundary_sdf_nodes"] = self.coefficients.embeddedBoundary_sdf_nodes
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']

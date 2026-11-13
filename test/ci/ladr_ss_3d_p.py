@@ -25,6 +25,7 @@ opts = Context.Options([
     ("cut", "none", "ask for a cut-cell feature, which must stop with a clear error in 3D (C44 phase 0): "
         "none, embedded, robin, immersed, scifem, pg or both; plane is a supported embedded boundary: "
         "plane / plane_nogp are a planar solid boundary (Nitsche, with / without the ghost penalty); "
+        "plane_curved / sphere_curved use the P2 level set as a quadric (embeddedBoundary_curved, P2 only, C44 phase 1b); "
         "ifem_plane (manufactured two-material solution across a plane), ifem_pwl (piecewise linear: in the "
         "IFE space, so P1 reproduces it) and ifem_sphere (radial, curved interface) use the two-sided P1 "
         "IFEM basis, immersedBoundary alone (C44 phase 2); scifem, pg and both still stop"),
@@ -34,6 +35,8 @@ opts = Context.Options([
     ("scifemPenalty", 0.0, "immersedSCIFEM_penalty (interior penalty gamma, scaled by 1/h) of an ifem_* case"),
     ("fluxJump", 0.0, "prescribed flux jump [mu du/dn] (phi_f < 0 to phi_f > 0) of ifem_plane"),
     ("solJump", 0.0, "prescribed solution jump [u] = u(phi_f > 0 side) - u(phi_f < 0 side) of ifem_plane"),
+    ("planeD", 0.37, "offset d of the plane n.x = d of the plane* cases (a small-cut stress moves it to within a hair of a vertex)"),
+    ("sphereR", 0.3, "radius of the embedded sphere of the embedded / sphere_curved cases"),
     ("exact", "smooth", "manufactured solution: 'smooth' (sin*cos*exp) or 'quadratic' (in P2's space, so P2 must reproduce it)"),
 ])
 
@@ -50,9 +53,9 @@ kx, ky, kz, cx = 1.3, 0.7, 0.5, 0.4
 # which a P2 space reproduces exactly. The two are not combined: ADR's subgrid-error term uses the
 # strong residual b.grad(u) - f without the diffusion term, so with b != 0 and a variable a (or any
 # non-polynomial u) it is inconsistent and the rates drop to ~1 (measured, same in any dimension).
-if opts.exact == "smooth":
+if opts.exact in ("smooth", "radial"):
     bvec = numpy.zeros(3)
-    ACOEF, A0 = 0.3, 1.0
+    ACOEF, A0 = (0.3, 1.0) if opts.exact == "smooth" else (0.0, 1.0)
 else:
     bvec = numpy.array([0.5, -0.3, 0.2])
     ACOEF, A0 = 0.0, 1.5
@@ -72,8 +75,17 @@ class QuadAns(AnalyticalSolutions.SteadyState):
     def duOfX(self, x):
         return numpy.array([2.0*x[0] + x[1], 4.0*x[1] + x[0], -2.0*x[2] + 0.5])
 
-ans = Ans() if opts.exact == "smooth" else QuadAns()
-lapOfU = (lambda x: -kx**2 - ky**2 + kz**2) if opts.exact == "smooth" else (lambda x: 2.0 + 4.0 - 2.0)
+class RadialAns(AnalyticalSolutions.SteadyState):
+    """u = rho^2 - R^2 (rho from the cube centre): in the P2 space, and 0 on the sphere of radius R, so a
+    constant Dirichlet datum there is exact and the error of a cut solid measures its geometry."""
+    def uOfX(self, x):
+        return (x[0]-0.5)**2 + (x[1]-0.5)**2 + (x[2]-0.5)**2 - opts.sphereR**2
+    def duOfX(self, x):
+        return numpy.array([2.0*(x[0]-0.5), 2.0*(x[1]-0.5), 2.0*(x[2]-0.5)])
+
+ans = {"smooth": Ans, "quadratic": QuadAns, "radial": RadialAns}[opts.exact]()
+lapOfU = {"smooth": (lambda x: -kx**2 - ky**2 + kz**2), "quadratic": (lambda x: 2.0 + 4.0 - 2.0),
+          "radial": (lambda x: 6.0)}[opts.exact]
 
 def a(x):
     return (A0 + ACOEF*x[0])*numpy.eye(3)
@@ -93,17 +105,17 @@ initialConditions = None
 def sphere_sdf(x, t):
     d = math.sqrt((x[0]-0.5)**2 + (x[1]-0.5)**2 + (x[2]-0.5)**2)
     n = ((x[0]-0.5)/d, (x[1]-0.5)/d, (x[2]-0.5)/d) if d > 0.0 else (0.0, 0.0, 1.0)
-    return d - 0.3, n
+    return d - opts.sphereR, n
 
 def interface_u(x, t):
-    return ans.uOfX(x)
+    return 0.0 if opts.exact == "radial" else ans.uOfX(x)
 
 _pn = numpy.array([1.0, 0.6, 0.3])
 _pn /= numpy.linalg.norm(_pn)
 
 def plane_sdf(x, t):
     """Signed distance to the plane n.x = 0.37, positive on the fluid side (the solid is n.x < 0.37)."""
-    return float(numpy.dot(_pn, x[:3])) - 0.37, tuple(_pn)
+    return float(numpy.dot(_pn, x[:3])) - opts.planeD, tuple(_pn)
 
 # --- two-material cases for the immersed (IFEM) interface, C44 phase 2 -------------------------------------
 # phi_f < 0 is mua, phi_f > 0 is mub; u is continuous and mu du/dn is continuous across Gamma_f.
@@ -207,6 +219,8 @@ if opts.cut in _ifem:
 cutOptions = {"none": {},
               "plane": dict(embeddedBoundary=True),
               "plane_nogp": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
+              "plane_curved": dict(embeddedBoundary=True, embeddedBoundary_curved=True),
+              "sphere_curved": dict(embeddedBoundary=True, embeddedBoundary_curved=True),
               "embedded": dict(embeddedBoundary=True),
               "robin": dict(embeddedBoundary=True, embeddedBoundary_robin=True),
               "immersed": dict(immersedBoundary=True),
@@ -218,7 +232,7 @@ cutOptions = {"none": {},
                                  immersedBoundary_solutionJump=(lambda x, t: opts.solJump) if opts.solJump != 0.0 else None),
               "ifem_pwl": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0),
               "ifem_sphere": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0)}[opts.cut]
-if opts.cut in ("plane", "plane_nogp"):
+if opts.cut in ("plane", "plane_nogp", "plane_curved"):
     cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
 elif opts.cut in _ifem:
     cutOptions.update(immersedBoundary_sdf=_ifem[opts.cut][1], immersedBoundary_u=interface_u,

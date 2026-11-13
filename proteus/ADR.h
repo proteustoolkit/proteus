@@ -14,6 +14,7 @@
 #include "CompKernel.h"
 #include "ModelFactory.h"
 #include "equivalent_polynomials.h"
+#include "cutquadric.h"
 #include "mprans/ArgumentsDict.h"
 #include "pyarray.h"
 
@@ -60,7 +61,11 @@ namespace proteus
 		// (simplex Lagrange: P1 has nSpace+1 dofs, P2 has (nSpace+1)(nSpace+2)/2). Not a triangle
 		// test: a 3D P1 tetrahedron has 4 dofs and a P2 one has 10.
 		static const int pOrder = (nDOF_trial_element == nSpace + 1) ? 1 : ((nDOF_trial_element == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
-		static const int nP_fit = (pOrder == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
+		// 2D P2: k=4 with the 16-point (degree-8) triangle rule. 3D P2: k=3 with the degree-7 rule (31 points,
+		// qOrder 7, the default, decision P9 of C44 phase 1b), or k=4 with the degree-8 rule (45 points, qOrder 8;
+		// both tetrahedron rules have some negative weights). The degree-4 Nitsche penalty is exact against k=3
+		// only through degree 3; with the curved cut k=4 is what reaches L2 rate 3 and H1 rate 2 (measured, B4).
+		static const int nP_fit = (pOrder == 2 && (nSpace == 2 ? nQuadraturePoints_element >= 16 : nQuadraturePoints_element >= 45)) ? 4 : 3;
 		using GfType = GeneralizedFunctions<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary>;
 		// The solid level set only needs the H/D moment fits, never the two-sided IFEM basis. In 2D it
 		// shares GfType (kept bit-for-bit). In 3D the basis solve is 2D-only, so the solid uses the
@@ -86,6 +91,11 @@ namespace proteus
 		equivalent_polynomials::Simplex<2, 3, nP_edge, nQuadraturePoints_elementBoundary, 1, false> face_gf;
 		std::vector<GfType> gf_f_cache;
 		std::vector<GfTypeS> gf_s_cache;
+		// C44 phase 1b: the curved solid (embeddedBoundary_curved) on P2 tetrahedra. Per element, filled with the
+		// same generation counters as gf_s_cache: the classification from the exact range test of the P2 level
+		// set, and on a cut element the moment fits of H, D and the three normal-weighted Diracs (cutquadric.h).
+		std::vector<cutquadric::SolidFit> cf_s_cache;
+		bool curvedSolid = false;
 		std::vector<int> gf_s_interior_gen, gf_f_interior_gen, gf_f_boundary_gen;
 		std::vector<int> gf_s_interior_icase, gf_f_interior_icase, gf_f_boundary_icase;
 		// Composite equivalent polynomials for elements cut by BOTH level sets. The product
@@ -501,6 +511,35 @@ namespace proteus
 			dr += D_s * a * embeddedBoundary_penalty;
 		}
 
+		// The same Nitsche terms with the normal-weighted Dirac Dn_s = D_s n (n into the fluid, phi_s > 0) in place of
+		// D_s times one normal per element: exact for polynomial integrands on a curved Gamma_s (C44 phase 1b, P3).
+		// outward_normal = -n, so D_s * outward_normal[I] = -Dn_s[I]; the penalty keeps the scalar D_s.
+		inline void updateEmbeddedBoundaryTermsDn(const double embeddedBoundary_penalty,
+												  const double *Dn_s,
+												  const double u_s,
+												  const double u,
+												  const double grad_u[nSpace],
+												  const double a,
+												  double &r,
+												  double &dr,
+												  double &ham,
+												  double *dham,
+												  double *f,
+												  double *df,
+												  const double D_s)
+		{
+			for (int I = 0; I < nSpace; I++)
+			{
+				const double Dn_out = -Dn_s[I]; // D_s * outward_normal[I]
+				ham -= a * Dn_out * grad_u[I];
+				dham[I] -= a * Dn_out;
+				f[I] += a * Dn_out * (u - u_s);
+				df[I] += a * Dn_out;
+			}
+			r += D_s * a * embeddedBoundary_penalty * (u - u_s);
+			dr += D_s * a * embeddedBoundary_penalty;
+		}
+
 		inline void updateEmbeddedBoundaryRobinTerms(const double h_coeff,
 													const double u_infinity,
 													const double u,
@@ -890,8 +929,11 @@ namespace proteus
 					f[I] = q_v.data()[eN_k * nSpace + I] * u;
 					df[I] = q_v.data()[eN_k * nSpace + I];
 				}
-				const double H_s = gf_s.H(0., 0.);
-				const double D_s = gf_s.D(0., 0.);
+				const double H_s = curvedSolid ? cf_s_cache[eN].H(k) : gf_s.H(0., 0.);
+				const double D_s = curvedSolid ? cf_s_cache[eN].D(k) : gf_s.D(0., 0.);
+				double Dn_s[nSpace];
+				for (int I = 0; I < nSpace; I++)
+					Dn_s[I] = curvedSolid ? cf_s_cache[eN].Dn(k, I) : 0.0;
 				// Per-side Dirac for the solid surface. Weighting the single-cut D_s by a region fit
 				// (ImH_f * D_s) is the product-of-two-fits error again, and a large one -- about 31% on
 				// the segment length. Declared here because the Nitsche terms below consume it.
@@ -911,10 +953,10 @@ namespace proteus
 				}
 				if (embeddedBoundary)
 				{
-					double level_set_normal[nSpace];
+					double level_set_normal[nSpace] = {};
 					double sign = 0.0;
 					double norm_exact = 0.0, norm_cut = 0.0;
-					for (int I = 0; I < nSpace; I++)
+					for (int I = 0; I < nSpace && !curvedSolid; I++)
 					{
 						sign += embeddedBoundary_normal_q.data()[eN_k_3d + I] * gf_s.get_normal()[I];
 						level_set_normal[I] = gf_s.get_normal()[I];
@@ -978,9 +1020,14 @@ namespace proteus
 						}
 						else
 						{
-							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-								u_s_dem, u, grad_u, a[0],
-								r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+							if (curvedSolid)
+								updateEmbeddedBoundaryTermsDn(embeddedBoundary_penalty / h_phi, Dn_s,
+									u_s_dem, u, grad_u, a[0],
+									r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+							else
+								updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+									u_s_dem, u, grad_u, a[0],
+									r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
 						}
 					}
 				}
@@ -1190,7 +1237,7 @@ namespace proteus
 					}
 					if (embeddedBoundary)
 					{
-						if (gf_s.exact.edge >= 0 && !gf_s.exact.corner)
+						if (curvedSolid || (gf_s.exact.edge >= 0 && !gf_s.exact.corner))
 						{
 							if (icase_f == 0)
 							{
@@ -1301,8 +1348,21 @@ namespace proteus
 		// penalty, SCIFEM, the triply-cut edge correction, and the composite triply-cut fit) is written
 		// for triangles. assert() is compiled out (-DNDEBUG), so in 3D they would not stop, they would
 		// compute garbage. Refuse before any of it runs. The phase numbers are the C44 plan's.
-		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG, double ghost_penalty)
+		static void requireSupportedDimension(bool embedded, bool robin, bool immersed, double scifem_switch, double scifem_penalty, bool PG, double ghost_penalty, bool curved = false)
 		{
+			// The curved solid (a P2 level set, C44 phase 1b) is 3D P2 tetrahedra with the embedded solid alone.
+			// Curved cuts in 2D (where p = 2 uses straight cuts) are not part of phase 1b (decision P7).
+			if (curved)
+			{
+				if (!embedded)
+					throw std::runtime_error("ADR: embeddedBoundary_curved needs embeddedBoundary");
+				if (nSpace != 3)
+					throw std::runtime_error("ADR: embeddedBoundary_curved is implemented on tetrahedra only (curved cuts in 2D are not part of C44 phase 1b)");
+				if (pOrder != 2)
+					throw std::runtime_error("ADR: embeddedBoundary_curved needs a P2 space (the level set is the P2 interpolant; P1 cuts are planar)");
+				if (immersed || robin)
+					throw std::runtime_error("ADR: embeddedBoundary_curved is implemented for the embedded solid alone (not with immersedBoundary or embeddedBoundary_robin)");
+			}
 			if (nSpace == 2)
 				return;
 			std::string what;
@@ -1314,11 +1374,9 @@ namespace proteus
 				what += name;
 				phase = std::max(phase, ph);
 			};
-			// C44 phase 1 so far: the Nitsche terms of an embedded boundary on P1 tetrahedra. The ghost
-			// penalty (cut faces as triangles) and P2 are still to come.
-			(void)ghost_penalty; // the P1 ghost penalty on triangular faces is implemented
-			if (embedded && pOrder != 1)
-				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
+			// C44 phase 1: the Nitsche terms and the ghost penalty of an embedded boundary on P1 and P2
+			// tetrahedra (planar cut: the vertex values place the plane; P2 needs the degree-7 rule, qOrder 7).
+			(void)ghost_penalty;
 			if (robin)
 				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
 			// C44 phase 2, P1: the two-sided IFEM basis and the flux-jump lift on P1 tetrahedra
@@ -1412,7 +1470,10 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
-			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
+			const bool embeddedBoundary_curved = args.scalar<int>("embeddedBoundary_curved");
+			proteus::pyarray<int> &embeddedBoundary_cut_label = args.array<int>("embeddedBoundary_cut_label");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty, embeddedBoundary_curved);
+			curvedSolid = embeddedBoundary_curved;
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -1445,6 +1506,11 @@ namespace proteus
 			const bool recomputeIFEMGeometry = args.scalar<int>("recomputeIFEMGeometry");
 			const bool fluxJumpLift = args.scalar<int>("immersedBoundary_fluxJumpLift");
 			ensureIFEMCacheSized(nElements_global); // also (re)asserts useExact = true on (re)allocation
+			if (curvedSolid && (int)cf_s_cache.size() != nElements_global)
+			{
+				cf_s_cache.assign(nElements_global, cutquadric::SolidFit());
+				std::fill(gf_s_interior_gen.begin(), gf_s_interior_gen.end(), -1);
+			}
 			if (recomputeIFEMGeometry)
 				ifemGeometryGeneration++;
 			for (int eN = 0; eN < nElements_global; eN++)
@@ -1525,7 +1591,13 @@ namespace proteus
 				} // i
 				if (gf_s_interior_gen[eN] != ifemGeometryGeneration)
 				{
-					gf_s_interior_icase[eN] = gf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), false);
+					if (curvedSolid)
+					{
+						gf_s_interior_icase[eN] = cf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), nQuadraturePoints_element, nP_fit);
+						embeddedBoundary_cut_label.data()[eN] = static_cast<int>(cf_s_cache[eN].label);
+					}
+					else
+						gf_s_interior_icase[eN] = gf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), false);
 					gf_s_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_s = gf_s_interior_icase[eN];
@@ -3040,8 +3112,11 @@ namespace proteus
 				for (int I = 0; I < nSpace; I++)
 					df[I] = q_v.data()[eN_k * nSpace + I];
 				dr = 0.0;
-				const double H_s = gf_s.H(0., 0.);
-				const double D_s = gf_s.D(0., 0.);
+				const double H_s = curvedSolid ? cf_s_cache[eN].H(k) : gf_s.H(0., 0.);
+				const double D_s = curvedSolid ? cf_s_cache[eN].D(k) : gf_s.D(0., 0.);
+				double Dn_s[nSpace];
+				for (int I = 0; I < nSpace; I++)
+					Dn_s[I] = curvedSolid ? cf_s_cache[eN].Dn(k, I) : 0.0;
 				// Per-side Dirac for the solid surface. Weighting the single-cut D_s by a region fit
 				// (ImH_f * D_s) is the product-of-two-fits error again, and a large one -- about 31% on
 				// the segment length. Declared here because the Nitsche terms below consume it.
@@ -3061,10 +3136,10 @@ namespace proteus
 				}
 				if (embeddedBoundary)
 				{
-					double level_set_normal[nSpace];
+					double level_set_normal[nSpace] = {};
 					double sign = 0.0;
 					double norm_exact = 0.0, norm_cut = 0.0;
-					for (int I = 0; I < nSpace; I++)
+					for (int I = 0; I < nSpace && !curvedSolid; I++)
 					{
 						sign += embeddedBoundary_normal_q.data()[eN_k_3d + I] * gf_s.get_normal()[I];
 						level_set_normal[I] = gf_s.get_normal()[I];
@@ -3114,9 +3189,14 @@ namespace proteus
 						}
 						else
 						{
-							updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
-								u_s_dem, u, grad_u, a[0],
-								r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+							if (curvedSolid)
+								updateEmbeddedBoundaryTermsDn(embeddedBoundary_penalty / h_phi, Dn_s,
+									u_s_dem, u, grad_u, a[0],
+									r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
+							else
+								updateEmbeddedBoundaryTerms(embeddedBoundary_penalty / h_phi, dV, level_set_normal,
+									u_s_dem, u, grad_u, a[0],
+									r_s, dr_s, ham_s, dham_s, f_s, df_s, D_s);
 						}
 					}
 				}
@@ -3294,7 +3374,7 @@ namespace proteus
 						}
 						if (embeddedBoundary)
 						{
-							if (gf_s.exact.edge >=0 && !gf_s.exact.corner)
+							if (curvedSolid || (gf_s.exact.edge >=0 && !gf_s.exact.corner))
 							{
 								if (icase_f == 0)
 								{
@@ -3401,7 +3481,10 @@ namespace proteus
 			const double immersedSCIFEM_switch = args.scalar<double>("immersedSCIFEM_switch");
 			const double immersedSCIFEM_penalty = args.scalar<double>("immersedSCIFEM_penalty");
 			const bool PG = args.scalar<int>("PG");
-			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty);
+			const bool embeddedBoundary_curved = args.scalar<int>("embeddedBoundary_curved");
+			proteus::pyarray<int> &embeddedBoundary_cut_label = args.array<int>("embeddedBoundary_cut_label");
+			requireSupportedDimension(embeddedBoundary, embeddedBoundary_robin, immersedBoundary, immersedSCIFEM_switch, immersedSCIFEM_penalty, PG, embeddedBoundary_ghost_penalty, embeddedBoundary_curved);
+			curvedSolid = embeddedBoundary_curved;
 			proteus::pyarray<double> &immersedBoundary_sdf_nodes = args.array<double>("immersedBoundary_sdf_nodes");
 			proteus::pyarray<double> &immersedBoundary_sdf_q = args.array<double>("immersedBoundary_sdf_q");
 			proteus::pyarray<double> &immersedBoundary_normal_q = args.array<double>("immersedBoundary_normal_q");
@@ -3423,6 +3506,11 @@ namespace proteus
 			const double jf = args.scalar<double>("jf");
 			const bool recomputeIFEMGeometry = args.scalar<int>("recomputeIFEMGeometry");
 			ensureIFEMCacheSized(nElements_global); // also (re)asserts useExact = true on (re)allocation
+			if (curvedSolid && (int)cf_s_cache.size() != nElements_global)
+			{
+				cf_s_cache.assign(nElements_global, cutquadric::SolidFit());
+				std::fill(gf_s_interior_gen.begin(), gf_s_interior_gen.end(), -1);
+			}
 			if (recomputeIFEMGeometry)
 				ifemGeometryGeneration++;
 			//
@@ -3485,7 +3573,13 @@ namespace proteus
 				} // i
 				if (gf_s_interior_gen[eN] != ifemGeometryGeneration)
 				{
-					gf_s_interior_icase[eN] = gf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), false);
+					if (curvedSolid)
+					{
+						gf_s_interior_icase[eN] = cf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), nQuadraturePoints_element, nP_fit);
+						embeddedBoundary_cut_label.data()[eN] = static_cast<int>(cf_s_cache[eN].label);
+					}
+					else
+						gf_s_interior_icase[eN] = gf_s_cache[eN].calculate(element_phi_s, element_nodes, x_ref.data(), false);
 					gf_s_interior_gen[eN] = ifemGeometryGeneration;
 				}
 				int icase_s = gf_s_interior_icase[eN];
@@ -4365,6 +4459,16 @@ namespace proteus
 		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
 			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
 			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
+		// 3D P2 with the degree-7 rule (31 points on the tetrahedron, 16 on a face; the tetrahedron rule has some
+		// negative weights): the rule that integrates the fit (degree 3) times the degree-4 Nitsche integrands
+		// exactly, qOrder 7 (C44 phase 1b).
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 31 && nQuadraturePoints_elementBoundaryIn == 16)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 31, 4, 10, 10, 16>());
+		// 3D P2 with the degree-8 rule (qOrder 8: 45 tetrahedron points, 16 face points): fit degree 4 (C44 phase 1b)
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 45 && nQuadraturePoints_elementBoundaryIn == 16)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 45, 4, 10, 10, 16>());
 		if (nSpaceIn == 2)
 			return proteus::chooseAndAllocateDiscretization2D<cADR_base, cADR, CompKernel>(nSpaceIn,
 																						   nQuadraturePoints_elementIn,
