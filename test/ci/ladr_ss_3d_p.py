@@ -24,7 +24,16 @@ opts = Context.Options([
     ("name", "ladr_ss_3d", "name of the test"),
     ("cut", "none", "ask for a cut-cell feature, which must stop with a clear error in 3D (C44 phase 0): "
         "none, embedded, robin, immersed, scifem, pg or both; plane is a supported embedded boundary: "
-        "plane / plane_nogp are a planar solid boundary (Nitsche, with / without the ghost penalty)"),
+        "plane / plane_nogp are a planar solid boundary (Nitsche, with / without the ghost penalty); "
+        "ifem_plane (manufactured two-material solution across a plane), ifem_pwl (piecewise linear: in the "
+        "IFE space, so P1 reproduces it) and ifem_sphere (radial, curved interface) use the two-sided P1 "
+        "IFEM basis, immersedBoundary alone (C44 phase 2); scifem, pg and both still stop"),
+    ("mua", 1.0, "diffusion on the phi_f < 0 side of an ifem_* case (the two-sided IFEM basis, C44 phase 2)"),
+    ("mub", 10.0, "diffusion on the phi_f > 0 side of an ifem_* case"),
+    ("scifem", 0.0, "immersedSCIFEM_switch of an ifem_* case: 1 adds the SCIFEM consistency terms on cut triangular faces"),
+    ("scifemPenalty", 0.0, "immersedSCIFEM_penalty (interior penalty gamma, scaled by 1/h) of an ifem_* case"),
+    ("fluxJump", 0.0, "prescribed flux jump [mu du/dn] (phi_f < 0 to phi_f > 0) of ifem_plane"),
+    ("solJump", 0.0, "prescribed solution jump [u] = u(phi_f > 0 side) - u(phi_f < 0 side) of ifem_plane"),
     ("exact", "smooth", "manufactured solution: 'smooth' (sin*cos*exp) or 'quadratic' (in P2's space, so P2 must reproduce it)"),
 ])
 
@@ -96,6 +105,105 @@ def plane_sdf(x, t):
     """Signed distance to the plane n.x = 0.37, positive on the fluid side (the solid is n.x < 0.37)."""
     return float(numpy.dot(_pn, x[:3])) - 0.37, tuple(_pn)
 
+# --- two-material cases for the immersed (IFEM) interface, C44 phase 2 -------------------------------------
+# phi_f < 0 is mua, phi_f > 0 is mub; u is continuous and mu du/dn is continuous across Gamma_f.
+_in = numpy.array([1.0, 0.6, 0.3])
+_in /= numpy.linalg.norm(_in)
+_id = 0.45   # plane n.x = 0.45: not aligned with the mesh, and not through a vertex
+_ic = numpy.array([0.5, 0.5, 0.5]); _iR = 0.3
+
+def ifem_plane_sdf(x, t):
+    return float(numpy.dot(_in, x[:3])) - _id, tuple(_in)
+
+def ifem_sphere_sdf(x, t):
+    r = numpy.sqrt(numpy.sum((numpy.asarray(x[:3]) - _ic)**2))
+    n = tuple((numpy.asarray(x[:3]) - _ic)/r) if r > 0 else (0.0, 0.0, 1.0)
+    return float(r - _iR), n
+
+class IfemPlane(AnalyticalSolutions.SteadyState):
+    """u^pm = S(x) + q(x)/mu^pm with S = sin(a.x), a.n = 0 (so dS/dn = 0) and q = (n.x - d) cos(b.x):
+    continuous across the plane (q = 0 there) with mu du/dn = dq/dn on both sides."""
+    a = numpy.cross(_in, [0.0, 0.0, 1.0]) * 2.0 + numpy.cross(_in, [0.0, 1.0, 0.0]) * 1.3
+    b = numpy.array([1.1, -0.7, 0.9])
+    def __init__(self, mua, mub):
+        self.mua, self.mub = mua, mub
+        self.fj, self.sj = opts.fluxJump, opts.solJump
+    def S(self, x):
+        return math.sin(numpy.dot(self.a, x[:3]) + 0.4)
+    def dS(self, x):
+        return math.cos(numpy.dot(self.a, x[:3]) + 0.4)*self.a
+    def q(self, x):
+        return (numpy.dot(_in, x[:3]) - _id)*math.cos(numpy.dot(self.b, x[:3]))
+    def dq(self, x):
+        return _in*math.cos(numpy.dot(self.b, x[:3])) - (numpy.dot(_in, x[:3]) - _id)*math.sin(numpy.dot(self.b, x[:3]))*self.b
+    def lapq(self, x):
+        nb = numpy.dot(_in, self.b)
+        return -2.0*nb*math.sin(numpy.dot(self.b, x[:3])) - (numpy.dot(_in, x[:3]) - _id)*numpy.dot(self.b, self.b)*math.cos(numpy.dot(self.b, x[:3]))
+    def uOfX_inner(self, x):
+        return self.S(x) + self.q(x)/self.mua
+    def uOfX_outer(self, x):
+        return self.S(x) + self.q(x)/self.mub + self.fj*(numpy.dot(_in, x[:3]) - _id)/self.mub + self.sj
+    def duOfX_inner(self, x):
+        return self.dS(x) + self.dq(x)/self.mua
+    def duOfX_outer(self, x):
+        return self.dS(x) + self.dq(x)/self.mub + self.fj*_in/self.mub
+    def uOfX(self, x):
+        return self.uOfX_inner(x) if ifem_plane_sdf(x, 0)[0] <= 0.0 else self.uOfX_outer(x)
+    def f(self, x):
+        mu = self.mua if ifem_plane_sdf(x, 0)[0] <= 0.0 else self.mub
+        return mu*numpy.dot(self.a, self.a)*self.S(x) - self.lapq(x)
+
+class IfemPWL(AnalyticalSolutions.SteadyState):
+    """u^pm = g0 + g.x + (c/mu^pm)(n.x - d), g.n = 0: lies in the P1 IFE space for the plane n.x = d."""
+    g0, c = 0.3, 1.7
+    g = numpy.array([0.4, -0.2, 0.6])
+    g = g - numpy.dot(g, _in)*_in      # g.n = 0, so mu du/dn = c on both sides: the flux jump is zero
+    def __init__(self, mua, mub):
+        self.mua, self.mub = mua, mub
+    def uOfX_inner(self, x):
+        return self.g0 + numpy.dot(self.g, x[:3]) + self.c/self.mua*(numpy.dot(_in, x[:3]) - _id)
+    def uOfX_outer(self, x):
+        return self.g0 + numpy.dot(self.g, x[:3]) + self.c/self.mub*(numpy.dot(_in, x[:3]) - _id)
+    def duOfX_inner(self, x):
+        return self.g + self.c/self.mua*_in
+    def duOfX_outer(self, x):
+        return self.g + self.c/self.mub*_in
+    def uOfX(self, x):
+        return self.uOfX_inner(x) if ifem_plane_sdf(x, 0)[0] <= 0.0 else self.uOfX_outer(x)
+    def f(self, x):
+        return 0.0
+
+class IfemSphere(AnalyticalSolutions.SteadyState):
+    """u^- = rho^2/mua, u^+ = rho^2/mub + (1/mua - 1/mub) R^2: continuous at rho = R, mu du/drho = 2 rho on both sides."""
+    def __init__(self, mua, mub):
+        self.mua, self.mub = mua, mub
+    def uOfX_inner(self, x):
+        return numpy.sum((numpy.asarray(x[:3]) - _ic)**2)/self.mua
+    def uOfX_outer(self, x):
+        return numpy.sum((numpy.asarray(x[:3]) - _ic)**2)/self.mub + (1.0/self.mua - 1.0/self.mub)*_iR**2
+    def duOfX_inner(self, x):
+        return 2.0*(numpy.asarray(x[:3]) - _ic)/self.mua
+    def duOfX_outer(self, x):
+        return 2.0*(numpy.asarray(x[:3]) - _ic)/self.mub
+    def uOfX(self, x):
+        return self.uOfX_inner(x) if ifem_sphere_sdf(x, 0)[0] <= 0.0 else self.uOfX_outer(x)
+    def f(self, x):
+        return -6.0
+
+_ifem = {"ifem_plane": (IfemPlane, ifem_plane_sdf), "ifem_pwl": (IfemPWL, ifem_plane_sdf),
+         "ifem_sphere": (IfemSphere, ifem_sphere_sdf)}
+if opts.cut in _ifem:
+    bvec = numpy.zeros(3)
+    ans = _ifem[opts.cut][0](opts.mua, opts.mub)
+    _isdf = _ifem[opts.cut][1]
+    def a(x):
+        return (opts.mua if _isdf(x, 0)[0] <= 0.0 else opts.mub)*numpy.eye(3)
+    def f(x):
+        return ans.f(x)
+    aOfX = {0: a}
+    fOfX = {0: f}
+    analyticalSolution = {0: ans}
+
 cutOptions = {"none": {},
               "plane": dict(embeddedBoundary=True),
               "plane_nogp": dict(embeddedBoundary=True, embeddedBoundary_ghost_penalty=0.0),
@@ -104,9 +212,17 @@ cutOptions = {"none": {},
               "immersed": dict(immersedBoundary=True),
               "scifem": dict(immersedBoundary=True, immersedSCIFEM_switch=1.0),
               "pg": dict(immersedBoundary=True, PG=True),
-              "both": dict(embeddedBoundary=True, immersedBoundary=True)}[opts.cut]
+              "both": dict(embeddedBoundary=True, immersedBoundary=True),
+              "ifem_plane": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0,
+                                 immersedBoundary_fluxJump=(lambda x, t: opts.fluxJump) if opts.fluxJump != 0.0 else None,
+                                 immersedBoundary_solutionJump=(lambda x, t: opts.solJump) if opts.solJump != 0.0 else None),
+              "ifem_pwl": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0),
+              "ifem_sphere": dict(immersedBoundary=True, mua=opts.mua, mub=opts.mub, immersedBoundary_penalty=0.0)}[opts.cut]
 if opts.cut in ("plane", "plane_nogp"):
     cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
+elif opts.cut in _ifem:
+    cutOptions.update(immersedBoundary_sdf=_ifem[opts.cut][1], immersedBoundary_u=interface_u,
+                      immersedSCIFEM_switch=opts.scifem, immersedSCIFEM_penalty=opts.scifemPenalty)
 elif cutOptions:
     cutOptions.update(embeddedBoundary_sdf=sphere_sdf, embeddedBoundary_u=interface_u,
                       immersedBoundary_sdf=sphere_sdf, immersedBoundary_u=interface_u)
