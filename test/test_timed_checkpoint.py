@@ -234,12 +234,12 @@ def test_the_next_leg_on_two_ranks_is_the_uninterrupted_run(tmp_path, where):
 
 
 def test_the_next_leg_is_exact_however_slow_the_archive_is(tmp_path):
-    """Every archive write takes a second longer (a slow machine): the stop, driven by the test clock, is still
+    """Every archive write takes 0.2 s longer (a slow machine: the measured checkpoint cost then passes the clock's half second of slack, as it did on the hosted runners): the stop, driven by the test clock, is still
     after the same step, and the continuation is still the uninterrupted run. Before the helper's clock fixed
     the checkpoint cost, the measured cost (frame time x state/dof bytes: 216 s here) passed the half step of slack
     and the run stopped at step 2 of 7, so the next leg repeated steps (hosted runners, proteustoolkit/proteus#1356)."""
     stop_after = _stop_steps(tmp_path)["mid-interval"]
-    _legs(tmp_path, stop_after, SLOWARCHIVE=1.0)
+    _legs(tmp_path, stop_after, SLOWARCHIVE=0.2)
     _same_run(tmp_path, 1, stop_after)
 
 

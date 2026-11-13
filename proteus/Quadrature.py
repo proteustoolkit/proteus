@@ -18,14 +18,91 @@ class Q_base(object):
         self.pointsAll=(())
         self.weightsAll=(())
         self.order=order
+    def maxAvailableOrder(self):
+        """The largest order this rule family can provide."""
+        return len(self.pointsAll)
+    def rule(self,k):
+        """The points and weights of the rule of order k (1 <= k <= maxAvailableOrder())."""
+        return self.pointsAll[k-1], self.weightsAll[k-1]
     def setOrder(self,k):
-        self.order=k
-        if self.order > len(self.pointsAll):
-            logEvent("WARNING Q_base requested order=%d > max allowed=%d setting order to max" % (self.order,
-                                                                                               len(self.pointsAll)))
-            self.order= len(self.pointsAll)
-        self.points=self.pointsAll[self.order-1]
-        self.weights=self.weightsAll[self.order-1]
+        """Select the rule of order k.
+
+        Raises ValueError if that order is not available. (Until 2026-11 a request above the
+        maximum logged a warning and silently returned the highest tabulated rule, so a caller
+        asking for degree 12 on a tetrahedron integrated with degree 8 and never knew.)
+        """
+        kmax = self.maxAvailableOrder()
+        if k < 1 or k > kmax:
+            raise ValueError("%s: quadrature order %s is not available (orders 1..%d are)" % (type(self).__name__, k, kmax))
+        self.order = k
+        self.points, self.weights = self.rule(k)
+
+def _gauss_jacobi(n, alpha):
+    """Nodes and weights of the n-point Gauss-Jacobi rule on the unit interval for the weight (1-t)**alpha.
+
+    Golub-Welsch on the Jacobi matrix of the weight (1-x)**alpha (1+x)**0 on [-1,1] (recurrence
+    coefficients from the three-term recurrence of P_n^(alpha,0)), mapped to [0,1]. Exact to degree
+    2n-1 for integrals of (1-t)**alpha g(t), g a polynomial; the nodes are interior and the weights
+    positive. alpha = 0 is Gauss-Legendre.
+    """
+    if alpha == 0:
+        x, w = numpy.polynomial.legendre.leggauss(n)
+    else:
+        k = numpy.arange(n, dtype=float)
+        s = 2.0*k + alpha
+        diag = -alpha**2/(s*(s+2.0))
+        kk = numpy.arange(1, n, dtype=float)
+        sk = 2.0*kk + alpha
+        off = 2.0/sk*numpy.sqrt(kk*kk*(kk+alpha)*(kk+alpha)/((sk-1.0)*(sk+1.0)))
+        J = numpy.diag(diag) + numpy.diag(off, 1) + numpy.diag(off, -1)
+        x, V = numpy.linalg.eigh(J)
+        mu0 = 2.0**(alpha+1)*gamma(alpha+1.0)/gamma(alpha+2.0)
+        w = mu0*V[0, :]**2
+    return 0.5*(x+1.0), w/2.0**(alpha+1)
+
+def conicalProductTriangle(n):
+    """The n x n Stroud conical product rule on the unit triangle: exact to degree 2n-1, positive weights.
+
+    Collapsed coordinates x = s, y = (1-s) t with s Gauss-Jacobi (weight 1-s) and t Gauss-Legendre.
+    Derived and verified here, not tabulated (n**2 points; symmetric low-point rules would need fewer).
+    """
+    s, ws = _gauss_jacobi(n, 1)
+    t, wt = _gauss_jacobi(n, 0)
+    points = []; weights = []
+    for i in range(n):
+        for j in range(n):
+            points.append(EVec(s[i], (1.0-s[i])*t[j]))
+            weights.append(ws[i]*wt[j])
+    return tuple(points), tuple(weights)
+
+def conicalProductTetrahedron(n):
+    """The n x n x n Stroud conical product rule on the unit tetrahedron: exact to degree 2n-1, positive weights.
+
+    Collapsed coordinates x = s, y = (1-s) t, z = (1-s)(1-t) u with s Gauss-Jacobi (weight (1-s)**2),
+    t Gauss-Jacobi (weight 1-t) and u Gauss-Legendre. Derived and verified here, not tabulated.
+    """
+    s, ws = _gauss_jacobi(n, 2)
+    t, wt = _gauss_jacobi(n, 1)
+    u, wu = _gauss_jacobi(n, 0)
+    points = []; weights = []
+    for i in range(n):
+        for j in range(n):
+            for k in range(n):
+                points.append(EVec(s[i], (1.0-s[i])*t[j], (1.0-s[i])*(1.0-t[j])*u[k]))
+                weights.append(ws[i]*wt[j]*wu[k])
+    return tuple(points), tuple(weights)
+
+#highest order requested of a generated rule that is accepted (a guard against typos: the tetrahedron
+#rule of order 20 already has 1000 points)
+MAX_GENERATED_SIMPLEX_ORDER = 20
+
+_generatedRuleCache = {}
+def _generatedRule(builder, k):
+    """Points and weights of the conical product rule of order k (degree k), built once per process."""
+    key = (builder.__name__, k)
+    if key not in _generatedRuleCache:
+        _generatedRuleCache[key] = builder((k+2)//2)
+    return _generatedRuleCache[key]
 
 class GaussPoint(Q_base):
     """
@@ -108,6 +185,9 @@ class GaussEdge(Q_base):
              EVec(p9[7]),                          
              EVec(p9[8]))
             )        
+        #orders (= numbers of points) 10..20: Gauss-Legendre as for 6..9
+        extraRules = [numpy.polynomial.legendre.leggauss(n) for n in range(10,21)]
+        self.pointsAll += tuple(tuple(EVec(0.5*(x+1.0)) for x in xw[0]) for xw in extraRules)
         self.weightsAll=(
             (1.0,), #n=1
             (0.5, #n=2
@@ -126,6 +206,7 @@ class GaussEdge(Q_base):
             (w8[0],w8[1],w8[2],w8[3],w8[4],w8[5],w8[6],w8[7]), #n=8
             (w9[0],w9[1],w9[2],w9[3],w9[4],w9[5],w9[6],w9[7],w9[8]) #n=9
             )
+        self.weightsAll += tuple(tuple(0.5*w for w in xw[1]) for xw in extraRules)
         self.setOrder(order)
 
     def setOrder(self,order,domain=[0.0,1.0]):
@@ -296,6 +377,14 @@ class GaussTriangle(Q_base):
             tuple(eighthOrderWeights)
             )#weightsAll
         self.setOrder(order)
+
+    def maxAvailableOrder(self):
+        return MAX_GENERATED_SIMPLEX_ORDER
+    def rule(self,k):
+        """Orders 1-8 are tabulated; 9 and up are the conical product rule with n = (k+2)//2 points per direction."""
+        if k <= len(self.pointsAll):
+            return Q_base.rule(self,k)
+        return _generatedRule(conicalProductTriangle,k)
 
 
 class CompositeTriangle(Q_base):
@@ -493,14 +582,6 @@ class LobattoTriangle(Q_base):
              wab,wab,wab,wab,wab,wab),
             )
         self.setOrder(order)
-    def setOrder(self,k):
-        self.order = 1
-        self.points = self.pointsAll[0]
-        self.weights = self.weightsAll[0]
-        if k > 1:
-            self.order = 2
-            self.points = self.pointsAll[1]
-            self.weights = self.weightsAll[1]
 
 class CompositeTrapezoidalTriangle(Q_base):
     """
@@ -905,12 +986,20 @@ class GaussTetrahedron(Q_base):
 #              wa,wa,wa,wa,wa,wa))
         self.setOrder(order)
 
+    def maxAvailableOrder(self):
+        return MAX_GENERATED_SIMPLEX_ORDER
+    def rule(self,k):
+        """Orders 1-8 are tabulated; 9 and up are the conical product rule with n = (k+2)//2 points per direction."""
+        if k <= len(self.pointsAll):
+            return Q_base.rule(self,k)
+        return _generatedRule(conicalProductTetrahedron,k)
+
+
 class LobattoTetrahedron(Q_base):
     """
     Gauss-Lobatto quadrature on the unit tetrahedron.
     """
     def __init__(self,order=1):
-        order=1
         Q_base.__init__(self,order)
         self.pointsAll=(
             ( EVec(0.0,0.0,0.0),
@@ -920,10 +1009,6 @@ class LobattoTetrahedron(Q_base):
         self.weightsAll=(
             (1.0/24.0,1.0/24.0,1.0/24.0,1.0/24.0),)
         self.setOrder(order)
-    def setOrder(self,k):
-        self.order = 1
-        self.points = self.pointsAll[0]
-        self.weights = self.weightsAll[0]
 
 class FaceBarycenterTetrahedron(Q_base):
     def __init__(self,order=1):

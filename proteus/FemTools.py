@@ -450,12 +450,23 @@ class LinearOnCubeWithNodalBasis(LocalFunctionSpace):
             self.gradientList.append(numpy.array([0.5]))
             self.basisGradients.append(lambda xi: self.gradientList[1])
         elif nd == 2:
+            #the mixed second derivative of a bilinear function is not zero
+            self.basisHessians=[]
+            self.nonzeroHessians=True
             for node in self.referenceElement.nodeList:
                 self.basis.append(lambda xi, n0=node[0],n1=node[1]:0.25*(1.0+n0*xi[0])*(1.0+n1*xi[1]))
                 self.basisGradients.append(lambda xi, n0=node[0],n1=node[1]: numpy.array([0.25*     n0       *(1.0+n1*xi[1]),
                                                                                           0.25*(1.0+n0*xi[0])*     n1       ]))
+                self.basisHessians.append(lambda xi, n0=node[0],n1=node[1]: numpy.array([[0.0       ,0.25*n0*n1],
+                                                                                         [0.25*n0*n1,0.0       ]]))
         elif nd == 3:
+            self.basisHessians=[]
+            self.nonzeroHessians=True
             for node in self.referenceElement.nodeList:
+                self.basisHessians.append(lambda xi, n0=node[0],n1=node[1],n2=node[2]: 0.125*numpy.array(
+                    [[0.0                 ,n0*n1*(1.0+n2*xi[2]),n0*n2*(1.0+n1*xi[1])],
+                     [n0*n1*(1.0+n2*xi[2]),0.0                 ,n1*n2*(1.0+n0*xi[0])],
+                     [n0*n2*(1.0+n1*xi[1]),n1*n2*(1.0+n0*xi[0]),0.0                 ]]))
                 self.basis.append         (lambda xi, n0=node[0],n1=node[1],n2=node[2]:              0.125*(1.0+n0*xi[0])*(1.0+n1*xi[1])*(1.0+n2*xi[2]))
                 self.basisGradients.append(lambda xi, n0=node[0],n1=node[1],n2=node[2]: numpy.array([0.125*     n0       *(1.0+n1*xi[1])*(1.0+n2*xi[2]),
                                                                                                      0.125*(1.0+n0*xi[0])*     n1       *(1.0+n2*xi[2]),
@@ -516,12 +527,36 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
             self. fun.append(lambda xi,fc=fc, den=den:   fun[fc](xi)/den)
             self.dfun.append(lambda xi,fc=fc, den=den:  dfun[fc](xi)/den)
 
+        # Second derivatives of the 1D Lagrange polynomials:
+        # l_a'' = sum_{b != a} sum_{c != a,b} prod_{e != a,b,c} (xi - x_e) / prod_{b != a} (x_a - x_b)
+        nodes1d = self.nodes
+        def d2Lagrange(xi,a):
+            n = len(nodes1d)
+            total = 0.0
+            for b in range(n):
+                if b == a: continue
+                for c in range(n):
+                    if c == a or c == b: continue
+                    term = 1.0
+                    for e in range(n):
+                        if e != a and e != b and e != c:
+                            term *= (xi - nodes1d[e])
+                    total += term
+            den = 1.0
+            for b in range(n):
+                if b != a:
+                    den *= (nodes1d[a]-nodes1d[b])
+            return total/den
+        self.d2fun = [(lambda xi,a=a: d2Lagrange(xi,a)) for a in range(order+1)]
+
         # Define multi-dimensional stuff
         basis= []
         basisGradients = []
+        basisHessians = []
         if nd == 1:
             basis = self.fun
             basisGradients = self.dfun
+            basisHessians = [(lambda xi,a=a: numpy.array([[self.d2fun[a](xi[0])]])) for a in range(order+1)]
             funMap=[0,2,1]
         elif nd == 2:
             for j in range(order+1):
@@ -529,6 +564,9 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
                     basis.append(lambda xi,i=i,j=j:self.fun[i](xi[0])*self.fun[j](xi[1]))
                     basisGradients.append(lambda xi,i=i,j=j:numpy.array([self.dfun[i](xi[0])*self. fun[j](xi[1]),
                                                                               self. fun[i](xi[0])*self.dfun[j](xi[1])]))
+                    basisHessians.append(lambda xi,i=i,j=j:numpy.array(
+                        [[self.d2fun[i](xi[0])*self.  fun[j](xi[1]),self.dfun[i](xi[0])*self. dfun[j](xi[1])],
+                         [self. dfun[i](xi[0])*self. dfun[j](xi[1]),self. fun[i](xi[0])*self.d2fun[j](xi[1])]]))
             funMap=[0,7,3,  4,8,6,   1,5,2]
         elif nd == 3:
             for k in range(order+1):
@@ -540,6 +578,14 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
                             lambda xi,i=i,j=j,k=k: numpy.array([self.dfun[i](xi[0])*self. fun[j](xi[1])*self. fun[k](xi[2]),
                                                                 self. fun[i](xi[0])*self.dfun[j](xi[1])*self. fun[k](xi[2]),
                                                                 self. fun[i](xi[0])*self. fun[j](xi[1])*self.dfun[k](xi[2])]))
+                        def hessian(xi,i=i,j=j,k=k):
+                            f  = (self.  fun[i](xi[0]),self.  fun[j](xi[1]),self.  fun[k](xi[2]))
+                            d  = (self. dfun[i](xi[0]),self. dfun[j](xi[1]),self. dfun[k](xi[2]))
+                            d2 = (self.d2fun[i](xi[0]),self.d2fun[j](xi[1]),self.d2fun[k](xi[2]))
+                            return numpy.array([[d2[0]*f[1]*f[2],d[0]*d[1]*f[2] ,d[0]*f[1]*d[2] ],
+                                                [d[0]*d[1]*f[2] ,f[0]*d2[1]*f[2],f[0]*d[1]*d[2] ],
+                                                [d[0]*f[1]*d[2] ,f[0]*d[1]*d[2] ,f[0]*f[1]*d2[2]]])
+                        basisHessians.append(hessian)
 
             #funMap=numpy.array([0,3,6,8,18,19,24,26])
             funMap = [ 0, 8, 1,
@@ -557,9 +603,12 @@ class LagrangeOnCubeWithNodalBasis(LocalFunctionSpace):
         for i in range(self.dim):
             invMap[funMap[i]] = i
 
+        self.basisHessians = []
+        self.nonzeroHessians = True
         for i in range(self.dim):
             self.basis.append(basis[invMap[i]])
             self.basisGradients.append(basisGradients[invMap[i]])
+            self.basisHessians.append(basisHessians[invMap[i]])
         # Get boundary data
         self.defineTraceFunctions()
 
@@ -1768,6 +1817,66 @@ class P1P0BubblesWithNodalBasis(LocalFunctionSpace):
 Interpolation conditions.
 """
 
+class PolynomialOnSimplex(LocalFunctionSpace):
+    """
+    Polynomials of degree ``order`` on the unit nd-simplex (nd <= 3), any order.
+
+    Parameters
+    ----------
+    nd : int
+        Space dimension.
+    order : int
+        Polynomial degree p >= 1.
+    family : str
+        ``'lagrange'`` (nodal basis) or ``'bernstein'`` (Bernstein-Bezier basis: non-negative, sums to one;
+        the dofs are control-point coefficients, not point values).
+    nodes : str
+        For ``'lagrange'``: ``'gll'`` (default; warp-and-blend nodes with Gauss-Lobatto-Legendre points on
+        the edges, well conditioned for p >= 3) or ``'equispaced'`` (for comparison). They coincide for
+        p <= 2. Ignored by the Bernstein basis itself; its exact interpolation uses the ``'gll'`` points.
+
+    The local dofs are grouped by entity (vertices, edges, faces, interior) and for p = 1, 2 the numbering
+    and the values are those of :class:`LinearOnSimplexWithNodalBasis` and
+    :class:`QuadraticOnSimplexWithNodalBasis`. See :mod:`proteus.SimplexSpaces` for the layout
+    (``space.multi_index``, ``space.entity_dofs``, ``space.dof_points``) and the node sets.
+
+    ``tabulate`` and ``tabulate_trace`` evaluate all basis functions at arrays of points; ``basis``,
+    ``basisGradients``, ``basisHessians`` and the trace lists are the usual per-function callables on top
+    of them.
+    """
+    def __init__(self,nd=3,order=1,family='lagrange',nodes='gll'):
+        from . import SimplexSpaces
+        self.referenceElement = ReferenceSimplex(nd)
+        self.space = SimplexSpaces.SimplexSpace(nd,order,family,nodes)
+        LocalFunctionSpace.__init__(self,self.space.dim,self.referenceElement)
+        self.order = order
+        self.family = family
+        self.nodes = nodes
+        self.nonzeroHessians = order >= 2
+        self._lastPoint = None
+        self._lastTabulation = None
+        self.basis = [(lambda xi,i=i: self._tabulateAtPoint(xi).values[0,i]) for i in self.range_dim]
+        self.basisGradients = [(lambda xi,i=i: self._tabulateAtPoint(xi).grads[0,i].copy()) for i in self.range_dim]
+        self.basisHessians = [(lambda xi,i=i: self._tabulateAtPoint(xi).hessians[0,i].copy()) for i in self.range_dim]
+        self.defineTraceFunctions()
+    def _tabulateAtPoint(self,xi):
+        #the callers loop over the basis functions at one point, so keep the last point's tabulation
+        nd = self.referenceElement.dim
+        key = tuple(float(xi[I]) for I in range(nd))
+        if key != self._lastPoint:
+            self._lastTabulation = self.space.tabulate(numpy.array(key).reshape(1,nd),2)
+            self._lastPoint = key
+        return self._lastTabulation
+    def tabulate(self,points,derivatives=2):
+        """Values (nQ,dim), reference gradients (nQ,dim,nd) and Hessians (nQ,dim,nd,nd) at points (nQ,>=nd)."""
+        nd = self.referenceElement.dim
+        return self.space.tabulate(numpy.asarray(points,dtype='d').reshape(len(points),-1)[:,:nd],derivatives)
+    def tabulate_trace(self,face,points_bar,derivatives=1):
+        """The element tabulation at the points of local face ``face`` given in face coordinates (nQ,>=nd-1)."""
+        nd = self.referenceElement.dim
+        nbar = max(nd-1,1)
+        return self.space.tabulate_trace(face,numpy.asarray(points_bar,dtype='d').reshape(len(points_bar),-1)[:,:nbar],derivatives)
+
 class InterpolationConditions(object):
     """
     Base class for generalized interpolation conditions
@@ -1905,6 +2014,60 @@ class QuadraticLagrangeNodalInterpolationConditions(InterpolationConditions):
                                                               self.functionals_quadrature_map,
                                                               interpolationValues,
                                                               finiteElementFunction.dof)
+
+class PolynomialInterpolationConditions(InterpolationConditions):
+    """
+    Interpolation conditions (dof functionals) for :class:`PolynomialOnSimplex`.
+
+    * Lagrange: the dofs are the values at the nodes.
+    * Bernstein, ``bernsteinOperator=False`` (default): the dofs are the Bernstein coefficients of the
+      degree-p interpolant at the space's unisolvent points (``space.lagrange_points``):
+      ``c = V^{-1} u(points)`` with ``V[j,i] = B_i(x_j)``. Exact for polynomials of degree p, order p+1.
+      The coefficient of a dof on a vertex, edge or face depends only on the values on that entity, so
+      neighbouring elements compute the same number.
+    * Bernstein, ``bernsteinOperator=True``: ``c_i = u`` at the control point of dof i (the Bernstein
+      operator). Preserves bounds and monotonicity; second order only.
+
+    ``quadraturePointArray`` holds the points where the function is sampled, ``weights[i,j]`` the weight
+    of sample j in dof i (the identity for the nodal cases).
+    """
+    def __init__(self,localFunctionSpace,bernsteinOperator=False):
+        space = localFunctionSpace.space
+        referenceElement = localFunctionSpace.referenceElement
+        InterpolationConditions.__init__(self,space.dim,referenceElement)
+        self.space = space
+        self.bernsteinOperator = bernsteinOperator
+        nd = referenceElement.dim
+        if space.family == 'lagrange' or bernsteinOperator:
+            points = space.dof_points
+            self.weights = numpy.eye(space.dim)
+            self.nodal = True
+        else:
+            points = space.lagrange_points
+            self.weights = numpy.linalg.inv(space.tabulate(points,0).values)
+            self.nodal = False
+        self.quadraturePointArray = numpy.zeros((space.dim,3),'d')
+        self.quadraturePointArray[:,:nd] = points
+        self.nQuadraturePoints = space.dim
+        for i in range(space.dim):
+            self.functionals.append(lambda f,i=i: sum(self.weights[i,j]*f(self.quadraturePointArray[j,:]) for j in range(space.dim)))
+            self.functionalsQuadrature.append(lambda fList,i=i: numpy.dot(self.weights[i],numpy.asarray(fList)[:space.dim]))
+    def definedOnLocalElementBoundary(self,k,ebN_local):
+        #dof (and sample point) k lies on the closure of local face ebN_local
+        return bool(self.space.on_face(k,ebN_local))
+    def quadrature2Node_element(self,k):
+        if k <= self.referenceElement.dim:
+            return k
+        return None
+    def projectFiniteElementFunctionFromInterpolationConditions_opt(self,finiteElementFunction,interpolationValues):
+        """dof[l2g[eN,i]] = sum_j weights[i,j] interpolationValues[eN,j], for every element at once."""
+        l2g = finiteElementFunction.femSpace.dofMap.l2g
+        nE,n = l2g.shape
+        dim_dof = finiteElementFunction.dim_dof
+        values = numpy.asarray(interpolationValues).reshape(nE,n,dim_dof)
+        dofs = values if self.nodal else numpy.einsum('ij,ejt->eit',self.weights,values)
+        for t in range(dim_dof):
+            finiteElementFunction.dof[l2g*dim_dof + t] = dofs[:,:,t]
 
 class QuadraticLagrangeCubeNodalInterpolationConditions(InterpolationConditions):
     """
@@ -2645,6 +2808,183 @@ class QuadraticLagrangeDOFMap(DOFMap):
                                                                                     self.lagrangeNodesArray)
         assert self.nDOF == self.nDOF_subdomain
  #QuadraticDOFMap
+
+class SimplexEntityDOFMap(DOFMap):
+    """
+    DOF map for C0 polynomial spaces of any order on simplex meshes (:class:`PolynomialOnSimplex`).
+
+    Every mesh entity (vertex, edge, face in 3D, cell) carries the dofs interior to it: 1, p-1,
+    (p-1)(p-2)/2 and, in a tetrahedron, (p-1)(p-2)(p-3)/6. In 2D the edges are the element boundaries,
+    in 3D the faces are; in 1D the interior dofs belong to the element.
+
+    **Orientation.** The dofs of an entity are indexed in the entity's global frame: its vertices sorted
+    by *global* vertex number (``nodeNumbering_subdomain2global``, never the subdomain-local number, which
+    differs between the ranks that share the entity). A local dof with multi-index alpha on an entity with
+    local vertices a_1 < .. < a_m gets the rank of (alpha_{a_s(1)}, .., alpha_{a_s(m)}) in decreasing
+    lexicographic order, s sorting the vertices by global number. Two elements sharing an edge or a face
+    then identify the same physical points whatever their local vertex orders are. p = 3 is the first
+    degree that needs this on edges, p = 4 on the faces of tetrahedra; p <= 2 has at most one dof per
+    entity and reproduces :class:`NodalDOFMap` / :class:`QuadraticLagrangeDOFMap`.
+
+    **Numbering.** On a subdomain: ``| owned vertices | owned edges | owned faces | owned cells | ghost
+    vertices | ghost edges | ghost faces | ghost cells |``. Globally each rank's block is
+    ``[ vertices | edges | faces | cells ]`` of the entities it owns, so with ``d_t`` dofs per entity of
+    type t and the mesh's owned offsets ``off_t``::
+
+        dof_offset[r]  = sum_t d_t off_t[r]
+        global dof(t, global entity g owned by r, entity index m) =
+            dof_offset[r] + sum_{t' < t} d_t' (off_t'[r+1] - off_t'[r]) + d_t (g - off_t[r]) + m
+
+    a closed form in the entities' global numbers: no communication. Serial and parallel runs number
+    vertices differently, so the index of a dof inside its entity can differ; compare at
+    ``lagrangeNodesArray`` (the dof points: nodes, or control points for Bernstein), not by index.
+
+    ``conformityDefect`` is the largest distance between the point an element assigns to a dof and the
+    point stored for it; construction fails if it is not round-off (``orient=False`` exists only to show
+    that the check sees a wrong orientation).
+    """
+    def __init__(self,mesh,localFunctionSpace,nd,orient=True):
+        self.nd = nd
+        self.localFunctionSpace = localFunctionSpace
+        self.order = localFunctionSpace.space.order
+        self.orient = orient
+        DOFMap.__init__(self,0)
+        globalMesh = mesh.globalMesh if getattr(mesh,'globalMesh',None) is not None else mesh
+        self.updateAfterParallelPartitioning(globalMesh)
+
+    @staticmethod
+    def _matchRows(table,query,nNodes):
+        """Row index in ``table`` (n,m) of each row of ``query`` (nQ,m), rows compared as node sets."""
+        t = numpy.sort(table,axis=1).astype(numpy.int64)
+        q = numpy.sort(query,axis=1).astype(numpy.int64)
+        kt = t[:,0]; kq = q[:,0]
+        for j in range(1,t.shape[1]):
+            if j > 1: #compress the keys so that key*nNodes cannot overflow
+                inv = numpy.unique(numpy.concatenate([kt,kq]),return_inverse=True)[1]
+                kt = inv[:len(kt)]; kq = inv[len(kt):]
+            kt = kt*nNodes + t[:,j]; kq = kq*nNodes + q[:,j]
+        order = numpy.argsort(kt,kind='stable')
+        pos = numpy.minimum(numpy.searchsorted(kt[order],kq),len(kt)-1)
+        index = order[pos]
+        if not (kt[index] == kq).all():
+            raise ValueError("SimplexEntityDOFMap: an edge or face of an element is missing from the subdomain mesh")
+        return index
+
+    @staticmethod
+    def _entityIndexTables(m,order):
+        """For an entity with m vertices: (codes, tables). ``tables[q][k]`` is the entity index of the
+        dof at local position k when the vertices sort by global number with permutation q;
+        ``codes[sum_i perm[i] m^i] = q``."""
+        from . import SimplexSpaces
+        import itertools
+        B = SimplexSpaces.interior_multi_indices(m,order)
+        position = dict((b,k) for k,b in enumerate(B))
+        perms = list(itertools.permutations(range(m)))
+        codes = numpy.zeros((m**m,),'i8')
+        tables = numpy.zeros((len(perms),len(B)),'i8')
+        for q,perm in enumerate(perms):
+            codes[sum(perm[i]*m**i for i in range(m))] = q
+            for k,b in enumerate(B):
+                tables[q,k] = position[tuple(b[perm[i]] for i in range(m))]
+        return codes,tables
+
+    def updateAfterParallelPartitioning(self,globalMesh):
+        from . import Comm
+        I = cmeshTools.INDEX_DTYPE
+        mesh = globalMesh.subdomainMesh
+        space = self.localFunctionSpace.space
+        nd = self.nd; p = self.order
+        comm = Comm.get()
+        rank = comm.rank()
+        elementNodes = numpy.asarray(mesh.elementNodesArray)
+        nE = elementNodes.shape[0]
+        nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        #entity types: (dofs per entity, number on the subdomain, owned offsets, subdomain2global, node table)
+        types = [(1,mesh.nNodes_global,globalMesh.nodeOffsets_subdomain_owned,globalMesh.nodeNumbering_subdomain2global,None)]
+        boundaryType = (globalMesh.elementBoundaryOffsets_subdomain_owned,globalMesh.elementBoundaryNumbering_subdomain2global)
+        cellType = (globalMesh.elementOffsets_subdomain_owned,globalMesh.elementNumbering_subdomain2global)
+        if nd == 2:
+            types.append((p-1,mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
+        elif nd == 3:
+            types.append((p-1,mesh.nEdges_global,globalMesh.edgeOffsets_subdomain_owned,globalMesh.edgeNumbering_subdomain2global,
+                          numpy.asarray(mesh.edgeNodesArray)))
+            types.append(((p-1)*(p-2)//2,mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
+        types.append((len(space.entity_dofs[nd][0]),nE)+cellType+(None,))
+        nTypes = len(types)
+        assert nTypes == nd+1
+        d_t = [t[0] for t in types]
+        n_t = [t[1] for t in types]
+        off_t = [numpy.asarray(t[2],dtype='i8') for t in types]
+        num_t = [numpy.asarray(t[3],dtype='i8') for t in types]
+        nOwned_t = [int(off[rank+1]-off[rank]) for off in off_t]
+        for t in range(nTypes):
+            #the closed form below relies on the owned entities coming first, in global order
+            assert n_t[t] >= nOwned_t[t] and len(num_t[t]) >= n_t[t]
+            assert (num_t[t][:nOwned_t[t]] == off_t[t][rank] + numpy.arange(nOwned_t[t])).all(), \
+                "SimplexEntityDOFMap: owned mesh entities are not numbered contiguously"
+        ownedStart = numpy.concatenate(([0],numpy.cumsum([d_t[t]*nOwned_t[t] for t in range(nTypes)])))
+        ghostStart = ownedStart[-1] + numpy.concatenate(([0],numpy.cumsum([d_t[t]*(n_t[t]-nOwned_t[t]) for t in range(nTypes)])))
+        self.nDOF = int(ghostStart[-1])
+        self.range_nDOF = range(self.nDOF)
+        self.nDOF_subdomain = self.nDOF
+        self.nDOF_subdomain_owned = int(ownedStart[-1])
+        def subdomainDOF(t,e):
+            """First subdomain dof of entity e (array) of type t."""
+            return numpy.where(e < nOwned_t[t],
+                               ownedStart[t] + d_t[t]*e,
+                               ghostStart[t] + d_t[t]*(e - nOwned_t[t]))
+        #global numbering, closed form
+        dofOffsets = sum(d_t[t]*off_t[t] for t in range(nTypes))
+        self.dof_offsets_subdomain_owned = dofOffsets.astype(I)
+        self.nDOF_all_processes = int(dofOffsets[-1])
+        self.subdomain2global = numpy.zeros((self.nDOF,),I)
+        typeStart = numpy.zeros_like(dofOffsets[:-1])
+        for t in range(nTypes):
+            if d_t[t] > 0 and n_t[t] > 0:
+                g = num_t[t][:n_t[t]]
+                owner = numpy.searchsorted(off_t[t],g,side='right') - 1
+                first = dofOffsets[owner] + typeStart[owner] + d_t[t]*(g - off_t[t][owner])
+                local = subdomainDOF(t,numpy.arange(n_t[t]))
+                for m in range(d_t[t]):
+                    self.subdomain2global[local+m] = first + m
+            typeStart = typeStart + d_t[t]*(off_t[t][1:]-off_t[t][:-1])
+        #element maps, with every entity's dofs in the entity's global frame
+        self.l2g = numpy.zeros((nE,space.dim),I)
+        for dim,(vertexLists,dofLists) in enumerate(zip(space.entity_vertices,space.entity_dofs)):
+            t = dim #entity types are ordered by dimension: nTypes == nd+1
+            for vertices,dofs in zip(vertexLists,dofLists):
+                if len(dofs) == 0:
+                    continue
+                vertices = list(vertices)
+                if dim == 0:
+                    e = elementNodes[:,vertices[0]].astype('i8')
+                elif dim == nd:
+                    e = numpy.arange(nE,dtype='i8')
+                else:
+                    e = self._matchRows(types[t][4],elementNodes[:,vertices],mesh.nNodes_global)
+                first = subdomainDOF(t,e)
+                if len(dofs) == 1 or not self.orient:
+                    for k,i in enumerate(dofs):
+                        self.l2g[:,i] = first + k
+                else:
+                    m = len(vertices)
+                    codes,tables = self._entityIndexTables(m,p)
+                    order = numpy.argsort(nodeNumbering[elementNodes[:,vertices]],axis=1,kind='stable')
+                    entityIndex = tables[codes[(order*(m**numpy.arange(m))).sum(axis=1)]]
+                    for k,i in enumerate(dofs):
+                        self.l2g[:,i] = first + entityIndex[:,k]
+        #dof points (nodes, or control points for Bernstein) and the conformity check
+        barycentric = numpy.column_stack([1.0-space.dof_points.sum(axis=1),space.dof_points])
+        points = numpy.einsum('iv,evc->eic',barycentric,numpy.asarray(mesh.nodeArray)[elementNodes])
+        self.lagrangeNodesArray = numpy.zeros((self.nDOF,3),'d')
+        self.lagrangeNodesArray[self.l2g] = points
+        self.conformityDefect = float(numpy.abs(self.lagrangeNodesArray[self.l2g]-points).max()) if nE > 0 else 0.0
+        scale = float(numpy.abs(points).max()) + 1.0 if nE > 0 else 1.0
+        if self.orient and self.conformityDefect > 1.0e-9*scale:
+            raise RuntimeError("SimplexEntityDOFMap: elements disagree on the position of a shared dof by %g" % (self.conformityDefect,))
+        #the same heuristic as the P1 and P2 maps (the value is only passed along, not used for preallocation)
+        self.max_dof_neighbors = p*globalMesh.max_nNodeNeighbors_node
+        assert self.nDOF == 0 or self.l2g.max() < self.nDOF
 
 class p0DOFMap(DOFMap):
     def __init__(self,mesh):
@@ -5629,19 +5969,46 @@ P2 = C0_AffineQuadraticOnSimplexWithNodalBasis
 
 class C0_AffineBernsteinOnSimplex(C0_AffineQuadraticOnSimplexWithNodalBasis):
     """
-    A quadratic C0 space with Bernstein basis.
+    A quadratic C0 space with the Bernstein basis.
 
     Globally piecewise continuous.
     Each geometric element is the image of the reference simplex under
     a piecewise linear, continuous, affine mapping.
-    The nodal basis is used on the reference simplex.
-    """    
-    def __init__(self,mesh,nd=3):
+    The Bernstein basis is used on the reference simplex: non-negative, sums to one; the dofs are
+    control-point coefficients (values only at the vertices).
+
+    Parameters
+    ----------
+    mesh : the (subdomain) simplex mesh
+    nd : int
+    bernsteinOperator : bool
+        How data (initial conditions, strong Dirichlet values) becomes dofs.
+
+        True (default, the behaviour this class has always had): the dof of an edge is the value of the
+        data at the edge midpoint. The coefficients stay inside the range of the data, which the
+        bounds-preserving schemes rely on (CLSVOF, elliptic redistancing), but the result is only second
+        order: for data g with curvature along an edge (a, b) with midpoint m the exact coefficient is
+        2 g(m) - (g(a) + g(b))/2, so the dof is off by about h^2 g''/8. Data that is linear along the
+        edge (constants, zero) is reproduced exactly.
+
+        False: the exact conversion, as :class:`C0_AffinePolynomialOnSimplex` with ``family='bernstein'``
+        does by default: quadratic data is reproduced exactly (third order), but a coefficient can leave
+        the range of the data (g = 0, 1, 1 at a, m, b gives 1.5).
+
+    A numerics module passes ``(mesh, nd)``; to choose the exact conversion there use
+    ``lambda mesh, nd: C0_AffineBernsteinOnSimplex(mesh, nd, bernsteinOperator=False)``.
+    """
+    def __init__(self,mesh,nd=3,bernsteinOperator=True):
         self.order = 2
+        self.bernsteinOperator = bernsteinOperator
         localFunctionSpace = BernsteinOnSimplex(nd)
         localGeometricSpace= LinearOnSimplexWithNodalBasis(nd)
-        # NOTE: Bernstein polynomials ARE NOT INTERPOLATORY but we use them as control points to create a bezier curve.
-        interpolationConditions = QuadraticLagrangeNodalInterpolationConditions(localFunctionSpace.referenceElement)
+        if bernsteinOperator:
+            # NOTE: Bernstein polynomials ARE NOT INTERPOLATORY but we use them as control points to create a bezier curve.
+            interpolationConditions = QuadraticLagrangeNodalInterpolationConditions(localFunctionSpace.referenceElement)
+        else:
+            #the same dofs in the same order (PolynomialOnSimplex of order 2 equals BernsteinOnSimplex)
+            interpolationConditions = PolynomialInterpolationConditions(PolynomialOnSimplex(nd,2,'bernstein'))
         ParametricFiniteElementSpace.__init__(self,
                                               ReferenceFiniteElement(localFunctionSpace,
                                                                      interpolationConditions),
@@ -5653,6 +6020,154 @@ class C0_AffineBernsteinOnSimplex(C0_AffineQuadraticOnSimplexWithNodalBasis):
         #for archiving
         from . import Archiver
         self.XdmfWriter=Archiver.XdmfWriter()
+
+class C0_AffinePolynomialOnSimplex(ParametricFiniteElementSpace):
+    """
+    A C0 space of piecewise polynomials of degree ``order`` on a simplex mesh, any order.
+
+    Globally continuous; each element is the image of the reference simplex under an affine map
+    (the geometry is P1 whatever the order of the space).
+
+    Parameters
+    ----------
+    mesh : the (subdomain) simplex mesh
+    nd : int
+    order : int
+        Polynomial degree p >= 1.
+    family : ``'lagrange'`` or ``'bernstein'``
+    nodes : ``'gll'`` (default, warp-and-blend) or ``'equispaced'``
+    bernsteinOperator : bool
+        Bernstein only. False (default): interpolation (initial data) is the exact conversion of the
+        degree-p interpolant; True: control-point values (bounds preserving, second order).
+
+    For order 1 and 2 with the Lagrange family this is the space of
+    :class:`C0_AffineLinearOnSimplexWithNodalBasis` / :class:`C0_AffineQuadraticOnSimplexWithNodalBasis`
+    with the same local and global numbering; those classes stay as they are.
+    """
+    _configuredTypes = {}
+    def __new__(cls,mesh=None,nd=3,order=1,family='lagrange',nodes='gll',bernsteinOperator=False):
+        #Transport groups the fields it archives by the *class* of their space (one grid per class), so
+        #spaces of different order, family or nodes must be different classes: instantiate a subclass
+        #per configuration (isinstance(space, C0_AffinePolynomialOnSimplex) holds for all of them)
+        if cls is C0_AffinePolynomialOnSimplex:
+            key = (int(order),family,nodes)
+            if key not in cls._configuredTypes:
+                cls._configuredTypes[key] = type("C0_AffinePolynomialOnSimplex_p%d_%s_%s" % key,(cls,),{})
+            cls = cls._configuredTypes[key]
+        return super(C0_AffinePolynomialOnSimplex,cls).__new__(cls)
+    def __init__(self,mesh,nd=3,order=1,family='lagrange',nodes='gll',bernsteinOperator=False):
+        self.order = order
+        self.family = family
+        self.nodes = nodes
+        localFunctionSpace = PolynomialOnSimplex(nd,order,family,nodes)
+        localGeometricSpace = LinearOnSimplexWithNodalBasis(nd)
+        interpolationConditions = PolynomialInterpolationConditions(localFunctionSpace,bernsteinOperator)
+        ParametricFiniteElementSpace.__init__(self,
+                                              ReferenceFiniteElement(localFunctionSpace,
+                                                                     interpolationConditions),
+                                              AffineMaps(mesh,
+                                                         localGeometricSpace.referenceElement,
+                                                         LinearOnSimplexWithNodalBasis(nd)),
+                                              SimplexEntityDOFMap(mesh,localFunctionSpace,nd))
+        #for archiving
+        from . import Archiver
+        self.XdmfWriter=Archiver.XdmfWriter()
+    #archiving: the dofs on a piecewise-linear view of the space
+    def writeMeshXdmf(self,ar,name,t=0.0,init=False,meshChanged=False,arGrid=None,tCount=0):
+        """
+        Write the grid the fields of this space are attached to: every element split into order**nd linear
+        sub-cells whose vertices are the dof points (``dofMap.lagrangeNodesArray``), so a field is stored
+        as its complete dof vector (hot start reads it back exactly) and viewed as the piecewise-linear
+        interpolant of the dof values. For Lagrange spaces those are the nodal values; for Bernstein
+        spaces the picture is the control net (within O(h^2) of the function, inside its bounds).
+        """
+        from . import SimplexSpaces
+        mesh = self.mesh
+        dofMap = self.dofMap
+        nd = self.nSpace_global
+        mesh.writeMeshXdmf(ar,"Spatial_Domain",t,init,meshChanged,tCount=tCount)
+        spaceSuffix = "_c0p%d_%s_%s" % (self.order,self.family,self.nodes)
+        writer = self.XdmfWriter
+        gridName = writer.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
+        if writer._needsGrid(t):
+            subcells = SimplexSpaces.subcells(nd,self.order)
+            nSub = subcells.shape[0]
+            Xdmf_ElementTopology = {1:"Polyline",2:"Triangle",3:"Tetrahedron"}[nd]
+            if ar.global_sync:
+                n_elements       = mesh.globalMesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF_all_processes,3]
+                elements_dataset = 'elements'+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+            else:
+                n_elements       = mesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF,3]
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+            elements_dims = [n_elements,nd+1]
+            elements_stem = 'elements'+spaceSuffix+str(tCount)
+            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            writer.arGrid = ar.write_grid(writer.arGridCollection,gridName,t,tCount)
+            ar.write_topology(writer.arGrid,Xdmf_ElementTopology,n_elements,
+                              elements_dims,elements_dataset,elements_stem,
+                              dtype=(dofMap.subdomain2global if ar.global_sync else dofMap.l2g))
+            ar.write_geometry(writer.arGrid,nodes_dims,nodes_dataset,nodes_stem,
+                              dtype=dofMap.lagrangeNodesArray)
+            def subElements(nElements):
+                return dofMap.l2g[:nElements][:,subcells].reshape(-1,nd+1)
+            if not ar.writesDatasets:
+                assert not ar.global_sync, "global_sync is not implemented for text heavy data"
+                if init or meshChanged:
+                    numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",subElements(mesh.nElements_global),fmt='%d')
+                    numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",dofMap.lagrangeNodesArray)
+                return writer.arGrid
+            if init or meshChanged:
+                if ar.global_sync:
+                    owned = dofMap.dof_offsets_subdomain_owned
+                    ar.create_dataset_sync(elements_dataset,
+                                           offsets = nSub*numpy.asarray(mesh.globalMesh.elementOffsets_subdomain_owned),
+                                           data = dofMap.subdomain2global[subElements(mesh.nElements_owned)])
+                    ar.create_dataset_sync(nodes_dataset,
+                                           offsets = owned,
+                                           data = dofMap.lagrangeNodesArray[:owned[ar.rank+1]-owned[ar.rank]])
+                else:
+                    ar.create_dataset_async(elements_dataset,data = subElements(mesh.nElements_global))
+                    ar.create_dataset_async(nodes_dataset,data = dofMap.lagrangeNodesArray)
+        return writer.arGrid
+    def writeFunctionXdmf(self,ar,u,tCount=0,init=True):
+        #the complete dof vector as a nodal field on the grid of writeMeshXdmf (the writer is generic)
+        self.XdmfWriter.writeFunctionXdmf_C0P2Lagrange(ar,u,tCount=tCount,init=init)
+    def readFunctionXdmf(self,ar,u,tCount=0):
+        dataset = ar.field_dataset(u.name,tCount)
+        if ar.global_sync:
+            numbering = u.femSpace.dofMap.subdomain2global
+            permute = np.argsort(numbering)
+            u.dof[permute] = dataset[numbering[permute].tolist()]
+        else:
+            u.dof[:] = dataset[:]
+    def writeVectorFunctionXdmf(self,ar,uList,components,vectorName,tCount=0,init=True):
+        self.XdmfWriter.writeVectorFunctionXdmf_nodal(ar,uList,components,vectorName,
+                                                      "c0p%d_%s_%s" % (self.order,self.family,self.nodes),
+                                                      tCount=tCount,init=init)
+    #tabulate all basis functions at once instead of one callable per function and point
+    def getBasisValuesRef(self,xiArray):
+        self.psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,0).values
+        return self.psi
+    def getBasisGradientValuesRef(self,xiArray):
+        self.grad_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,1).grads
+        return self.grad_psi
+    def getBasisHessianValuesRef(self,xiArray):
+        self.Hessian_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,2).hessians
+        return self.Hessian_psi
+    def getBasisValuesTraceRef(self,xiArray):
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        self.psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,0).values
+                                      for ebN in lfs.referenceElement.range_nElementBoundaries])
+        return self.psi_trace
+    def getBasisGradientValuesTraceRef(self,xiArray):
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        self.grad_psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,1).grads
+                                           for ebN in lfs.referenceElement.range_nElementBoundaries])
+        return self.grad_psi_trace
 
 class DG_AffineQuadraticOnSimplexWithNodalBasis(ParametricFiniteElementSpace):
     """
@@ -6839,6 +7354,9 @@ class DOFBoundaryConditions(object):
                 return hash(tuple(self.p))
             def __eq__(self,other):
                 return  enorm(self.p - other.p) <= self.h
+        #Bernstein spaces with exact conversion (PolynomialInterpolationConditions, nodal False): a boundary
+        #dof is a combination of the data at the sample points of its entity, not the value at one point
+        exactConversion = getattr(femSpace.referenceFiniteElement.interpolationConditions,'nodal',True) is False
         if getPointwiseBoundaryConditions is not None and femSpace.strongDirichletConditions and not weakDirichletConditions:
             for eN in range(femSpace.elementMaps.mesh.nElements_global):
             # mesh = femSpace.elementMaps.mesh
@@ -6878,6 +7396,8 @@ class DOFBoundaryConditions(object):
                                     else:
                                         self.periodicDOFDict[ptuple(p)] = set([dofN])
                                 elif g is not None:
+                                    if exactConversion:
+                                        g = self.exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions)
                                     self.DOFBoundaryConditionsDict[dofN] = g
                                     self.DOFBoundaryPointDict[dofN]=x
                                     self.DOFBoundaryMaterialFlag[dofN] = materialFlag
@@ -7019,6 +7539,38 @@ class DOFBoundaryConditions(object):
             self.global2freeGlobal_global_dofs[i] = dofN#map each of the unknown DOF's to the original node number
             self.global2freeGlobal_free_dofs[i] = self.global2freeGlobal[dofN]#map each of the unknown DOF's to the free unknown number
 
+
+    @staticmethod
+    def exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions):
+        """
+        The Dirichlet condition of local dof i of element eN for a space whose dofs are not point values
+        (Bernstein with exact conversion): ``sum_j weights[i,j] g_j(x_j,t)`` over the sample points of
+        the dof's entity, with g_j the condition the user gives at x_j for the same boundary flag. The
+        result is called like any other condition, ``g(x,t)``; x is ignored.
+
+        The weights of a dof on a vertex, edge or face vanish off that entity, so only data on the
+        boundary face is used. If the user gives no condition at one of those points (a condition that
+        ends inside the face), the dof falls back to the single value g at its own sample point, with a warning.
+        """
+        interpolation = femSpace.referenceFiniteElement.interpolationConditions
+        weights = interpolation.weights[i]
+        terms = []
+        for j in numpy.nonzero(numpy.abs(weights) > 1.0e-12)[0]:
+            if j == i:
+                g_j = g
+            else:
+                gReturn = getPointwiseBoundaryConditions(femSpace.interpolationPoints[eN,j],materialFlag)
+                try:
+                    g_j = gReturn[0]
+                except TypeError:
+                    g_j = gReturn
+            if g_j is None:
+                logEvent("WARNING DOFBoundaryConditions exact conversion: no Dirichlet condition at a sample point of a boundary dof; using the value at the dof's own sample point")
+                return g
+            terms.append((float(weights[j]),g_j,femSpace.interpolationPoints[eN,j].copy()))
+        if len(terms) == 1 and abs(terms[0][0]-1.0) < 1.0e-12: #a vertex: the dof is the value
+            return g
+        return lambda x,t,terms=terms: sum(w*g_j(x_j,t) for w,g_j,x_j in terms)
 
 class DOFBoundaryConditions_alt(object):
     """
