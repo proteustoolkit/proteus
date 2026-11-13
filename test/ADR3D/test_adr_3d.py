@@ -223,7 +223,50 @@ def test_p1_immersed_plane_two_ranks_match_serial(tmp_path):
     np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
 
 
-CUT_PHASE = {"robin": 1, "scifem": 2, "pg": 2, "both": 3}
+SCIFEM = "scifem=1.0 scifemPenalty=10.0"
+IFEM_SCIFEM_PLANE_L2 = {10.0: [3.66983450782109102e-02, 9.03573535578436164e-03, 2.34186492160958545e-03, 6.17740313962773400e-04],
+                        1000.0: [3.37869233267889812e-02, 8.79494815923208099e-03, 2.63388253074005926e-03, 1.17265913688247752e-03]}
+IFEM_SCIFEM_SPHERE_L2 = {10.0: [1.61503769780517101e-02, 8.47620060428019503e-03, 2.59021131275304203e-03, 6.78877414369735070e-04],
+                         1000.0: [8.19725414710156634e-03, 8.75073991203536954e-03, 2.64772024283712682e-03, 6.88329959911526245e-04]}
+
+
+@pytest.mark.parametrize("mub", [10.0, 1000.0])
+def test_p1_immersed_scifem_plane(mub, tmp_path):
+    """SCIFEM consistency terms + interior penalty (gamma = 10) on the cut triangular faces, plane n.x = 0.45.
+    mub = 10 reaches rate 2 (2.02, 1.95, 1.92); mub = 1000, which does not converge without the face terms,
+    now converges (rates 1.94, 1.74, 1.17: it flattens at the finest pair, where the plane leaves the cube and
+    the exterior cut faces carry no consistency term, as in 2D)."""
+    l2 = [_run("refinement={0} pOrder=1 cut=\"ifem_plane\" mub={1} {2}".format(r, mub, SCIFEM), cwd=tmp_path)["L2"] for r in range(4)]
+    rates = [np.log2(l2[i] / l2[i + 1]) for i in range(3)]
+    if mub == 10.0:
+        assert all(r >= 1.9 for r in rates), (l2, rates)
+    else:
+        assert l2[3] < l2[2] < l2[1] < l2[0] and rates[0] >= 1.9 and rates[1] >= 1.7, (l2, rates)
+    np.testing.assert_allclose(l2, IFEM_SCIFEM_PLANE_L2[mub], rtol=1e-5)
+
+
+@pytest.mark.parametrize("mub", [10.0, 1000.0])
+def test_p1_immersed_scifem_sphere(mub, tmp_path):
+    """Sphere r = 0.3 (the interface does not touch the boundary): rate 1.9-2 on the finest pair at both contrasts."""
+    l2 = [_run("refinement={0} pOrder=1 cut=\"ifem_sphere\" mub={1} {2}".format(r, mub, SCIFEM), cwd=tmp_path)["L2"] for r in range(4)]
+    assert np.log2(l2[2] / l2[3]) >= 1.9, l2
+    np.testing.assert_allclose(l2, IFEM_SCIFEM_SPHERE_L2[mub], rtol=1e-5)
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_p1_immersed_scifem_two_ranks_match_serial(tmp_path):
+    """The face terms need both elements of every cut face; two layers of overlap (the case sets them) give them."""
+    ctx = "refinement=1 pOrder=1 cut=\"ifem_plane\" mub=10.0 fluxJump=2.0 " + SCIFEM
+    serial = _run(ctx, cwd=tmp_path)
+    petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+             "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
+    par = _run(ctx + " usePetsc=True", ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
+    assert par["ranks"] == 2
+    np.testing.assert_allclose([par["L2"], par["Linfty"]], [serial["L2"], serial["Linfty"]], rtol=1e-8)
+
+
+CUT_PHASE = {"robin": 1, "pg": 2, "both": 3}
 
 
 def _setup(cut, extra=""):

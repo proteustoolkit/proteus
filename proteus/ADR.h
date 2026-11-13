@@ -82,6 +82,8 @@ namespace proteus
 		// Interior (isBoundary=false) and boundary (isBoundary=true) evaluations
 		// populate different internal storage within the same GfType object, so
 		// they are tracked with separate generation/icase arrays.
+		// the 2D moment fit on a cut triangular face of a tetrahedron (3D SCIFEM); unused in 2D
+		equivalent_polynomials::Simplex<2, 3, nP_edge, nQuadraturePoints_elementBoundary, 1, false> face_gf;
 		std::vector<GfType> gf_f_cache;
 		std::vector<GfTypeS> gf_s_cache;
 		std::vector<int> gf_s_interior_gen, gf_f_interior_gen, gf_f_boundary_gen;
@@ -131,6 +133,71 @@ namespace proteus
 						c[I] += element_nodes[j * 3 + I] / (nSpace + 1.0);
 				throw std::runtime_error("ADR immersedBoundary: element " + std::to_string(eN) + " (local number, centroid " +
 										 std::to_string(c[0]) + ", " + std::to_string(c[1]) + ", " + std::to_string(c[2]) + "): " + e.what());
+			}
+		}
+		// 3D SCIFEM: moment-fit weights of the two branches on a triangular face that Gamma_f cuts.
+		// H = weight of branch b (phi_f > 0), ImH = weight of branch a (phi_f < 0), at the face quadrature points
+		// of side 0 (physical positions xq0), exact for polynomials of degree <= nP_edge. The fit is the 2D
+		// equivalent polynomial on the reference triangle: the face's three vertex values of phi_f and the
+		// barycentric coordinates of each quadrature point in the face (side 0's vertex order) are all it needs,
+		// because the map from the reference triangle to the face is affine and the physical weights carry the
+		// face area through dS. Face k of a tetrahedron is opposite local node k; its vertices are the other three.
+		inline void cutFaceWeights(const int eN0, const int ebN_local0, const double (*xq0)[3],
+								   proteus::pyarray<int> &u_l2g, proteus::pyarray<double> &mesh_dof, proteus::pyarray<double> &phi_nodes,
+								   double *H, double *ImH)
+		{
+			if constexpr (nSpace == 3)
+			{
+				double P[3][3], phi3[3];
+				for (int m = 0; m < 3; m++)
+				{
+					const int ln = (m < ebN_local0) ? m : m + 1;
+					const int dof = u_l2g.data()[eN0 * nDOF_trial_element + ln];
+					phi3[m] = phi_nodes.data()[dof];
+					for (int I = 0; I < 3; I++)
+						P[m][I] = mesh_dof.data()[dof * 3 + I];
+				}
+				double v0[3], v1[3];
+				for (int I = 0; I < 3; I++)
+				{
+					v0[I] = P[1][I] - P[0][I];
+					v1[I] = P[2][I] - P[0][I];
+				}
+				const double d00 = v0[0] * v0[0] + v0[1] * v0[1] + v0[2] * v0[2], d01 = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2],
+							 d11 = v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2];
+				const double den = d00 * d11 - d01 * d01;
+				double xi[nQuadraturePoints_elementBoundary * 3];
+				for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
+				{
+					double v2[3];
+					for (int I = 0; I < 3; I++)
+						v2[I] = xq0[k][I] - P[0][I];
+					const double d20 = v2[0] * v0[0] + v2[1] * v0[1] + v2[2] * v0[2], d21 = v2[0] * v1[0] + v2[1] * v1[1] + v2[2] * v1[2];
+					xi[k * 3 + 0] = (d11 * d20 - d01 * d21) / den;
+					xi[k * 3 + 1] = (d00 * d21 - d01 * d20) / den;
+					xi[k * 3 + 2] = 0.0;
+				}
+				static const double ref_nodes[9] = {0., 0., 0., 1., 0., 0., 0., 1., 0.};
+				const int icase = face_gf.calculate(phi3, ref_nodes, xi, false);
+				for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
+				{
+					if (icase == 1)
+					{
+						H[k] = 1.0;
+						ImH[k] = 0.0;
+					}
+					else if (icase == -1)
+					{
+						H[k] = 0.0;
+						ImH[k] = 1.0;
+					}
+					else
+					{
+						face_gf.set_quad(k);
+						H[k] = face_gf.H(0., 0.);
+						ImH[k] = face_gf.ImH(0., 0.);
+					}
+				}
 			}
 		}
 		inline void ensureIFEMCacheSized(int nElements_global)
@@ -1257,8 +1324,9 @@ namespace proteus
 			// C44 phase 2, P1: the two-sided IFEM basis and the flux-jump lift on P1 tetrahedra
 			if (immersed && pOrder != 1)
 				need("immersedBoundary with P2 (the two-sided P2 basis on tetrahedra)", 2);
-			if (scifem_switch != 0.0 || scifem_penalty != 0.0)
-				need("immersedSCIFEM (consistency terms on cut faces)", 2);
+			// SCIFEM on triangular faces of P1 tetrahedra is implemented (cutFaceWeights); P2 is refused above
+			(void)scifem_switch;
+			(void)scifem_penalty;
 			if (PG)
 				need("PG (Petrov-Galerkin test with the IFEM basis)", 2);
 			if (embedded && immersed)
@@ -1421,7 +1489,7 @@ namespace proteus
 					const double *phi_m = &mesh_trial_trace_ref.data()[fkb * nDOF_mesh_trial_element];
 					xB_ref_faces[fkb * 3 + 0] = phi_m[1];
 					xB_ref_faces[fkb * 3 + 1] = phi_m[2];
-					xB_ref_faces[fkb * 3 + 2] = 0.0;
+					xB_ref_faces[fkb * 3 + 2] = (nSpace == 3) ? phi_m[3] : 0.0;
 				}
 			for (int eN = 0; eN < nElements_global; eN++)
 			{
@@ -1580,6 +1648,21 @@ namespace proteus
 						{
 							// This should give just the cut edges for simplices.
 							ifem_boundaries.insert(ebN);
+						}
+						else if (nSpace == 3 && elementBoundaryElementsArray.data()[ebN * 2 + 1] != -1)
+						{
+							// a triangular face Gamma_f cuts: its three vertices (the ones but the opposite
+							// node) carry both signs. Decided from the face's own vertex values, so both
+							// elements, and both ranks, agree.
+							double fmin = 1.0e300, fmax = -1.0e300;
+							for (int m = 0; m < 4; m++)
+								if (m != ebN_element)
+								{
+									fmin = std::min(fmin, element_phi_f[m]);
+									fmax = std::max(fmax, element_phi_f[m]);
+								}
+							if (fmin < 0.0 && fmax > 0.0)
+								ifem_boundaries.insert(ebN);
 						}
 					}
 					// Leveque & Li 1994, Example 1, 2, 3, 4; Ji et. al. 2014
@@ -2186,7 +2269,9 @@ namespace proteus
 					}
 
 					// --- Edge-restricted phi (both level sets) --------------------------------
-					double edge_nodes[2][3], phi_edge[2], phi_s_edge[2];
+					// (2D; in 3D the face is a triangle and its weights come from cutFaceWeights below)
+					double edge_nodes[2][3] = {}, phi_edge[2] = {}, phi_s_edge[2] = {};
+					if constexpr (nSpace == 2)
 					{
 						const int n0l = (ebN_local_s[0] + 1) % 3, n1l = (ebN_local_s[0] + 2) % 3;
 						const int ln[2] = {n0l, n1l};
@@ -2227,7 +2312,7 @@ namespace proteus
 						{
 							double jac_t[nSpace * nSpace], jacDet_t, jacInv_t[nSpace * nSpace],
 								   bJac_t[nSpace * (nSpace - 1)], mT_t[(nSpace - 1) * (nSpace - 1)],
-								   mTDS_t, nrm_t[2], xt_ = 0.0, yt_ = 0.0, zt_ = 0.0;
+								   mTDS_t, nrm_t[3], xt_ = 0.0, yt_ = 0.0, zt_ = 0.0;
 							ck.calculateMapping_elementBoundary(eN_s[s], ebN_local_s[s], kb,
 																ebN_local_s[s] * nQuadraturePoints_elementBoundary + kb,
 																mesh_dof.data(), mesh_l2g.data(),
@@ -2290,8 +2375,16 @@ namespace proteus
 					// {phi_s>0} (phi_s_edge is 1 without an embedded solid, so this is then exactly the
 					// single Gamma_f fit and its complement).
 					double C_a_edge[nP_edge + 1], C_b_edge[nP_edge + 1];
-					equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-phi_edge[0], -phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_a_edge);
-					equivalent_polynomials::calculate_edge_interval_H<nP_edge>(phi_edge[0], phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_b_edge);
+					// 3D: the same weights on the cut triangular face (moment fit of the 2D Heaviside on the face), at side 0's
+					// quadrature points
+					double H_face[nQuadraturePoints_elementBoundary], ImH_face[nQuadraturePoints_elementBoundary];
+					if constexpr (nSpace == 2)
+					{
+						equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-phi_edge[0], -phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_a_edge);
+						equivalent_polynomials::calculate_edge_interval_H<nP_edge>(phi_edge[0], phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_b_edge);
+					}
+					else
+						cutFaceWeights(eN_s[0], ebN_local_s[0], xq[0], u_l2g, mesh_dof, immersedBoundary_sdf_nodes, H_face, ImH_face);
 
 					for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
 					{
@@ -2310,7 +2403,7 @@ namespace proteus
 								   jac_int[nSpace * nSpace], jacDet_int, jacInv_int[nSpace * nSpace],
 								   boundaryJac[nSpace * (nSpace - 1)],
 								   metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt,
-								   normal[2], x_int, y_int, z_int;
+								   normal[3], x_int, y_int, z_int;
 							ck.calculateMapping_elementBoundary(eN, ebN_local, kb, ebN_local_kb,
 																mesh_dof.data(), mesh_l2g.data(),
 																mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
@@ -2351,8 +2444,13 @@ namespace proteus
 								vb[i] = gf_f.VB(i);
 								vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
 								vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
-							}
-							// Solution-jump lift (same node pattern as assign_jump_side / the ghost penalty's
+								if constexpr (nSpace == 3)
+								{
+									va_grad_trial[i * nSpace + 2] = gf_f.VA_z(i);
+									vb_grad_trial[i * nSpace + 2] = gf_f.VB_z(i);
+								}
+								}
+								// Solution-jump lift (same node pattern as assign_jump_side / the ghost penalty's
 							// gp_JA/gp_JB): branch a is u + JA, branch b is u + JB. Without it the edge terms
 							// see u^h instead of u^h + j_h and are inconsistent when [u] != 0.
 							double ca_s[nDOF_trial_element], cb_s[nDOF_trial_element];
@@ -2385,7 +2483,12 @@ namespace proteus
 								grad_ua[1] += J * gf_f.PSIA_y();
 								grad_ub[0] += J * gf_f.PSIB_x();
 								grad_ub[1] += J * gf_f.PSIB_y();
-							}
+								if constexpr (nSpace == 3)
+								{
+									grad_ua[2] += J * gf_f.PSIA_z();
+									grad_ub[2] += J * gf_f.PSIB_z();
+								}
+								}
 
 							ua_s[eN_side] = ua;
 							ub_s[eN_side] = ub;
@@ -2415,13 +2518,22 @@ namespace proteus
 						} // eN_side
 
 						// t of this physical point along side 0's edge direction, then H_hat(t)
-						double proj = 0.0;
-						for (int I = 0; I < 3; I++)
-							proj += (xq[0][k][I] - edge_nodes[0][I]) * edge_vec[I];
-						double t_edge = (edge_len2 > 1.0e-24) ? (proj / edge_len2) : 0.0;
-						// H_e / ImH_e: weights of branch b / branch a on its fluid piece of the edge
-						double H_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b_edge, t_edge);
-						double ImH_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a_edge, t_edge);
+						double H_e, ImH_e;
+						if constexpr (nSpace == 2)
+						{
+							double proj = 0.0;
+							for (int I = 0; I < 3; I++)
+								proj += (xq[0][k][I] - edge_nodes[0][I]) * edge_vec[I];
+							double t_edge = (edge_len2 > 1.0e-24) ? (proj / edge_len2) : 0.0;
+							// H_e / ImH_e: weights of branch b / branch a on its fluid piece of the edge
+							H_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b_edge, t_edge);
+							ImH_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a_edge, t_edge);
+						}
+						else
+						{
+							H_e = H_face[k];
+							ImH_e = ImH_face[k];
+						}
 
 						double avg_flux_a = 0.5 * (flux_a_s[0] + flux_a_s[1]);
 						double avg_flux_b = 0.5 * (flux_b_s[0] + flux_b_s[1]);
@@ -3340,7 +3452,7 @@ namespace proteus
 					const double *phi_m = &mesh_trial_trace_ref.data()[fkb * nDOF_mesh_trial_element];
 					xB_ref_faces[fkb * 3 + 0] = phi_m[1];
 					xB_ref_faces[fkb * 3 + 1] = phi_m[2];
-					xB_ref_faces[fkb * 3 + 2] = 0.0;
+					xB_ref_faces[fkb * 3 + 2] = (nSpace == 3) ? phi_m[3] : 0.0;
 				}
 			for (int eN = 0; eN < nElements_global; eN++)
 			{
@@ -3864,7 +3976,9 @@ namespace proteus
 					}
 
 					// --- Edge-restricted phi (both level sets) --------------------------------
-					double edge_nodes[2][3], phi_edge[2], phi_s_edge[2];
+					// (2D; in 3D the face is a triangle and its weights come from cutFaceWeights below)
+					double edge_nodes[2][3] = {}, phi_edge[2] = {}, phi_s_edge[2] = {};
+					if constexpr (nSpace == 2)
 					{
 						const int n0l = (ebN_local_s[0] + 1) % 3, n1l = (ebN_local_s[0] + 2) % 3;
 						const int ln[2] = {n0l, n1l};
@@ -3905,7 +4019,7 @@ namespace proteus
 						{
 							double jac_t[nSpace * nSpace], jacDet_t, jacInv_t[nSpace * nSpace],
 								   bJac_t[nSpace * (nSpace - 1)], mT_t[(nSpace - 1) * (nSpace - 1)],
-								   mTDS_t, nrm_t[2], xt_ = 0.0, yt_ = 0.0, zt_ = 0.0;
+								   mTDS_t, nrm_t[3], xt_ = 0.0, yt_ = 0.0, zt_ = 0.0;
 							ck.calculateMapping_elementBoundary(eN_s[s], ebN_local_s[s], kb,
 																ebN_local_s[s] * nQuadraturePoints_elementBoundary + kb,
 																mesh_dof.data(), mesh_l2g.data(),
@@ -3968,8 +4082,16 @@ namespace proteus
 					// {phi_s>0} (phi_s_edge is 1 without an embedded solid, so this is then exactly the
 					// single Gamma_f fit and its complement).
 					double C_a_edge[nP_edge + 1], C_b_edge[nP_edge + 1];
-					equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-phi_edge[0], -phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_a_edge);
-					equivalent_polynomials::calculate_edge_interval_H<nP_edge>(phi_edge[0], phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_b_edge);
+					// 3D: the same weights on the cut triangular face (moment fit of the 2D Heaviside on the face), at side 0's
+					// quadrature points
+					double H_face[nQuadraturePoints_elementBoundary], ImH_face[nQuadraturePoints_elementBoundary];
+					if constexpr (nSpace == 2)
+					{
+						equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-phi_edge[0], -phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_a_edge);
+						equivalent_polynomials::calculate_edge_interval_H<nP_edge>(phi_edge[0], phi_edge[1], phi_s_edge[0], phi_s_edge[1], C_b_edge);
+					}
+					else
+						cutFaceWeights(eN_s[0], ebN_local_s[0], xq[0], u_l2g, mesh_dof, immersedBoundary_sdf_nodes, H_face, ImH_face);
 
 					for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
 					{
@@ -3985,7 +4107,7 @@ namespace proteus
 							double jac_int[nSpace * nSpace], jacDet_int, jacInv_int[nSpace * nSpace],
 								   boundaryJac[nSpace * (nSpace - 1)],
 								   metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt,
-								   normal[2], x_int, y_int, z_int;
+								   normal[3], x_int, y_int, z_int;
 							ck.calculateMapping_elementBoundary(eN, ebN_local, kb, ebN_local_kb,
 																mesh_dof.data(), mesh_l2g.data(),
 																mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
@@ -4019,19 +4141,34 @@ namespace proteus
 								vb_m[eN_side][dof_i] = gf_f.VB(i);
 								double gax = gf_f.VA_x(i), gay = gf_f.VA_y(i),
 									   gbx = gf_f.VB_x(i), gby = gf_f.VB_y(i);
-								fta_m[eN_side][dof_i] = sign_ne * mua * (gax * normal[0] + gay * normal[1]);
-								ftb_m[eN_side][dof_i] = sign_ne * mub * (gbx * normal[0] + gby * normal[1]);
+								double fta = gax * normal[0] + gay * normal[1], ftb = gbx * normal[0] + gby * normal[1];
+								if constexpr (nSpace == 3)
+								{
+									fta += gf_f.VA_z(i) * normal[2];
+									ftb += gf_f.VB_z(i) * normal[2];
+								}
+								fta_m[eN_side][dof_i] = sign_ne * mua * fta;
+								ftb_m[eN_side][dof_i] = sign_ne * mub * ftb;
 							}
 						} // eN_side
 
 						// t of this physical point along side 0's edge direction, then H_hat(t)
-						double proj = 0.0;
-						for (int I = 0; I < 3; I++)
-							proj += (xq[0][k][I] - edge_nodes[0][I]) * edge_vec[I];
-						double t_edge = (edge_len2 > 1.0e-24) ? (proj / edge_len2) : 0.0;
-						// H_e / ImH_e: weights of branch b / branch a on its fluid piece of the edge
-						double H_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b_edge, t_edge);
-						double ImH_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a_edge, t_edge);
+						double H_e, ImH_e;
+						if constexpr (nSpace == 2)
+						{
+							double proj = 0.0;
+							for (int I = 0; I < 3; I++)
+								proj += (xq[0][k][I] - edge_nodes[0][I]) * edge_vec[I];
+							double t_edge = (edge_len2 > 1.0e-24) ? (proj / edge_len2) : 0.0;
+							// H_e / ImH_e: weights of branch b / branch a on its fluid piece of the edge
+							H_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b_edge, t_edge);
+							ImH_e = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a_edge, t_edge);
+						}
+						else
+						{
+							H_e = H_face[k];
+							ImH_e = ImH_face[k];
+						}
 
 						for (int side_i = 0; side_i < 2; side_i++)
 						{

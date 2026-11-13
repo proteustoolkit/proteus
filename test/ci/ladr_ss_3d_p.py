@@ -30,6 +30,8 @@ opts = Context.Options([
         "IFEM basis, immersedBoundary alone (C44 phase 2); scifem, pg and both still stop"),
     ("mua", 1.0, "diffusion on the phi_f < 0 side of an ifem_* case (the two-sided IFEM basis, C44 phase 2)"),
     ("mub", 10.0, "diffusion on the phi_f > 0 side of an ifem_* case"),
+    ("scifem", 0.0, "immersedSCIFEM_switch of an ifem_* case: 1 adds the SCIFEM consistency terms on cut triangular faces"),
+    ("scifemPenalty", 0.0, "immersedSCIFEM_penalty (interior penalty gamma, scaled by 1/h) of an ifem_* case"),
     ("fluxJump", 0.0, "prescribed flux jump [mu du/dn] (phi_f < 0 to phi_f > 0) of ifem_plane"),
     ("solJump", 0.0, "prescribed solution jump [u] = u(phi_f > 0 side) - u(phi_f < 0 side) of ifem_plane"),
     ("exact", "smooth", "manufactured solution: 'smooth' (sin*cos*exp) or 'quadratic' (in P2's space, so P2 must reproduce it)"),
@@ -152,8 +154,10 @@ class IfemPlane(AnalyticalSolutions.SteadyState):
         return mu*numpy.dot(self.a, self.a)*self.S(x) - self.lapq(x)
 
 class IfemPWL(AnalyticalSolutions.SteadyState):
-    """u^pm = g0 + g.x + (c/mu^pm)(n.x - d): lies in the P1 IFE space for the plane n.x = d."""
-    g0, g, c = 0.3, numpy.array([0.4, -0.2, 0.6]), 1.7
+    """u^pm = g0 + g.x + (c/mu^pm)(n.x - d), g.n = 0: lies in the P1 IFE space for the plane n.x = d."""
+    g0, c = 0.3, 1.7
+    g = numpy.array([0.4, -0.2, 0.6])
+    g = g - numpy.dot(g, _in)*_in      # g.n = 0, so mu du/dn = c on both sides: the flux jump is zero
     def __init__(self, mua, mub):
         self.mua, self.mub = mua, mub
     def uOfX_inner(self, x):
@@ -217,7 +221,8 @@ cutOptions = {"none": {},
 if opts.cut in ("plane", "plane_nogp"):
     cutOptions.update(embeddedBoundary_sdf=plane_sdf, embeddedBoundary_u=interface_u)
 elif opts.cut in _ifem:
-    cutOptions.update(immersedBoundary_sdf=_ifem[opts.cut][1], immersedBoundary_u=interface_u)
+    cutOptions.update(immersedBoundary_sdf=_ifem[opts.cut][1], immersedBoundary_u=interface_u,
+                      immersedSCIFEM_switch=opts.scifem, immersedSCIFEM_penalty=opts.scifemPenalty)
 elif cutOptions:
     cutOptions.update(embeddedBoundary_sdf=sphere_sdf, embeddedBoundary_u=interface_u,
                       immersedBoundary_sdf=sphere_sdf, immersedBoundary_u=interface_u)

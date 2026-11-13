@@ -664,8 +664,6 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
     if c.immersedBoundary and pOrder != 1:
         needs.append(("immersedBoundary with P2 (the two-sided P2 basis on tetrahedra)", 2))
-    if c.immersedSCIFEM_switch != 0.0 or c.immersedSCIFEM_penalty != 0.0:
-        needs.append(("immersedSCIFEM (consistency terms on cut faces)", 2))
     if c.PG:
         needs.append(("PG (Petrov-Galerkin test with the IFEM basis)", 2))
     if c.embeddedBoundary and c.immersedBoundary:
