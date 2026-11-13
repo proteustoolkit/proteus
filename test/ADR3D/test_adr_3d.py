@@ -128,6 +128,57 @@ def test_p1_sphere_embedded_boundary_converges_at_rate_two(tmp_path):
     np.testing.assert_allclose(l2, SPHERE_L2, rtol=1e-5)
 
 
+# P2 embedded solid (C44 phase 1b, B1): the planar cut (the vertex values place the plane) with fit degree 3 and
+# the degree-7 tetrahedron rule (qOrder 7, 31 points), ghost penalty on. nnx = 3, 5, 9. Pinned from 2026-11-13.
+# Without the ghost penalty the cut elements are not stable at nnx = 9 (L2 6.1e-5, Linfty 2.1e-3, no rate three):
+# the penalty is part of the method, as in 2D.
+P2_PLANE_L2 = [2.02840740211593634e-03, 2.33684944414725820e-04, 2.81798770745835767e-05]
+P2_PLANE_H1 = [2.64855268948593035e-02, 6.52415056616724703e-03, 1.61423662601366561e-03]
+
+
+def test_p2_plane_cut_embedded_boundary_converges_at_rate_three(tmp_path):
+    """M0: plane n.x = 0.37, P2: L2 rate 3, H1 seminorm rate 2."""
+    runs = [_run("refinement={0} pOrder=2 qOrder=7 cut=\"plane\"".format(r), cwd=tmp_path) for r in range(3)]
+    l2 = [r["L2"] for r in runs]
+    h1 = [r["H1"] for r in runs]
+    l2_rates = [np.log2(l2[i] / l2[i + 1]) for i in range(2)]
+    h1_rates = [np.log2(h1[i] / h1[i + 1]) for i in range(2)]
+    assert all(r >= 2.9 for r in l2_rates), "L2 errors {0}, rates {1}".format(l2, l2_rates)
+    assert all(r >= 1.95 for r in h1_rates), "H1 errors {0}, rates {1}".format(h1, h1_rates)
+    np.testing.assert_allclose(l2, P2_PLANE_L2, rtol=1e-5)
+    np.testing.assert_allclose(h1, P2_PLANE_H1, rtol=1e-5)
+
+
+# Curved solid (sphere r = 0.3) on P2 with the planar fits (the vertex values only): the geometry error of the
+# planar cut. nnx = 3, 5, 9. The curved option (B2) is compared against these.
+P2_SPHERE_PLANAR_L2 = [1.83415683963385613e-03, 2.25561758100372670e-04, 2.74792384564471665e-05]
+
+
+def test_p2_sphere_with_planar_cuts_runs_and_converges(tmp_path):
+    l2 = [_run("refinement={0} pOrder=2 qOrder=7 cut=\"embedded\"".format(r), cwd=tmp_path)["L2"] for r in range(3)]
+    rates = [np.log2(l2[i] / l2[i + 1]) for i in range(2)]
+    assert all(r >= 2.9 for r in rates), "L2 errors {0}, rates {1}".format(l2, rates)
+    np.testing.assert_allclose(l2, P2_SPHERE_PLANAR_L2, rtol=1e-5)
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.skipif(DIRECT_SOLVER is None, reason="PETSc has no parallel direct solver")
+def test_p2_plane_cut_two_ranks_match_serial(tmp_path):
+    serial = _run("refinement=1 pOrder=2 qOrder=7 cut=\"plane\"", cwd=tmp_path)
+    petsc = ("-mat_partitioning_type current -ksp_type preonly -pc_type lu "
+             "-pc_factor_mat_solver_type " + str(DIRECT_SOLVER))
+    par = _run("refinement=1 pOrder=2 qOrder=7 cut=\"plane\" usePetsc=True", ranks=2, cwd=tmp_path, PETSC_OPTIONS=petsc)
+    assert par["ranks"] == 2
+    np.testing.assert_allclose([par["L2"], par["Linfty"], par["H1"]], [serial["L2"], serial["Linfty"], serial["H1"]], rtol=1e-8)
+
+
+def test_p2_robin_still_stops_in_3d(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    so, p, n, opts = _setup("robin", "pOrder=2 qOrder=7")
+    with pytest.raises(NotImplementedError, match=r"2D only.*embeddedBoundary_robin.*C44 phase 1"):
+        NumericalSolution.NS_base(so, [p], [n], so.sList, opts)
+
+
 def test_p2_reproduces_a_quadratic_with_advection(tmp_path):
     out = _run("refinement=1 pOrder=2 exact=\"quadratic\"", cwd=tmp_path)
     assert out["L2"] < 1e-10 and out["Linfty"] < 1e-10, out

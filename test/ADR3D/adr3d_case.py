@@ -34,5 +34,5 @@ ns = NumericalSolution.NS_base(so, [p], [n], so.sList, opts)
 ns.calculateSolution("adr3d")
 lm = ns.modelList[0].levelModelList[-1]
 if comm.rank() == 0:
-    print("RESULT ranks=%d L2=%.17e Linfty=%.17e"
-          % (comm.size(), float(lm.L2_error[0] ** 0.5), float(lm.Linfty_error[0])), flush=True)
+    print("RESULT ranks=%d L2=%.17e Linfty=%.17e H1=%.17e"
+          % (comm.size(), float(lm.L2_error[0] ** 0.5), float(lm.Linfty_error[0]), float(lm.H1_error[0] ** 0.5)), flush=True)

@@ -658,8 +658,6 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
     if nSpace == 2:
         return
     needs = []
-    if c.embeddedBoundary and pOrder != 1:
-        needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
     if c.immersedBoundary and pOrder != 1:

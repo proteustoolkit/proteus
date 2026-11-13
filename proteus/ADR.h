@@ -60,7 +60,10 @@ namespace proteus
 		// (simplex Lagrange: P1 has nSpace+1 dofs, P2 has (nSpace+1)(nSpace+2)/2). Not a triangle
 		// test: a 3D P1 tetrahedron has 4 dofs and a P2 one has 10.
 		static const int pOrder = (nDOF_trial_element == nSpace + 1) ? 1 : ((nDOF_trial_element == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
-		static const int nP_fit = (pOrder == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
+		// 2D P2: k=4 with the 16-point (degree-8) triangle rule. 3D P2 keeps k=3 (decision P9 of C44 phase 1b):
+			// the Nitsche terms are degree 2p=4 against the fit, so the degree-7 tetrahedron rule (31 points) is
+			// exact for them; k=4 would need degree 8 (45 points, also negative weights).
+			static const int nP_fit = (pOrder == 2 && nSpace == 2 && nQuadraturePoints_element >= 16) ? 4 : 3;
 		using GfType = GeneralizedFunctions<nSpace, nDOF_trial_element, nP_fit, nQuadraturePoints_element, nDOF_mesh_trial_element * nQuadraturePoints_elementBoundary>;
 		// The solid level set only needs the H/D moment fits, never the two-sided IFEM basis. In 2D it
 		// shares GfType (kept bit-for-bit). In 3D the basis solve is 2D-only, so the solid uses the
@@ -1314,11 +1317,9 @@ namespace proteus
 				what += name;
 				phase = std::max(phase, ph);
 			};
-			// C44 phase 1 so far: the Nitsche terms of an embedded boundary on P1 tetrahedra. The ghost
-			// penalty (cut faces as triangles) and P2 are still to come.
-			(void)ghost_penalty; // the P1 ghost penalty on triangular faces is implemented
-			if (embedded && pOrder != 1)
-				need("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1);
+			// C44 phase 1: the Nitsche terms and the ghost penalty of an embedded boundary on P1 and P2
+			// tetrahedra (planar cut: the vertex values place the plane; P2 needs the degree-7 rule, qOrder 7).
+			(void)ghost_penalty;
 			if (robin)
 				need("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1);
 			// C44 phase 2, P1: the two-sided IFEM basis and the flux-jump lift on P1 tetrahedra
@@ -4365,6 +4366,12 @@ namespace proteus
 		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
 			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 15 && nQuadraturePoints_elementBoundaryIn == 7)
 			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 15, 4, 10, 10, 7>());
+		// 3D P2 with the degree-7 rule (31 points on the tetrahedron, 16 on a face; the tetrahedron rule has some
+		// negative weights): the rule that integrates the fit (degree 3) times the degree-4 Nitsche integrands
+		// exactly, qOrder 7 (C44 phase 1b).
+		if (nSpaceIn == 3 && CompKernelFlag == 0 && nDOF_mesh_trial_elementIn == 4 && nDOF_trial_elementIn == 10 &&
+			nDOF_test_elementIn == 10 && nQuadraturePoints_elementIn == 31 && nQuadraturePoints_elementBoundaryIn == 16)
+			return static_cast<cADR_base *>(new cADR<CompKernel<3, 4, 10, 10>, 3, 31, 4, 10, 10, 16>());
 		if (nSpaceIn == 2)
 			return proteus::chooseAndAllocateDiscretization2D<cADR_base, cADR, CompKernel>(nSpaceIn,
 																						   nQuadraturePoints_elementIn,
