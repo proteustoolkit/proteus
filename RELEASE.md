@@ -2,87 +2,89 @@
 
 ## Where the code lives
 
-**`proteustoolkit/proteus`** is the one repository. Development happens on its
-`main`, review and CI run there, the issue tracker and wiki are there, and the
-GitHub release is drawn from it. (Before 2.0.0 the code was developed on
-`cekees/proteus` and published to `erdc/proteus`; the latter was transferred to
-`proteustoolkit` and both old paths redirect. Do not create a repository named
-`erdc/proteus`: that would end the redirect.)
+**`proteustoolkit/proteus`** is the one repository. Its `main` is the development line (currently `2.0.x`), the
+issue tracker and wiki are there, and the GitHub release is drawn from it. Patch releases are cut from a **line
+branch** (`1.9.x`, `1.8.x`, ...): a release is a **tag on the line branch's final commit**. A release never moves
+`main`.
 
-Contributor forks, including `cekees/proteus`, remain forks of the same network.
+Contributor forks, including `cekees/proteus`, remain forks of the same network. Do not create a repository named
+`erdc/proteus`: that would end the redirect from the old name.
 
-## Contributing (for everyone else)
+## Contributing
 
-* Fork `proteustoolkit/proteus`, or keep using an existing fork of it
-* Open the pull request against `proteustoolkit/proteus`'s `main`
+* Fork `proteustoolkit/proteus`, or keep using an existing fork of it.
+* Pull requests that change the code go to the fork `cekees/proteus` first (review and CI run there), then reach
+  `proteustoolkit/proteus` in a "train": one pull request per release line that merges the reviewed fork pull
+  requests with one merge commit each. Merge trains with "Create a merge commit", never squash or rebase, so the
+  commits keep their hashes.
+* Qualify every reference that could be read in another repository: `proteustoolkit/proteus#1274`. History from the
+  two-repository era contains bare `#NNN` references that resolve to the wrong thing.
 
-### Referring to issues from a commit
+## Versions
 
-Issues and pull requests now share one numbering in one repository, but the
-history contains references from the two-repository era, when a bare `#1274`
-could mean an issue on one repository or a pull request on the other. In
-commits made before the transfer, resolve a bare `#NNN` with care. From here
-on, qualify anything that could be read elsewhere:
+Exactly three files carry the version, and all must agree:
 
-    Fixes proteustoolkit/proteus#1274
+* `proteus/__init__.py` — `__version__`
+* `setup.py` — `version=`
+* `docs/Doxyfile` — `PROJECT_NUMBER`
 
-## Cut the release candidate
+(`pyproject.toml` does not.) A development version has a bare `.dev` suffix (`2.0.0.dev`, `1.9.2.dev`), not `.dev0`.
+A release candidate is a PEP 440 `rcN` (`1.9.1rc1`). Always set a new version **outright**. Past clean-ups appended
+`.dev` to the released value instead of incrementing it, so never assume the file is one step from what you want.
 
-* Create the release candidate branch on `proteustoolkit/proteus`, from `main` (e.g. `rc1.9.0`)
-* Set the version in the three places that carry it, dropping the `.dev` suffix:
-  * `proteus/__init__.py` — `__version__`
-  * `setup.py` — `version=`
-  * `docs/Doxyfile` — `PROJECT_NUMBER`
-* Open the PR against **`main`** and request two reviewers
-* This is the last review before release; merge it when it passes
+## Release procedure (patch release on a line branch)
 
-The version strings carry a bare `.dev` suffix (`1.8.3.dev`), not `.dev0`.
-Note also that the clean-up step below has in practice set the version back to
-the *released* value with `.dev` appended rather than incrementing it, so
-`main` may still read `1.8.3.dev` when you come to release 1.9.0. Set the new
-version outright; do not assume it is one increment away.
+1. **Gate.** Agree what must be reproducible before the release (for a release that a publication will cite: the
+   results are reproducible from the line branch and the articles are in review).
+2. **Release candidate.** Set the three files to `X.Y.Zrc1` in a pull request against the line branch, let CI pass
+   (every leg of `sdist.yml`, read at job level, not only the run's conclusion), and merge it. Co-authors review the
+   candidate; their findings arrive as ordinary pull requests on the line branch.
+3. **Release notes.** Draft them from the range `<previous tag>..<line branch>`: every entry cites its pull request,
+   breaking changes are marked, the dependency floors are stated. Count commits and files with `git rev-list --count`
+   and `git diff --name-only`. Do not name journals or unpublished venues in public text.
+4. **Final version.** One commit, in its own pull request against the line branch, sets the three files to `X.Y.Z`;
+   merge it through the train and let CI pass on the merged commit.
+5. **Hook check.** Before tagging, confirm the Zenodo hook exists and is active:
+   `gh api repos/proteustoolkit/proteus/hooks --jq '.[]|{id,active,events}'`. Do not print its URL: it contains a token.
+   The concept DOI is 10.5281/zenodo.1004620; note how many versions it has now.
+6. **Tag and publish, once.** Create the tag (a bare number, `1.9.1`, not `v1.9.1`) on the final line-branch commit and
+   publish the GitHub release in the same step, directly, never as a draft that is toggled later:
 
-## Publish
+       gh release create X.Y.Z -R proteustoolkit/proteus --target <full sha> --title "proteus X.Y.Z" --notes-file <notes> --latest
 
-* Merge the release candidate PR into `main`; `main` is then the release commit.
-* Draft the release on `proteustoolkit/proteus` from the GitHub web UI
-  * Tag the release commit. Tags are bare version numbers — `1.8.3`, not `v1.8.3`
-  * List significant changes and contributors since the last release
-* Publishing the release fires the Zenodo webhook. Confirm afterwards that a new
-  version appeared under the concept DOI 10.5281/zenodo.1004620. The hook never
-  backfills and re-publishing a release fails with 409, so a missed deposit
-  needs a new release id.
+   Publishing fires the Zenodo webhook. The hook never backfills, and publishing an already-received release again
+   fails with 409, because Zenodo keys on the release id.
+7. **Verify.** The tag points at the commit, the release is not a draft, and the concept DOI has gained one version
+   (the three `release` deliveries show one 202 and two 409s: that is normal). Add the version DOI badge to the top of
+   the release body with `gh release edit`; editing is safe, it produces another `edited` delivery that Zenodo accepts
+   without creating a version. If no version appears: back up the body (`gh api repos/proteustoolkit/proteus/releases/<id>`),
+   `gh release delete X.Y.Z --cleanup-tag=false`, and recreate it.
+
+## After the release
+
+* **Clean up the line.** One commit sets the three files to `X.Y.(Z+1).dev` outright, through the train. The line
+  branch is not renamed or recreated.
+* **conda-forge.** The bot opens a feedstock pull request for the new version; check it keeps the dependency floors
+  and read every file under `recipe/`, not only `meta.yaml`. A fork branch with the same change is the fallback.
+* **Spack.** Bump the pinned version in `py-proteus` and update the open pull request.
+* **Documentation** (below).
+* **HPC modules.** Rebuild the `proteus-modules` stacks against the tag so that runs can cite the release.
 
 ## Documentation
 
-No longer generated by CI, so check it by hand.
+Not generated by CI; build it from the **tag**, and check it by hand.
 
-* Clone `proteustoolkit/proteus-docs`
-* Check out `main`
-* Run `make docs` in proteus
-* Open `proteus-docs/index.html` in a browser and check the site — version numbers, math and diagram rendering
-* Merge `main` into `gh-pages` in the proteus-docs repo; `gh-pages` is the branch the site serves
-
-## Clean up
-
-* Create the next `devX.Y.Z` branch — or branches, if more than one line of
-  work continues from this release
-* Set the version numbers in the three files above back to `X.Y.Z.dev`
+* Use a fresh clone of the tag (it has no vendored xtensor: install `xtensor`, `xtensor-python` and `xtl` from
+  conda-forge, plus `sphinx`, `sphinx_rtd_theme`, `breathe`, `doxygen` and `graphviz`), build the extensions in place,
+  and run `make docs` with `PYTHONPATH` set to the clone. An environment that also has another proteus installed
+  editable will otherwise document that one; the file paths in the Sphinx warnings show which source was used.
+* Clone `proteustoolkit/proteus-docs` on `gh-pages`, replace its contents with `docs/build` (keep `CNAME` and
+  `.nojekyll`), commit, check version numbers, math and diagram rendering, and push `gh-pages`.
 
 ## A note on Git LFS
 
-Test comparison data was tracked in Git LFS until `c75eb6c9` (2026-08-11),
-which converted those 218 files back to ordinary git objects. Two
-consequences are worth knowing when a release is being cut:
-
-* GitHub bills LFS **bandwidth** against the fork-network root —
-  `proteustoolkit/proteus` — no matter which fork is cloned or who owns it. Pushing a
-  fork's own copy of the objects does not change this, and neither does
-  paying for the fork's own account. So an exhausted quota affects every
-  consumer of every fork at once.
-* Nothing at `main`'s tip is LFS-tracked any more, so a plain clone of the
-  default branch transfers no LFS objects at all. Older tags still do: `1.8.3`
-  has 210 LFS-tracked files. Checking out a pre-1.9.0 tag, or running
-  `git lfs fetch --all`, still draws on the quota. The objects also remain in
-  LFS **storage**, a separate quota from bandwidth that removing the pointers
-  does not reclaim.
+Test comparison data was tracked in Git LFS until `c75eb6c9` (2026-08-11), which converted those 218 files back to
+ordinary git objects. GitHub bills LFS **bandwidth** against the fork-network root, `proteustoolkit/proteus`, no matter
+which fork is cloned. Nothing at the tip of `main` or `1.9.x` is LFS-tracked, so a plain clone transfers no LFS objects.
+Older tags still do: `1.8.3` has 210 LFS-tracked files, so checking out a pre-1.9.0 tag or running `git lfs fetch --all`
+draws on the quota. The objects also remain in LFS **storage**, a separate quota that removing the pointers does not reclaim.
