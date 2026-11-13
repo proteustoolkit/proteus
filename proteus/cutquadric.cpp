@@ -40,4 +40,14 @@ PYBIND11_MODULE(cutquadric, m)
     d["double_edges"] = c.doubleEdges;
     return d;
   });
+  m.def("volume_moments",
+        [](Arr u, int degree, int order, double planar_tol, double deflate_tol) {
+          Options opt;
+          opt.order = order;
+          opt.planarTol = planar_tol;
+          opt.deflateTol = deflate_tol;
+          return volumeMomentsNodal(toP2Tet(u), degree, opt);
+        },
+        py::arg("u"), py::arg("degree"), py::arg("order") = 16, py::arg("planar_tol") = 1e-12,
+        py::arg("deflate_tol") = 1e-10);
 }

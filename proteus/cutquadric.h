@@ -327,6 +327,337 @@ inline Classification classify(const P2Tet &u)
     r.label = CutLabel::Simple;
   return r;
 }
+
+// ------------------------------------------------------------------------------------------------ the sweep
+struct Options
+{
+  int order = 16;           // Gauss points per outer segment per outer coordinate
+  double planarTol = 1e-12; // quadratic part below this fraction of the largest coefficient: plane, use cutclip (<= 0: never)
+  double deflateTol = 1e-10; // drop leading polynomial coefficients below this fraction of the largest before a root solve
+};
+
+namespace detail
+{
+struct GL
+{
+  std::vector<double> x, w;  // on [0,1]
+};
+
+inline const GL &gauss01(int n)
+{
+  static std::map<int, GL> cache;
+  static std::mutex mtx;
+  std::lock_guard<std::mutex> lock(mtx);
+  auto it = cache.find(n);
+  if (it != cache.end())
+    return it->second;
+  GL g;
+  g.x.resize(n);
+  g.w.resize(n);
+  for (int i = 0; i < n; ++i)
+  {
+    double x = std::cos(M_PI * (i + 0.75) / (n + 0.5));
+    double p0 = 1.0, p1 = 0.0;
+    for (int it2 = 0; it2 < 100; ++it2)
+    {
+      p0 = 1.0;
+      p1 = 0.0;
+      for (int k = 0; k < n; ++k)
+      {
+        const double p2 = p1;
+        p1 = p0;
+        p0 = ((2.0 * k + 1.0) * x * p1 - k * p2) / (k + 1.0);
+      }
+      const double dp = n * (x * p0 - p1) / (x * x - 1.0);
+      const double dx = p0 / dp;
+      x -= dx;
+      if (std::fabs(dx) < 1e-15)
+      {
+        p0 = 1.0;
+        p1 = 0.0;
+        for (int k = 0; k < n; ++k)
+        {
+          const double p2 = p1;
+          p1 = p0;
+          p0 = ((2.0 * k + 1.0) * x * p1 - k * p2) / (k + 1.0);
+        }
+        break;
+      }
+    }
+    const double dp = n * (x * p0 - p1) / (x * x - 1.0);
+    g.x[i] = 0.5 * (x + 1.0);
+    g.w[i] = 0.5 * 2.0 / ((1.0 - x * x) * dp * dp);
+  }
+  return cache.emplace(n, std::move(g)).first->second;
+}
+
+// stable real roots of a x^2 + b x + c; a tangential double root is returned once (it is a split point)
+inline int quadRoots(double a, double b, double c, double eps, double r[2])
+{
+  if (std::fabs(a) <= eps)
+  {
+    if (std::fabs(b) <= eps)
+      return 0;
+    r[0] = -c / b;
+    return 1;
+  }
+  const double disc = b * b - 4.0 * a * c;
+  if (disc <= 0.0)
+  {
+    if (disc > -eps * eps)
+    {
+      r[0] = -b / (2.0 * a);
+      return 1;
+    }
+    return 0;
+  }
+  const double s = std::sqrt(disc);
+  const double q = -0.5 * (b + (b >= 0.0 ? s : -s));
+  r[0] = q / a;
+  r[1] = (q != 0.0 ? c / q : -b / (2.0 * a));
+  if (r[0] > r[1])
+    std::swap(r[0], r[1]);
+  return 2;
+}
+
+// real roots in (lo-eps, hi+eps) of c0 + c1 z + c2 z^2. Leading coefficients below deflate * (largest) are round-off and
+// are dropped first: a root finder handed 1e-17 z^2 + b z + c otherwise returns a root of the wrong polynomial.
+inline void polyRoots(double c0, double c1, double c2, double lo, double hi, double eps, double deflate,
+                      std::vector<double> &out)
+{
+  const double scale = std::max({std::fabs(c0), std::fabs(c1), std::fabs(c2)});
+  if (scale == 0.0)
+    return;
+  if (std::fabs(c2) < deflate * scale)
+    c2 = 0.0;
+  if (c2 == 0.0 && std::fabs(c1) < deflate * scale)
+    return;
+  double r[2];
+  const int n = quadRoots(c2, c1, c0, 1e-13 * scale, r);
+  for (int i = 0; i < n; ++i)
+    if (lo - eps < r[i] && r[i] < hi + eps)
+      out.push_back(r[i]);
+}
+
+// sorted, clamped, de-duplicated critical values with the two end points
+inline std::vector<double> segments(std::vector<double> crit, double hiEnd, double eps)
+{
+  std::sort(crit.begin(), crit.end());
+  std::vector<double> segs;
+  for (double t : crit)
+  {
+    if (t < -eps || t > hiEnd + eps)
+      continue;
+    t = std::min(std::max(t, 0.0), hiEnd);
+    if (segs.empty() || t - segs.back() > 1e-14)
+      segs.push_back(t);
+  }
+  if (segs.empty() || segs.front() > 0.0)
+    segs.insert(segs.begin(), 0.0);
+  if (segs.back() < hiEnd)
+    segs.push_back(hiEnd);
+  return segs;
+}
+
+// cubic smoothstep t -> s(t), with ds/dt
+inline void smooth(double t, double &s, double &j)
+{
+  s = t * t * (3.0 - 2.0 * t);
+  j = 6.0 * t * (1.0 - t);
+}
+
+inline double maxAbs(const Coef3 &c)
+{
+  double m = 0.0;
+  for (double v : c)
+    m = std::max(m, std::fabs(v));
+  return m;
+}
+
+// Visit every outer Gauss point (y, z) of the sweep with its weight (segment length, Gauss weight and smoothstep
+// Jacobian in both outer directions) and the inner polynomial a2 x^2 + a1 x + a0 on x in [0, L], L = 1 - y - z.
+// The outer partition is by the critical values of the level set (the x-discriminant, the two facet restrictions, the
+// branch line) so that every outer integrand is smooth on a segment up to the endpoint square roots the map removes.
+template <class Visitor>
+inline void sweepOuter(const Coef3 &c, const Options &opt, Visitor &&visit)
+{
+  const double scale = maxAbs(c);
+  if (scale == 0.0)
+    return;
+  const double eps = 1e-12 * scale;
+  const double c1 = c[0], cx = c[1], cy = c[2], cz = c[3], cxx = c[4], cxy = c[5], cxz = c[6], cyy = c[7], cyz = c[8],
+               czz = c[9];
+  const double a2 = cxx;
+  // quadratic-in-y families alpha, beta(z) linear, gamma(z) quadratic
+  struct Fam
+  {
+    double al;
+    double be[2];
+    double ga[3];
+  };
+  std::vector<Fam> fams;
+  fams.push_back({cxy * cxy - 4 * a2 * cyy,
+                  {2 * cxy * cx - 4 * a2 * cy, 2 * cxy * cxz - 4 * a2 * cyz},
+                  {cx * cx - 4 * a2 * c1, 2 * cx * cxz - 4 * a2 * cz, cxz * cxz - 4 * a2 * czz}});
+  fams.push_back({cyy, {cy, cyz}, {c1, cz, czz}});
+  fams.push_back({cxx + cyy - cxy,
+                  {cy - cx + cxy - 2 * cxx, 2 * cxx - cxy + cyz - cxz},
+                  {c1 + cx + cxx, cz - cx - 2 * cxx + cxz, cxx + czz - cxz}});
+  if (std::fabs(cxy) > eps)
+    fams.push_back({0.0, {cxy, 0.0}, {cx, cxz, 0.0}});
+
+  std::vector<double> zcrit = {0.0, 1.0};
+  for (const Fam &F : fams)
+  {
+    // beta^2 - 4 alpha gamma = 0 (birth/death), gamma = 0 (exit through y = 0), value at y = 1 - z (exit through the facet)
+    polyRoots(F.be[0] * F.be[0] - 4 * F.al * F.ga[0], 2 * F.be[0] * F.be[1] - 4 * F.al * F.ga[1],
+              F.be[1] * F.be[1] - 4 * F.al * F.ga[2], 0.0, 1.0, eps, opt.deflateTol, zcrit);
+    polyRoots(F.ga[0], F.ga[1], F.ga[2], 0.0, 1.0, eps, opt.deflateTol, zcrit);
+    polyRoots(F.al + F.be[0] + F.ga[0], -2 * F.al + F.be[1] - F.be[0] + F.ga[1], F.al - F.be[1] + F.ga[2], 0.0, 1.0, eps,
+              opt.deflateTol, zcrit);
+  }
+
+  const GL &g = gauss01(opt.order);
+  const std::vector<double> zsegs = segments(zcrit, 1.0, eps);
+  std::vector<double> ycrit;
+  for (std::size_t zs = 0; zs + 1 < zsegs.size(); ++zs)
+  {
+    const double za = zsegs[zs], zh = zsegs[zs + 1] - za;
+    if (zh < 1e-14)
+      continue;
+    for (int zi = 0; zi < opt.order; ++zi)
+    {
+      double sz, jz;
+      smooth(g.x[zi], sz, jz);
+      const double z = za + zh * sz;
+      const double wz = g.w[zi] * zh * jz;
+      const double Ly = 1.0 - z;
+      ycrit.clear();
+      for (const Fam &F : fams)
+      {
+        double r[2];
+        const int n = quadRoots(F.al, F.be[0] + F.be[1] * z, F.ga[0] + z * (F.ga[1] + z * F.ga[2]), eps, r);
+        for (int i = 0; i < n; ++i)
+          if (eps < r[i] && r[i] < Ly - eps)
+            ycrit.push_back(r[i]);
+      }
+      const std::vector<double> ysegs = segments(ycrit, Ly, eps);
+      for (std::size_t ys = 0; ys + 1 < ysegs.size(); ++ys)
+      {
+        const double ya = ysegs[ys], yh = ysegs[ys + 1] - ya;
+        if (yh < 1e-14)
+          continue;
+        for (int yi = 0; yi < opt.order; ++yi)
+        {
+          double sy, jy;
+          smooth(g.x[yi], sy, jy);
+          const double y = ya + yh * sy;
+          const double L = 1.0 - y - z;
+          if (L <= eps)
+            continue;
+          const double b1 = cxy * y + cxz * z + cx;
+          const double b0 = cyy * y * y + czz * z * z + cyz * y * z + cy * y + cz * z + c1;
+          visit(y, z, wz * g.w[yi] * yh * jy, a2, b1, b0, L, eps);
+        }
+      }
+    }
+  }
+}
+
+// intervals of [0, L] where a2 x^2 + a1 x + a0 > 0 (at most two); returns their count
+inline int positiveIntervals(double a2, double a1, double a0, double L, double eps, double lo[2], double hi[2])
+{
+  double r[2];
+  const int n = quadRoots(a2, a1, a0, eps, r);
+  double pts[4] = {0.0, L, L, L};
+  int np = 1;
+  for (int i = 0; i < n; ++i)
+    if (eps < r[i] && r[i] < L - eps)
+      pts[np++] = r[i];
+  pts[np++] = L;
+  int count = 0;
+  for (int k = 0; k + 1 < np; ++k)
+  {
+    if (pts[k + 1] - pts[k] < 1e-15)
+      continue;
+    const double xm = 0.5 * (pts[k] + pts[k + 1]);
+    if ((a2 * xm + a1) * xm + a0 > 0.0)
+    {
+      lo[count] = pts[k];
+      hi[count] = pts[k + 1];
+      ++count;
+    }
+  }
+  return count;
+}
+
+inline bool isPlanar(const Coef3 &c, double planarTol)
+{
+  if (planarTol <= 0.0)
+    return false;
+  const double scale = maxAbs(c);
+  double q = 0.0;
+  for (int k = 4; k < 10; ++k)
+    q = std::max(q, std::fabs(c[k]));
+  return q <= planarTol * scale;
+}
+
+inline cutclip::Tet refTet()
+{
+  return {cutclip::Vec3{0, 0, 0}, cutclip::Vec3{1, 0, 0}, cutclip::Vec3{0, 1, 0}, cutclip::Vec3{0, 0, 1}};
+}
+// {x : a.x + b > 0} for the linear part of the quadric
+inline cutclip::Plane planeOf(const Coef3 &c) { return {c[1], c[2], c[3], c[0]}; }
+}  // namespace detail
+
+// Monomial moments of {u > 0} over the reference tet, every monomial of total degree <= degree in monomialIndex order.
+// Exactly planar data (quadratic part round-off) goes to cutclip, which is exact and cheaper; otherwise one slicing
+// sweep builds the interval list once per outer point and accumulates every antiderivative x^(a+1)/(a+1) y^b z^c.
+inline std::vector<double> volumeMoments(const Coef3 &c, int degree, const Options &opt = Options())
+{
+  if (degree < 0 || degree > 7)
+    throw std::invalid_argument("cutquadric: moments are supported to degree 7 (cutclip's limit)");
+  if (detail::maxAbs(c) == 0.0)
+    return std::vector<double>(numMonomials(degree), 0.0);
+  if (detail::isPlanar(c, opt.planarTol))
+    return cutclip::moments(cutclip::clipTet(detail::refTet(), std::vector<cutclip::Plane>{detail::planeOf(c)}), degree);
+  const auto idx = monomialIndex(degree);
+  std::vector<double> m(idx.size(), 0.0);
+  std::vector<double> yp(degree + 1), zp(degree + 1), lp(degree + 2), hp(degree + 2);
+  detail::sweepOuter(c, opt, [&](double y, double z, double w, double a2, double a1, double a0, double L, double eps) {
+    double lo[2], hi[2];
+    const int ni = detail::positiveIntervals(a2, a1, a0, L, eps, lo, hi);
+    if (ni == 0)
+      return;
+    yp[0] = zp[0] = 1.0;
+    for (int k = 1; k <= degree; ++k)
+    {
+      yp[k] = yp[k - 1] * y;
+      zp[k] = zp[k - 1] * z;
+    }
+    for (int i = 0; i < ni; ++i)
+    {
+      lp[0] = hp[0] = 1.0;
+      for (int k = 1; k <= degree + 1; ++k)
+      {
+        lp[k] = lp[k - 1] * lo[i];
+        hp[k] = hp[k - 1] * hi[i];
+      }
+      for (std::size_t n = 0; n < idx.size(); ++n)
+      {
+        const int a = idx[n][0];
+        m[n] += w * (hp[a + 1] - lp[a + 1]) / (a + 1) * yp[idx[n][1]] * zp[idx[n][2]];
+      }
+    }
+  });
+  return m;
+}
+// Coef3 and P2Tet are both std::array<double,10>: the nodal-value entry point has its own name
+inline std::vector<double> volumeMomentsNodal(const P2Tet &u, int degree, const Options &opt = Options())
+{
+  return volumeMoments(p2ToMonomial(u), degree, opt);
+}
+
 }  // namespace cutquadric
 }  // namespace proteus
 #endif
