@@ -27,7 +27,7 @@ def test_unfitted_kernels_standalone(tmp_path):
     exe = str(tmp_path / "unfitted_kernels_test")
     cmd = [_compiler(), "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-I" + INCLUDE,
            os.path.join(HERE, "unfitted_kernels_test.cpp"), "-o", exe]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     assert out.returncode == 0, out.stderr
     run = subprocess.run([exe], capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stdout[-3000:]
