@@ -33,8 +33,9 @@ Layout of ``reference_tables.npz``
 Keys are ``<family>/<cell>/p<p>/<item>``.
 
 * family: ``lagrange_equi`` (equispaced nodes), ``lagrange_gll`` (GLL on edges, warp-and-blend inside;
-  equal to equispaced for p <= 2; the quadrilateral/hexahedron have equispaced only, which equals GLL
-  for Q1, Q2), ``bernstein``. On the tetrahedron at p = 5 the ``lagrange_gll`` nodes are the published
+  equal to equispaced for p <= 2; the quadrilateral/hexahedron have ``lagrange_equi`` for Q1, Q2, where
+  it equals GLL, both families for Q3, Q4 on the quadrilateral and ``lagrange_gll``, the tensor product of
+  the GLL points, for Q3 on the hexahedron), ``bernstein``. On the tetrahedron at p = 5 the ``lagrange_gll`` nodes are the published
   warp-and-blend construction, the set ``FemTools`` uses, read from ``proteus/SimplexSpaces.py``: the
   notebook's ``nodes3d`` places the interior nodes differently from p = 5 on (``oracle_gll_lattice``).
 * cell: ``interval`` ([0,1]), ``triangle`` and ``tetrahedron`` (the unit simplex, vertices at the origin
@@ -291,6 +292,16 @@ def equispaced_lattice(cell, p):
     raise ValueError(cell)
 
 
+def tensor_gll_lattice(cell, p):
+    """Tensor product of the GLL points on [0,1], in the index order of ``equispaced_lattice``."""
+    g = (gll(p) + 1.0) / 2.0
+    if cell == "quadrilateral":
+        return np.array([[g[i], g[j]] for i in range(p + 1) for j in range(p + 1)])
+    if cell == "hexahedron":
+        return np.array([[g[i], g[j], g[k]] for i in range(p + 1) for j in range(p + 1) for k in range(p + 1)])
+    raise ValueError(cell)
+
+
 def symbols(d):
     import sympy
     return sympy.symbols('x y z')[:d]
@@ -367,8 +378,10 @@ class Space(object):
         else:
             self.gens = monomials(cell, p)
             self.n = len(self.gens)
-            if family == "lagrange_equi" or self.cube:
+            if family == "lagrange_equi" or (self.cube and p <= 2):
                 lattice = equispaced_lattice(cell, p)
+            elif self.cube and family == "lagrange_gll":
+                lattice = tensor_gll_lattice(cell, p)
             elif family == "lagrange_gll":
                 lattice = oracle_gll_lattice(cell, p)
             else:
@@ -482,6 +495,12 @@ def build(out):
     for cell in ("quadrilateral", "hexahedron"):
         for p in (1, 2):
             specs.append(("lagrange_equi", cell, p))
+    # Q_p, p >= 3 (C8 round 4): both node sets on the quadrilateral; on the hexahedron the GLL set at p = 3
+    # only, to keep the pinned file small (hexahedron p = 4 alone would add 5 MB)
+    for p in (3, 4):
+        for family in ("lagrange_equi", "lagrange_gll"):
+            specs.append((family, "quadrilateral", p))
+    specs.append(("lagrange_gll", "hexahedron", 3))
     # sample points are seeded per (cell, p), so every family at one (cell, p) shares them
     for family, cell, p in specs:
         sp = Space(family, cell, p)
