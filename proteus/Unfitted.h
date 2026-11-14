@@ -1462,6 +1462,182 @@ namespace proteus
         return fluxLiftJ;
       }
     };
+
+    // The two-sided basis of a Gamma_f-cut element at the current quadrature point (after gf.set_quad): the branch
+    // functions a (phi_f < 0) and b (phi_f > 0), their physical gradients and the unit flux-jump lift. It carries the
+    // solution on each branch and the jump lift in one place, for the residual and the Jacobian alike.
+    template <int nSpace, int nDOF>
+    struct BranchBasis
+    {
+      double va[nDOF], vb[nDOF], va_grad[nDOF * nSpace], vb_grad[nDOF * nSpace];
+      double psi_a = 0.0, psi_b = 0.0, psi_a_grad[nSpace] = {}, psi_b_grad[nSpace] = {};
+
+      template <class GfF>
+      inline void load(GfF &gf)
+      {
+        for (int i = 0; i < nDOF; i++)
+        {
+          va[i] = gf.VA(i);
+          va_grad[i * nSpace + 0] = gf.VA_x(i);
+          va_grad[i * nSpace + 1] = gf.VA_y(i);
+          vb[i] = gf.VB(i);
+          vb_grad[i * nSpace + 0] = gf.VB_x(i);
+          vb_grad[i * nSpace + 1] = gf.VB_y(i);
+          if constexpr (nSpace == 3)
+          {
+            va_grad[i * nSpace + 2] = gf.VA_z(i);
+            vb_grad[i * nSpace + 2] = gf.VB_z(i);
+          }
+        }
+        psi_a = gf.PSIA();
+        psi_b = gf.PSIB();
+        psi_a_grad[0] = gf.PSIA_x();
+        psi_a_grad[1] = gf.PSIA_y();
+        psi_b_grad[0] = gf.PSIB_x();
+        psi_b_grad[1] = gf.PSIB_y();
+        if constexpr (nSpace == 3)
+        {
+          psi_a_grad[2] = gf.PSIA_z();
+          psi_b_grad[2] = gf.PSIB_z();
+        }
+      }
+      // value and gradient of the field with nodal coefficients c on branch a / branch b
+      inline void fieldA(const double *c, double &val, double *grad) const { field(c, va, va_grad, val, grad); }
+      inline void fieldB(const double *c, double &val, double *grad) const { field(c, vb, vb_grad, val, grad); }
+      // the solution-jump lift (nodal jumps JA on branch a, JB on branch b) and the flux-jump lift fluxLift*psi,
+      // added once as known data (zero unless Gamma_f cuts the cell and a flux jump is prescribed)
+      inline void lift(const double *JA, const double *JB, const double fluxLift,
+                       double &uja, double *grad_uja, double &ujb, double *grad_ujb) const
+      {
+        fieldA(JA, uja, grad_uja);
+        fieldB(JB, ujb, grad_ujb);
+        uja += fluxLift * psi_a;
+        ujb += fluxLift * psi_b;
+        for (int I = 0; I < nSpace; I++)
+        {
+          grad_uja[I] += fluxLift * psi_a_grad[I];
+          grad_ujb[I] += fluxLift * psi_b_grad[I];
+        }
+      }
+      // test functions times the quadrature weight dV
+      inline void weight(const double dV, double *ua_test_dV, double *ub_test_dV, double *ua_grad_test_dV, double *ub_grad_test_dV) const
+      {
+        for (int i = 0; i < nDOF; i++)
+        {
+          ua_test_dV[i] = va[i] * dV;
+          ub_test_dV[i] = vb[i] * dV;
+          for (int I = 0; I < nSpace; I++)
+          {
+            ua_grad_test_dV[i * nSpace + I] = va_grad[i * nSpace + I] * dV;
+            ub_grad_test_dV[i * nSpace + I] = vb_grad[i * nSpace + I] * dV;
+          }
+        }
+      }
+
+    private:
+      static inline void field(const double *c, const double *v, const double *gv, double &val, double *grad)
+      {
+        val = 0.0;
+        for (int j = 0; j < nDOF; j++)
+          val += c[j] * v[j];
+        for (int I = 0; I < nSpace; I++)
+          grad[I] = 0.0;
+        for (int j = 0; j < nDOF; j++)
+          for (int I = 0; I < nSpace; I++)
+            grad[I] += c[j] * gv[j * nSpace + I];
+      }
+    };
+
+    // The weights of the regions at one quadrature point of one element, from the geometry: the solid's Heaviside H_s,
+    // Dirac D_s (and the normal-weighted Dirac Dn_s of the curved fit); the weights wA, wB of the two fluid regions
+    // (Omega^- and Omega^+) for the bulk terms; the Dirac measures of Gamma_s on each side (D_s_a, D_s_b) and of Gamma_f in
+    // the fluid (D_f). On an element cut by both level sets these come from the composite fit (the product ImH_f*H_s is
+    // not moment-exact there), on a demoted element (Gamma_f buried in the solid, the fluid undivided) the empty region
+    // gets exactly zero, and otherwise they are the usual products, unchanged. `branches` says which branch of the
+    // two-sided basis a Gamma_f-cut element has (0 both, -1 only a, +1 only b: the interface touches it at a vertex or
+    // an edge, or an invalid classification, +2).
+    template <int nSpace, int nP_fit>
+    struct RegionWeights
+    {
+      double H_s = 0.0, D_s = 0.0, Dn_s[nSpace] = {}, D_s_a = 0.0, D_s_b = 0.0;
+      double ImH_f = 0.0, H_f = 0.0, D_f = 0.0, wA = 0.0, wB = 0.0;
+      int branches = 0;
+
+      template <class Geom>
+      inline void evaluate(Geom &geom, const int eN, const int k, const double *x_ref, const bool curvedSolid)
+      {
+        auto &gf_s = geom.gfS(eN);
+        auto &gf_f = geom.gfF(eN);
+        gf_s.set_quad(k);
+        gf_f.set_quad(k);
+        H_s = curvedSolid ? geom.cfS(eN).H(k) : gf_s.H(0., 0.);
+        D_s = curvedSolid ? geom.cfS(eN).D(k) : gf_s.D(0., 0.);
+        for (int I = 0; I < nSpace; I++)
+          Dn_s[I] = curvedSolid ? geom.cfS(eN).Dn(k, I) : 0.0;
+        const int demoted_f = geom.demoted(eN);
+        // Per-side Dirac for the solid surface. Weighting the single-cut D_s by a region fit (ImH_f * D_s) is the
+        // product-of-two-fits error again, and a large one -- about 31% on the segment length. Defaults to D_s, so
+        // elements cut by only one level set are untouched.
+        D_s_a = D_s;
+        D_s_b = D_s;
+        if (demoted_f != 0)
+        {
+          // The whole solid surface in this element borders the one surviving fluid region.
+          D_s_a = (demoted_f < 0) ? D_s : 0.0;
+          D_s_b = (demoted_f < 0) ? 0.0 : D_s;
+        }
+        else if (geom.compDA(eN) != nullptr)
+        {
+          const double xr_d = x_ref[k * 3 + 0], yr_d = x_ref[k * 3 + 1];
+          D_s_a = equivalent_polynomials::composite::evaluate<nP_fit>(geom.compDA(eN), xr_d, yr_d);
+          D_s_b = equivalent_polynomials::composite::evaluate<nP_fit>(geom.compDB(eN), xr_d, yr_d);
+        }
+        ImH_f = gf_f.ImH(0., 0.);
+        H_f = gf_f.H(0., 0.);
+        // Region weights for the bulk terms. On an element cut by both level sets these come from the composite fit;
+        // otherwise they are the usual products, unchanged.
+        wA = ImH_f * H_s;
+        wB = H_f * H_s;
+        if (demoted_f != 0)
+        {
+          // Only one fluid region exists here; give it the whole fluid weight and the other none.
+          wA = (demoted_f < 0) ? H_s : 0.0;
+          wB = (demoted_f < 0) ? 0.0 : H_s;
+        }
+        else if (geom.compA(eN) != nullptr)
+        {
+          const double xr = x_ref[k * 3 + 0], yr = x_ref[k * 3 + 1];
+          wA = equivalent_polynomials::composite::evaluate<nP_fit>(geom.compA(eN), xr, yr);
+          wB = equivalent_polynomials::composite::evaluate<nP_fit>(geom.compB(eN), xr, yr);
+        }
+        D_f = gf_f.D(0., 0.);
+        if (geom.compDFa(eN) != nullptr)
+        {
+          // Gamma_f's own Dirac measure, restricted to the part still inside the active fluid domain -- the plain,
+          // single-curve gf_f.D(0.,0.) double-counts whatever part of Gamma_f's chord falls inside Gamma_s's masked-out
+          // solid on a triply-cut element.
+          const double xr_f = x_ref[k * 3 + 0], yr_f = x_ref[k * 3 + 1];
+          D_f = equivalent_polynomials::composite::evaluate<nP_fit>(geom.compDFa(eN), xr_f, yr_f);
+        }
+        // A demoted element's Gamma_f lies entirely inside the solid: no part of it borders fluid, so the flux-jump
+        // load must vanish exactly there (any fit would leave a spurious source).
+        if (demoted_f != 0)
+          D_f = 0.0;
+        if (geom.icaseF(eN) == 0)
+        {
+          if (!gf_f.exact.edge && !gf_f.exact.corner) // full cut or cut on boundary of negative cell
+            branches = 0;
+          else if (gf_f.exact.edge == -1 || gf_f.exact.corner == -1)
+            branches = -1;
+          else if (gf_f.exact.edge == 1 || gf_f.exact.corner == 1)
+            branches = 1;
+          else
+            branches = 2; // invalid: neither branch contributes
+        }
+        else
+          branches = 0;
+      }
+    };
   } // namespace unfitted
 } // namespace proteus
 #endif

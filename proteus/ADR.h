@@ -549,11 +549,6 @@ namespace proteus
 											 proteus::pyarray<int> &sd_rowptr,
 											 proteus::pyarray<int> &sd_colind,
 											 proteus::pyarray<double> &q_a,
-											 const double *comp_A,
-											 const double *comp_B,
-											 const double *comp_DA,
-											 const double *comp_DB,
-											 const double *comp_DFa,
 											 proteus::pyarray<double> &q_v,
 											 proteus::pyarray<double> &q_r,
 											 int lag_shockCapturingDiffusion,
@@ -613,9 +608,7 @@ namespace proteus
 			// loop over quadrature points and compute integrands
 			for (int k = 0; k < nQuadraturePoints_element; k++)
 			{
-				gf_s.set_quad(k);
-				gf_f.set_quad(k);
-				// compute indeces and declare local storage
+								// compute indeces and declare local storage
 				int eN_k = eN * nQuadraturePoints_element + k;
 				int eN_k_3d = eN_k * 3;
 				double h_phi;
@@ -714,56 +707,20 @@ namespace proteus
 						//PGIFEM
 					}
 				}
-				double va[nDOF_trial_element], va_grad_trial[nDOF_trial_element * nSpace], vb[nDOF_trial_element], vb_grad_trial[nDOF_trial_element * nSpace];
+				// the two-sided basis of a Gamma_f-cut element and the jump lifts (see unfitted::BranchBasis)
+				unfitted::BranchBasis<nSpace, nDOF_trial_element> bb;
+				double(&va)[nDOF_trial_element] = bb.va;
+				double(&vb)[nDOF_trial_element] = bb.vb;
+				double(&va_grad_trial)[nDOF_trial_element * nSpace] = bb.va_grad;
+				double(&vb_grad_trial)[nDOF_trial_element * nSpace] = bb.vb_grad;
 				if (icase_f == 0)
 				{
-					for (int i = 0; i < nDOF_trial_element; i++)
-					{
-						va[i] = gf_f.VA(i);
-						va_grad_trial[i * nSpace + 0] = gf_f.VA_x(i);
-						va_grad_trial[i * nSpace + 1] = gf_f.VA_y(i);
-						vb[i] = gf_f.VB(i);
-						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
-						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
-						if constexpr (nSpace == 3)
-						{
-							va_grad_trial[i * nSpace + 2] = gf_f.VA_z(i);
-							vb_grad_trial[i * nSpace + 2] = gf_f.VB_z(i);
-						}
-					}	
-					
-					
-					ck.valFromElementDOF(element_u.data(), va, ua);
-					ck.gradFromElementDOF(element_u.data(), va_grad_trial, grad_ua);
-					ck.valFromElementDOF(element_u.data(), vb, ub);
-					ck.gradFromElementDOF(element_u.data(), vb_grad_trial, grad_ub);
-					ck.valFromElementDOF(JA, va, uja);
-					ck.gradFromElementDOF(JA, va_grad_trial, grad_uja);
-					ck.valFromElementDOF(JB, vb, ujb);
-					ck.gradFromElementDOF(JB, vb_grad_trial, grad_ujb);
-					// Flux-jump lift J_f*psi, added once as known data (zero unless Gamma_f cuts the cell
-					// and a flux jump is prescribed). psi is the unit lift of the basis constructor.
-					uja += fluxLiftJ * gf_f.PSIA();
-					ujb += fluxLiftJ * gf_f.PSIB();
-					grad_uja[0] += fluxLiftJ * gf_f.PSIA_x();
-					grad_uja[1] += fluxLiftJ * gf_f.PSIA_y();
-					grad_ujb[0] += fluxLiftJ * gf_f.PSIB_x();
-					grad_ujb[1] += fluxLiftJ * gf_f.PSIB_y();
-					if constexpr (nSpace == 3)
-					{
-						grad_uja[2] += fluxLiftJ * gf_f.PSIA_z();
-						grad_ujb[2] += fluxLiftJ * gf_f.PSIB_z();
-					}
-					for (int i = 0; i < nDOF_test_element; i++)
-					{
-						ua_test_dV[i] = va[i] * dV;
-						ub_test_dV[i] = vb[i] * dV;
-						for (int I = 0; I < nSpace; I++)
-						{
-							ua_grad_test_dV[i * nSpace + I] = va_grad_trial[i * nSpace + I] * dV;
-							ub_grad_test_dV[i * nSpace + I] = vb_grad_trial[i * nSpace + I] * dV;
-						}
-					}
+					gf_f.set_quad(k);
+					bb.load(gf_f);
+					bb.fieldA(element_u.data(), ua, grad_ua);
+					bb.fieldB(element_u.data(), ub, grad_ub);
+					bb.lift(JA, JB, fluxLiftJ, uja, grad_uja, ujb, grad_ujb);
+					bb.weight(dV, ua_test_dV, ub_test_dV, ua_grad_test_dV, ub_grad_test_dV);
 					for (int j = 0; j < nDOF_trial_element; j++)
 					{
 						for (int I = 0; I < nSpace; I++)
@@ -817,28 +774,11 @@ namespace proteus
 					f[I] = q_v.data()[eN_k * nSpace + I] * u;
 					df[I] = q_v.data()[eN_k * nSpace + I];
 				}
-				const double H_s = curvedSolid ? geom.cfS(eN).H(k) : gf_s.H(0., 0.);
-				const double D_s = curvedSolid ? geom.cfS(eN).D(k) : gf_s.D(0., 0.);
-				double Dn_s[nSpace];
-				for (int I = 0; I < nSpace; I++)
-					Dn_s[I] = curvedSolid ? geom.cfS(eN).Dn(k, I) : 0.0;
-				// Per-side Dirac for the solid surface. Weighting the single-cut D_s by a region fit
-				// (ImH_f * D_s) is the product-of-two-fits error again, and a large one -- about 31% on
-				// the segment length. Declared here because the Nitsche terms below consume it.
-				// Defaults to D_s, so elements cut by only one level set are untouched.
-				double D_s_a = D_s, D_s_b = D_s;
-				if (demoted_f != 0)
-				{
-					// The whole solid surface in this element borders the one surviving fluid region.
-					D_s_a = (demoted_f < 0) ? D_s : 0.0;
-					D_s_b = (demoted_f < 0) ? 0.0 : D_s;
-				}
-				else if (comp_DA != nullptr)
-				{
-					const double xr_d = x_ref.data()[k * 3 + 0], yr_d = x_ref.data()[k * 3 + 1];
-					D_s_a = equivalent_polynomials::composite::evaluate<nP_fit>(comp_DA, xr_d, yr_d);
-					D_s_b = equivalent_polynomials::composite::evaluate<nP_fit>(comp_DB, xr_d, yr_d);
-				}
+				// the weights of the regions at this quadrature point (see unfitted::RegionWeights)
+				unfitted::RegionWeights<nSpace, nP_fit> rw;
+				rw.evaluate(geom, eN, k, x_ref.data(), curvedSolid);
+				const double H_s = rw.H_s, D_s = rw.D_s, D_s_a = rw.D_s_a, D_s_b = rw.D_s_b;
+				const double *Dn_s = rw.Dn_s;
 				// Test functions without the quadrature weight, for the penalty kernels (Petrov-Galerkin tests with the
 				// ordinary hats, the trial side is the branch basis)
 				const double *ua_test = PG ? &u_test_ref.data()[k * nDOF_trial_element] : va;
@@ -932,38 +872,7 @@ namespace proteus
 						}
 					}
 				}
-				const double ImH_f = gf_f.ImH(0., 0.);
-				const double H_f = gf_f.H(0., 0.);
-				// Region weights for the bulk terms. On an element cut by both level sets these
-				// come from the composite fit; otherwise they are the usual products, unchanged.
-				double wA = ImH_f * H_s, wB = H_f * H_s;
-				if (demoted_f != 0)
-				{
-					// Only one fluid region exists here; give it the whole fluid weight and the other none.
-					wA = (demoted_f < 0) ? H_s : 0.0;
-					wB = (demoted_f < 0) ? 0.0 : H_s;
-				}
-				else if (comp_A != nullptr)
-				{
-					const double xr = x_ref.data()[k * 3 + 0], yr = x_ref.data()[k * 3 + 1];
-					wA = equivalent_polynomials::composite::evaluate<nP_fit>(comp_A, xr, yr);
-					wB = equivalent_polynomials::composite::evaluate<nP_fit>(comp_B, xr, yr);
-				}
-				double D_f = gf_f.D(0., 0.);
-				if (comp_DFa != nullptr)
-				{
-					// Gamma_f's own Dirac measure, restricted to the part still inside the active
-					// fluid domain (see comp_DFa_cache's declaration) -- the plain, single-curve
-					// gf_f.D(0.,0.) above double-counts whatever part of Gamma_f's chord falls
-					// inside Gamma_s's masked-out solid on a triply-cut element.
-					const double xr_f = x_ref.data()[k * 3 + 0], yr_f = x_ref.data()[k * 3 + 1];
-					D_f = equivalent_polynomials::composite::evaluate<nP_fit>(comp_DFa, xr_f, yr_f);
-				}
-				// A demoted element's Gamma_f lies entirely inside the solid: no part of it borders
-				// fluid, so the flux-jump load must vanish exactly there (any fit would leave a
-				// spurious source).
-				if (demoted_f != 0)
-					D_f = 0.0;
+				const double ImH_f = rw.ImH_f, H_f = rw.H_f, wA = rw.wA, wB = rw.wB, D_f = rw.D_f;
 				if (immersedBoundary)
 				{
 					double level_set_normal[nSpace];
@@ -995,7 +904,7 @@ namespace proteus
 					// product of two fits), so H_s is applied only to the single-curve D_f.
 					const double jump_flux = fluxJumpValue(immersedBoundary_fluxJump_q.data()[eN_k],
 														   &immersedBoundary_fluxJumpVector_q.data()[eN_k_3d], level_set_normal);
-					const double D_f_load = (comp_DFa != nullptr) ? D_f : D_f * H_s;
+					const double D_f_load = (geom.compDFa(eN) != nullptr) ? D_f : D_f * H_s;
 					if (icase_f == 0)
 					{
 						// Flux-jump load int_Gamma_f J_f v: D_f times the IFE test function, NOT weighted by
@@ -1005,9 +914,9 @@ namespace proteus
 						double v_load[nDOF_test_element];
 						for (int i = 0; i < nDOF_test_element; i++)
 						{
-							if (!gf_f.exact.edge && !gf_f.exact.corner) // full cut or cut on boundary of negative cell
+							if (rw.branches == 0) // full cut or cut on boundary of negative cell
 								v_load[i] = 0.5 * (ua_test[i] + ub_test[i]);
-							else if (gf_f.exact.edge == -1 || gf_f.exact.corner == -1)
+							else if (rw.branches == -1)
 								v_load[i] = ua_test[i];
 							else
 								v_load[i] = ub_test[i];
@@ -1081,7 +990,7 @@ namespace proteus
 					int i_nSpace = i * nSpace;
 					if (icase_f == 0)
 					{
-						if(!gf_f.exact.edge  && !gf_f.exact.corner)//full cut or cut on boundary of negative cell
+						if (rw.branches == 0) // full cut or cut on boundary of negative cell
 					    {
 							for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
 							elementResidual_u.data()[i] += wA * (ck.Advection_weak(f, &ua_grad_test_dV[i_nSpace]) +
@@ -1097,7 +1006,7 @@ namespace proteus
 							ck.Reaction_weak(r, ub_test_dV[i]) +
 							ck.NumericalDiffusion(q_numDiff_u_last.data()[eN_k], grad_ub, &ub_grad_test_dV[i_nSpace]));
 						}
-						else if (gf_f.exact.edge == -1 || gf_f.exact.corner == -1)
+						else if (rw.branches == -1)
 						{
 							for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
 							elementResidual_u.data()[i] += wA * (ck.Advection_weak(f, &ua_grad_test_dV[i_nSpace]) +
@@ -1106,7 +1015,7 @@ namespace proteus
 							ck.Reaction_weak(r, ua_test_dV[i]) +
 							ck.NumericalDiffusion(q_numDiff_u_last.data()[eN_k], grad_ua, &ua_grad_test_dV[i_nSpace]));
 						}
-						else if (gf_f.exact.edge == 1 || gf_f.exact.corner == 1)
+						else if (rw.branches == 1)
 						{
 							for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mub;
 							elementResidual_u.data()[i] += wB * (ck.Advection_weak(f, &ub_grad_test_dV[i_nSpace]) +
@@ -1115,7 +1024,7 @@ namespace proteus
 								ck.Reaction_weak(r, ub_test_dV[i]) +
 								ck.NumericalDiffusion(q_numDiff_u_last.data()[eN_k], grad_ub, &ub_grad_test_dV[i_nSpace]));
 						}
-						else assert(false && "Invalid gf_f.exact.edge/corner values. Should be -1, 0 or +1.");
+						else assert(rw.branches != 2 && "Invalid gf_f.exact.edge/corner values. Should be -1, 0 or +1.");
 					}
 					else
 					{
@@ -1485,11 +1394,6 @@ namespace proteus
 										 sd_rowptr,
 										 sd_colind,
 										 q_a,
-										 geom.compA(eN),
-										 geom.compB(eN),
-										 geom.compDA(eN),
-										 geom.compDB(eN),
-										 geom.compDFa(eN),
 										 q_v,
 										 q_r,
 										 lag_shockCapturing,
@@ -2442,11 +2346,6 @@ namespace proteus
 											 proteus::pyarray<int> &sd_rowptr,
 											 proteus::pyarray<int> &sd_colind,
 											 proteus::pyarray<double> &q_a,
-											 const double *comp_A,
-											 const double *comp_B,
-											 const double *comp_DA,
-											 const double *comp_DB,
-											 const double *comp_DFa,
 											 proteus::pyarray<double> &q_v,
 											 proteus::pyarray<double> &q_r,
 											 int lag_shockCapturing,
@@ -2490,9 +2389,7 @@ namespace proteus
 				}
 			for (int k = 0; k < nQuadraturePoints_element; k++)
 			{
-				gf_s.set_quad(k);
-				gf_f.set_quad(k);
-				int eN_k = eN * nQuadraturePoints_element + k; // index to a scalar at a quadrature point
+								int eN_k = eN * nQuadraturePoints_element + k; // index to a scalar at a quadrature point
 				int eN_k_3d = eN_k * 3;
 				// declare local storage
 				double u = 0.0,
@@ -2569,38 +2466,18 @@ namespace proteus
 						//PGIFEM
 					}
 				}
-				double va[nDOF_trial_element], va_grad_trial[nDOF_trial_element * nSpace],
-					vb[nDOF_trial_element], vb_grad_trial[nDOF_trial_element * nSpace];
+				unfitted::BranchBasis<nSpace, nDOF_trial_element> bb;
+				double(&va)[nDOF_trial_element] = bb.va;
+				double(&vb)[nDOF_trial_element] = bb.vb;
+				double(&va_grad_trial)[nDOF_trial_element * nSpace] = bb.va_grad;
+				double(&vb_grad_trial)[nDOF_trial_element * nSpace] = bb.vb_grad;
 				if (icase_f == 0)
 				{
-					for (int i = 0; i < nDOF_trial_element; i++)
-					{
-						va[i] = gf_f.VA(i);
-						va_grad_trial[i * nSpace + 0] = gf_f.VA_x(i);
-						va_grad_trial[i * nSpace + 1] = gf_f.VA_y(i);
-						vb[i] = gf_f.VB(i);
-						vb_grad_trial[i * nSpace + 0] = gf_f.VB_x(i);
-						vb_grad_trial[i * nSpace + 1] = gf_f.VB_y(i);
-						if constexpr (nSpace == 3)
-						{
-							va_grad_trial[i * nSpace + 2] = gf_f.VA_z(i);
-							vb_grad_trial[i * nSpace + 2] = gf_f.VB_z(i);
-						}
-					}
-					ck.valFromElementDOF(element_u.data(), va, ua);
-					ck.gradFromElementDOF(element_u.data(), va_grad_trial, grad_ua);
-					ck.valFromElementDOF(element_u.data(), vb, ub);
-					ck.gradFromElementDOF(element_u.data(), vb_grad_trial, grad_ub);
-					for (int i = 0; i < nDOF_test_element; i++)
-					{
-						ua_test_dV[i] = va[i] * dV;
-						ub_test_dV[i] = vb[i] * dV;
-						for (int I = 0; I < nSpace; I++)
-						{
-							ua_grad_test_dV[i * nSpace + I] = va_grad_trial[i * nSpace + I] * dV;
-							ub_grad_test_dV[i * nSpace + I] = vb_grad_trial[i * nSpace + I] * dV;
-						}
-					}
+					gf_f.set_quad(k);
+					bb.load(gf_f);
+					bb.fieldA(element_u.data(), ua, grad_ua);
+					bb.fieldB(element_u.data(), ub, grad_ub);
+					bb.weight(dV, ua_test_dV, ub_test_dV, ua_grad_test_dV, ub_grad_test_dV);
 					for (int j = 0; j < nDOF_trial_element; j++)
 					{
 						ua_trial[j] = va[j];
@@ -2652,28 +2529,11 @@ namespace proteus
 				for (int I = 0; I < nSpace; I++)
 					df[I] = q_v.data()[eN_k * nSpace + I];
 				dr = 0.0;
-				const double H_s = curvedSolid ? geom.cfS(eN).H(k) : gf_s.H(0., 0.);
-				const double D_s = curvedSolid ? geom.cfS(eN).D(k) : gf_s.D(0., 0.);
-				double Dn_s[nSpace];
-				for (int I = 0; I < nSpace; I++)
-					Dn_s[I] = curvedSolid ? geom.cfS(eN).Dn(k, I) : 0.0;
-				// Per-side Dirac for the solid surface. Weighting the single-cut D_s by a region fit
-				// (ImH_f * D_s) is the product-of-two-fits error again, and a large one -- about 31% on
-				// the segment length. Declared here because the Nitsche terms below consume it.
-				// Defaults to D_s, so elements cut by only one level set are untouched.
-				double D_s_a = D_s, D_s_b = D_s;
-				if (demoted_f != 0)
-				{
-					// The whole solid surface in this element borders the one surviving fluid region.
-					D_s_a = (demoted_f < 0) ? D_s : 0.0;
-					D_s_b = (demoted_f < 0) ? 0.0 : D_s;
-				}
-				else if (comp_DA != nullptr)
-				{
-					const double xr_d = x_ref.data()[k * 3 + 0], yr_d = x_ref.data()[k * 3 + 1];
-					D_s_a = equivalent_polynomials::composite::evaluate<nP_fit>(comp_DA, xr_d, yr_d);
-					D_s_b = equivalent_polynomials::composite::evaluate<nP_fit>(comp_DB, xr_d, yr_d);
-				}
+				// the weights of the regions at this quadrature point (see unfitted::RegionWeights)
+				unfitted::RegionWeights<nSpace, nP_fit> rw;
+				rw.evaluate(geom, eN, k, x_ref.data(), curvedSolid);
+				const double H_s = rw.H_s, D_s = rw.D_s, D_s_a = rw.D_s_a, D_s_b = rw.D_s_b;
+				const double *Dn_s = rw.Dn_s;
 				// Test functions without the quadrature weight (Petrov-Galerkin tests with the ordinary hats), and the
 				// trial functions, for the penalty kernels
 				const double *ua_test = PG ? &u_test_ref.data()[k * nDOF_trial_element] : va;
@@ -2753,23 +2613,9 @@ namespace proteus
 						}
 					}
 				}
-				const double ImH_f = gf_f.ImH(0., 0.);
-				const double H_f = gf_f.H(0., 0.);
-				// Region weights for the bulk terms. On an element cut by both level sets these
-				// come from the composite fit; otherwise they are the usual products, unchanged.
-				double wA = ImH_f * H_s, wB = H_f * H_s;
-				if (demoted_f != 0)
-				{
-					// Only one fluid region exists here; give it the whole fluid weight and the other none.
-					wA = (demoted_f < 0) ? H_s : 0.0;
-					wB = (demoted_f < 0) ? 0.0 : H_s;
-				}
-				else if (comp_A != nullptr)
-				{
-					const double xr = x_ref.data()[k * 3 + 0], yr = x_ref.data()[k * 3 + 1];
-					wA = equivalent_polynomials::composite::evaluate<nP_fit>(comp_A, xr, yr);
-					wB = equivalent_polynomials::composite::evaluate<nP_fit>(comp_B, xr, yr);
-				}
+				const double ImH_f = rw.ImH_f, H_f = rw.H_f, wA = rw.wA, wB = rw.wB;
+				(void)ImH_f;
+				(void)H_f;
 				// immersedBoundary: the prescribed flux-jump load is data (u-independent), so it is residual-only
 				//
 				// calculate subgrid error contribution to the Jacobian (strong residual, adjoint, jacobian of strong residual)
@@ -2822,7 +2668,7 @@ namespace proteus
 						int j_nSpace = j * nSpace;
 						if (icase_f == 0)
 						{
-							if(!gf_f.exact.edge && !gf_f.exact.corner)
+							if (rw.branches == 0)
 						    {
 								for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
 								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += wA * (ck.AdvectionJacobian_weak(df, ua_trial[j], &ua_grad_test_dV[i_nSpace]) +
@@ -2836,7 +2682,7 @@ namespace proteus
 									ck.ReactionJacobian_weak(dr, ub_trial[j], ub_test_dV[i]) +
 									ck.NumericalDiffusionJacobian(q_numDiff_u_last.data()[eN_k], &ub_grad_trial[j_nSpace], &ub_grad_test_dV[i_nSpace]));
 							}
-							else if (gf_f.exact.edge == -1 || gf_f.exact.corner == -1)
+							else if (rw.branches == -1)
 							{
 								for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mua;
 								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += wA * (ck.AdvectionJacobian_weak(df, ua_trial[j], &ua_grad_test_dV[i_nSpace]) +
@@ -2844,7 +2690,7 @@ namespace proteus
 								ck.ReactionJacobian_weak(dr, ua_trial[j], ua_test_dV[i]) +
 								ck.NumericalDiffusionJacobian(q_numDiff_u_last.data()[eN_k], &ua_grad_trial[j_nSpace], &ua_grad_test_dV[i_nSpace]));
 							}
-							else if (gf_f.exact.edge == 1 || gf_f.exact.corner == 1)
+							else if (rw.branches == 1)
 							{
 								for (int I = 0; I < nSpace; I++) a_loc[I * nSpace + I] = mub;
 								elementJacobian_u_u.data()[i * nDOF_trial_element + j] += wB * (ck.AdvectionJacobian_weak(df, ub_trial[j], &ub_grad_test_dV[i_nSpace]) +
@@ -2852,7 +2698,7 @@ namespace proteus
 									ck.ReactionJacobian_weak(dr, ub_trial[j], ub_test_dV[i]) +
 									ck.NumericalDiffusionJacobian(q_numDiff_u_last.data()[eN_k], &ub_grad_trial[j_nSpace], &ub_grad_test_dV[i_nSpace]));
 							}
-							else assert(false && "Invalid gf_f.exact.edge/corner values. Should be -1, 0 or +1.");
+							else assert(rw.branches != 2 && "Invalid gf_f.exact.edge/corner values. Should be -1, 0 or +1.");
 						}
 						else
 						{
@@ -3051,11 +2897,6 @@ namespace proteus
 										 sd_rowptr,
 										 sd_colind,
 										 q_a,
-										 geom.compA(eN),
-										 geom.compB(eN),
-										 geom.compDA(eN),
-										 geom.compDB(eN),
-										 geom.compDFa(eN),
 										 q_v,
 										 q_r,
 										 lag_shockCapturing,
