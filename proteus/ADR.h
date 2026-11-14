@@ -505,6 +505,233 @@ namespace proteus
 			return jump_flux;
 		}
 
+		// ---- face terms ---------------------------------------------------------------------------------------------------
+		// What the face terms (ghost penalty, SCIFEM, triply-cut edge) read about the mesh, as plain pointers.
+		struct FaceCtx
+		{
+			double *mesh_dof, *mesh_trial_trace_ref, *mesh_grad_trial_trace_ref, *boundaryJac_ref, *normal_ref, *dS_ref,
+				*u_grad_trial_trace_ref, *u_dof, *phi_f_nodes, *jump_nodes;
+			int *mesh_l2g, *u_l2g, *eb_elements, *eb_local;
+			bool immersed;
+		};
+		inline FaceCtx makeFaceCtx(arguments_dict &args)
+		{
+			FaceCtx c;
+			c.mesh_dof = args.array<double>("mesh_dof").data();
+			c.mesh_trial_trace_ref = args.array<double>("mesh_trial_trace_ref").data();
+			c.mesh_grad_trial_trace_ref = args.array<double>("mesh_grad_trial_trace_ref").data();
+			c.boundaryJac_ref = args.array<double>("boundaryJac_ref").data();
+			c.normal_ref = args.array<double>("normal_ref").data();
+			c.dS_ref = args.array<double>("dS_ref").data();
+			c.u_grad_trial_trace_ref = args.array<double>("u_grad_trial_trace_ref").data();
+			c.u_dof = args.array<double>("u_dof").data();
+			c.phi_f_nodes = args.array<double>("immersedBoundary_sdf_nodes").data();
+			c.jump_nodes = args.array<double>("immersedBoundary_solutionJump_nodes").data();
+			c.mesh_l2g = args.array<int>("mesh_l2g").data();
+			c.u_l2g = args.array<int>("u_l2g").data();
+			c.eb_elements = args.array<int>("elementBoundaryElementsArray").data();
+			c.eb_local = args.array<int>("elementBoundaryLocalElementBoundariesArray").data();
+			c.immersed = args.scalar<int>("immersedBoundary");
+			return c;
+		}
+
+		// The two elements sharing an interior face do NOT necessarily parametrize it in the same direction, so
+		// quadrature index kb can denote DIFFERENT physical points on the two sides (measured: 4 of 14 cut edges at
+		// test=8.0/refinement=1, with exactly the mirror offsets |1-2t_k|*L of the Gauss rule). Pairing the sides by raw kb
+		// then differences u at two different points, so [[u]] and {{beta grad u}} pick up u's variation ALONG the face
+		// instead of the genuine inter-element jump. kmap[s][k] is side s's index for the physical point that side 0 calls
+		// k, matched by position (no assumption about the rule being symmetric or ascending); xq are the physical points
+		// of both sides. Match over nSpace components only: a component the mapping does not define contributes nothing
+		// but noise to the distance. With strict, the pairing is verified (the winning distance is 0 and the runner-up is
+		// a full quadrature spacing away) and a failure throws: a mis-pick silently differences u at two different points,
+		// and assert() is compiled out by the -DNDEBUG that reaches these translation units. Without it the nearest point
+		// is taken (the ghost penalty's pairing).
+		inline void pairFacePoints(const FaceCtx &c, const int ebN, int kmap[2][nQuadraturePoints_elementBoundary],
+								   double xq[2][nQuadraturePoints_elementBoundary][3], const double h_edge, const bool strict)
+		{
+			for (int s = 0; s < 2; s++)
+			{
+				const int eN_g = c.eb_elements[ebN * 2 + s], ebN_local_g = c.eb_local[ebN * 2 + s];
+				for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
+				{
+					double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
+						bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3], xt = 0.0, yt = 0.0, zt = 0.0;
+					ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb, ebN_local_g * nQuadraturePoints_elementBoundary + kb,
+														c.mesh_dof, c.mesh_l2g, c.mesh_trial_trace_ref, c.mesh_grad_trial_trace_ref,
+														c.boundaryJac_ref, jac_g, jacDet_g, jacInv_g, bJac_g, mT_g, mTDS_g, c.normal_ref, nrm_g,
+														xt, yt, zt);
+					xq[s][kb][0] = xt;
+					xq[s][kb][1] = yt;
+					xq[s][kb][2] = zt;
+				}
+			}
+			bool used[nQuadraturePoints_elementBoundary] = {};
+			for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
+			{
+				kmap[0][k] = k;
+				int best = strict ? -1 : 0;
+				double bestd = 1.0e300, nextd = 1.0e300;
+				for (int j = 0; j < nQuadraturePoints_elementBoundary; j++)
+				{
+					double d = 0.0;
+					for (int I = 0; I < nSpace; I++)
+						d += std::fabs(xq[1][j][I] - xq[0][k][I]);
+					if (d < bestd)
+					{
+						nextd = bestd;
+						bestd = d;
+						best = j;
+					}
+					else if (d < nextd)
+						nextd = d;
+				}
+				if (strict && (best < 0 || used[best] || bestd >= 1.0e-8 * h_edge || nextd <= 2.0 * bestd))
+				{
+					std::cerr << "ADR immersedSCIFEM: quadrature points on face " << ebN
+							  << " between elements " << c.eb_elements[ebN * 2 + 0] << " and " << c.eb_elements[ebN * 2 + 1]
+							  << " do not pair up (k=" << k << ", best=" << best
+							  << ", d=" << bestd << ", runner-up=" << nextd
+							  << ", h=" << h_edge << "); the mesh is non-conforming or the"
+							  << " boundary mapping is inconsistent." << std::endl;
+					throw std::runtime_error("ADR immersedSCIFEM: face quadrature pairing failed");
+				}
+				used[best] = true;
+				kmap[1][k] = best;
+			}
+		}
+
+		// Ghost penalty at one quadrature point of an interior face of Gamma_s-cut elements, per fluid phase. The penalty
+		// kills *spurious* normal-derivative jumps across a cut element's face. On an element the fluid interface also
+		// cuts, the combined IFEM solution genuinely kinks at Gamma_f, so penalising the combined gradient penalises
+		// physics and destroys exactness. Each phase's own polynomial extension IS smooth across the face, so [[d(u_a)/dn]]
+		// and [[d(u_b)/dn]] are penalised separately -- the same per-side treatment the bulk (wA/wB) and Nitsche
+		// (D_s_a/D_s_b) terms get. A face only gets a phase's penalty if BOTH its elements have that phase; when neither is
+		// shared (Gamma_f runs along the face itself) the combined penalty is kept so the face is still stabilised.
+		//
+		// The local DOFs are those of both elements, side 0 first: jv_*[s * n + i] is the normal derivative of basis
+		// function i of side s times that side's outward normal, so the sum is the jump; ju_* is the jump of the normal
+		// derivative of the solution (residual only: with withSolution == false it is not formed). a and b are the
+		// phases, c the combined (standard-basis) form. dS is the weight of the last side, as always here.
+		struct GhostPoint
+		{
+			double jv_a[2 * nDOF_test_element], jv_b[2 * nDOF_test_element], jv_c[2 * nDOF_test_element];
+			double ju_a = 0.0, ju_b = 0.0, ju_c = 0.0, dS = 0.0;
+			bool okA = true, okB = true;
+		};
+		inline void ghostPoint(const FaceCtx &c, const int ebN, const int kb, const int kb1, const bool withSolution, GhostPoint &gp)
+		{
+			gp.ju_a = gp.ju_b = gp.ju_c = 0.0;
+			gp.okA = gp.okB = true;
+			for (int eN_side = 0; eN_side < 2; eN_side++)
+			{
+				const int eN = c.eb_elements[ebN * 2 + eN_side], ebN_local = c.eb_local[ebN * 2 + eN_side],
+						  kb_s = (eN_side == 0) ? kb : kb1, ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb_s,
+						  ebN_local_kb_nSpace = ebN_local_kb * nSpace;
+				double grad_u_int[nSpace] = {0., 0.}, jac_int[nSpace * nSpace], jacDet_int, jacInv_int[nSpace * nSpace],
+					boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt,
+					u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_int, y_int, z_int;
+				ck.calculateMapping_elementBoundary(eN, ebN_local, kb_s, ebN_local_kb, c.mesh_dof, c.mesh_l2g,
+													c.mesh_trial_trace_ref, c.mesh_grad_trial_trace_ref, c.boundaryJac_ref,
+													jac_int, jacDet_int, jacInv_int, boundaryJac, metricTensor, metricTensorDetSqrt,
+													c.normal_ref, normal, x_int, y_int, z_int);
+				gp.dS = metricTensorDetSqrt * c.dS_ref[kb_s]; // kb_s mirrors kb: same Gauss weight
+				ck.gradTrialFromRef(&c.u_grad_trial_trace_ref[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_int, u_grad_trial_trace);
+				const int l2g0 = eN * nDOF_trial_element;
+				if (withSolution)
+				{
+					ck.gradFromDOF(c.u_dof, &c.u_l2g[l2g0], u_grad_trial_trace, grad_u_int);
+					for (int I = 0; I < nSpace; I++)
+						gp.ju_c += grad_u_int[I] * normal[I];
+				}
+				for (int i = 0; i < nDOF_test_element; i++)
+				{
+					double s = 0.0;
+					for (int I = 0; I < nSpace; I++)
+						s += u_grad_trial_trace[i * nSpace + I] * normal[I];
+					gp.jv_c[eN_side * nDOF_test_element + i] = s;
+				}
+				// the phase fields: the branch basis on a Gamma_f-cut element, the standard basis elsewhere
+				const int icaseF = c.immersed ? geom.icaseF(eN) : -2; // -2: no fluid interface in play, single phase
+				double va_grad[nDOF_trial_element * nSpace], vb_grad[nDOF_trial_element * nSpace];
+				double JA[nDOF_trial_element], JB[nDOF_trial_element];
+				std::fill(JA, JA + nDOF_trial_element, 0.0);
+				std::fill(JB, JB + nDOF_trial_element, 0.0);
+				if (icaseF == 0)
+				{
+					// the solution-jump lift of this element (assign_jump_side's node pattern), zero unless eN is Gamma_f-cut
+					for (int i = 0; i < nDOF_trial_element; i++)
+					{
+						const double jump_i = c.jump_nodes[c.u_l2g[eN * nDOF_trial_element + i]];
+						if (c.phi_f_nodes[c.u_l2g[eN * nDOF_trial_element + i]] > 0.0)
+							JA[i] = -jump_i;
+						else
+							JB[i] = jump_i;
+					}
+					GfType &gf = geom.gfF(eN);
+					gf.set_boundary_quad(ebN_local_kb);
+					for (int i = 0; i < nDOF_trial_element; i++)
+					{
+						va_grad[i * nSpace + 0] = gf.VA_x(i);
+						va_grad[i * nSpace + 1] = gf.VA_y(i);
+						vb_grad[i * nSpace + 0] = gf.VB_x(i);
+						vb_grad[i * nSpace + 1] = gf.VB_y(i);
+						if constexpr (nSpace == 3)
+						{
+							va_grad[i * nSpace + 2] = gf.VA_z(i);
+							vb_grad[i * nSpace + 2] = gf.VB_z(i);
+						}
+					}
+				}
+				else
+					for (int i = 0; i < nDOF_trial_element * nSpace; i++)
+					{
+						va_grad[i] = u_grad_trial_trace[i];
+						vb_grad[i] = u_grad_trial_trace[i];
+					}
+				// Which phases does this element actually carry?
+				gp.okA = gp.okA && (icaseF == 0 || icaseF == -1 || icaseF == -2);
+				gp.okB = gp.okB && (icaseF == 0 || icaseF == 1);
+				for (int i = 0; i < nDOF_test_element; i++)
+				{
+					double sa = 0.0, sb = 0.0;
+					for (int I = 0; I < nSpace; I++)
+					{
+						sa += va_grad[i * nSpace + I] * normal[I];
+						sb += vb_grad[i * nSpace + I] * normal[I];
+					}
+					gp.jv_a[eN_side * nDOF_test_element + i] = sa;
+					gp.jv_b[eN_side * nDOF_test_element + i] = sb;
+				}
+				if (withSolution)
+				{
+					double eu[nDOF_trial_element], gua[nSpace] = {0., 0.}, gub[nSpace] = {0., 0.};
+					for (int i = 0; i < nDOF_trial_element; i++)
+						eu[i] = c.u_dof[c.u_l2g[l2g0 + i]];
+					ck.gradFromElementDOF(eu, va_grad, gua);
+					ck.gradFromElementDOF(eu, vb_grad, gub);
+					// The ghost penalty must compare the TOTAL branch field (u_a+u_ja / u_b+u_jb) across the shared face, not
+					// the jump-free piece alone, or a genuine prescribed solution jump reads as a spurious normal-derivative
+					// kink between elements. Zero (no-op) unless eN is Gamma_f-cut.
+					double gja[nSpace] = {0., 0.}, gjb[nSpace] = {0., 0.};
+					ck.gradFromElementDOF(JA, va_grad, gja);
+					ck.gradFromElementDOF(JB, vb_grad, gjb);
+					if (icaseF == 0) // flux-jump lift; set_boundary_quad(ebN_local_kb) is current
+					{
+						const double J = geom.fluxLift(eN);
+						gja[0] += J * geom.gfF(eN).PSIA_x();
+						gja[1] += J * geom.gfF(eN).PSIA_y();
+						gjb[0] += J * geom.gfF(eN).PSIB_x();
+						gjb[1] += J * geom.gfF(eN).PSIB_y();
+					}
+					for (int I = 0; I < nSpace; I++)
+					{
+						gp.ju_a += (gua[I] + gja[I]) * normal[I];
+						gp.ju_b += (gub[I] + gjb[I]) * normal[I];
+					}
+				}
+			}
+		}
+
 		inline void calculateElementResidual(int icase_f,
 											 // nonzero when the buried-Gamma_f logic demoted this element:
 											 // -1 = fluid all Omega^- (mua), +1 = all Omega^+ (mub)
@@ -1549,241 +1776,39 @@ namespace proteus
 					}
 				}
 			} // elements
-			// ghost penalty on the interior faces of Gamma_s-cut elements (the list geometry built, both elements carry fluid)
-			for (const int ebN_gp : geom.cutfemFaces())
+			// Ghost penalty on the interior faces of Gamma_s-cut elements (the faces the geometry lists: both elements carry
+			// fluid): gamma_g h_F int_F [[du/dn]] [[dv/dn]], one jump penalty per phase (see ghostPoint) over the local DOFs
+			// of both elements.
 			{
-				const int *it = &ebN_gp;
+				const FaceCtx fctx = makeFaceCtx(args);
+				constexpr int n2 = 2 * nDOF_test_element;
+				for (const int ebN : geom.cutfemFaces())
 				{
-					std::map<int, double> Dwp_Dn_jump, Dw_Dn_jump;
-					std::map<int, double> Dw_Dn_jump_a, Dw_Dn_jump_b;
-					double gamma_cutfem = embeddedBoundary_ghost_penalty, h_cutfem = elementBoundaryDiameter.data()[*it];
-					// The two elements need not parametrize the shared face in the same direction, so
-					// index kb can be DIFFERENT physical points on the two sides (see the SCIFEM loop's
-					// orientation map). Harmless for P1, where the normal derivative is constant on a
-					// face; for P2 it turns the variation along the face into a spurious jump. Match
-					// side 1 to side 0 by position.
-					int gp_kmap[nQuadraturePoints_elementBoundary];
-					{
-						double gp_xq[2][nQuadraturePoints_elementBoundary][3] = {}; // 2D mapping never writes z
-						for (int s = 0; s < 2; s++)
-						{
-							const int eN_g = elementBoundaryElementsArray.data()[(*it) * 2 + s],
-									  ebN_local_g = elementBoundaryLocalElementBoundariesArray.data()[(*it) * 2 + s];
-							for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
-							{
-								double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-									bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
-								ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
-																	ebN_local_g * nQuadraturePoints_elementBoundary + kb,
-																	mesh_dof.data(), mesh_l2g.data(),
-																	mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
-																	boundaryJac_ref.data(), jac_g, jacDet_g, jacInv_g,
-																	bJac_g, mT_g, mTDS_g, normal_ref.data(), nrm_g,
-																	gp_xq[s][kb][0], gp_xq[s][kb][1], gp_xq[s][kb][2]);
-							}
-						}
-						for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
-						{
-							int best = 0;
-							double bestd = 1.0e300;
-							for (int j = 0; j < nQuadraturePoints_elementBoundary; j++)
-							{
-								double d = 0.0;
-								for (int I = 0; I < nSpace; I++)
-									d += std::fabs(gp_xq[1][j][I] - gp_xq[0][k][I]);
-								if (d < bestd) { bestd = d; best = j; }
-							}
-							gp_kmap[k] = best;
-						}
-					}
+					const double gamma_h = embeddedBoundary_ghost_penalty * elementBoundaryDiameter.data()[ebN];
+					int gp_kmap[2][nQuadraturePoints_elementBoundary];
+					double gp_xq[2][nQuadraturePoints_elementBoundary][3];
+					pairFacePoints(fctx, ebN, gp_kmap, gp_xq, elementBoundaryDiameter.data()[ebN], false);
 					for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 					{
-						double Du_Dn_jump = 0.0, dS;
-						double Du_Dn_jump_a = 0.0, Du_Dn_jump_b = 0.0;
-						bool phaseA_ok = true, phaseB_ok = true;
-						for (int eN_side = 0; eN_side < 2; eN_side++)
+						GhostPoint gp;
+						ghostPoint(fctx, ebN, kb, gp_kmap[1][kb], true, gp);
+						double r2[n2] = {};
+						if (gp.okA || gp.okB)
 						{
-							int ebN = *it,
-								eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side];
-							for (int i = 0; i < nDOF_test_element; i++)
-							{
-								Dw_Dn_jump[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-								Dw_Dn_jump_a[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-								Dw_Dn_jump_b[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-							}
-						}
-						for (int eN_side = 0; eN_side < 2; eN_side++)
-						{
-							int ebN = *it,
-								eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side],
-								ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + eN_side],
-								eN_nDOF_trial_element = eN * nDOF_trial_element,
-								kb_s = (eN_side == 0) ? kb : gp_kmap[kb],
-								ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb_s,
-								ebN_local_kb_nSpace = ebN_local_kb * nSpace;
-							double u_int = 0.0,
-								   grad_u_int[nSpace] = {0., 0.},
-								   jac_int[nSpace * nSpace],
-								   jacDet_int,
-								   jacInv_int[nSpace * nSpace],
-								   boundaryJac[nSpace * (nSpace - 1)],
-								   metricTensor[(nSpace - 1) * (nSpace - 1)],
-								   metricTensorDetSqrt,
-								   u_test_dS[nDOF_test_element],
-								   u_grad_trial_trace[nDOF_trial_element * nSpace],
-								   u_grad_test_dS[nDOF_trial_element * nSpace],
-								   normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
-								   G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty,
-								   force_x, force_y, force_z, force_p_x, force_p_y, force_p_z, force_v_x, force_v_y, force_v_z, r_x, r_y, r_z;
-							// compute information about mapping from reference element to physical element
-							ck.calculateMapping_elementBoundary(eN,
-																ebN_local,
-																kb_s,
-																ebN_local_kb,
-																mesh_dof.data(),
-																mesh_l2g.data(),
-																mesh_trial_trace_ref.data(),
-																mesh_grad_trial_trace_ref.data(),
-																boundaryJac_ref.data(),
-																jac_int,
-																jacDet_int,
-																jacInv_int,
-																boundaryJac,
-																metricTensor,
-																metricTensorDetSqrt,
-																normal_ref.data(),
-																normal,
-																x_int, y_int, z_int);
-							dS = metricTensorDetSqrt * dS_ref.data()[kb_s]; // kb_s mirrors kb: same Gauss weight
-							// compute shape and solution information
-							// shape
-							ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_int, u_grad_trial_trace);
-							// solution and gradients
-							ck.valFromDOF(u_dof.data(), &u_l2g.data()[eN_nDOF_trial_element], &u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element], u_int);
-							ck.gradFromDOF(u_dof.data(), &u_l2g.data()[eN_nDOF_trial_element], u_grad_trial_trace, grad_u_int);
-							for (int I = 0; I < nSpace; I++)
-							{
-								Du_Dn_jump += grad_u_int[I] * normal[I];
-							}
-							for (int i = 0; i < nDOF_test_element; i++)
-							{
-								for (int I = 0; I < nSpace; I++)
-									Dw_Dn_jump[u_l2g.data()[eN_nDOF_trial_element + i]] += u_grad_trial_trace[i * nSpace + I] * normal[I];
-							}
-							// --- Ghost penalty, per fluid phase. The penalty is meant to kill *spurious*
-							//     normal-derivative jumps across a cut element's face. On an element that the
-							//     fluid interface also cuts, the combined IFEM solution genuinely kinks at
-							//     Gamma_f, so penalising the combined gradient penalises physics and destroys
-							//     exactness. Each phase's own polynomial extension IS smooth across the face,
-							//     so we penalise [[d(u_a)/dn]] and [[d(u_b)/dn]] separately -- the same per-side
-							//     treatment the bulk (wA/wB) and Nitsche (D_s_a/D_s_b) terms already get.
-							int gp_icase = -2; // -2: no fluid interface in play, single phase
-							double gp_va_grad[nDOF_trial_element * nSpace], gp_vb_grad[nDOF_trial_element * nSpace];
-							// Jump-lift arrays (assign_jump_side's own node pattern, ~line 1499-1524) for
-							// THIS element eN, needed below to add grad_uja/grad_ujb to the ghost penalty's
-							// per-phase normal derivative. Zero unless eN is genuinely Gamma_f-cut.
-							double gp_JA[nDOF_trial_element], gp_JB[nDOF_trial_element];
-							std::fill(gp_JA, gp_JA + nDOF_trial_element, 0.0);
-							std::fill(gp_JB, gp_JB + nDOF_trial_element, 0.0);
-							if (immersedBoundary)
-							{
-								double gp_phi_f[nDOF_trial_element], gp_nodes[nDOF_trial_element * 3];
-								for (int i = 0; i < nDOF_trial_element; i++)
-								{
-									const int gp_eN_i = eN * nDOF_trial_element + i;
-									gp_phi_f[i] = immersedBoundary_sdf_nodes.data()[u_l2g.data()[gp_eN_i]];
-									for (int I = 0; I < 3; I++)
-										gp_nodes[i * 3 + I] = mesh_dof.data()[u_l2g.data()[gp_eN_i] * 3 + I];
-								}
-								gp_icase = geom.icaseF(eN);
-								if (gp_icase == 0)
-								{
-									for (int i = 0; i < nDOF_trial_element; i++)
-									{
-										const double jump_i = immersedBoundary_solutionJump_nodes.data()[u_l2g.data()[eN * nDOF_trial_element + i]];
-										if (gp_phi_f[i] > 0.0)
-											gp_JA[i] = -jump_i;
-										else
-											gp_JB[i] = jump_i;
-									}
-								}
-							}
-							if (gp_icase == 0)
-							{
-								geom.gfF(eN).set_boundary_quad(ebN_local_kb);
-								for (int i = 0; i < nDOF_trial_element; i++)
-								{
-									gp_va_grad[i * nSpace + 0] = geom.gfF(eN).VA_x(i);
-									gp_va_grad[i * nSpace + 1] = geom.gfF(eN).VA_y(i);
-									gp_vb_grad[i * nSpace + 0] = geom.gfF(eN).VB_x(i);
-									gp_vb_grad[i * nSpace + 1] = geom.gfF(eN).VB_y(i);
-								}
-							}
-							else
-								for (int i = 0; i < nDOF_trial_element * nSpace; i++)
-								{
-									gp_va_grad[i] = u_grad_trial_trace[i];
-									gp_vb_grad[i] = u_grad_trial_trace[i];
-								}
-							// Which phases does this element actually carry? A face only gets a phase's penalty
-							// if BOTH its elements have that phase, otherwise there is no extension to compare.
-							phaseA_ok = phaseA_ok && (gp_icase == 0 || gp_icase == -1 || gp_icase == -2);
-							phaseB_ok = phaseB_ok && (gp_icase == 0 || gp_icase == 1);
-							for (int i = 0; i < nDOF_test_element; i++)
-							{
-								const int gp_dof = u_l2g.data()[eN * nDOF_trial_element + i];
-								for (int I = 0; I < nSpace; I++)
-								{
-									Dw_Dn_jump_a[gp_dof] += gp_va_grad[i * nSpace + I] * normal[I];
-									Dw_Dn_jump_b[gp_dof] += gp_vb_grad[i * nSpace + I] * normal[I];
-								}
-							}
-							{
-								double gp_eu[nDOF_trial_element], gp_gua[nSpace] = {0., 0.}, gp_gub[nSpace] = {0., 0.};
-								for (int i = 0; i < nDOF_trial_element; i++)
-									gp_eu[i] = u_dof.data()[u_l2g.data()[eN_nDOF_trial_element + i]];
-								ck.gradFromElementDOF(gp_eu, gp_va_grad, gp_gua);
-								ck.gradFromElementDOF(gp_eu, gp_vb_grad, gp_gub);
-								// Add the jump-lift gradient (grad_uja/grad_ujb): the ghost penalty must
-								// compare the TOTAL branch field (u_a+u_ja / u_b+u_jb, see ga/gb ~line
-								// 865-866) across the shared face, not the jump-free piece alone, or a
-								// genuine prescribed solution jump reads as a spurious normal-derivative
-								// kink between elements. Zero (no-op) unless eN is Gamma_f-cut.
-								double gp_gja[nSpace] = {0., 0.}, gp_gjb[nSpace] = {0., 0.};
-								ck.gradFromElementDOF(gp_JA, gp_va_grad, gp_gja);
-								ck.gradFromElementDOF(gp_JB, gp_vb_grad, gp_gjb);
-								if (gp_icase == 0) // flux-jump lift; set_boundary_quad(ebN_local_kb) is current
-								{
-									const double J = geom.fluxLift(eN);
-									gp_gja[0] += J * geom.gfF(eN).PSIA_x();
-									gp_gja[1] += J * geom.gfF(eN).PSIA_y();
-									gp_gjb[0] += J * geom.gfF(eN).PSIB_x();
-									gp_gjb[1] += J * geom.gfF(eN).PSIB_y();
-								}
-								for (int I = 0; I < nSpace; I++)
-								{
-									Du_Dn_jump_a += (gp_gua[I] + gp_gja[I]) * normal[I];
-									Du_Dn_jump_b += (gp_gub[I] + gp_gjb[I]) * normal[I];
-								}
-							}
-						} // eN_side
-						if (phaseA_ok || phaseB_ok)
-						{
-							if (phaseA_ok)
-								for (std::map<int, double>::iterator w_it = Dw_Dn_jump_a.begin(); w_it != Dw_Dn_jump_a.end(); ++w_it)
-									globalResidual.data()[offset_u + stride_u * w_it->first] += gamma_cutfem * h_cutfem * Du_Dn_jump_a * w_it->second * dS;
-							if (phaseB_ok)
-								for (std::map<int, double>::iterator w_it = Dw_Dn_jump_b.begin(); w_it != Dw_Dn_jump_b.end(); ++w_it)
-									globalResidual.data()[offset_u + stride_u * w_it->first] += gamma_cutfem * h_cutfem * Du_Dn_jump_b * w_it->second * dS;
+							if (gp.okA)
+								unfitted::jumpPenalty<n2>(gp.dS, gamma_h, gp.ju_a, gp.jv_a, r2, nullptr);
+							if (gp.okB)
+								unfitted::jumpPenalty<n2>(gp.dS, gamma_h, gp.ju_b, gp.jv_b, r2, nullptr);
 						}
 						else
+							unfitted::jumpPenalty<n2>(gp.dS, gamma_h, gp.ju_c, gp.jv_c, r2, nullptr);
+						for (int side = 0; side < 2; side++)
 						{
-							// Neither phase is shared by both elements (Gamma_f runs along the face itself).
-							// Keep the original combined penalty so the face is still stabilised.
-							for (std::map<int, double>::iterator w_it = Dw_Dn_jump.begin(); w_it != Dw_Dn_jump.end(); ++w_it)
-								globalResidual.data()[offset_u + stride_u * w_it->first] += gamma_cutfem * h_cutfem * Du_Dn_jump * w_it->second * dS;
-						} // i
-					} // kb
+							const int eN = elementBoundaryElementsArray.data()[ebN * 2 + side];
+							for (int i = 0; i < nDOF_test_element; i++)
+								globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN * nDOF_test_element + i]] += r2[side * nDOF_test_element + i];
+						}
+					}
 				}
 			} // cutfem element boundaries
 			// SCIFEM (Ji et al. 2014, eq. 3.7/3.8) symmetric consistency + adjoint-consistency terms
@@ -3006,216 +3031,51 @@ namespace proteus
 					}
 				}
 			} // elements
-			for (const int ebN_gp : geom.cutfemFaces())
+			// Jacobian of the ghost penalty assembled in calculateResidual: the same jump penalties, over the local DOFs of both
+			// elements, scattered by the face's CSR offsets (everything is linear in u_dof)
 			{
-				const int *it = &ebN_gp;
-				std::map<int, double> Dw_Dn_jump;
-				std::map<int, double> Dw_Dn_jump_a, Dw_Dn_jump_b;
-				std::map<std::pair<int, int>, int> u_u_nz;
-				double gamma_cutfem = embeddedBoundary_ghost_penalty, h_cutfem = elementBoundaryDiameter.data()[*it];
-				// The two elements need not parametrize the shared face in the same direction, so
-				// index kb can be DIFFERENT physical points on the two sides (see the SCIFEM loop's
-				// orientation map). Harmless for P1, where the normal derivative is constant on a
-				// face; for P2 it turns the variation along the face into a spurious jump. Match
-				// side 1 to side 0 by position.
-				int gp_kmap[nQuadraturePoints_elementBoundary];
+				const FaceCtx fctx = makeFaceCtx(args);
+				constexpr int n2 = 2 * nDOF_test_element;
+				for (const int ebN : geom.cutfemFaces())
 				{
-					double gp_xq[2][nQuadraturePoints_elementBoundary][3] = {}; // 2D mapping never writes z
-					for (int s = 0; s < 2; s++)
+					const double gamma_h = embeddedBoundary_ghost_penalty * elementBoundaryDiameter.data()[ebN];
+					int gp_kmap[2][nQuadraturePoints_elementBoundary];
+					double gp_xq[2][nQuadraturePoints_elementBoundary][3];
+					pairFacePoints(fctx, ebN, gp_kmap, gp_xq, elementBoundaryDiameter.data()[ebN], false);
+					for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
 					{
-						const int eN_g = elementBoundaryElementsArray.data()[(*it) * 2 + s],
-								  ebN_local_g = elementBoundaryLocalElementBoundariesArray.data()[(*it) * 2 + s];
-						for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
+						GhostPoint gp;
+						ghostPoint(fctx, ebN, kb, gp_kmap[1][kb], false, gp);
+						double J2[n2 * n2] = {};
+						if (gp.okA || gp.okB)
 						{
-							double jac_g[nSpace * nSpace], jacDet_g, jacInv_g[nSpace * nSpace],
-								bJac_g[nSpace * (nSpace - 1)], mT_g[(nSpace - 1) * (nSpace - 1)], mTDS_g, nrm_g[3];
-							ck.calculateMapping_elementBoundary(eN_g, ebN_local_g, kb,
-																ebN_local_g * nQuadraturePoints_elementBoundary + kb,
-																mesh_dof.data(), mesh_l2g.data(),
-																mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
-																boundaryJac_ref.data(), jac_g, jacDet_g, jacInv_g,
-																bJac_g, mT_g, mTDS_g, normal_ref.data(), nrm_g,
-																gp_xq[s][kb][0], gp_xq[s][kb][1], gp_xq[s][kb][2]);
-						}
-					}
-					for (int k = 0; k < nQuadraturePoints_elementBoundary; k++)
-					{
-						int best = 0;
-						double bestd = 1.0e300;
-						for (int j = 0; j < nQuadraturePoints_elementBoundary; j++)
-						{
-							double d = 0.0;
-							for (int I = 0; I < nSpace; I++)
-								d += std::fabs(gp_xq[1][j][I] - gp_xq[0][k][I]);
-							if (d < bestd) { bestd = d; best = j; }
-						}
-						gp_kmap[k] = best;
-					}
-				}
-				int eN_nDOF_trial_element = elementBoundaryElementsArray.data()[(*it) * 2 + 0] * nDOF_trial_element;
-				for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
-				{
-					double Dp_Dn_jump = 0.0, Du_Dn_jump = 0.0, Dv_Dn_jump = 0.0, dS;
-					bool phaseA_ok = true, phaseB_ok = true;
-					for (int eN_side = 0; eN_side < 2; eN_side++)
-					{
-						int ebN = *it,
-							eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side];
-						for (int i = 0; i < nDOF_test_element; i++)
-						{
-							Dw_Dn_jump[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-							Dw_Dn_jump_a[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-							Dw_Dn_jump_b[u_l2g.data()[eN * nDOF_test_element + i]] = 0.0;
-						}
-					}
-					for (int eN_side = 0; eN_side < 2; eN_side++)
-					{
-						int ebN = *it,
-							eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side],
-							ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + eN_side],
-							eN_nDOF_trial_element = eN * nDOF_trial_element,
-							kb_s = (eN_side == 0) ? kb : gp_kmap[kb],
-								ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb_s,
-							ebN_local_kb_nSpace = ebN_local_kb * nSpace;
-						double
-							u_int = 0.0,
-							grad_u_int[nSpace] = {0., 0.},
-							jac_int[nSpace * nSpace],
-							jacDet_int,
-							jacInv_int[nSpace * nSpace],
-							boundaryJac[nSpace * (nSpace - 1)],
-							metricTensor[(nSpace - 1) * (nSpace - 1)],
-							metricTensorDetSqrt,
-							u_test_dS[nDOF_test_element],
-							u_grad_trial_trace[nDOF_trial_element * nSpace],
-							u_grad_test_dS[nDOF_trial_element * nSpace],
-							normal[3], x_int, y_int, z_int, xt_int, yt_int, zt_int, integralScaling,
-							G[nSpace * nSpace], G_dd_G, tr_G, h_phi, h_penalty, penalty;
-						// compute information about mapping from reference element to physical element
-						ck.calculateMapping_elementBoundary(eN,
-															ebN_local,
-															kb_s,
-															ebN_local_kb,
-															mesh_dof.data(),
-															mesh_l2g.data(),
-															mesh_trial_trace_ref.data(),
-															mesh_grad_trial_trace_ref.data(),
-															boundaryJac_ref.data(),
-															jac_int,
-															jacDet_int,
-															jacInv_int,
-															boundaryJac,
-															metricTensor,
-															metricTensorDetSqrt,
-															normal_ref.data(),
-															normal,
-															x_int, y_int, z_int);
-						dS = metricTensorDetSqrt * dS_ref.data()[kb_s]; // kb_s mirrors kb: same Gauss weight
-						// compute shape and solution information
-						// shape
-						ck.gradTrialFromRef(&u_grad_trial_trace_ref.data()[ebN_local_kb_nSpace * nDOF_trial_element], jacInv_int, u_grad_trial_trace);
-						for (int i = 0; i < nDOF_test_element; i++)
-						{
-							int eN_i = eN * nDOF_test_element + i;
-							for (int I = 0; I < nSpace; I++)
-								Dw_Dn_jump[u_l2g.data()[eN_i]] += u_grad_trial_trace[i * nSpace + I] * normal[I];
-						}
-						// Ghost penalty per fluid phase -- see the matching comment in calculateResidual.
-						// Must mirror the residual exactly or Newton loses one-step consistency.
-						int gp_icase = -2;
-						double gp_va_grad[nDOF_trial_element * nSpace], gp_vb_grad[nDOF_trial_element * nSpace];
-						if (immersedBoundary)
-						{
-							double gp_phi_f[nDOF_trial_element], gp_nodes[nDOF_trial_element * 3];
-							for (int i = 0; i < nDOF_trial_element; i++)
-							{
-								const int gp_eN_i = eN * nDOF_trial_element + i;
-								gp_phi_f[i] = immersedBoundary_sdf_nodes.data()[u_l2g.data()[gp_eN_i]];
-								for (int I = 0; I < 3; I++)
-									gp_nodes[i * 3 + I] = mesh_dof.data()[u_l2g.data()[gp_eN_i] * 3 + I];
-							}
-							gp_icase = geom.icaseF(eN);
-						}
-						if (gp_icase == 0)
-						{
-							geom.gfF(eN).set_boundary_quad(ebN_local_kb);
-							for (int i = 0; i < nDOF_trial_element; i++)
-							{
-								gp_va_grad[i * nSpace + 0] = geom.gfF(eN).VA_x(i);
-								gp_va_grad[i * nSpace + 1] = geom.gfF(eN).VA_y(i);
-								gp_vb_grad[i * nSpace + 0] = geom.gfF(eN).VB_x(i);
-								gp_vb_grad[i * nSpace + 1] = geom.gfF(eN).VB_y(i);
-							}
+							if (gp.okA)
+								unfitted::jumpPenalty<n2>(gp.dS, gamma_h, 0.0, gp.jv_a, nullptr, J2);
+							if (gp.okB)
+								unfitted::jumpPenalty<n2>(gp.dS, gamma_h, 0.0, gp.jv_b, nullptr, J2);
 						}
 						else
-							for (int i = 0; i < nDOF_trial_element * nSpace; i++)
-							{
-								gp_va_grad[i] = u_grad_trial_trace[i];
-								gp_vb_grad[i] = u_grad_trial_trace[i];
-							}
-						phaseA_ok = phaseA_ok && (gp_icase == 0 || gp_icase == -1 || gp_icase == -2);
-						phaseB_ok = phaseB_ok && (gp_icase == 0 || gp_icase == 1);
-						for (int i = 0; i < nDOF_test_element; i++)
+							unfitted::jumpPenalty<n2>(gp.dS, gamma_h, 0.0, gp.jv_c, nullptr, J2);
+						for (int eN_side = 0; eN_side < 2; eN_side++)
 						{
-							const int gp_dof = u_l2g.data()[eN * nDOF_trial_element + i];
-							for (int I = 0; I < nSpace; I++)
+							const int eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side];
+							for (int i = 0; i < nDOF_test_element; i++)
 							{
-								Dw_Dn_jump_a[gp_dof] += gp_va_grad[i * nSpace + I] * normal[I];
-								Dw_Dn_jump_b[gp_dof] += gp_vb_grad[i * nSpace + I] * normal[I];
-							}
-						}
-					} // eN_side
-					for (int eN_side = 0; eN_side < 2; eN_side++)
-					{
-						int ebN = *it,
-							eN = elementBoundaryElementsArray.data()[ebN * 2 + eN_side];
-						for (int i = 0; i < nDOF_test_element; i++)
-						{
-							int eN_i = eN * nDOF_test_element + i;
-							for (int eN_side2 = 0; eN_side2 < 2; eN_side2++)
-							{
-								int eN2 = elementBoundaryElementsArray.data()[ebN * 2 + eN_side2];
-								for (int j = 0; j < nDOF_test_element; j++)
-								{
-									int eN_i_j = eN_i * nDOF_test_element + j;
-									int eN2_j = eN2 * nDOF_test_element + j;
-									int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element +
-												  eN_side * 2 * nDOF_test_X_trial_element +
-												  eN_side2 * nDOF_test_X_trial_element +
-												  i * nDOF_trial_element +
-												  j;
-									std::pair<int, int> ij = std::make_pair(u_l2g.data()[eN_i], u_l2g.data()[eN2_j]);
-									if (u_u_nz.count(ij))
+								const int eN_i = eN * nDOF_test_element + i;
+								for (int eN_side2 = 0; eN_side2 < 2; eN_side2++)
+									for (int j = 0; j < nDOF_test_element; j++)
 									{
-										assert(u_u_nz[ij] == csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]);
+										const int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element +
+															eN_side * 2 * nDOF_test_X_trial_element +
+															eN_side2 * nDOF_test_X_trial_element +
+															i * nDOF_trial_element + j;
+										globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]] +=
+											J2[(eN_side * nDOF_test_element + i) * n2 + eN_side2 * nDOF_test_element + j];
 									}
-									else
-										u_u_nz[ij] = csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j];
-								}
 							}
 						}
 					}
-					{
-						std::map<int, double> *gp_maps[2] = {&Dw_Dn_jump_a, &Dw_Dn_jump_b};
-						bool gp_ok[2] = {phaseA_ok, phaseB_ok};
-						if (!phaseA_ok && !phaseB_ok)
-						{
-							gp_maps[0] = &Dw_Dn_jump; gp_ok[0] = true;   // fall back to the combined form
-							gp_ok[1] = false;
-						}
-						for (int gp_p = 0; gp_p < 2; gp_p++)
-						{
-							if (!gp_ok[gp_p]) continue;
-							std::map<int, double> &M = *gp_maps[gp_p];
-							for (std::map<int, double>::iterator wi_it = M.begin(); wi_it != M.end(); ++wi_it)
-								for (std::map<int, double>::iterator wj_it = M.begin(); wj_it != M.end(); ++wj_it)
-								{
-									std::pair<int, int> ij = std::make_pair(wi_it->first, wj_it->first);
-									globalJacobian.data()[u_u_nz.at(ij)] += gamma_cutfem * h_cutfem * wj_it->second * wi_it->second * dS;
-								} // i,j
-						}
-					}
-				} // kb
+				}
 			} // cutfem element boundaries
 			// Jacobian of the SCIFEM (eq. 3.7) consistency terms assembled in calculateResidual --
 			// same construction (orientation map + edge Heaviside blend of region-wise products),
