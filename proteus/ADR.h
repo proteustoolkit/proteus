@@ -905,6 +905,103 @@ namespace proteus
 			}
 		}
 
+		// The one-sided edge correction on an element cut by both level sets (2D, P1 and P2). Masked root-adjacent edges
+		// leak boundary flux that H_s does not remove (ordinary hat functions vanish there; two-sided branches do not), so it is
+		// added back: on the two Gamma_f-cut (root-adjacent) faces of the element, with the face quadrature and the boundary
+		// evaluation of the two-branch basis, each branch restricted to its piece of the face (its side of Gamma_f, and the
+		// solid side of Gamma_s -- or the fluid side, tcFluidMode) by an edge moment-fit indicator, exact for integrands of
+		// degree <= nP_edge (flux * v: degree 1 for P1, 3 for P2). The term is  tcSgn * W_branch * (mu_branch grad u_branch . n)
+		// * v_branch  per branch: a one-sided consistency term, unfitted::symmetricConsistency with no adjoint part (s = 0),
+		// local DOFs = the element's. With r (and the nodal coefficients of the two branches cuA, cuB, and the flux-jump
+		// lift) the residual is added, with J the Jacobian block (linear in u_dof through the flux only; JA/JB are fixed
+		// data). r and J are local (nDOF, nDOF * nDOF); either may be null.
+		inline void tripleCutEdge(const FaceCtx &c, const int eN, const double *element_phi_f, const double *element_phi_s,
+								  const double *element_nodes, const int *elementBoundaries, const bool tcFluidMode,
+								  const bool tcBoundaryOnly, const double tcSgn, const double mua, const double mub,
+								  const double *JA, const double *JB, const double fluxLiftJ, double *r, double *J)
+		{
+			constexpr int nD = nDOF_trial_element;
+			bool neg[3] = {element_phi_f[0] < 0.0, element_phi_f[1] < 0.0, element_phi_f[2] < 0.0};
+			int cnt_neg = (neg[0] ? 1 : 0) + (neg[1] ? 1 : 0) + (neg[2] ? 1 : 0);
+			int root_i = -1;
+			for (int ii = 0; ii < 3; ii++)
+				if ((neg[ii] && cnt_neg == 1) || (!neg[ii] && cnt_neg == 2))
+				{
+					root_i = ii;
+					break;
+				}
+			if (root_i < 0)
+				return;
+			GfType &gf_f_tc = geom.gfF(eN);
+			// Branch coefficients u_i + JA_i / u_i + JB_i: the solution-jump field (JA/JB) is reconstructed through the same
+			// branch basis as everywhere else in this file, so the true branch value is sum (u_i+JA_i) va_i.
+			double cuA[nD], cuB[nD];
+			if (r)
+				for (int ii = 0; ii < nD; ii++)
+				{
+					const double u_ii = c.u_dof[c.u_l2g[eN * nD + ii]];
+					cuA[ii] = u_ii + JA[ii];
+					cuB[ii] = u_ii + JB[ii];
+				}
+			// Default (TC_EDGE): the solid pieces {phi_s<0}. triplyCut_edgeFluidSide: the fluid pieces {phi_s>0}, opposite sign.
+			const double sgn_s = tcFluidMode ? 1.0 : -1.0;
+			for (int pj = 0; pj < 3; pj++)
+			{
+				if (pj == root_i)
+					continue; // the face opposite the root is not cut by Gamma_f
+				const int ebN_tc = elementBoundaries[eN * nDOF_mesh_trial_element + pj];
+				if (tcBoundaryOnly && c.eb_elements[ebN_tc * 2 + 1] != -1)
+					continue; // interior face: left to SCIFEM
+				// face pj runs from local node (pj+1)%3 (t=0) to (pj+2)%3 (t=1), as in the SCIFEM loop
+				const int n0 = (pj + 1) % 3, n1 = (pj + 2) % 3;
+				double C_a[nP_edge + 1], C_b[nP_edge + 1];
+				equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-element_phi_f[n0], -element_phi_f[n1],
+																		   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_a);
+				equivalent_polynomials::calculate_edge_interval_H<nP_edge>(element_phi_f[n0], element_phi_f[n1],
+																		   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_b);
+				const double ex0 = element_nodes[n0 * 3 + 0], ey0 = element_nodes[n0 * 3 + 1];
+				const double evx = element_nodes[n1 * 3 + 0] - ex0, evy = element_nodes[n1 * 3 + 1] - ey0;
+				const double elen2 = evx * evx + evy * evy;
+				for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
+				{
+					const int ebN_local_kb = pj * nQuadraturePoints_elementBoundary + kb;
+					double jac_b[nSpace * nSpace], jacDet_b, jacInv_b[nSpace * nSpace],
+						bJac_b[nSpace * (nSpace - 1)], mT_b[(nSpace - 1) * (nSpace - 1)], mTDS_b, n_b[3], xb, yb, zb;
+					ck.calculateMapping_elementBoundary(eN, pj, kb, ebN_local_kb, c.mesh_dof, c.mesh_l2g,
+														c.mesh_trial_trace_ref, c.mesh_grad_trial_trace_ref, c.boundaryJac_ref,
+														jac_b, jacDet_b, jacInv_b, bJac_b, mT_b, mTDS_b, c.normal_ref, n_b, xb, yb, zb);
+					const double dS = mTDS_b * c.dS_ref[kb];
+					const double t = ((xb - ex0) * evx + (yb - ey0) * evy) / elen2;
+					const double Wa = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a, t);
+					const double Wb = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b, t);
+					gf_f_tc.set_boundary_quad(ebN_local_kb);
+					double vA[nD], vB[nD], fA[nD], fB[nD];
+					for (int kk = 0; kk < nD; kk++)
+					{
+						vA[kk] = gf_f_tc.VA(kk);
+						vB[kk] = gf_f_tc.VB(kk);
+						fA[kk] = mua * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
+						fB[kk] = mub * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
+					}
+					double fluxA = 0.0, fluxB = 0.0;
+					if (r)
+					{
+						for (int kk = 0; kk < nD; kk++)
+						{
+							fluxA += cuA[kk] * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
+							fluxB += cuB[kk] * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
+						}
+						fluxA += fluxLiftJ * (gf_f_tc.PSIA_x() * n_b[0] + gf_f_tc.PSIA_y() * n_b[1]);
+						fluxB += fluxLiftJ * (gf_f_tc.PSIB_x() * n_b[0] + gf_f_tc.PSIB_y() * n_b[1]);
+						fluxA *= mua;
+						fluxB *= mub;
+					}
+					unfitted::symmetricConsistency<nD>(-tcSgn * Wa * dS, 0.0, fluxA, 0.0, fA, vA, fA, vA, r, J);
+					unfitted::symmetricConsistency<nD>(-tcSgn * Wb * dS, 0.0, fluxB, 0.0, fB, vB, fB, vB, r, J);
+				}
+			}
+		}
+
 		inline void calculateElementResidual(int icase_f,
 											 // nonzero when the buried-Gamma_f logic demoted this element:
 											 // -1 = fluid all Omega^- (mua), +1 = all Omega^+ (mub)
@@ -1680,6 +1777,7 @@ namespace proteus
 			// handled by SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge.
 			const bool tcBoundaryOnly = args.scalar<int>("triplyCut_edgeBoundaryOnly");
 			const double tcSgn = tcFluidMode ? -1.0 : 1.0;
+			const FaceCtx tcCtx = makeFaceCtx(args);
 
 			//
 			// loop over elements to compute volume integrals and load them into element and global residual
@@ -1870,83 +1968,11 @@ namespace proteus
 				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
-					// P1 and P2. Integrated on the two Gamma_f-cut (root-adjacent) faces with the element-boundary
-					// quadrature and the boundary evaluation of the two-branch basis, as in the SCIFEM loop. Each
-					// branch is restricted to its piece of the face (its side of Gamma_f, and the fluid side of
-					// Gamma_s -- or the solid side for the default TC_EDGE) by an edge moment-fit indicator, exact
-					// for integrands of degree <= nP_edge (flux*v: degree 1 for P1, 3 for P2).
-					const int nD = nDOF_trial_element;
-					bool neg[3] = {element_phi_f[0] < 0.0, element_phi_f[1] < 0.0, element_phi_f[2] < 0.0};
-					int cnt_neg = (neg[0] ? 1 : 0) + (neg[1] ? 1 : 0) + (neg[2] ? 1 : 0);
-					int root_i = -1;
-					for (int ii = 0; ii < 3; ii++)
-						if ((neg[ii] && cnt_neg == 1) || (!neg[ii] && cnt_neg == 2)) { root_i = ii; break; }
-					if (root_i >= 0)
-					{
-						GfType &gf_f_tc = geom.gfF(eN);
-						// Branch coefficients u_i + JA_i / u_i + JB_i: the solution-jump field (JA/JB) is
-						// reconstructed through the same branch basis as everywhere else in this file, so the true
-						// branch value is sum (u_i+JA_i) va_i (cf. line ~784, ~931).
-						double cuA[nDOF_trial_element], cuB[nDOF_trial_element];
-						for (int ii = 0; ii < nD; ii++)
-						{
-							const double u_ii = u_dof.data()[u_l2g.data()[eN * nD + ii]];
-							cuA[ii] = u_ii + JA[ii];
-							cuB[ii] = u_ii + JB[ii];
-						}
-						// Default (TC_EDGE): the solid pieces {phi_s<0}. triplyCut_edgeFluidSide: the fluid pieces {phi_s>0}, opposite sign.
-						const double sgn_s = tcFluidMode ? 1.0 : -1.0;
-						for (int pj = 0; pj < 3; pj++)
-						{
-							if (pj == root_i)
-								continue; // the face opposite the root is not cut by Gamma_f
-							const int ebN_tc = elementBoundariesArray.data()[eN * nDOF_mesh_trial_element + pj];
-							if (tcBoundaryOnly && elementBoundaryElementsArray.data()[ebN_tc * 2 + 1] != -1)
-								continue; // interior face: left to SCIFEM
-							// face pj runs from local node (pj+1)%3 (t=0) to (pj+2)%3 (t=1), as in the SCIFEM loop
-							const int n0 = (pj + 1) % 3, n1 = (pj + 2) % 3;
-							double C_a[nP_edge + 1], C_b[nP_edge + 1];
-							equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-element_phi_f[n0], -element_phi_f[n1],
-																					   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_a);
-							equivalent_polynomials::calculate_edge_interval_H<nP_edge>(element_phi_f[n0], element_phi_f[n1],
-																					   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_b);
-							const double ex0 = element_nodes[n0 * 3 + 0], ey0 = element_nodes[n0 * 3 + 1];
-							const double evx = element_nodes[n1 * 3 + 0] - ex0, evy = element_nodes[n1 * 3 + 1] - ey0;
-							const double elen2 = evx * evx + evy * evy;
-							for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
-							{
-								const int ebN_local_kb = pj * nQuadraturePoints_elementBoundary + kb;
-								double jac_b[nSpace * nSpace], jacDet_b, jacInv_b[nSpace * nSpace],
-									bJac_b[nSpace * (nSpace - 1)], mT_b[(nSpace - 1) * (nSpace - 1)], mTDS_b, n_b[2], xb, yb, zb;
-								ck.calculateMapping_elementBoundary(eN, pj, kb, ebN_local_kb,
-																	mesh_dof.data(), mesh_l2g.data(),
-																	mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
-																	boundaryJac_ref.data(), jac_b, jacDet_b, jacInv_b,
-																	bJac_b, mT_b, mTDS_b, normal_ref.data(), n_b, xb, yb, zb);
-								const double dS = mTDS_b * dS_ref.data()[kb];
-								const double t = ((xb - ex0) * evx + (yb - ey0) * evy) / elen2;
-								const double Wa = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a, t);
-								const double Wb = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b, t);
-								gf_f_tc.set_boundary_quad(ebN_local_kb);
-								double fluxA = 0.0, fluxB = 0.0;
-								for (int kk = 0; kk < nD; kk++)
-								{
-									fluxA += cuA[kk] * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
-									fluxB += cuB[kk] * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
-								}
-								fluxA += fluxLiftJ * (gf_f_tc.PSIA_x() * n_b[0] + gf_f_tc.PSIA_y() * n_b[1]);
-								fluxB += fluxLiftJ * (gf_f_tc.PSIB_x() * n_b[0] + gf_f_tc.PSIB_y() * n_b[1]);
-								fluxA *= mua;
-								fluxB *= mub;
-								for (int jj = 0; jj < nD; jj++)
-								{
-									const int gdof = u_l2g.data()[eN * nD + jj];
-									const double vA = gf_f_tc.VA(jj), vB = gf_f_tc.VB(jj);
-									globalResidual.data()[offset_u + stride_u * gdof] += tcSgn * (Wa * fluxA * vA + Wb * fluxB * vB) * dS;
-								}
-							}
-						}
-					}
+					double r_tc[nDOF_trial_element] = {};
+					tripleCutEdge(tcCtx, eN, element_phi_f, element_phi_s, element_nodes, elementBoundariesArray.data(), tcFluidMode,
+								  tcBoundaryOnly, tcSgn, mua, mub, JA, JB, fluxLiftJ, r_tc, nullptr);
+					for (int jj = 0; jj < nDOF_trial_element; jj++)
+						globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN * nDOF_trial_element + jj]] += r_tc[jj];
 				}
 			} // elements
 			// Ghost penalty on the interior faces of Gamma_s-cut elements (the faces the geometry lists: both elements carry
@@ -2755,6 +2781,7 @@ namespace proteus
 			// handled by SCIFEM's two-sided consistency term, which has no counterpart on an exterior edge.
 			const bool tcBoundaryOnly = args.scalar<int>("triplyCut_edgeBoundaryOnly");
 			const double tcSgn = tcFluidMode ? -1.0 : 1.0;
+			const FaceCtx tcCtx = makeFaceCtx(args);
 			for (int eN = 0; eN < nElements_global; eN++)
 			{
 				// double  elementJacobian_u_u.data()[nDOF_test_element*nDOF_trial_element],element_u[nDOF_trial_element];
@@ -2876,62 +2903,16 @@ namespace proteus
 				if (embeddedBoundary && immersedBoundary && (nSpace == 2 && (pOrder == 1 || pOrder == 2)) && icase_f == 0
 					&& icase_s != -1)
 				{
-					// Same faces, quadrature and piece indicators as the residual side (P1 and P2).
-					const int nD = nDOF_trial_element;
-					bool neg[3] = {element_phi_f[0] < 0.0, element_phi_f[1] < 0.0, element_phi_f[2] < 0.0};
-					int cnt_neg = (neg[0] ? 1 : 0) + (neg[1] ? 1 : 0) + (neg[2] ? 1 : 0);
-					int root_i = -1;
-					for (int ii = 0; ii < 3; ii++)
-						if ((neg[ii] && cnt_neg == 1) || (!neg[ii] && cnt_neg == 2)) { root_i = ii; break; }
-					if (root_i >= 0)
+					double J_tc[nDOF_trial_element * nDOF_trial_element] = {};
+					tripleCutEdge(tcCtx, eN, element_phi_f, element_phi_s, element_nodes, elementBoundariesArray.data(), tcFluidMode,
+								  tcBoundaryOnly, tcSgn, mua, mub, nullptr, nullptr, 0.0, nullptr, J_tc);
+					for (int jj = 0; jj < nDOF_test_element; jj++)
 					{
-						GfType &gf_f_tc = geom.gfF(eN);
-						const double sgn_s = tcFluidMode ? 1.0 : -1.0;
-						for (int pj = 0; pj < 3; pj++)
+						const int eN_jj = eN * nDOF_test_element + jj;
+						for (int kk = 0; kk < nDOF_trial_element; kk++)
 						{
-							if (pj == root_i)
-								continue;
-							const int ebN_tc = elementBoundariesArray.data()[eN * nDOF_mesh_trial_element + pj];
-							if (tcBoundaryOnly && elementBoundaryElementsArray.data()[ebN_tc * 2 + 1] != -1)
-								continue; // interior face: left to SCIFEM
-							const int n0 = (pj + 1) % 3, n1 = (pj + 2) % 3;
-							double C_a[nP_edge + 1], C_b[nP_edge + 1];
-							equivalent_polynomials::calculate_edge_interval_H<nP_edge>(-element_phi_f[n0], -element_phi_f[n1],
-																					   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_a);
-							equivalent_polynomials::calculate_edge_interval_H<nP_edge>(element_phi_f[n0], element_phi_f[n1],
-																					   sgn_s * element_phi_s[n0], sgn_s * element_phi_s[n1], C_b);
-							const double ex0 = element_nodes[n0 * 3 + 0], ey0 = element_nodes[n0 * 3 + 1];
-							const double evx = element_nodes[n1 * 3 + 0] - ex0, evy = element_nodes[n1 * 3 + 1] - ey0;
-							const double elen2 = evx * evx + evy * evy;
-							for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++)
-							{
-								const int ebN_local_kb = pj * nQuadraturePoints_elementBoundary + kb;
-								double jac_b[nSpace * nSpace], jacDet_b, jacInv_b[nSpace * nSpace],
-									bJac_b[nSpace * (nSpace - 1)], mT_b[(nSpace - 1) * (nSpace - 1)], mTDS_b, n_b[2], xb, yb, zb;
-								ck.calculateMapping_elementBoundary(eN, pj, kb, ebN_local_kb,
-																	mesh_dof.data(), mesh_l2g.data(),
-																	mesh_trial_trace_ref.data(), mesh_grad_trial_trace_ref.data(),
-																	boundaryJac_ref.data(), jac_b, jacDet_b, jacInv_b,
-																	bJac_b, mT_b, mTDS_b, normal_ref.data(), n_b, xb, yb, zb);
-								const double dS = mTDS_b * dS_ref.data()[kb];
-								const double t = ((xb - ex0) * evx + (yb - ey0) * evy) / elen2;
-								const double Wa = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_a, t);
-								const double Wb = equivalent_polynomials::evaluate_edge_poly<nP_edge>(C_b, t);
-								gf_f_tc.set_boundary_quad(ebN_local_kb);
-								for (int jj = 0; jj < nD; jj++)
-								{
-									const int eN_jj = eN * nDOF_test_element + jj;
-									const double vA = gf_f_tc.VA(jj), vB = gf_f_tc.VB(jj);
-									for (int kk = 0; kk < nD; kk++)
-									{
-										// JA/JB need no Jacobian term: fixed data, not a function of u_dof.
-										const double fA_k = mua * (gf_f_tc.VA_x(kk) * n_b[0] + gf_f_tc.VA_y(kk) * n_b[1]);
-										const double fB_k = mub * (gf_f_tc.VB_x(kk) * n_b[0] + gf_f_tc.VB_y(kk) * n_b[1]);
-										const int eN_jj_kk = eN_jj * nDOF_trial_element + kk;
-										globalJacobian.data()[csrRowIndeces_u_u.data()[eN_jj] + csrColumnOffsets_u_u.data()[eN_jj_kk]] += tcSgn * (Wa * fA_k * vA + Wb * fB_k * vB) * dS;
-									}
-								}
-							}
+							const int eN_jj_kk = eN_jj * nDOF_trial_element + kk;
+							globalJacobian.data()[csrRowIndeces_u_u.data()[eN_jj] + csrColumnOffsets_u_u.data()[eN_jj_kk]] += J_tc[jj * nDOF_trial_element + kk];
 						}
 					}
 				}
