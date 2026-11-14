@@ -6,6 +6,17 @@ import numpy as np
 from proteus.Transport import OneLevelTransport
 from proteus import cfemIntegrals
 from . import cArgumentsDict
+# proteus.X below is attribute access: X has to be imported here,
+# not by whatever happened to import it first
+import proteus.Comm
+import proteus.FemTools
+import proteus.NonlinearSolvers
+import proteus.NumericalFlux
+import proteus.Quadrature
+import proteus.ShockCapturing
+import proteus.SubgridError
+import proteus.Transport
+import proteus.TransportCoefficients
 
 """
 NOTES:
