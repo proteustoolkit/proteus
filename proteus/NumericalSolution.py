@@ -220,6 +220,12 @@ class NS_base(object):  # (HasTraits):
         #checkpoint costs, for WallLimit.WallClock)
         self._frameTimes = {}
         self._stateTimes = {}
+        #the last frame write times of each model (a bounded window): their median is what the not yet measured
+        #state write is estimated from; the longest frame, a one-off stall, is not
+        self._frameSamples = {}
+        #how long a hot start took to read each model's solver state: written, it takes about as long (see
+        #_checkpointCost); the first leg of a chain has none
+        self._stateReadTimes = {}
         #the frame (tCount) whose solver state each model last wrote
         self._stateFrame = {}
         #state bytes over dof bytes, per model, estimated once (_stateToFrameRatio)
@@ -236,6 +242,9 @@ class NS_base(object):  # (HasTraits):
         from . import Comm
         comm=Comm.get()
         self.comm=comm
+        #a marker left by the previous leg says that leg stopped, not this one; this run rewrites it if it stops
+        if self.wallClock is not None and self.comm.isMaster():
+            WallLimit.clear_marker(WallLimit.marker_path(so.name))
         # before any model opens its history or gauge files: a hot start keeps them (proteus.Gauges)
         Gauges.reset_history_files(opts.hotStart)
         message = "Initializing NumericalSolution for "+so.name+"\n System includes: \n"
@@ -1311,7 +1320,23 @@ class NS_base(object):  # (HasTraits):
         for index, model in enumerate(self.modelList):
             self.finalizeViewSolution(model)
             self.closeArchive(model, index)
+        self._writeCheckpointMarker(t)
         return False
+
+    def _writeCheckpointMarker(self, t):
+        """``<name>.checkpoint`` in the working directory, written by rank 0 once every rank has closed its archive:
+        the file a job script tests (the launcher's exit status can be 143 where the ranks exit 75). A barrier
+        after the write keeps every rank from exiting, and the launcher from killing rank 0, before the file is there.
+        Collective. Not written when the run has no archive: there is nothing to continue from."""
+        if self.archiveFlag == ArchiveFlags.UNDEFINED:
+            return
+        self.comm.barrier()
+        if self.comm.isMaster():
+            path = WallLimit.marker_path(self.so.name)
+            WallLimit.write_marker(path, t, self.tCount, self.comm.size())
+            logEvent("Wall limit: wrote %s (t=%g, frame %d); a job script can test for it, whatever the launcher's "
+                     "exit status" % (path, t, self.tCount), level=0)
+        self.comm.barrier()
 
     #
     #try to make preStep and postStep just manipulate "current values" and let the step controllers manage the history setting
@@ -1829,7 +1854,11 @@ class NS_base(object):  # (HasTraits):
             return False
         from mpi4py import MPI
         comm = ar.comm.comm.tompi4py()
+        import time
+        readStarted = time.time()
         found, state = self._readSolverState(model, index)
+        #a measured stand-in for the cost of writing this state, for the wall limit's checkpoint estimate
+        self._stateReadTimes[model.name] = time.time() - readStarted
         #a changed step policy cannot continue the archived numerical state: stop, naming what differs
         differs = []
         if "policy" in state:
@@ -1925,18 +1954,29 @@ class NS_base(object):  # (HasTraits):
             ratio = self._stateRatio[model.name] = max(1.0, state / max(dofs, 1))
         return ratio
 
+    #a collective write of the state is taken to cost up to this many times its read
+    _STATE_WRITE_PER_READ = 2.0
+
     def _checkpointCost(self):
-        """Seconds one checkpoint takes to write, from this run's own writes: for every model, its frame and its
-        solver state, each as long as the longest so far. A state not yet written in this run (the default writes
-        it at the end only) is estimated, as the model's frame time times ``_stateToFrameRatio``."""
+        """Seconds one checkpoint takes to write, from this run's own writes: for every model, its frame (the
+        longest so far) and its solver state. A state write that has been timed counts as the longest one so far;
+        before that (the default writes it at the end only) it is the time a hot start took to read that state
+        (twice it), and in the first leg of a chain it is estimated from the sizes, as the *median* frame
+        time of the model (the lower one of two: the first write of a file is the slow one) times
+        ``_stateToFrameRatio``. The median, not the longest frame: one slow frame (a
+        1.57 s stall among 0.1 s writes on Carpenter) made the estimate 18-77x the measured ~5 s, and on a
+        24 h run at full width that would have reserved an hour."""
         total = 0.0
         for model in self.modelList:
             frame = self._frameTimes.get(model.name)
             if frame is None:
                 continue
             state = self._stateTimes.get(model.name)
+            if state is None and self._stateReadTimes.get(model.name):
+                state = self._stateReadTimes[model.name] * self._STATE_WRITE_PER_READ
             if state is None:
-                state = frame * self._stateToFrameRatio(model)
+                samples = sorted(self._frameSamples.get(model.name) or [frame])
+                state = samples[(len(samples) - 1) // 2] * self._stateToFrameRatio(model)
             total += frame + state
         return total
 
@@ -1953,8 +1993,8 @@ class NS_base(object):  # (HasTraits):
         due = int(wallClock.due()) if self.comm.isMaster() else 0
         if not self.comm.globalMax(due):
             return False
-        logEvent("Wall limit: %.0f s left of %s, and the next step (%.1f s at most) and a checkpoint (%.1f s) "
-                 "need %.1f s: stopping at t=%g" % (wallClock.left(), wallClock.source, wallClock.longestStep,
+        logEvent("Wall limit: %.0f s left of %s, and the next step (%.3g s at most) and a checkpoint (%.3g s) "
+                 "need %.3g s: stopping at t=%g" % (wallClock.left(), wallClock.source, wallClock.longestStep,
                                                     wallClock.checkpointCost, wallClock.margin(),
                                                     self.systemStepController.t_system_last), level=0)
         return True
@@ -1986,6 +2026,9 @@ class NS_base(object):  # (HasTraits):
                                                                                  checkpoint=checkpoint or self.wallLimitStop))
         frameTime = time.time() - started - (stateTime or 0.0)
         self._frameTimes[model.name] = max(self._frameTimes.get(model.name, 0.0), frameTime)
+        samples = self._frameSamples.setdefault(model.name, [])
+        samples.append(frameTime)
+        del samples[:-101]
         if stateTime is not None:
             self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), stateTime)
             self._stateFrame[model.name] = self.tCount

@@ -164,6 +164,13 @@ class Coefficients(TC_base):
     embeddedBoundary_penalty : float
         Nitsche parameter :math:`\gamma_N`; the penalty term is scaled by :math:`\mu/h`. The paper
         uses :math:`10p^2`.
+    embeddedBoundary_curved : bool
+        Use the P2 level set as it is (a quadric on each tetrahedron) for the cut of the embedded solid, not the
+        plane through the vertex values (C44 phase 1b). The Heaviside, the Dirac and the three normal-weighted
+        Diracs of the cut come from the exact moments of the quadric (cutquadric.h), the elements are
+        classified by the exact range of the quadric (so a cap through a face, an edge cut twice and a closed
+        component are integrated, and counted in the log), and the Nitsche flux terms use the normal-weighted
+        Dirac. Default off: the planar cut, as before. 3D P2 with ``embeddedBoundary`` alone.
     embeddedBoundary_ghost_penalty : float
         Ghost-penalty parameter :math:`\gamma_g`. The paper uses 0.15. In parallel, the ghost
         penalty and the SCIFEM edge terms need two layers of mesh overlap.
@@ -260,6 +267,7 @@ class Coefficients(TC_base):
                  embeddedBoundary=False,
                  embeddedBoundary_penalty=100.0,
                  embeddedBoundary_ghost_penalty=0.1,
+                 embeddedBoundary_curved=False,
                  embeddedBoundary_sdf=None,
                  embeddedBoundary_u=None,
                  embeddedBoundary_u_inner=None,
@@ -290,6 +298,7 @@ class Coefficients(TC_base):
         self.embeddedBoundary=embeddedBoundary
         self.embeddedBoundary_penalty=embeddedBoundary_penalty
         self.embeddedBoundary_ghost_penalty=embeddedBoundary_ghost_penalty
+        self.embeddedBoundary_curved=embeddedBoundary_curved
         self.embeddedBoundary_sdf=embeddedBoundary_sdf
         self.embeddedBoundary_u=embeddedBoundary_u
         # Per-phase weak-Dirichlet targets on the solid surface. On a triply-cut element the
@@ -450,24 +459,50 @@ class Coefficients(TC_base):
         if (self.immersedBoundary and self.immersedBoundary_fluxJumpLift and
                 (self.immersedBoundary_fluxJump is not None or self.immersedBoundary_fluxJumpVector is not None)):
             l2g_f = femSpace.dofMap.l2g
+            nd = femSpace.nSpace_global
+            nv = nd + 1
             for eN in range(nElements_f):
-                g = l2g_f[eN,:3]
+                g = l2g_f[eN,:nv]
                 phi = self.immersedBoundary_sdf_nodes[g]
                 if not ((phi < 0.0).any() and (phi > 0.0).any()):
                     continue
                 X = nodeArray[g]
-                cuts = [X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
-                        for i, j in ((0, 1), (1, 2), (2, 0)) if phi[i]*phi[j] < 0.0]
-                if len(cuts) != 2:
-                    continue
-                xm = 0.5*(cuts[0] + cuts[1])
+                if nd == 2:
+                    cuts = [X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
+                            for i, j in ((0, 1), (1, 2), (2, 0)) if phi[i]*phi[j] < 0.0]
+                    if len(cuts) != 2:
+                        continue
+                    xm = 0.5*(cuts[0] + cuts[1])
+                else:
+                    # Gamma_f in a tetrahedron is a triangle (1-3 split) or a quadrilateral (2-2); xm is the
+                    # area centroid of the polygon of cut points (vertices on Gamma_f count as cut points).
+                    # J_f is exact for a constant jump and for the mean value over the cut to first order.
+                    neg = [i for i in range(4) if phi[i] < 0.0]
+                    pos = [i for i in range(4) if phi[i] > 0.0]
+                    def _cut(i, j):
+                        return X[i] + phi[i]/(phi[i] - phi[j])*(X[j] - X[i])
+                    if len(neg) == 2 and len(pos) == 2:
+                        poly = [_cut(neg[0], pos[0]), _cut(neg[0], pos[1]), _cut(neg[1], pos[1]), _cut(neg[1], pos[0])]
+                    else:
+                        poly = [_cut(i, j) for i in neg for j in pos]
+                        poly += [X[i] for i in range(4) if phi[i] == 0.0]
+                    if len(poly) < 3:
+                        continue
+                    xm = np.zeros(3); area = 0.0
+                    for t in range(1, len(poly) - 1):
+                        ar = 0.5*np.linalg.norm(np.cross(poly[t] - poly[0], poly[t + 1] - poly[0]))
+                        xm += ar*(poly[0] + poly[t] + poly[t + 1])/3.0
+                        area += ar
+                    if area <= 0.0:
+                        continue
+                    xm /= area
                 J = 0.0
                 if self.immersedBoundary_fluxJump is not None:
                     J += self.immersedBoundary_fluxJump(t=0.0,x=xm)
                 if self.immersedBoundary_fluxJumpVector is not None:
-                    A = np.array([[X[1,0]-X[0,0], X[1,1]-X[0,1]], [X[2,0]-X[0,0], X[2,1]-X[0,1]]])
-                    grad = np.linalg.solve(A, np.array([phi[1]-phi[0], phi[2]-phi[0]]))
-                    n = np.zeros(3); n[:2] = grad/np.linalg.norm(grad)
+                    A = (X[1:nv, :nd] - X[0, :nd])
+                    grad = np.linalg.solve(A, phi[1:nv] - phi[0])
+                    n = np.zeros(3); n[:nd] = grad/np.linalg.norm(grad)
                     J += np.dot(self.immersedBoundary_fluxJumpVector(t=0.0,x=xm), n)
                 self.immersedBoundary_fluxJump_element[eN] = J
     def _diffusionDivergence(self, aOfX, x, out):
@@ -629,17 +664,25 @@ def _requireSupportedDimension(c, nSpace, pOrder=1):
     (ADR.h, requireSupportedDimension); this one fails at setup with the same message. The phase numbers
     are the C44 plan's (PROTEUS_CAMPAIGN_ROSTER.md).
     """
+    if getattr(c, 'embeddedBoundary_curved', False):
+        if not c.embeddedBoundary:
+            raise NotImplementedError("ADR: embeddedBoundary_curved needs embeddedBoundary")
+        if nSpace != 3:
+            raise NotImplementedError("ADR: embeddedBoundary_curved is implemented on tetrahedra only (curved cuts in 2D "
+                                      "are not part of C44 phase 1b)")
+        if pOrder != 2:
+            raise NotImplementedError("ADR: embeddedBoundary_curved needs a P2 space (the level set is the P2 "
+                                      "interpolant; P1 cuts are planar)")
+        if c.immersedBoundary or c.embeddedBoundary_robin:
+            raise NotImplementedError("ADR: embeddedBoundary_curved is implemented for the embedded solid alone (not "
+                                      "with immersedBoundary or embeddedBoundary_robin)")
     if nSpace == 2:
         return
     needs = []
-    if c.embeddedBoundary and pOrder != 1:
-        needs.append(("embeddedBoundary with P2 (needs fit degree 4 and rules above degree 8)", 1))
     if c.embeddedBoundary_robin:
         needs.append(("embeddedBoundary_robin (Robin condition on the cut solid surface)", 1))
-    if c.immersedBoundary:
-        needs.append(("immersedBoundary (two-sided IFEM basis, flux-jump lift)", 2))
-    if c.immersedSCIFEM_switch != 0.0 or c.immersedSCIFEM_penalty != 0.0:
-        needs.append(("immersedSCIFEM (consistency terms on cut faces)", 2))
+    if c.immersedBoundary and pOrder != 1:
+        needs.append(("immersedBoundary with P2 (the two-sided P2 basis on tetrahedra)", 2))
     if c.PG:
         needs.append(("PG (Petrov-Galerkin test with the IFEM basis)", 2))
     if c.embeddedBoundary and c.immersedBoundary:
@@ -722,6 +765,9 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
         ## Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh #assume the same mesh for  all components for now
+        # class of the solid cut in each element (cutquadric.CutLabel), written by the kernel when
+        # embeddedBoundary_curved is on; counted in the log whenever the geometry is recomputed
+        self.embeddedBoundary_cut_label = np.zeros((self.mesh.nElements_global,), 'i')
         self.testSpace = testSpaceDict
         self.dirichletConditions = dofBoundaryConditionsDict
         self.dirichletNodeSetList=None #explicit Dirichlet  conditions for now, no Dirichlet BC constraints
@@ -1166,6 +1212,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary"] = self.coefficients.embeddedBoundary
         argsDict["embeddedBoundary_penalty"] = self.coefficients.embeddedBoundary_penalty
         argsDict["embeddedBoundary_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
+        argsDict["embeddedBoundary_curved"] = int(bool(self.coefficients.embeddedBoundary_curved))
+        argsDict["embeddedBoundary_cut_label"] = self.embeddedBoundary_cut_label
         argsDict["embedded_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
         argsDict["embeddedBoundary_sdf_nodes"] = self.coefficients.embeddedBoundary_sdf_nodes
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']
@@ -1208,6 +1256,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["q_grad_u_exact_inner"] = self.q[('grad_u_exact_inner',0)]
         argsDict["q_grad_u_exact_outer"] = self.q[('grad_u_exact_outer',0)]
         argsDict["recomputeIFEMGeometry"] = int(self.recompute_ifem_geometry)
+        _geometryRecomputed = self.recompute_ifem_geometry
         self.recompute_ifem_geometry = False
         self.L2_error = np.array((0.0,),'d')
         argsDict["L2_error"] = self.L2_error
@@ -1219,6 +1268,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             for dofN, g in list(self.dirichletConditionsForceDOF.DOFBoundaryConditionsDict.items()):
                 self.u[0].dof[dofN] = g(self.dirichletConditionsForceDOF.DOFBoundaryPointDict[dofN], self.timeIntegration.t)
         self.adr.calculateResidual(argsDict)
+        if _geometryRecomputed and self.coefficients.embeddedBoundary_curved:
+            self._logCutLabels()
         self.L2_error[0] = globalSum(self.L2_error[0])
         self.Linfty_error[0] = globalMax(self.Linfty_error[0])
         self.H1_error[0] = globalSum(self.H1_error[0])
@@ -1237,6 +1288,16 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         log("Global residual",level=9,data=r)
         #log("   Mass Conservation Error",level=3,data=self.coefficients.massConservationError)
         self.nonlinear_function_evaluations += 1
+    def _logCutLabels(self):
+        """Count the elements by the class of the solid cut (C44 phase 1b, decision P1: the elements the vertex
+        signs do not see as cut are integrated, and counted here)."""
+        names = ("uncut (fluid)", "uncut (solid)", "simple cut", "edge cut twice", "sub-nodal")
+        owned = self.embeddedBoundary_cut_label[:self.mesh.nElements_owned]
+        counts = [int(globalSum(float(np.count_nonzero(owned == i)))) for i in range(len(names))]
+        log("ADR embeddedBoundary_curved: elements by the class of the solid cut: " +
+            ", ".join("{0} {1}".format(n, c) for n, c in zip(names, counts)), level=1)
+        self.cut_label_counts = dict(zip(names, counts))
+
     def getJacobian(self,jacobian):
         #import superluWrappers
         #import numpy
@@ -1309,6 +1370,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["embeddedBoundary"] = self.coefficients.embeddedBoundary
         argsDict["embeddedBoundary_penalty"] = self.coefficients.embeddedBoundary_penalty
         argsDict["embeddedBoundary_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
+        argsDict["embeddedBoundary_curved"] = int(bool(self.coefficients.embeddedBoundary_curved))
+        argsDict["embeddedBoundary_cut_label"] = self.embeddedBoundary_cut_label
         argsDict["embedded_ghost_penalty"] = self.coefficients.embeddedBoundary_ghost_penalty
         argsDict["embeddedBoundary_sdf_nodes"] = self.coefficients.embeddedBoundary_sdf_nodes
         argsDict["embeddedBoundary_sdf_q"] = self.q['embeddedBoundary_sdf']

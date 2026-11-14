@@ -5,6 +5,7 @@ hot start needs to be the uninterrupted run) is some 20 times the size of one fr
 was written with every frame (4.1 s a frame against 0.44 s on 1.9.x, Torino S0H30). It is now written at the final
 step, at a checkpoint (--wall-limit) and with every N-th frame (--state-every N); the other frames carry the solution.
 """
+import glob
 import os
 import re
 import subprocess
@@ -134,6 +135,25 @@ def test_a_run_past_its_wall_limit_stops_at_a_step_boundary_with_the_checkpoint_
     assert "Wall limit: " in log and "stopping at t=" in log and "Wall limit: checkpoint at t=" in log
     from proteus import WallLimit
     assert WallLimit.CHECKPOINT_EXIT_STATUS == 75
+    # the marker a job script tests when the launcher's exit status is not 75 (aprun under PALS: 143)
+    markers = glob.glob(os.path.join(str(tmp_path), "*.checkpoint"))
+    assert len(markers) == 1 and not glob.glob(os.path.join(str(tmp_path), "*.checkpoint.tmp*"))
+    marker = WallLimit.read_marker(markers[0])
+    assert marker["ranks"] == ranks and marker["exit_status"] == 75 and marker["frame"] == max(_frames(tmp_path))
+    assert marker["t"] > 0.0 and "wrote %s" % os.path.basename(markers[0]) in log.replace("./", "")
+
+
+def test_the_marker_is_gone_when_the_next_leg_finishes_and_never_written_by_a_finished_run(tmp_path):
+    """A leg that stops leaves the marker; the leg after it (still under --wall-limit, never reached) removes it at
+    its start and leaves none at its end. A run without a limit writes none, and does not touch one."""
+    assert _run(tmp_path, FT=0.05, DTOUT=0.01, WALLSTEPS=3).returncode == 75
+    marker = glob.glob(os.path.join(str(tmp_path), "*.checkpoint"))
+    assert len(marker) == 1
+    out = _run(tmp_path, FT=0.05, DTOUT=0.01, HOTSTART=1, WALLLIMIT="99:00:00")
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert not glob.glob(os.path.join(str(tmp_path), "*.checkpoint"))
+    done = _run(tmp_path / "done", FT=0.03, DTOUT=0.01, WALLLIMIT="99:00:00")
+    assert done.returncode == 0 and not glob.glob(os.path.join(str(tmp_path / "done"), "*.checkpoint"))
 
 
 def test_a_run_inside_its_wall_limit_is_the_run_without_one(tmp_path):

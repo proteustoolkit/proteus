@@ -201,7 +201,7 @@ parser.add_option("--wall-limit",
                   dest="wallLimit",
                   default=None,
                   metavar="HH:MM:SS",
-                  help="""stop at a system step boundary, with room left to write a checkpoint, before this much wall time has passed since parun started (HH:MM:SS, or D-HH:MM:SS), and exit with status 75 (WallLimit.CHECKPOINT_EXIT_STATUS) so that a job script can continue with parun -H. "scheduler" uses the end time of the SLURM or PBS job. Inside a batch job a duration is cut at the job's end. Rank 0 decides at each step boundary whether another step, as long as the longest so far, and a checkpoint, as long as this run's own frame and solver state writes took, still fit, and the others follow, so the ranks stop at the same step""")
+                  help="""stop at a system step boundary, with room left to write a checkpoint, before this much wall time has passed since parun started (HH:MM:SS, or D-HH:MM:SS), and exit with status 75 (WallLimit.CHECKPOINT_EXIT_STATUS), after writing <name>.checkpoint (t, frame, ranks) which a job script can test when the launcher reports another status (aprun: 143), so that a job script can continue with parun -H. "scheduler" uses the end time of the SLURM or PBS job. Inside a batch job a duration is cut at the job's end. Rank 0 decides at each step boundary whether another step, as long as the longest so far, and a checkpoint, as long as this run's own frame and solver state writes took, still fit, and the others follow, so the ranks stop at the same step""")
 parser.add_option("-t","--hotStartTime",
                   dest="hotStartTime",
                   action="store",
