@@ -4,6 +4,13 @@ from proteus.Comm import globalMax
 import numpy as np
 from proteus.Transport import OneLevelTransport
 from . import cArgumentsDict
+# proteus.X below is attribute access: X has to be imported here,
+# not by whatever happened to import it first
+import proteus.NumericalFlux
+import proteus.ShockCapturing
+import proteus.SubgridError
+import proteus.Transport
+import proteus.TransportCoefficients
 
 class SubgridError(proteus.SubgridError.SGE_base):
     def __init__(self, coefficients, nd, lag=False, nStepsToDelay=0, hFactor=1.0):
