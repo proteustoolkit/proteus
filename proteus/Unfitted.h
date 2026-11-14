@@ -20,8 +20,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include "equivalent_polynomials.h"
 #include "UnfittedKernels.h"
+#include "cutquadric.h"
 
 namespace proteus
 {
@@ -969,6 +971,496 @@ namespace proteus
       inline double PSIB_x() { return basis.PSIB_x(); }
       inline double PSIB_y() { return basis.PSIB_y(); }
       inline double PSIB_z() { return basis.PSIB_z(); }
+    };
+
+    // The geometry of the cuts of a mesh, built once by prepare() and read by the residual and the Jacobian alike.
+    //
+    // For every element: how the solid level set (phi_s, Gamma_s) and the fluid-interface level set (phi_f, Gamma_f) cut
+    // it (icase: +1 uncut with phi > 0, -1 uncut with phi < 0, 0 cut), the moment fits of H/1-H/D (and the two-sided
+    // IFE basis for Gamma_f, and for the curved solid the quadric fits), the composite fits of an element cut by both
+    // (2D), the flux-jump lift amplitude, whether the element carries any fluid, and the interior faces the ghost
+    // penalty and the SCIFEM terms are integrated on. None of it depends on the solution.
+    //
+    // Storage is for cut elements only: an uncut element has only its icase (and a per-element slot index), and reads
+    // from two canonical objects per fit type. Before this, two fit objects (8.5 KB each in 2D P1, 16.7 KB in 2D P2,
+    // about 80 KB in 3D P2) were allocated for every element, cut or not.
+    //
+    // prepare() is idempotent and cheap when the geometry is unchanged (it returns at once unless `recompute` is set,
+    // the mesh size changed or this is the first call), so the residual and the Jacobian each call it and neither
+    // depends on the other having run first.
+    template <class GfF, class GfS, int nSpace, int nDOF, int nQ, int nFaces, int nFaceQ, int nP_fit>
+    class CutGeometry
+    {
+    public:
+      static constexpr int nCompMon = (nP_fit + 1) * (nP_fit + 2) / 2; // monomials up to degree nP_fit
+      static constexpr int pOrder = (nDOF == nSpace + 1) ? 1 : ((nDOF == (nSpace + 1) * (nSpace + 2) / 2) ? 2 : 0);
+
+      // Everything prepare() reads, as plain pointers. Arrays are indexed as in the ADR arguments.
+      struct Inputs
+      {
+        int nElements = 0;
+        const int *l2g = nullptr;               // nElements * nDOF
+        const double *phi_s_nodes = nullptr;     // per global dof: the solid level set
+        const double *phi_f_nodes = nullptr;     // per global dof: the fluid-interface level set
+        const double *mesh_dof = nullptr;        // 3 per global dof
+        const double *x_ref = nullptr;           // nQ * 3 reference quadrature points
+        const double *xB_ref_faces = nullptr;    // nFaces * nFaceQ * 3 reference-element face quadrature points
+        const double *dV_ref = nullptr;          // nQ reference weights
+        const int *elementBoundaries = nullptr;  // nElements * nFaces
+        const int *elementBoundaryElements = nullptr; // 2 per face, -1 if exterior
+        const double *fluxJump_element = nullptr; // prescribed flux jump of each cell (the lift amplitude)
+        const double *solutionJump_nodes = nullptr; // per global dof
+        bool fluxJumpLift = false;
+        double mua = 1.0, mub = 1.0, jf = 0.0;
+        bool curvedSolid = false;
+        int *cut_label = nullptr;                // optional output, nElements: the class of the solid cut (curved solid)
+      };
+
+      // Element classification and weights
+      inline int icaseS(int eN) const { return icase_s_[eN]; }
+      inline int icaseF(int eN) const { return icase_f_[eN]; }
+      // -1 / +1: the buried-Gamma_f logic demoted the element to the fluid on one side of Gamma_f (0: not demoted)
+      inline int demoted(int eN) const { return demoted_[eN]; }
+      inline bool active(int eN) const { return active_[eN] != 0; }
+      // (with the curved solid the fits live in cfS(); this object is then only the canonical one the element routines touch)
+      inline GfS &gfS(int eN) { return (slot_s_[eN] >= 0 && !curved_) ? gf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? gf_s_pos_ : gf_s_neg_); }
+      inline GfF &gfF(int eN) { return slot_f_[eN] >= 0 ? gf_f_[slot_f_[eN]] : (icase_f_[eN] > 0 ? gf_f_pos_ : gf_f_neg_); }
+      inline cutquadric::SolidFit &cfS(int eN) { return slot_s_[eN] >= 0 ? cf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? cf_pos_ : cf_neg_); }
+      // composite fits of an element cut by both level sets (null where not valid)
+      inline const double *compA(int eN) const { return comp_valid_[eN] ? &comp_A_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compB(int eN) const { return comp_valid_[eN] ? &comp_B_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDA(int eN) const { return comp_valid_[eN] ? &comp_DA_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDB(int eN) const { return comp_valid_[eN] ? &comp_DB_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDFa(int eN) const { return comp_DF_valid_[eN] ? &comp_DFa_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      // amplitude of the flux-jump lift J*psi on a Gamma_f-cut cell: the per-cell J_f minus the flux jump the
+      // solution-jump lift already carries (nonzero only when the solution jump varies over the cell); 0 elsewhere
+      inline double fluxLift(int eN) const { return slot_f_[eN] >= 0 ? flux_lift_[slot_f_[eN]] : 0.0; }
+      // interior faces, ascending, both elements carrying fluid: the faces of Gamma_s-cut elements (ghost penalty)
+      // and the faces Gamma_f cuts (SCIFEM)
+      inline const std::vector<int> &cutfemFaces() const { return cutfem_faces_; }
+      inline const std::vector<int> &ifemFaces() const { return ifem_faces_; }
+      inline int nCutS() const { return (int)gf_s_.size() + (int)cf_s_.size(); }
+      inline int nCutF() const { return (int)gf_f_.size(); }
+      inline bool valid() const { return valid_; }
+
+      inline void prepare(const Inputs &in, const bool recompute)
+      {
+        if (valid_ && !recompute && in.nElements == nElements_ && in.curvedSolid == curved_)
+          return;
+        nElements_ = in.nElements;
+        curved_ = in.curvedSolid;
+        const int nE = in.nElements;
+        icase_s_.assign(nE, 0);
+        icase_f_.assign(nE, 0);
+        demoted_.assign(nE, 0);
+        active_.assign(nE, 0);
+        slot_s_.assign(nE, -1);
+        slot_f_.assign(nE, -1);
+        comp_slot_.assign(nE, -1);
+        comp_valid_.assign(nE, 0);
+        comp_DF_valid_.assign(nE, 0);
+        gf_s_.clear();
+        cf_s_.clear();
+        gf_f_.clear();
+        flux_lift_.clear();
+        comp_A_.clear(); comp_B_.clear(); comp_DA_.clear(); comp_DB_.clear(); comp_DFm_.clear(); comp_DFa_.clear();
+        std::vector<int> cutfem, ifem;
+        // canonical objects an uncut element reads (an uncut cell's fits are the constants 1 or 0; D and the normal
+        // are never used there)
+        init_canonical(in);
+        GfS gfs_scratch;
+        gfs_scratch.useExact = true;
+        GfF gff_scratch;
+        gff_scratch.useExact = true;
+        cutquadric::SolidFit cf_scratch;
+        for (int eN = 0; eN < nE; eN++)
+        {
+          double phi_s[nDOF], phi_f[nDOF], nodes[nDOF * 3];
+          for (int j = 0; j < nDOF; j++)
+          {
+            const int dof = in.l2g[eN * nDOF + j];
+            phi_s[j] = in.phi_s_nodes[dof];
+            phi_f[j] = in.phi_f_nodes[dof];
+            for (int I = 0; I < 3; I++)
+              nodes[j * 3 + I] = in.mesh_dof[dof * 3 + I];
+          }
+          // --- the solid
+          if (curved_)
+          {
+            icase_s_[eN] = cf_scratch.calculate(phi_s, nodes, in.x_ref, nQ, nP_fit);
+            if (in.cut_label)
+              in.cut_label[eN] = static_cast<int>(cf_scratch.label);
+            if (icase_s_[eN] == 0)
+            {
+              slot_s_[eN] = (int)cf_s_.size();
+              cf_s_.push_back(cf_scratch);
+            }
+          }
+          else
+          {
+            gfs_scratch.useExact = true;
+            icase_s_[eN] = gfs_scratch.calculate(phi_s, nodes, in.x_ref, false);
+            if (icase_s_[eN] == 0)
+            {
+              slot_s_[eN] = (int)gf_s_.size();
+              gf_s_.push_back(gfs_scratch);
+            }
+          }
+          const int icase_s = icase_s_[eN];
+          if (icase_s == 0)
+          {
+            // every interior face of a Gamma_s-cut element, owned or not (the residual is assembled with full overlap, so a
+            // face term is summed on every rank that has both of its elements)
+            for (int f = 0; f < nFaces; f++)
+            {
+              const int ebN = in.elementBoundaries[eN * nFaces + f];
+              if (in.elementBoundaryElements[ebN * 2 + 1] != -1)
+                cutfem.push_back(ebN);
+            }
+          }
+          // --- the fluid interface
+          gff_scratch.useExact = true;
+          icase_f_[eN] = fluid_calculate(eN, gff_scratch, phi_f, nodes, in.x_ref, in.mua, in.mub, in.jf);
+          const int icase_f = icase_f_[eN];
+          if (icase_f == 0)
+          {
+            // the same fit at the quadrature points of every face (two-sided basis on the faces, for the face terms)
+            fluid_calculate_faces(eN, gff_scratch, phi_f, nodes, in.xB_ref_faces, in.mua, in.mub, in.jf);
+            slot_f_[eN] = (int)gf_f_.size();
+            gf_f_.push_back(gff_scratch);
+            flux_lift_.push_back(0.0);
+          }
+          // --- an element cut by both: composite fits per intersected region (2D only)
+          int demoted = 0;
+          if (icase_s == 0 && icase_f == 0 && nSpace == 2)
+            demoted = composite_setup(eN, phi_s, phi_f, nodes);
+          demoted_[eN] = (signed char)demoted;
+          if (icase_f == 0)
+          {
+            // faces Gamma_f cuts. Interior faces only: the SCIFEM facet term needs the trace from both elements.
+            for (int f = 0; f < nFaces; f++)
+            {
+              const int ebN = in.elementBoundaries[eN * nFaces + f];
+              if (in.elementBoundaryElements[ebN * 2 + 1] == -1)
+                continue;
+              if (nSpace == 2)
+              {
+                // indexing convention for P1/P2 triangles: the face opposite vertex f joins vertices (f+1)%3 and (f+2)%3
+                if (phi_f[(f + 1) % 3] * phi_f[(f + 2) % 3] < 0.0)
+                  ifem.push_back(ebN);
+              }
+              else
+              {
+                // a triangular face Gamma_f cuts: its three vertices (all but the opposite node) carry both signs. Decided
+                // from the face's own vertex values, so both elements, and both ranks, agree.
+                double fmin = 1.0e300, fmax = -1.0e300;
+                for (int m = 0; m < 4; m++)
+                  if (m != f)
+                  {
+                    fmin = std::min(fmin, phi_f[m]);
+                    fmax = std::max(fmax, phi_f[m]);
+                  }
+                if (fmin < 0.0 && fmax > 0.0)
+                  ifem.push_back(ebN);
+              }
+            }
+            flux_lift_[slot_f_[eN]] = fluxLiftAmplitude(eN, in, phi_f, nodes);
+          }
+          // --- does the element carry any fluid? (H_s, D_s or D_f nonzero at a quadrature point)
+          bool act = false;
+          {
+            GfS &gs = gfS(eN);
+            GfF &gf = gfF(eN);
+            for (int k = 0; k < nQ && !act; k++)
+            {
+              double H_s, D_s;
+              if (curved_)
+              {
+                H_s = cfS(eN).H(k);
+                D_s = cfS(eN).D(k);
+              }
+              else
+              {
+                gs.set_quad(k);
+                H_s = gs.H(0., 0.);
+                D_s = gs.D(0., 0.);
+              }
+              gf.set_quad(k);
+              double D_f = gf.D(0., 0.);
+              if (compDFa(eN) != nullptr)
+              {
+                const double xr = in.x_ref[k * 3 + 0], yr = in.x_ref[k * 3 + 1];
+                D_f = equivalent_polynomials::composite::evaluate<nP_fit>(compDFa(eN), xr, yr);
+              }
+              if (demoted != 0)
+                D_f = 0.0;
+              act = (H_s != 0.0 || D_s != 0.0 || D_f != 0.0);
+            }
+          }
+          active_[eN] = act ? 1 : 0;
+        }
+        // the face sets: ascending, unique, and only faces whose two elements both carry fluid
+        for (auto *list : {&cutfem, &ifem})
+        {
+          std::sort(list->begin(), list->end());
+          list->erase(std::unique(list->begin(), list->end()), list->end());
+        }
+        auto filter = [&](const std::vector<int> &in_list, std::vector<int> &out)
+        {
+          out.clear();
+          for (int ebN : in_list)
+            if (active_[in.elementBoundaryElements[ebN * 2 + 0]] && active_[in.elementBoundaryElements[ebN * 2 + 1]])
+              out.push_back(ebN);
+        };
+        filter(cutfem, cutfem_faces_);
+        filter(ifem, ifem_faces_);
+        valid_ = true;
+      }
+
+    private:
+      bool valid_ = false, curved_ = false;
+      int nElements_ = -1;
+      std::vector<int> icase_s_, icase_f_, slot_s_, slot_f_, comp_slot_;
+      std::vector<signed char> demoted_;
+      std::vector<char> active_, comp_valid_, comp_DF_valid_;
+      std::vector<GfS> gf_s_;
+      std::vector<cutquadric::SolidFit> cf_s_;
+      std::vector<GfF> gf_f_;
+      std::vector<double> flux_lift_;
+      std::vector<double> comp_A_, comp_B_, comp_DA_, comp_DB_, comp_DFm_, comp_DFa_;
+      GfS gf_s_pos_, gf_s_neg_;
+      GfF gf_f_pos_, gf_f_neg_;
+      cutquadric::SolidFit cf_pos_, cf_neg_;
+      std::vector<int> cutfem_faces_, ifem_faces_;
+
+      // The reference element's own geometry, with the level set all positive or all negative: calculate() takes its
+      // early exit and leaves the constants H = 1 / 0, D = 0
+      inline void init_canonical(const Inputs &in)
+      {
+        double nodes[nDOF * 3] = {};
+        for (int i = 0; i < nSpace + 1 && i < nDOF; i++)
+          if (i > 0)
+            nodes[i * 3 + (i - 1)] = 1.0;
+        double phi[nDOF];
+        for (int sgn = 1; sgn >= -1; sgn -= 2)
+        {
+          for (int j = 0; j < nDOF; j++)
+            phi[j] = sgn;
+          GfS &gs = sgn > 0 ? gf_s_pos_ : gf_s_neg_;
+          gs = GfS();
+          gs.useExact = true;
+          gs.calculate(phi, nodes, in.x_ref, false);
+          GfF &gf = sgn > 0 ? gf_f_pos_ : gf_f_neg_;
+          gf = GfF();
+          gf.useExact = true;
+          gf.calculate(phi, nodes, in.x_ref, 1.0, 1.0, 0.0, false, false);
+          if (pOrder == 2 && nSpace == 3)
+          {
+            double u10[10];
+            for (int j = 0; j < 10; j++)
+              u10[j] = sgn;
+            (sgn > 0 ? cf_pos_ : cf_neg_).calculate(u10, nodes, in.x_ref, nQ, nP_fit);
+          }
+        }
+      }
+
+      // gf_f.calculate() for the interior quadrature points, naming the element if the two-sided P1 basis on a
+      // tetrahedron does not exist there (obtuse tetrahedron at a particular contrast, C44 decision C4). Only that error
+      // is rethrown; the rank that throws stops, so run such a mesh in serial to read it.
+      inline int fluid_calculate(int eN, GfF &gf, const double *phi_f, const double *nodes, const double *x_ref, double mua, double mub, double jf)
+      {
+        try
+        {
+          const int icase = gf.calculate(phi_f, nodes, x_ref, mua, mub, jf, false, false);
+          return icase;
+        }
+        catch (const ifem_singular_error &e)
+        {
+          double c[3] = {0.0, 0.0, 0.0};
+          for (int j = 0; j < nSpace + 1; j++)
+            for (int I = 0; I < nSpace; I++)
+              c[I] += nodes[j * 3 + I] / (nSpace + 1.0);
+          throw std::runtime_error("ADR immersedBoundary: element " + std::to_string(eN) + " (local number, centroid " +
+                                   std::to_string(c[0]) + ", " + std::to_string(c[1]) + ", " + std::to_string(c[2]) + "): " + e.what());
+        }
+      }
+
+      inline void fluid_calculate_faces(int eN, GfF &gf, const double *phi_f, const double *nodes, const double *xB_ref_faces, double mua, double mub, double jf)
+      {
+        try
+        {
+          gf.calculate(phi_f, nodes, xB_ref_faces, mua, mub, jf, true, false);
+        }
+        catch (const ifem_singular_error &e)
+        {
+          throw std::runtime_error("ADR immersedBoundary: element " + std::to_string(eN) + ": " + e.what());
+        }
+      }
+
+      // Both level sets genuinely cut this element: the product weight ImH_f*H_s is not moment-exact here, so fit one
+      // polynomial per intersected region instead. Returns the demotion (-1/+1) when the fluid interface lies entirely
+      // inside the solid and the fluid is undivided (the empty region then gets exactly zero), else 0 with the
+      // composite fits stored.
+      inline int composite_setup(int eN, const double *phi_s, const double *phi_f, const double *nodes)
+      {
+        if constexpr (nSpace == 2)
+        {
+          const double phi_s3[3] = {phi_s[0], phi_s[1], phi_s[2]};
+          const double phi_f3[3] = {phi_f[0], phi_f[1], phi_f[2]};
+          // The fluid interface can cross this element and still lie entirely inside the solid, leaving the fluid
+          // undivided. There is then no fluid-fluid interface to resolve *in the fluid*, so the two-sided IFEM
+          // reconstruction has nothing to do. NOTE: icase_f is deliberately NOT changed: switching this element to the
+          // standard basis would make it disagree with its neighbours about what their shared DOFs mean (one DOF cannot
+          // be both a pointwise nodal value and a continued branch value). What is fixed are the weights: the empty
+          // region gets exactly zero rather than whatever a fit over an empty region would produce.
+          //
+          // Tolerance, not exact equality: a genuine tangency between Gamma_f and Gamma_s makes one region's true area a
+          // single point, but roundoff in the clip lands a few ULPs away (observed: ~1e-33 against a reference-triangle
+          // scale of 0.5); fitting a degree-4 polynomial to such a sliver is unstable (off by 64x on its own area).
+          // areaTol is far above that floor and far below any physically meaningful sub-area.
+          double areaA = 0.0, areaB = 0.0;
+          equivalent_polynomials::composite::fluid_region_areas(phi_s3, phi_f3, areaA, areaB);
+          const double areaTol = 1.0e-9;
+          if (areaB <= areaTol && areaA > areaTol)
+            return -1; // fluid is all Omega^- (mua side)
+          if (areaA <= areaTol && areaB > areaTol)
+            return 1; // fluid is all Omega^+ (mub side)
+          const int slot = (int)(comp_A_.size() / nCompMon);
+          comp_slot_[eN] = slot;
+          comp_A_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          comp_B_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          comp_DA_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          comp_DB_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          comp_DFm_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          comp_DFa_.resize((std::size_t)(slot + 1) * nCompMon, 0.0);
+          const double nodes2[6] = {nodes[0], nodes[1], nodes[3], nodes[4], nodes[6], nodes[7]};
+          const std::size_t o = (std::size_t)slot * nCompMon;
+          comp_valid_[eN] = (equivalent_polynomials::composite::weights<nP_fit>(phi_s3, phi_f3, &comp_A_[o], &comp_B_[o]) &&
+                             equivalent_polynomials::composite::dirac_weights<nP_fit>(phi_s3, phi_f3, nodes2, &comp_DA_[o], &comp_DB_[o]))
+                                ? 1 : 0;
+          // Gamma_f's own Dirac measure, split by Gamma_s's sign: comp_DFa is the part of Gamma_f's chord still inside
+          // the active fluid, the only part any Gamma_f Dirac-delta term (the prescribed flux jump) should see here.
+          comp_DF_valid_[eN] = equivalent_polynomials::composite::edge_weights<nP_fit>(phi_f3, phi_s3, nodes2, &comp_DFm_[o], &comp_DFa_[o]) ? 1 : 0;
+        }
+        (void)eN; (void)phi_s; (void)phi_f; (void)nodes;
+        return 0;
+      }
+
+      // Amplitude of the flux-jump lift of a Gamma_f-cut cell. j_h carries the flux jump
+      // [mu dj_h/dn] = sum_i (mub JB_i grad phi_i^b - mua JA_i grad phi_i^a).n, which vanishes when J_s is the same at
+      // every node of the cell (partition of unity) but not when J_s varies. The lift supplies only the rest,
+      // J_f - [mu dj_h/dn], so that the trial function has the prescribed flux jump either way. n is the normal of the
+      // cell's Gamma_f chord from phi_f < 0 to phi_f > 0. Cells with a constant J_s are untouched; only cells ADR.py
+      // gives a lift (both signs at the vertices, none exactly zero) are corrected.
+      inline double fluxLiftAmplitude(int eN, const Inputs &in, const double *phi_f, const double *nodes)
+      {
+        double fluxLiftJ = in.fluxJump_element[eN];
+        bool liftCell = false;
+        {
+          int nneg = 0, npos = 0, nzero = 0;
+          for (int i = 0; i < nSpace + 1; i++)
+          {
+            if (phi_f[i] < 0.0) nneg++;
+            else if (phi_f[i] > 0.0) npos++;
+            else nzero++;
+          }
+          liftCell = (nneg > 0 && npos > 0 && nzero == 0);
+        }
+        if (!(in.fluxJumpLift && liftCell))
+          return fluxLiftJ;
+        // the solution-jump lift (assign_jump_side's node pattern): branch a is u + JA, branch b is u + JB
+        double JA[nDOF], JB[nDOF];
+        for (int i = 0; i < nDOF; i++)
+        {
+          const double jump_i = in.solutionJump_nodes[in.l2g[eN * nDOF + i]];
+          if (phi_f[i] > 0.0)
+          {
+            JA[i] = -jump_i;
+            JB[i] = 0.0;
+          }
+          else
+          {
+            JA[i] = 0.0;
+            JB[i] = jump_i;
+          }
+        }
+        bool jumpVaries = false;
+        const double jump0 = in.solutionJump_nodes[in.l2g[eN * nDOF]];
+        for (int i = 1; i < nDOF; i++)
+          if (in.solutionJump_nodes[in.l2g[eN * nDOF + i]] != jump0)
+            jumpVaries = true;
+        if (!jumpVaries)
+          return fluxLiftJ;
+        // unit normal of Gamma_f in the cell, from phi_f < 0 to phi_f > 0: grad of the linear interpolant
+        double nf[3] = {0.0, 0.0, 0.0};
+        if constexpr (nSpace == 2)
+        {
+          const double ex0 = nodes[3] - nodes[0], ey0 = nodes[4] - nodes[1];
+          const double ex1 = nodes[6] - nodes[0], ey1 = nodes[7] - nodes[1];
+          const double dp0 = phi_f[1] - phi_f[0], dp1 = phi_f[2] - phi_f[0];
+          const double det = ex0 * ey1 - ex1 * ey0;
+          nf[0] = (dp0 * ey1 - dp1 * ey0) / det;
+          nf[1] = (ex0 * dp1 - ex1 * dp0) / det;
+        }
+        else
+        {
+          // E g = dp with E's rows the edge vectors from node 0: g = E^{-1} dp by cofactors
+          double E[3][3], dp[3];
+          for (int k = 0; k < 3; k++)
+          {
+            dp[k] = phi_f[k + 1] - phi_f[0];
+            for (int I = 0; I < 3; I++)
+              E[k][I] = nodes[(k + 1) * 3 + I] - nodes[I];
+          }
+          const double det = E[0][0] * (E[1][1] * E[2][2] - E[1][2] * E[2][1]) -
+                             E[0][1] * (E[1][0] * E[2][2] - E[1][2] * E[2][0]) +
+                             E[0][2] * (E[1][0] * E[2][1] - E[1][1] * E[2][0]);
+          for (int I = 0; I < 3; I++)
+          {
+            // Cramer: replace column I of E by dp
+            double M[3][3];
+            for (int k = 0; k < 3; k++)
+              for (int J = 0; J < 3; J++)
+                M[k][J] = (J == I) ? dp[k] : E[k][J];
+            nf[I] = (M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+                     M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+                     M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0])) / det;
+          }
+        }
+        const double nnorm = std::sqrt(nf[0] * nf[0] + nf[1] * nf[1] + nf[2] * nf[2]);
+        nf[0] /= nnorm;
+        nf[1] /= nnorm;
+        nf[2] /= nnorm;
+        GfF &gfj = gfF(eN);
+        auto jhFluxJump = [&](int k)
+        {
+          gfj.set_quad(k);
+          double s = 0.0;
+          for (int i = 0; i < nDOF; i++)
+            s += in.mub * JB[i] * (gfj.VB_x(i) * nf[0] + gfj.VB_y(i) * nf[1] + gfj.VB_z(i) * nf[2]) -
+                 in.mua * JA[i] * (gfj.VA_x(i) * nf[0] + gfj.VA_y(i) * nf[1] + gfj.VA_z(i) * nf[2]);
+          return s;
+        };
+        double Fj = 0.0;
+        if (pOrder == 1)
+          Fj = jhFluxJump(0); // P1: the branch gradients are constant on the cell
+        else
+        {
+          // P2: average along Gamma_f, weighted by the Dirac fit
+          double wsum = 0.0, fsum = 0.0, usum = 0.0;
+          for (int k = 0; k < nQ; k++)
+          {
+            const double Fk = jhFluxJump(k);
+            const double wk = gfj.D(0., 0.) * in.dV_ref[k];
+            wsum += wk;
+            fsum += wk * Fk;
+            usum += Fk;
+          }
+          Fj = (std::fabs(wsum) > 1.0e-14) ? fsum / wsum : usum / nQ;
+        }
+        fluxLiftJ -= Fj;
+        return fluxLiftJ;
+      }
     };
   } // namespace unfitted
 } // namespace proteus
