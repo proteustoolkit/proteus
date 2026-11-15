@@ -129,8 +129,8 @@ namespace proteus
     
 
     inline
-void evaluateCoefficients(const int rowptr[nSpace],
-				                      const int colind[nnz],
+void evaluateCoefficients(const proteus_csr_index_t rowptr[nSpace],
+				                      const proteus_csr_index_t colind[nnz],
                               const double v[nSpace],
                               const double alpha_L,
                               const double alpha_T,
@@ -170,9 +170,9 @@ void evaluateCoefficients(const int rowptr[nSpace],
         {
           f[I] = rho_transport*v[I]*u;
           df[I] = (rho_transport + u*drho_du)*v[I];
-          for (int ii = rowptr[I]; ii < rowptr[I + 1]; ii++)
+          for (proteus_csr_index_t ii = rowptr[I]; ii < rowptr[I + 1]; ii++)
             {
-              const int J = colind[ii];
+              const proteus_csr_index_t J = colind[ii];
               const double deltaIJ = (I == J) ? 1.0 : 0.0;
               const double dispersion_tensor =
                 Dm*deltaIJ +
@@ -203,8 +203,8 @@ double inversevaluateCoefficients(const double storage,
     }
 
 inline
-    void exteriorNumericalDiffusiveFlux(int* rowptr,
-					int* colind,
+    void exteriorNumericalDiffusiveFlux(proteus_csr_index_t* rowptr,
+					proteus_csr_index_t* colind,
 					const int& isDOFBoundary,
 					const int& isDiffusiveFluxBoundary,
 					const double n[nSpace],
@@ -231,7 +231,7 @@ inline
 	  for (int I = 0; I < nSpace; I++)
 	    {
 	      diffusiveVelocityComponent_I = 0.0;
-	      for (int m = rowptr[I]; m < rowptr[I+1]; m++)
+	      for (proteus_csr_index_t m = rowptr[I]; m < rowptr[I+1]; m++)
 		{
 		  diffusiveVelocityComponent_I -= a[m] * grad_potential[colind[m]];
 		  max_a = fmax(max_a, a[m]);
@@ -249,8 +249,8 @@ inline
     }
 
     inline
-    double ExteriorNumericalDiffusiveFluxJacobian(int* rowptr,
-						  int* colind,
+    double ExteriorNumericalDiffusiveFluxJacobian(proteus_csr_index_t* rowptr,
+						  proteus_csr_index_t* colind,
 						  const int& isDOFBoundary,
 						  const int& isDiffusiveFluxBoundary,
 						  const double n[nSpace],
@@ -267,7 +267,7 @@ inline
 	  for (int I = 0; I < nSpace; I++)
 	    {
 	      dvel_I = 0.0;
-	      for (int m = rowptr[I]; m < rowptr[I + 1]; m++)
+	      for (proteus_csr_index_t m = rowptr[I]; m < rowptr[I + 1]; m++)
 		{
 		  dvel_I -= a[m] * grad_v[colind[m]];
 		  max_a = fmax(max_a, a[m]);
@@ -424,8 +424,8 @@ inline
 
   void exteriorNumericalDiffusiveFluxDerivative(const int& isDOFBoundary,
                                                 const int& isDiffusiveFluxBoundary,
-                                                const int rowptr[nSpace],
-                                                const int colind[nnz],
+                                                const proteus_csr_index_t rowptr[nSpace],
+                                                const proteus_csr_index_t colind[nnz],
                                                 const double n[nSpace],
                                                 const double a[nnz],
                                                 const double da[nnz],
@@ -440,7 +440,7 @@ inline
         fluxJacobian = 0.0;
         double max_a = 0.0;
         for (int I = 0; I < nSpace; I++) {
-            for(int m=rowptr[I]; m<rowptr[I+1]; m++)
+            for(proteus_csr_index_t m=rowptr[I]; m<rowptr[I+1]; m++)
         {
             max_a = fmax(max_a, a[m]);
             fluxJacobian -= (a[m] * grad_v[colind[m]] + da[m] * v * grad_psi[colind[m]]) * n[I];
@@ -469,14 +469,14 @@ inline
   // face and is not recorded.  ebqe_flux already holds the applied dispersive
   // flux.  c is the concentration the edge loop used (c^{n+1} for ImplicitEV,
   // c^n for the explicit branches).
-  inline void recordEdgeFluxBoundaryExchange(int nExteriorElementBoundaries_global,
-                                             int numDOFs,
-                                             const int* exteriorElementBoundariesArray,
-                                             const int* elementBoundaryElementsArray,
+  inline void recordEdgeFluxBoundaryExchange(proteus_index_t nExteriorElementBoundaries_global,
+                                             proteus_index_t numDOFs,
+                                             const proteus_index_t* exteriorElementBoundariesArray,
+                                             const proteus_index_t* elementBoundaryElementsArray,
                                              const int* elementBoundaryLocalElementBoundariesArray,
                                              const int* elementBoundaryMaterialTypes,
                                              const int* isExteriorBoundaryPhysical,
-                                             const int* u_l2g,
+                                             const proteus_index_t* u_l2g,
                                              const double* u_test_trace_ref,
                                              const double* ebqe_dS_ext,
                                              const double* nodalBoundaryFlux,
@@ -487,23 +487,23 @@ inline
     std::valarray<double> mb(0.0, numDOFs), a(0.0, numDOFs);
     for (int pass=0; pass<2; pass++)
       {
-        for (int ebNE=0; ebNE<nExteriorElementBoundaries_global; ebNE++)
+        for (proteus_index_t ebNE=0; ebNE<nExteriorElementBoundaries_global; ebNE++)
           {
-            const int ebN = exteriorElementBoundariesArray[ebNE],
-              eN = elementBoundaryElementsArray[ebN*2+0],
-              ebN_local = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
+            const proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
+              eN = elementBoundaryElementsArray[ebN*2+0];
+            const int ebN_local = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
             // the faces the exterior loop integrates
             if (elementBoundaryMaterialTypes[ebN] <= 0 || isExteriorBoundaryPhysical[ebNE] == 0 ||
                 elementBoundaryElementsArray[ebN*2+1] >= 0)
               continue;
             for (int kb=0; kb<nQuadraturePoints_elementBoundary; kb++)
               {
-                const int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                  ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb;
+                const proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb;
+                const int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb;
                 double adv = 0.0;
                 for (int i=0; i<nDOF_test_element; i++)
                   {
-                    const int gi = u_l2g[eN*nDOF_test_element+i];
+                    const proteus_index_t gi = u_l2g[eN*nDOF_test_element+i];
                     const double w = u_test_trace_ref[ebN_local_kb*nDOF_test_element+i];
                     if (pass == 0)
                       mb[gi] += w*ebqe_dS_ext[ebNE_kb];
@@ -518,7 +518,7 @@ inline
               }
           }
         if (pass == 0)
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             if (mb[i] > 0.0)
               {
                 const double B_i = nodalBoundaryFlux[i];
@@ -536,7 +536,7 @@ inline
       proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
       proteus::pyarray<double>& mesh_velocity_dof = args.array<double>("mesh_velocity_dof");
       double MOVING_DOMAIN = args.scalar<double>("MOVING_DOMAIN");
-      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
       proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
       proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
       proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
@@ -551,15 +551,15 @@ inline
       proteus::pyarray<double>& u_grad_test_trace_ref = args.array<double>("u_grad_test_trace_ref");
       proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
       proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-      int nElements_global = args.scalar<int>("nElements_global");
+      proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
       double useMetrics = args.scalar<double>("useMetrics");
       double alphaBDF = args.scalar<double>("alphaBDF");
       int lag_shockCapturing = args.scalar<int>("lag_shockCapturing");
       double shockCapturingDiffusion = args.scalar<double>("shockCapturingDiffusion");
       double sc_uref = args.scalar<double>("sc_uref");
       double sc_alpha = args.scalar<double>("sc_alpha");
-      proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
-      proteus::pyarray<int>& r_l2g = args.array<int>("r_l2g");
+      proteus::pyarray<proteus_index_t>& u_l2g = args.array<proteus_index_t>("u_l2g");
+      proteus::pyarray<proteus_index_t>& r_l2g = args.array<proteus_index_t>("r_l2g");
       proteus::pyarray<double>& elementDiameter = args.array<double>("elementDiameter");
       double degree_polynomial = args.scalar<double>("degree_polynomial");
       proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
@@ -598,14 +598,14 @@ inline
       proteus::pyarray<double>& edge_based_cfl = args.array<double>("edge_based_cfl");
       proteus::pyarray<double>& q_numDiff_u = args.array<double>("q_numDiff_u");
       proteus::pyarray<double>& q_numDiff_u_last = args.array<double>("q_numDiff_u_last");
-      int offset_u = args.scalar<int>("offset_u");
-      int stride_u = args.scalar<int>("stride_u");
+      proteus_index_t offset_u = args.scalar<proteus_index_t>("offset_u");
+      proteus_index_t stride_u = args.scalar<proteus_index_t>("stride_u");
       proteus::pyarray<double>& globalResidual = args.array<double>("globalResidual");
-      int nExteriorElementBoundaries_global = args.scalar<int>("nExteriorElementBoundaries_global");
-      proteus::pyarray<int>& exteriorElementBoundariesArray = args.array<int>("exteriorElementBoundariesArray");
+      proteus_index_t nExteriorElementBoundaries_global = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+      proteus::pyarray<proteus_index_t>& exteriorElementBoundariesArray = args.array<proteus_index_t>("exteriorElementBoundariesArray");
       proteus::pyarray<int>& elementBoundaryMaterialTypes = args.array<int>("elementBoundaryMaterialTypes");
       proteus::pyarray<int>& isExteriorBoundaryPhysical = args.array<int>("isExteriorBoundaryPhysical");
-      proteus::pyarray<int>& elementBoundaryElementsArray = args.array<int>("elementBoundaryElementsArray");
+      proteus::pyarray<proteus_index_t>& elementBoundaryElementsArray = args.array<proteus_index_t>("elementBoundaryElementsArray");
       proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
       proteus::pyarray<double>& ebqe_velocity_ext = args.array<double>("ebqe_velocity_ext");
       proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
@@ -636,13 +636,13 @@ inline
       double cK = args.scalar<double>("cK");
       double uL = args.scalar<double>("uL");
       double uR = args.scalar<double>("uR");
-      int numDOFs = args.scalar<int>("numDOFs");
-      int NNZ = args.scalar<int>("NNZ");
-      proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
-      proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
-      proteus::pyarray<int>& csrRowIndeces_CellLoops = args.array<int>("csrRowIndeces_CellLoops");
-      proteus::pyarray<int>& csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
-      proteus::pyarray<int>& csrColumnOffsets_eb_CellLoops = args.array<int>("csrColumnOffsets_eb_CellLoops");
+      proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
+      proteus_csr_index_t NNZ = args.scalar<proteus_csr_index_t>("NNZ");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_DofLoops = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_CellLoops = args.array<proteus_csr_index_t>("csrRowIndeces_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_CellLoops");
       proteus::pyarray<double>& ML = args.array<double>("ML");
       int LUMPED_MASS_MATRIX = args.scalar<int>("LUMPED_MASS_MATRIX");
       STABILIZATION STABILIZATION_TYPE = static_cast<STABILIZATION>(args.scalar<int>("STABILIZATION_TYPE"));
@@ -784,8 +784,8 @@ inline
       const double k_d   = args.scalar<double>("k_d");
       const double c_sat = args.scalar<double>("c_sat");
       /////////////////////////////////////////////////////////////////////////
-      proteus::pyarray<int>& a_rowptr = args.array<int>("a_rowptr");
-      proteus::pyarray<int>& a_colind = args.array<int>("a_colind");
+      proteus::pyarray<proteus_csr_index_t>& a_rowptr = args.array<proteus_csr_index_t>("a_rowptr");
+      proteus::pyarray<proteus_csr_index_t>& a_colind = args.array<proteus_csr_index_t>("a_colind");
       //proteus::pyarray<double>& D = args.array<double>("D");
       //initializeDToZero(D);
       ///////////////////////////////////////////
@@ -812,7 +812,7 @@ inline
       
       // the entropy normalization is over the domain: accumulate it over owned elements and hand it out with each
       // element's viscosities, so that in parallel the caller can reduce it over the ranks and recompute q_numDiff_u
-      int nElements_owned = args.scalar<int>("nElements_owned");
+      proteus_index_t nElements_owned = args.scalar<proteus_index_t>("nElements_owned");
       proteus::pyarray<double>& entropy_stats = args.array<double>("entropy_stats");
       proteus::pyarray<double>& element_viscosity = args.array<double>("element_viscosity");
       double meanEntropy = 0., meanOmega = 0., maxEntropy = -1E10, minEntropy = 1E10;
@@ -858,10 +858,10 @@ inline
           // It also destroys the steady state: with velocity identically zero
           // the projected form is NOT a fixed point (numpy replica: 3.1% drift
           // after one step, 23% after ten).  The nodal form is exact.
-          for (int eN=0; eN<nElements_global; eN++)
+          for (proteus_index_t eN=0; eN<nElements_global; eN++)
             for (int k=0; k<nQuadraturePoints_element; k++)
               {
-                int eN_k = eN*nQuadraturePoints_element + k,
+                proteus_index_t eN_k = eN*nQuadraturePoints_element + k,
                   eN_nDOF_trial_element = eN*nDOF_trial_element;
                 double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z, un_k=0.0;
                 ck.calculateMapping_element(eN,
@@ -879,14 +879,14 @@ inline
                 (void) un_k;
                 for (int i=0; i<nDOF_test_element; i++)
                   {
-                    int eN_i = eN*nDOF_test_element+i;
-                    const int gi = u_l2g.data()[eN_i];
+                    proteus_index_t eN_i = eN*nDOF_test_element+i;
+                    const proteus_index_t gi = u_l2g.data()[eN_i];
                     const double w = u_test_ref.data()[k*nDOF_trial_element+i]*dV;
                     theta_dof_proj[gi] += theta_k*w;
                     ML_mass_proj[gi] += w;
                   }
               }
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               if (ML_mass_proj[i] > 1.0e-14)
                 theta_dof_proj[i] /= ML_mass_proj[i];
@@ -928,11 +928,11 @@ inline
             }
           if (phase == -1)
             {
-              for (int i=0; i<numDOFs; i++)
+              for (proteus_index_t i=0; i<numDOFs; i++)
                 theta_dof.data()[i] = theta_dof_proj[i];
               return;
             }
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               theta_dof_proj[i] = theta_dof.data()[i];
               // rho = M/theta was formed above from the rank-local projection, which is partial at a ghost
@@ -958,7 +958,7 @@ inline
           cin_num = 0.0;
           cin_den.resize(numDOFs,0.0);
           cin_den = 0.0;
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               // NODAL ENTROPY //
               if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity) //EV stab
@@ -986,7 +986,7 @@ inline
       //eN_j is the element trial function index
       //eN_k_j is the quadrature point index for a trial function
       //eN_k_i is the quadrature point index for a trial function
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           //declare local storage for element residual and initialize
           double
@@ -1023,7 +1023,7 @@ inline
           for  (int k=0;k<nQuadraturePoints_element;k++)
             {
               //compute indeces and declare local storage
-              int eN_k = eN*nQuadraturePoints_element+k,
+              proteus_index_t eN_k = eN*nQuadraturePoints_element+k,
                 eN_k_nSpace = eN_k*nSpace,
                 eN_nDOF_trial_element = eN*nDOF_trial_element;
                 //int index_D = eN_k * a_rowptr.data()[nSpace];
@@ -1330,7 +1330,7 @@ inline
                           STABILIZATION_TYPE==STABILIZATION::Kuzmin or
                           STABILIZATION_TYPE==STABILIZATION::ImplicitEV)
                     {
-                      int eN_i=eN*nDOF_test_element+i;
+                      proteus_index_t eN_i=eN*nDOF_test_element+i;
                       if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity) // EV stab
                         {
                           element_entropy_residual[i] += DENTROPY_un*aux_entropy_residual*u_test_dV[i];
@@ -1506,8 +1506,8 @@ inline
           //
           for(int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i=eN*nDOF_test_element+i;
-              int gi = offset_u+stride_u*u_l2g.data()[eN_i]; //global i-th index
+              proteus_index_t eN_i=eN*nDOF_test_element+i;
+              proteus_index_t gi = offset_u+stride_u*u_l2g.data()[eN_i]; //global i-th index
               globalResidual.data()[gi] += elementResidual_u[i];
               if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity or
                   STABILIZATION_TYPE==STABILIZATION::SmoothnessIndicator or
@@ -1521,7 +1521,7 @@ inline
                   // distribute transport matrices
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      int eN_i_j = eN_i*nDOF_trial_element+j;
+                      proteus_index_t eN_i_j = eN_i*nDOF_trial_element+j;
                       TransportMatrix[csrRowIndeces_CellLoops.data()[eN_i] +
                                       csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementTransport[i][j];
                       DiffusionMatrix[csrRowIndeces_CellLoops.data()[eN_i] +
@@ -1546,14 +1546,14 @@ inline
       //ebNE is the Exterior element boundary INdex
       //ebN is the element boundary INdex
       //eN is the element index
-      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+      for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
         {
           double min_u_bc_local = 1E10, max_u_bc_local = -1E10;
-          int ebN = exteriorElementBoundariesArray.data()[ebNE],
-            eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-            ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0],
-            eN_nDOF_trial_element = eN*nDOF_trial_element;
-          const int eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
+          proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE],
+            eN  = elementBoundaryElementsArray.data()[ebN*2+0];
+          int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+          proteus_index_t eN_nDOF_trial_element = eN*nDOF_trial_element;
+          const proteus_index_t eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
           const int ebFlag = elementBoundaryMaterialTypes.data()[ebN];
           // Only integrate true physical exterior boundaries; skip partition/non-physical faces.
           if (ebFlag <= 0 || isExteriorBoundaryPhysical.data()[ebNE] == 0 || eN_out >= 0)
@@ -1572,9 +1572,9 @@ inline
             }
           for  (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
             {
-              int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                ebNE_kb_nSpace = ebNE_kb*nSpace,
-                ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+              proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
+                ebNE_kb_nSpace = ebNE_kb*nSpace;
+              int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                 ebN_local_kb_nSpace = ebN_local_kb*nSpace;
               double u_ext=0.0,
                 grad_u_ext[nSpace],
@@ -1861,7 +1861,7 @@ inline
                   double rho_trace_ext = 0.0;
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                      const proteus_index_t gj = u_l2g.data()[eN_nDOF_trial_element+j];
                       // ImplicitEV: the nodal EOS density, as in the interior
                       // edge loop (M_dof is storage only there).
                       rho_trace_ext += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
@@ -1912,7 +1912,7 @@ inline
                         max_a = fmax(max_a, a_ext[m]);
                       for (int j=0; j<nDOF_trial_element; j++)
                         {
-                          const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                          const proteus_index_t gj = u_l2g.data()[eN_nDOF_trial_element+j];
                           c_h += u_trial_trace_ref.data()[ebN_local_kb*nDOF_test_element+j]
                             *((STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                               ? u_dof.data()[gj] : u_dof_old.data()[gj]);
@@ -1975,7 +1975,7 @@ inline
                         // consistent BC, O(h) at the boundary since penalty ~ 1/h.
                         // The explicit branches advance from c^n, so the penalty
                         // acts on c^n there.
-                        const int gi_d = u_l2g.data()[eN*nDOF_test_element+i];
+                        const proteus_index_t gi_d = u_l2g.data()[eN*nDOF_test_element+i];
                         const double c_d = (STABILIZATION_TYPE == STABILIZATION::ImplicitEV)
                           ? u_dof.data()[gi_d] : u_dof_old.data()[gi_d];
                         double max_a = 0.0;
@@ -1989,7 +1989,7 @@ inline
                     // the concentration inflowing water carries at this node
                     if (isDOFBoundary_u.data()[ebNE_kb] == 1)
                       {
-                        const int gi_b = u_l2g.data()[eN*nDOF_test_element+i];
+                        const proteus_index_t gi_b = u_l2g.data()[eN*nDOF_test_element+i];
                         cin_num[gi_b] += bc_u_ext*u_test_dS[i];
                         cin_den[gi_b] += u_test_dS[i];
                       }
@@ -2109,7 +2109,7 @@ inline
                           // value here would make the subtraction below fail to
                           // cancel what actually went into TransportMatrix.
                           {
-                            const int gj = u_l2g.data()[eN_nDOF_trial_element+j];
+                            const proteus_index_t gj = u_l2g.data()[eN_nDOF_trial_element+j];
                             const double theta_j = fmax(theta_dof_proj[gj], 1.0e-14);
                             const double wn_j   = m_dof[gj]/theta_j;
                             const double rhon_j = fmax(M_dof.data()[gj],1.0e-14)/theta_j;
@@ -2158,8 +2158,8 @@ inline
           //
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i = eN*nDOF_test_element+i;
-              int gi = offset_u+stride_u*u_l2g.data()[eN_i]; //global i-th index
+              proteus_index_t eN_i = eN*nDOF_test_element+i;
+              proteus_index_t gi = offset_u+stride_u*u_l2g.data()[eN_i]; //global i-th index
               if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity or STABILIZATION_TYPE==STABILIZATION::SmoothnessIndicator or STABILIZATION_TYPE==STABILIZATION::Kuzmin)
                 {
                   globalResidual.data()[gi] += dt*elementResidual_u[i];
@@ -2169,7 +2169,7 @@ inline
                   max_u_bc[gi] = fmax(max_u_bc_local,max_u_bc[gi]);
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      int ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
+                      proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
                       TransportMatrix[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_eb_CellLoops.data()[ebN_i_j]]
                         += fluxTransport[i][j];
                       TransposeTransportMatrix[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_eb_CellLoops.data()[ebN_i_j]]
@@ -2203,7 +2203,7 @@ inline
           entropy_stats[3] = minEntropy;
           meanEntropy /= meanOmega;
           double norm_factor = fmax(fabs(maxEntropy - meanEntropy), fabs(meanEntropy-minEntropy));
-          for(int eN=0;eN<nElements_global;eN++)
+          for(proteus_index_t eN=0;eN<nElements_global;eN++)
             {
               double hK=elementDiameter.data()[eN]/degree_polynomial;
               double linear_viscosity = cMax*hK*maxVel[eN];
@@ -2212,7 +2212,7 @@ inline
               double entropy_viscosity = cE*hK*hK*maxEntRes[eN]/norm_factor;
               for  (int k=0;k<nQuadraturePoints_element;k++)
                 {
-                  int eN_k = eN*nQuadraturePoints_element+k;
+                  proteus_index_t eN_k = eN*nQuadraturePoints_element+k;
                   q_numDiff_u.data()[eN_k] = fmin(linear_viscosity,entropy_viscosity);
                 }
             }
@@ -2259,17 +2259,17 @@ inline
           //    edge, O(F) at a discontinuity.  Normalized as the element-based
           //    residual is, by 2 cE over the local entropy range.
           //  * SI/Kuzmin: the smoothness indicator on c.
-          int ij = 0;
-          for (int i=0; i<numDOFs; i++)
+          proteus_csr_index_t ij = 0;
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               const double ci = u_dof_old.data()[i];
               const double eta_i  = (ENTROPY_TYPE == ENTROPY::POWER) ? EPOWER(ci,uL,uR) : ELOG(ci,uL,uR);
               const double deta_i = (ENTROPY_TYPE == ENTROPY::POWER) ? DEPOWER(ci,uL,uR) : DELOG(ci,uL,uR);
               double etaMaxi = eta_i, etaMini = eta_i, entropy_residual = 0.0;
               double alpha_numerator = 0., alpha_denominator = 0.;
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
-                  const int j = csrColumnOffsets_DofLoops.data()[offset];
+                  const proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   const double cj = u_dof_old.data()[j];
                   if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity && i != j)
                     {
@@ -2298,7 +2298,7 @@ inline
             }
           // EDGE LOOP: low- and high-order stage, cancelled form.
           ij = 0;
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               const double ci      = u_dof_old.data()[i];
               const double MLi     = ML.data()[i];
@@ -2306,9 +2306,9 @@ inline
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
               double low_term = 0.0, high_term = 0.0, sum_gamma = 0.0;
               double ith_flux_term_fluid = 0.0;   // -sum_j F_ij, for the defect probe
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
-                  const int j = csrColumnOffsets_DofLoops.data()[offset];
+                  const proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   if (i != j)
                     {
                       const double cj  = u_dof_old.data()[j];
@@ -2387,8 +2387,8 @@ inline
           /////////////////////////////////////////////////////////////////
           // NOTE: see NCLS.h for a different but equivalent implementation of this.
           //cek todo: can these loops over numDOFs be collapsed?
-          int ij = 0;
-          for (int i=0; i<numDOFs; i++)
+          proteus_csr_index_t ij = 0;
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               double etaMaxi, etaMini;
               if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity) //EV
@@ -2399,9 +2399,9 @@ inline
                 }
               // for smoothness indicator //
               double alpha_numerator = 0., alpha_denominator = 0.;
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 { // First loop in j (sparsity pattern)
-                  int j = csrColumnOffsets_DofLoops.data()[offset];
+                  proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity) //EV Stabilization
                     {
                       // COMPUTE ETA MIN AND ETA MAX //
@@ -2439,14 +2439,14 @@ inline
             }
           if (phase == 0)
             {
-              for (int i=0; i<numDOFs; i++)
+              for (proteus_index_t i=0; i<numDOFs; i++)
                 {
                   psi_dof.data()[i] = psi[i];
                   global_entropy_residual_dof.data()[i] = global_entropy_residual[i];
                 }
               return;
             }
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               psi[i] = psi_dof.data()[i];
               if (STABILIZATION_TYPE==STABILIZATION::EntropyViscosity)
@@ -2461,10 +2461,11 @@ inline
           // total lines emitted over the whole run, so the first violation is
           // captured and the log does not explode over ~12000 substeps x 64 ranks
           static int dbg_budget = 40;
-          int    dbg_reported = 0, dbg_argmax_coef = -1;
+          int    dbg_reported = 0;
+          proteus_index_t dbg_argmax_coef = -1;
           double dbg_global_max_coef = -1.0e300, dbg_global_min_gamma = 1.0e300;
           ij=0;
-          for (int i=0; i<numDOFs; i++)
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               const double mi_mass = m_dof[i];
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
@@ -2506,9 +2507,9 @@ inline
               double dLii = 0.;
 
               // loop over the sparsity pattern of the i-th DOF
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
-                  int j = csrColumnOffsets_DofLoops.data()[offset];
+                  proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   const double mj_mass = m_dof[j];
                   const double theta_j = fmax(theta_dof_proj[j], 1.0e-14);
                   const double Mj_fluid = fmax(M_dof.data()[j], 1.0e-14);
@@ -2862,8 +2863,8 @@ inline
           // fluid flux, not rho = M/theta.
           //
           // --- solute: implicit, in the cancelled (bounded) form ---------
-          int ij=0;
-          for (int i=0; i<numDOFs; i++)
+          proteus_csr_index_t ij=0;
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               const double ci      = u_dof.data()[i];
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
@@ -2874,9 +2875,9 @@ inline
 
               double ith_upwind_flux_term_mass = 0.0;
               double ith_flux_term_fluid       = 0.0;   // continuity-defect probe
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
-                  int j = csrColumnOffsets_DofLoops.data()[offset];
+                  proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   // rho(c^n_j) from the EOS at the node -- the same nodal density
                   // Richards advected with.  The solute flux and the fluid flux
                   // below use this ONE density, which is what the cancellation
@@ -3004,7 +3005,7 @@ inline
 
   void invert(arguments_dict& args)
   {
-    int numDOFs = args.scalar<int>("numDOFs");
+    proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
     proteus::pyarray<double>& mIn = args.array<double>("mIn");
     proteus::pyarray<double>& uOut = args.array<double>("uOut");
     proteus::pyarray<double>& nodal_porosity = args.array<double>("nodal_porosity");
@@ -3026,13 +3027,13 @@ inline
         STABILIZATION_TYPE == STABILIZATION::EntropyViscosity or
         STABILIZATION_TYPE == STABILIZATION::SmoothnessIndicator or
         STABILIZATION_TYPE == STABILIZATION::Kuzmin)
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         uOut.data()[i] = mIn.data()[i]/fmax((newM_is_old ? M_dof_fct : M_low_fct).data()[i], 1.0e-14);
     else
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         uOut.data()[i] = inversevaluateCoefficients(mIn.data()[i], nodal_porosity.data()[i], rho_f, rho_s);
     if (implicitM)
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         rho_nodal.data()[i] = rho_f*(1.0 + ((rho_s - rho_f)/rho_f)*uOut.data()[i]);
   }
   
@@ -3044,7 +3045,7 @@ inline
       proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
       proteus::pyarray<double>& mesh_velocity_dof = args.array<double>("mesh_velocity_dof");
       double MOVING_DOMAIN = args.scalar<double>("MOVING_DOMAIN");
-      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
       proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
       proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
       proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
@@ -3059,13 +3060,13 @@ inline
       proteus::pyarray<double>& u_grad_test_trace_ref = args.array<double>("u_grad_test_trace_ref");
       proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
       proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-      int nElements_global = args.scalar<int>("nElements_global");
+      proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
       double useMetrics = args.scalar<double>("useMetrics");
       double alphaBDF = args.scalar<double>("alphaBDF");
       int lag_shockCapturing = args.scalar<int>("lag_shockCapturing");
       double shockCapturingDiffusion = args.scalar<double>("shockCapturingDiffusion");
-      proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
-      proteus::pyarray<int>& r_l2g = args.array<int>("r_l2g");
+      proteus::pyarray<proteus_index_t>& u_l2g = args.array<proteus_index_t>("u_l2g");
+      proteus::pyarray<proteus_index_t>& r_l2g = args.array<proteus_index_t>("r_l2g");
       proteus::pyarray<double>& elementDiameter = args.array<double>("elementDiameter");
       proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
       proteus::pyarray<double>& velocity = args.array<double>("velocity");
@@ -3074,14 +3075,14 @@ inline
       proteus::pyarray<double>& q_m_betaBDF = args.array<double>("q_m_betaBDF");
       proteus::pyarray<double>& cfl = args.array<double>("cfl");
       proteus::pyarray<double>& q_numDiff_u_last = args.array<double>("q_numDiff_u_last");
-      proteus::pyarray<int>& csrRowIndeces_u_u = args.array<int>("csrRowIndeces_u_u");
-      proteus::pyarray<int>& csrColumnOffsets_u_u = args.array<int>("csrColumnOffsets_u_u");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_u_u = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_u_u = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
       proteus::pyarray<double>& globalJacobian = args.array<double>("globalJacobian");
-      int nExteriorElementBoundaries_global = args.scalar<int>("nExteriorElementBoundaries_global");
-      proteus::pyarray<int>& exteriorElementBoundariesArray = args.array<int>("exteriorElementBoundariesArray");
+      proteus_index_t nExteriorElementBoundaries_global = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+      proteus::pyarray<proteus_index_t>& exteriorElementBoundariesArray = args.array<proteus_index_t>("exteriorElementBoundariesArray");
       proteus::pyarray<int>& elementBoundaryMaterialTypes = args.array<int>("elementBoundaryMaterialTypes");
       proteus::pyarray<int>& isExteriorBoundaryPhysical = args.array<int>("isExteriorBoundaryPhysical");
-      proteus::pyarray<int>& elementBoundaryElementsArray = args.array<int>("elementBoundaryElementsArray");
+      proteus::pyarray<proteus_index_t>& elementBoundaryElementsArray = args.array<proteus_index_t>("elementBoundaryElementsArray");
       proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
       proteus::pyarray<double>& ebqe_velocity_ext = args.array<double>("ebqe_velocity_ext");
       proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
@@ -3090,7 +3091,7 @@ inline
       proteus::pyarray<double>& ebqe_bc_flux_u_ext = args.array<double>("ebqe_bc_flux_u_ext");
       proteus::pyarray<double>& ebqe_porosity = args.array<double>("ebqe_porosity");
       proteus::pyarray<double>& ebqe_rho = args.array<double>("ebqe_rho");
-      proteus::pyarray<int>& csrColumnOffsets_eb_u_u = args.array<int>("csrColumnOffsets_eb_u_u");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_u_u = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_u");
       STABILIZATION STABILIZATION_TYPE = static_cast<STABILIZATION>(args.scalar<int>("STABILIZATION_TYPE"));
 //      ENTROPY ENTROPY_TYPE = static_cast<ENTROPY>(args.scalar<int>("ENTROPY_TYPE"));    
 //      STABILIZATION STABILIZATION_TYPE{args.scalar<int>("STABILIZATION_TYPE")};
@@ -3115,8 +3116,8 @@ inline
 
 
             /////////////////////////////////////////////////////////////////////////
-      proteus::pyarray<int>& a_rowptr = args.array<int>("a_rowptr");
-      proteus::pyarray<int>& a_colind = args.array<int>("a_colind");
+      proteus::pyarray<proteus_csr_index_t>& a_rowptr = args.array<proteus_csr_index_t>("a_rowptr");
+      proteus::pyarray<proteus_csr_index_t>& a_colind = args.array<proteus_csr_index_t>("a_colind");
       //proteus::pyarray<double>& D = args.array<double>("D");
       //////////////////////////////////////////////////////////////////////////
       proteus::pyarray<int>& isDiffusiveFluxBoundary_u = args.array<int>("isDiffusiveFluxBoundary_u");
@@ -3146,14 +3147,14 @@ inline
       if (STABILIZATION_TYPE==STABILIZATION::ImplicitEV)
         {
           const double dt = args.scalar<double>("dt");
-          const int numDOFs = args.scalar<int>("numDOFs");
+          const proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
           proteus::pyarray<double>& ML = args.array<double>("ML");
           proteus::pyarray<double>& dLow = args.array<double>("dLow");
           proteus::pyarray<double>& Sn_dof = args.array<double>("Sn_dof");
           const double k_d   = args.scalar<double>("k_d");
           const double c_sat = args.scalar<double>("c_sat");
-          proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
-          proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+          proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_DofLoops = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+          proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
           // OPTION C: the old-time fluid mass, read from Richards.  The
           // immediately preceding calculateResidual filled theta_dof_proj,
           // rho_dof_proj and boundary_integral_fluid (all class members), and
@@ -3181,8 +3182,8 @@ inline
           // independent of the iterate: it is evaluated from the old-time
           // concentration, so freezing it is EXACT here, not an inexact-Newton
           // approximation).
-          int ij=0;
-          for (int i=0; i<numDOFs; i++)
+          proteus_csr_index_t ij=0;
+          for (proteus_index_t i=0; i<numDOFs; i++)
             {
               const double ci = u_dof.data()[i];
               const double theta_i = fmax(theta_dof_proj[i], 1.0e-14);
@@ -3193,11 +3194,11 @@ inline
               // dR_diss_i/dc_i = theta_i*k_d*S_n_i*[ drho_du*(c_sat-c_i) - rho(c_i) ]
               const double dRdiss_dci = theta_i*k_d*S_n_i*( drho_du*(c_sat - ci) - rho_ci );
 
-              int diag_ij = -1;
+              proteus_csr_index_t diag_ij = -1;
               double sum_gamma_rho = 0.0;
-              for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+              for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                 {
-                  int j = csrColumnOffsets_DofLoops.data()[offset];
+                  proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
                   if (i != j)
                     {
                       // rho(c^n_j) at the node, matching the residual's flux
@@ -3235,25 +3236,25 @@ inline
           // distributes once).  For closed BCs (zero adv/diff flux, no
           // Dirichlet) every term here is identically 0.
           //
-          for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+          for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
             {
-              int ebN = exteriorElementBoundariesArray.data()[ebNE];
-              const int eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
+              proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+              const proteus_index_t eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
               const int ebFlag = elementBoundaryMaterialTypes.data()[ebN];
               if (ebFlag <= 0 || isExteriorBoundaryPhysical.data()[ebNE] == 0 || eN_out >= 0)
                 continue;
-              int eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-                ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0],
-                eN_nDOF_trial_element = eN*nDOF_trial_element;
+              proteus_index_t eN  = elementBoundaryElementsArray.data()[ebN*2+0];
+              int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+              proteus_index_t eN_nDOF_trial_element = eN*nDOF_trial_element;
               double fluxJacobian_u_u[nDOF_test_element][nDOF_trial_element];
               for (int i=0;i<nDOF_test_element;i++)
                 for (int j=0;j<nDOF_trial_element;j++)
                   fluxJacobian_u_u[i][j]=0.0;
               for (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
                 {
-                  int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                    ebNE_kb_nSpace = ebNE_kb*nSpace,
-                    ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+                  proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
+                    ebNE_kb_nSpace = ebNE_kb*nSpace;
+                  int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                     ebN_local_kb_nSpace = ebN_local_kb*nSpace;
                   double u_ext=0.0, grad_u_ext[nSpace], m_ext=0.0, dm_ext=0.0,
                     f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz],
@@ -3357,10 +3358,10 @@ inline
                 }//kb
               for (int i=0;i<nDOF_test_element;i++)
                 {
-                  int eN_i = eN*nDOF_test_element+i;
+                  proteus_index_t eN_i = eN*nDOF_test_element+i;
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      int ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
+                      proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
                       globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]] += fluxJacobian_u_u[i][j];
                     }//j
                 }//i
@@ -3371,7 +3372,7 @@ inline
       //
       //loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
       //
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           double  elementJacobian_u_u[nDOF_test_element][nDOF_trial_element];
           for (int i=0;i<nDOF_test_element;i++)
@@ -3381,7 +3382,7 @@ inline
               }
           for  (int k=0;k<nQuadraturePoints_element;k++)
             {
-              int eN_k = eN*nQuadraturePoints_element+k, //index to a scalar at a quadrature point
+              proteus_index_t eN_k = eN*nQuadraturePoints_element+k, //index to a scalar at a quadrature point
                 eN_k_nSpace = eN_k*nSpace,
                 eN_nDOF_trial_element = eN*nDOF_trial_element; //index to a vector at a quadrature point
 
@@ -3583,10 +3584,10 @@ inline
           //
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i = eN*nDOF_test_element+i;
+              proteus_index_t eN_i = eN*nDOF_test_element+i;
               for (int j=0;j<nDOF_trial_element;j++)
                 {
-                  int eN_i_j = eN_i*nDOF_trial_element+j;
+                  proteus_index_t eN_i_j = eN_i*nDOF_trial_element+j;
                   globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]] += elementJacobian_u_u[i][j];
                 }//j
             }//i
@@ -3596,16 +3597,16 @@ inline
       //
       if (STABILIZATION_TYPE==STABILIZATION::VMS or STABILIZATION_TYPE==STABILIZATION::Galerkin)
         {
-          for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+          for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
             {
-              int ebN = exteriorElementBoundariesArray.data()[ebNE];
-              const int eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
+              proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+              const proteus_index_t eN_out = elementBoundaryElementsArray.data()[ebN*2+1];
               const int ebFlag = elementBoundaryMaterialTypes.data()[ebN];
               if (ebFlag <= 0 || isExteriorBoundaryPhysical.data()[ebNE] == 0 || eN_out >= 0)
                 continue;
-              int eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-                ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0],
-                eN_nDOF_trial_element = eN*nDOF_trial_element;
+              proteus_index_t eN  = elementBoundaryElementsArray.data()[ebN*2+0];
+              int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+              proteus_index_t eN_nDOF_trial_element = eN*nDOF_trial_element;
               double fluxJacobian_u_u[nDOF_test_element][nDOF_trial_element];
               for (int i=0;i<nDOF_test_element;i++)
                 for (int j=0;j<nDOF_trial_element;j++)
@@ -3614,9 +3615,9 @@ inline
                   }
               for  (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
                 {
-                  int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                    ebNE_kb_nSpace = ebNE_kb*nSpace,
-                    ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+                  proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
+                    ebNE_kb_nSpace = ebNE_kb*nSpace;
+                  int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                     ebN_local_kb_nSpace = ebN_local_kb*nSpace;
                   double u_ext=0.0,
                     grad_u_ext[nSpace],
@@ -3806,10 +3807,10 @@ inline
               //
               for (int i=0;i<nDOF_test_element;i++)
                 {
-                  int eN_i = eN*nDOF_test_element+i;
+                  proteus_index_t eN_i = eN*nDOF_test_element+i;
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      int ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
+                      proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
                       globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]] += fluxJacobian_u_u[i][j];
 //                                                                                                                         
                     }//j
@@ -3822,8 +3823,8 @@ inline
   void FCTStep(arguments_dict& args)
   {
     double dt = args.scalar<double>("dt");
-    int NNZ = args.scalar<int>("NNZ");
-    int numDOFs = args.scalar<int>("numDOFs");
+    proteus_csr_index_t NNZ = args.scalar<proteus_csr_index_t>("NNZ");
+    proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
     proteus::pyarray<double>& lumped_mass_matrix = args.array<double>("lumped_mass_matrix");
     proteus::pyarray<double>& soln = args.array<double>("soln");
     proteus::pyarray<double>& solH = args.array<double>("solH");
@@ -3836,8 +3837,8 @@ inline
     // Nitsche BC contribution from the boundary residual) instead of being
     // antidiffused past the BC value.
     proteus::pyarray<double>& bc_mask = args.array<double>("bc_mask");
-    proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
-    proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+    proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_DofLoops = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     proteus::pyarray<double>& MassMatrix = args.array<double>("MassMatrix");
     proteus::pyarray<double>& dt_times_dH_minus_dL = args.array<double>("dt_times_dH_minus_dL");
     proteus::pyarray<double>& min_u_bc = args.array<double>("min_u_bc");
@@ -3847,13 +3848,13 @@ inline
     proteus::pyarray<double>& q_porosity_old_fct = args.array<double>("q_porosity_old_fct");
     proteus::pyarray<double>& q_rho_fct        = args.array<double>("q_rho_fct");
     proteus::pyarray<double>& q_dV_fct         = args.array<double>("q_dV_fct");
-    proteus::pyarray<int>&    u_l2g_fct        = args.array<int>("u_l2g_fct");
+    proteus::pyarray<proteus_index_t>&    u_l2g_fct        = args.array<proteus_index_t>("u_l2g_fct");
     proteus::pyarray<double>& u_test_ref_fct   = args.array<double>("u_test_ref_fct");
     proteus::pyarray<double>& theta_dof_out    = args.array<double>("theta_dof_out");
     proteus::pyarray<double>& M_dof_fct        = args.array<double>("M_dof_fct");
     proteus::pyarray<double>& M_low_fct        = args.array<double>("M_low_fct");
     proteus::pyarray<double>& theta_nodal_fct  = args.array<double>("theta_nodal");
-    int nElements_global_fct              = args.scalar<int>("nElements_global_fct");
+    proteus_index_t nElements_global_fct              = args.scalar<proteus_index_t>("nElements_global_fct");
     int nQuadraturePoints_element_fct     = args.scalar<int>("nQuadraturePoints_element_fct");
     int nDOF_trial_element_fct            = args.scalar<int>("nDOF_trial_element_fct");
     const double rho_f = args.scalar<double>("rho_f");
@@ -3871,14 +3872,14 @@ inline
     std::vector<double> theta_dof(numDOFs, 0.0);
     std::vector<double> rho_dof(numDOFs, 0.0);
     std::vector<double> ML_proj(numDOFs, 0.0);
-    for (int eN = 0; eN < nElements_global_fct; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global_fct; eN++) {
       for (int k = 0; k < nQuadraturePoints_element_fct; k++) {
-        const int eN_k = eN * nQuadraturePoints_element_fct + k;
+        const proteus_index_t eN_k = eN * nQuadraturePoints_element_fct + k;
         const double dV_k    = q_dV_fct.data()[eN_k];
         const double theta_k = q_porosity_old_fct.data()[eN_k];
         const double rho_k   = q_rho_fct.data()[eN_k];
         for (int i = 0; i < nDOF_trial_element_fct; i++) {
-          const int gi = u_l2g_fct.data()[eN * nDOF_trial_element_fct + i];
+          const proteus_index_t gi = u_l2g_fct.data()[eN * nDOF_trial_element_fct + i];
           const double w = u_test_ref_fct.data()[k * nDOF_trial_element_fct + i] * dV_k;
           theta_dof[gi] += theta_k * w;
           rho_dof[gi]   += rho_k   * w;
@@ -3886,7 +3887,7 @@ inline
         }
       }
     }
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
       if (ML_proj[i] > 1.0e-14) { theta_dof[i] /= ML_proj[i]; rho_dof[i] /= ML_proj[i]; }
       else { theta_dof[i] = 1.0; rho_dof[i] = rho_f; }
       // Same substitution as the residual: the group variable w = m/theta below has
@@ -3899,11 +3900,11 @@ inline
     // phases 0 and 1 take those values.
     if (phase == -1)
       {
-        for (int i=0; i<numDOFs; i++)
+        for (proteus_index_t i=0; i<numDOFs; i++)
           theta_dof_out.data()[i] = theta_dof[i];
         return;
       }
-    for (int i=0; i<numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       theta_dof[i] = theta_dof_out.data()[i];
     if (phase == 0)
       {
@@ -3927,10 +3928,10 @@ inline
     // the operator dLow acts on c itself (the fluxes are already mass fluxes).
     const int USE_EDGE_FLUX = args.scalar<int>("USE_EDGE_FLUX");
     const bool newM_is_old = implicitM && !USE_EDGE_FLUX;
-    int ij=0;
+    proteus_csr_index_t ij=0;
     //loop over nodes (i)
     if (phase == 0)
-    for (int i=0; i<numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       {
         //read some vectors
         double solHi = solH.data()[i];
@@ -3960,10 +3961,10 @@ inline
         double mini=min_u_bc.data()[i], maxi=max_u_bc.data()[i]; // init min/max with value at BCs (NOTE: if no boundary then min=1E10, max=-1E10)
         double Pposi=0, Pnegi=0;
         // Loop over neighbors (j)
-        for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+        for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
           {
             assert(offset == ij); // (CSR matrix consistency)
-            int j = csrColumnOffsets_DofLoops.data()[offset];
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
             double solnj = soln.data()[j];
             double uLowj = uLow.data()[j];
             ////////////////////////
@@ -4044,21 +4045,21 @@ inline
       }//i
     ij=0;
     if (phase == 1)
-    for (int i=0; i<numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       {
         Rpos[i] = Rpos_dof.data()[i];
         Rneg[i] = Rneg_dof.data()[i];
       }
     if (phase == 1)
-    for (int i=0; i<numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       {
         double ith_Limiter_times_FluxCorrectionMatrix = 0.;
         double Rposi = Rpos[i], Rnegi = Rneg[i];
         const double lumped_volume = lumped_mass_matrix.data()[i];
-        for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+        for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
           {
             assert(offset == ij); // (CSR matrix consistency
-            int j = csrColumnOffsets_DofLoops.data()[offset];
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
             double Lij = 1;
             Lij = ((FluxCorrectionMatrix[ij]>0) ? fmin(Rposi,Rneg[j]) : fmin(Rnegi,Rpos[j]));
             ith_Limiter_times_FluxCorrectionMatrix += Lij * FluxCorrectionMatrix[ij];
@@ -4096,19 +4097,19 @@ inline
     void calculateResidual_compatible(arguments_dict& args)
     {
       const double dt = args.scalar<double>("dt");
-      const int numDOFs = args.scalar<int>("numDOFs");
-      const int nElements_global = args.scalar<int>("nElements_global");
+      const proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
+      const proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
       proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
       proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
       proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
       proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
       proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
       proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
-      proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
-      proteus::pyarray<int>& r_l2g = args.array<int>("r_l2g");
-      proteus::pyarray<int>& a_rowptr = args.array<int>("a_rowptr");
-      proteus::pyarray<int>& a_colind = args.array<int>("a_colind");
+      proteus::pyarray<proteus_index_t>& u_l2g = args.array<proteus_index_t>("u_l2g");
+      proteus::pyarray<proteus_index_t>& r_l2g = args.array<proteus_index_t>("r_l2g");
+      proteus::pyarray<proteus_csr_index_t>& a_rowptr = args.array<proteus_csr_index_t>("a_rowptr");
+      proteus::pyarray<proteus_csr_index_t>& a_colind = args.array<proteus_csr_index_t>("a_colind");
       const double alpha_L = args.scalar<double>("alpha_L");
       const double alpha_T = args.scalar<double>("alpha_T");
       const double Dm = args.scalar<double>("Dm");
@@ -4118,10 +4119,10 @@ inline
       proteus::pyarray<double>& q_velocity_dispersion = args.array<double>("q_velocity_dispersion");
       proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
       proteus::pyarray<double>& u_dof_old = args.array<double>("u_dof_old");
-      proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
-      proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
-      proteus::pyarray<int>& csrRowIndeces_CellLoops = args.array<int>("csrRowIndeces_CellLoops");
-      proteus::pyarray<int>& csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_DofLoops = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_CellLoops = args.array<proteus_csr_index_t>("csrRowIndeces_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_CellLoops");
       proteus::pyarray<double>& ML = args.array<double>("ML");
       proteus::pyarray<double>& Fhat = args.array<double>("Fhat");
       proteus::pyarray<double>& Mn = args.array<double>("Mn");
@@ -4134,16 +4135,16 @@ inline
       const int computeJacobian = args.scalar<int>("computeJacobian");
       proteus::pyarray<double>& globalJacobian = args.array<double>("globalJacobian");
       std::valarray<double> c(numDOFs), cn(numDOFs);
-      for (int eN=0; eN<nElements_global; eN++)
+      for (proteus_index_t eN=0; eN<nElements_global; eN++)
         for (int j=0; j<nDOF_trial_element; j++)
           {
-            const int eN_j = eN*nDOF_trial_element + j;
+            const proteus_index_t eN_j = eN*nDOF_trial_element + j;
             c[r_l2g.data()[eN_j]] = u_dof.data()[u_l2g.data()[eN_j]];
             cn[r_l2g.data()[eN_j]] = u_dof_old.data()[u_l2g.data()[eN_j]];
           }
       // dispersion matrix d_ij(c)
       std::fill(dDispersion.begin(), dDispersion.end(), 0.0);
-      for (int eN=0; eN<nElements_global; eN++)
+      for (proteus_index_t eN=0; eN<nElements_global; eN++)
         {
           double elementDispersion[nDOF_test_element][nDOF_trial_element];
           for (int i=0; i<nDOF_test_element; i++)
@@ -4151,7 +4152,7 @@ inline
               elementDispersion[i][j] = 0.0;
           for (int k=0; k<nQuadraturePoints_element; k++)
             {
-              const int eN_k = eN*nQuadraturePoints_element + k;
+              const proteus_index_t eN_k = eN*nQuadraturePoints_element + k;
               double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z;
               double u_grad_trial[nDOF_trial_element*nSpace], u_grad_test_dV[nDOF_test_element*nSpace];
               ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(), mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
@@ -4174,20 +4175,20 @@ inline
             }
           for (int i=0; i<nDOF_test_element; i++)
             {
-              const int eN_i = eN*nDOF_test_element + i;
+              const proteus_index_t eN_i = eN*nDOF_test_element + i;
               for (int j=0; j<nDOF_trial_element; j++)
                 dDispersion.data()[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j]]
                   += elementDispersion[i][j];
             }
         }
       // edge loop
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         {
           if (bc_mask.data()[i] == 0.0)
             {
               globalResidual.data()[i] = c[i] - cD.data()[i];
               if (computeJacobian)
-                for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+                for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
                   globalJacobian.data()[offset] = (csrColumnOffsets_DofLoops.data()[offset] == i) ? 1.0 : 0.0;
               continue;
             }
@@ -4195,10 +4196,10 @@ inline
           const double storage = ML.data()[i]*Mn.data()[i]/dt;
           double res = storage*(c[i] - cn[i]) - Bpos*(cin.data()[i] - c[i]);
           double jac_ii = storage + Bpos;
-          int ii = -1;
-          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+          proteus_csr_index_t ii = -1;
+          for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
             {
-              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              const proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
               if (j == i)
                 {
                   ii = offset;
@@ -4223,21 +4224,21 @@ inline
     // the d+1 element moments then sum to zero and determine q_e uniquely. Used for the dispersion only.
     void reconstructFlux_compatible(arguments_dict& args)
     {
-      const int nElements_global = args.scalar<int>("nElements_global");
+      const proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
       proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
       proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
       proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-      proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+      proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
       proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
       proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
-      proteus::pyarray<int>& csrRowIndeces_CellLoops = args.array<int>("csrRowIndeces_CellLoops");
-      proteus::pyarray<int>& csrColumnOffsets_CellLoops = args.array<int>("csrColumnOffsets_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_CellLoops = args.array<proteus_csr_index_t>("csrRowIndeces_CellLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_CellLoops");
       proteus::pyarray<double>& Espatial = args.array<double>("Espatial");
       proteus::pyarray<double>& edgeWeight = args.array<double>("edgeWeight");
       proteus::pyarray<double>& edgeCount = args.array<double>("edgeCount");
       proteus::pyarray<double>& element_q = args.array<double>("element_q");
       std::vector<double> gradInt(nElements_global*nDOF_trial_element*nSpace, 0.0), K(nElements_global*nDOF_test_X_trial_element, 0.0);
-      for (int eN=0; eN<nElements_global; eN++)
+      for (proteus_index_t eN=0; eN<nElements_global; eN++)
         for (int k=0; k<nQuadraturePoints_element; k++)
           {
             double jac[nSpace*nSpace], jacDet, jacInv[nSpace*nSpace], x, y, z, u_grad_trial[nDOF_trial_element*nSpace];
@@ -4256,29 +4257,29 @@ inline
           }
       std::fill(edgeWeight.begin(), edgeWeight.end(), 0.0);
       std::fill(edgeCount.begin(), edgeCount.end(), 0.0);
-      for (int eN=0; eN<nElements_global; eN++)
+      for (proteus_index_t eN=0; eN<nElements_global; eN++)
         for (int i=0; i<nDOF_test_element; i++)
           {
-            const int eN_i = eN*nDOF_test_element + i;
+            const proteus_index_t eN_i = eN*nDOF_test_element + i;
             for (int j=0; j<nDOF_trial_element; j++)
               {
-                const int ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
+                const proteus_csr_index_t ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
                 edgeWeight.data()[ij] += fabs(K[eN*nDOF_test_X_trial_element + i*nDOF_trial_element + j]);
                 edgeCount.data()[ij] += 1.0;
               }
           }
-      for (int eN=0; eN<nElements_global; eN++)
+      for (proteus_index_t eN=0; eN<nElements_global; eN++)
         {
           double r[nDOF_test_element];
           for (int i=0; i<nDOF_test_element; i++)
             {
-              const int eN_i = eN*nDOF_test_element + i;
+              const proteus_index_t eN_i = eN*nDOF_test_element + i;
               r[i] = 0.0;
               for (int j=0; j<nDOF_trial_element; j++)
                 {
                   if (j == i)
                     continue;
-                  const int ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
+                  const proteus_csr_index_t ij = csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i*nDOF_trial_element + j];
                   const double Ke = fabs(K[eN*nDOF_test_X_trial_element + i*nDOF_trial_element + j]);
                   const double share = (edgeWeight.data()[ij] > 0.0) ? Ke/edgeWeight.data()[ij] : 1.0/edgeCount.data()[ij];
                   r[i] += share*Espatial.data()[ij];
@@ -4331,9 +4332,9 @@ inline
     void FCTStep_compatible(arguments_dict& args)
     {
       const double dt = args.scalar<double>("dt");
-      const int numDOFs = args.scalar<int>("numDOFs");
-      proteus::pyarray<int>& csrRowIndeces_DofLoops = args.array<int>("csrRowIndeces_DofLoops");
-      proteus::pyarray<int>& csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
+      const proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
+      proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_DofLoops = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+      proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
       proteus::pyarray<double>& ML = args.array<double>("ML");
       proteus::pyarray<double>& MC = args.array<double>("MC");
       proteus::pyarray<double>& Mn = args.array<double>("Mn");
@@ -4349,17 +4350,17 @@ inline
       proteus::pyarray<double>& limitedFluxMatrix = args.array<double>("limitedFluxMatrix");
       proteus::pyarray<double>& c_new = args.array<double>("c_new");
       std::vector<double> SL(numDOFs), SdotL(numDOFs);
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         {
           SL[i] = Mnp1.data()[i]*cL.data()[i];
           SdotL[i] = (SL[i] - Mn.data()[i]*cn.data()[i])/dt;
         }
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         {
           double cmax = cL.data()[i], cmin = cL.data()[i], Ppos = 0.0, Pneg = 0.0;
-          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+          for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
             {
-              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              const proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
               cmax = fmax(cmax, cL.data()[j]);
               cmin = fmin(cmin, cL.data()[j]);
               double f = 0.0;
@@ -4383,12 +4384,12 @@ inline
           Rpos.data()[i] = (Ppos == 0.0) ? 1.0 : fmax(0.0, fmin(1.0, Qpos/Ppos));
           Rneg.data()[i] = (Pneg == 0.0) ? 1.0 : fmax(0.0, fmin(1.0, Qneg/Pneg));
         }
-      for (int i=0; i<numDOFs; i++)
+      for (proteus_index_t i=0; i<numDOFs; i++)
         {
           double sum = 0.0;
-          for (int offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
+          for (proteus_csr_index_t offset=csrRowIndeces_DofLoops.data()[i]; offset<csrRowIndeces_DofLoops.data()[i+1]; offset++)
             {
-              const int j = csrColumnOffsets_DofLoops.data()[offset];
+              const proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
               const double f = FluxCorrectionMatrix.data()[offset];
               double alpha = (f > 0.0) ? fmin(Rpos.data()[i], Rneg.data()[j]) : fmin(Rneg.data()[i], Rpos.data()[j]);
               if (bc_mask.data()[i] == 0.0 && bc_mask.data()[j] == 0.0)
