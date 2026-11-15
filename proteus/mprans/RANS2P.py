@@ -16,6 +16,7 @@ from proteus import *
 from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
 from . import cArgumentsDict
+from proteus.csparsity import CSR_INDEX_DTYPE
 import proteus.NumericalFlux
 import proteus.Profiling
 import proteus.ShockCapturing
@@ -1705,18 +1706,18 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.u[3].name="w"
             self.timeIntegration.m_tmp[3] = self.timeIntegration.m_tmp[2].copy()
             self.timeIntegration.beta_bdf[3] = self.timeIntegration.beta_bdf[2].copy()
-            self.coefficients.sdInfo[(1, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(2, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 0)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 1)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 2)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
+            self.coefficients.sdInfo[(1, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(2, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 0)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 1)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 2)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.offset.append(self.offset[2])
             self.stride.append(self.stride[2])
             self.numericalFlux.isDOFBoundary[3] = self.numericalFlux.isDOFBoundary[2].copy()
