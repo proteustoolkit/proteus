@@ -7,6 +7,7 @@
 #include <vector>
 #include "cutclip.h"
 #include "equivalent_polynomials.h"
+#include "Unfitted.h"
 
 namespace py = pybind11;
 using namespace proteus::cutclip;
@@ -68,7 +69,7 @@ static py::dict ifemBasis(const Arr &nodes, const Arr &phi, const Arr &pts, doub
   if (pts.ndim() != 2 || pts.shape(1) != 3 || pts.shape(0) > NQ)
     throw std::invalid_argument("pts must be (m <= 64, 3) reference points");
   const int m = (int)pts.shape(0);
-  using S = equivalent_polynomials::Simplex<nSpace, nN, 3, NQ, NQ, true>;
+  using S = proteus::unfitted::IFEFunctions<nSpace, nN, 3, NQ, NQ>;
   std::unique_ptr<S> sx(new S());
   std::vector<double> xi(NQ * 3, 0.0);
   for (int q = 0; q < m; ++q)
@@ -84,9 +85,9 @@ static py::dict ifemBasis(const Arr &nodes, const Arr &phi, const Arr &pts, doub
   const int icase = sx->calculate(ph.data(), nd.data(), xi.data(), ma, mb, 0.0, false, false);
   py::dict out;
   out["icase"] = icase;
-  out["edge"] = sx->edge;
-  out["corner"] = sx->corner;
-  out["inside_out"] = sx->inside_out;
+  out["edge"] = sx->exact.edge;
+  out["corner"] = sx->exact.corner;
+  out["inside_out"] = sx->exact.inside_out;
   py::array_t<double> H({m}), ImH({m}), D({m}), va({m, nN}), vb({m, nN}), ga({m, nN, 3}), gb({m, nN, 3}), psi({m, 2, 4});
   py::array_t<double> normal({nSpace});
   if (icase == 0)

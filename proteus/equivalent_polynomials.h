@@ -10,7 +10,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include "ifemBasisCoefficients_wrapper.h"
 #include "equivalent_polynomials_coefficients.h"
 #include "equivalent_polynomials_coefficients_quad.h"
 #include "equivalent_polynomials_utils.h"
@@ -86,22 +85,15 @@ namespace equivalent_polynomials
         d = 0.5 * (1.0 + cos(M_PI * phi / eps)) / eps;
       return d;
     }
-    inline double VA(int i) { return -1.0; };
-    inline double VA_x(int i) { return -1.0; };
-    inline double VA_y(int i) { return -1.0; };
-    inline double VA_z(int i) { return -1.0; };
-    inline double VB(int i) { return -1.0; };
-    inline double VB_x(int i) { return -1.0; };
-    inline double VB_y(int i) { return -1.0; };
-    inline double VB_z(int i) { return -1.0; };
-    inline double PSIA() { return 0.0; };
-    inline double PSIA_x() { return 0.0; };
-    inline double PSIA_y() { return 0.0; };
-    inline double PSIA_z() { return 0.0; };
-    inline double PSIB() { return 0.0; };
-    inline double PSIB_x() { return 0.0; };
-    inline double PSIB_y() { return 0.0; };
-    inline double PSIB_z() { return 0.0; };
+  };
+
+  // Read-only view of the cut found by Simplex::calculate (see Simplex::cut_frame)
+  struct CutFrame
+  {
+    const unsigned int *permutation;
+    const double *phi, *inv_Jac, *X_0, *normal;
+    bool inside_out;
+    int corner, edge;
   };
 
   template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis = false>
@@ -168,24 +160,6 @@ namespace equivalent_polynomials
         _ImH_q = _ImH[q];
         _D_q = _D[q];
       }
-      // basis functions already adjusted for inside_out
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        _va_q[i] = _va[q * nP_ifem + i];
-        _vb_q[i] = _vb[q * nP_ifem + i];
-      }
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        _va_x_q[i] = _va_x[q * nP_ifem + i];
-        _va_y_q[i] = _va_y[q * nP_ifem + i];
-        _va_z_q[i] = _va_z[q * nP_ifem + i];
-        _vb_x_q[i] = _vb_x[q * nP_ifem + i];
-        _vb_y_q[i] = _vb_y[q * nP_ifem + i];
-        _vb_z_q[i] = _vb_z[q * nP_ifem + i];
-      }
-      const bool cut = !(edge == -1 || corner == -1 || edge == 1 || corner == 1);
-      for (int i = 0; i < 8; i++)
-        _psi_q[i] = cut ? _psi[q * 8 + i] : 0.0;
     }
 
     inline void set_boundary_quad(unsigned int ebq)
@@ -220,24 +194,6 @@ namespace equivalent_polynomials
         _ImH_q = _ImH_ebq[ebq];
         _D_q = _D_ebq[ebq];
       }
-      // basis functions already adjusted for inside_out
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        _va_q[i] = _va_ebq[ebq * nP_ifem + i];
-        _vb_q[i] = _vb_ebq[ebq * nP_ifem + i];
-      }
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        _va_x_q[i] = _va_x_ebq[ebq * nP_ifem + i];
-        _va_y_q[i] = _va_y_ebq[ebq * nP_ifem + i];
-        _vb_x_q[i] = _vb_x_ebq[ebq * nP_ifem + i];
-        _vb_y_q[i] = _vb_y_ebq[ebq * nP_ifem + i];
-        _va_z_q[i] = _va_z_ebq[ebq * nP_ifem + i];
-        _vb_z_q[i] = _vb_z_ebq[ebq * nP_ifem + i];
-      }
-      const bool cut = !(edge == -1 || corner == -1 || edge == 1 || corner == 1);
-      for (int i = 0; i < 8; i++)
-        _psi_q[i] = cut ? _psi_ebq[ebq * 8 + i] : 0.0;
     }
 
     inline double *get_H() { return _H; };
@@ -246,30 +202,39 @@ namespace equivalent_polynomials
     inline double H(double eps, double phi) { return _H_q; };
     inline double ImH(double eps, double phi) { return _ImH_q; };
     inline double D(double eps, double phi) { return _D_q; };
-    inline double VA(int i) { return _va_q[i]; };
-    inline double VA_x(int i) { return _va_x_q[i]; };
-    inline double VA_y(int i) { return _va_y_q[i]; };
-    inline double VA_z(int i) { return _va_z_q[i]; };
-    inline double VB(int i) { return _vb_q[i]; };
-    inline double VB_x(int i) { return _vb_x_q[i]; };
-    inline double VB_y(int i) { return _vb_y_q[i]; };
-    inline double VB_z(int i) { return _vb_z_q[i]; };
-    // Unit flux-jump lift psi (branch a / branch b, value and physical gradient) at the current
-    // quadrature point: zero at every node, continuous across the interface, and
-    // mb*dpsi_b/dn - ma*dpsi_a/dn = 1 with n the interface normal (from branch a to branch b).
-    // The basis itself is always built for a homogeneous flux jump; a prescribed jump J_f is
-    // represented by adding J_f*psi to the trial function once (like the solution-jump lift).
-    inline double PSIA() { return _psi_q[0]; };
-    inline double PSIA_x() { return _psi_q[1]; };
-    inline double PSIA_y() { return _psi_q[2]; };
-    inline double PSIA_z() { return _psi_q[3]; };
-    inline double PSIB() { return _psi_q[4]; };
-    inline double PSIB_x() { return _psi_q[5]; };
-    inline double PSIB_y() { return _psi_q[6]; };
-    inline double PSIB_z() { return _psi_q[7]; };
     inline double *get_normal()
     {
       return level_set_normal;
+    }
+    // The geometry of the cut found by the last calculate(): the permutation of the nodes that puts the cut in a
+    // canonical position, the permuted level-set values, the inverse Jacobian of the permuted reference map, the cut
+    // point X_0 on the reference simplex and the cut normal (after the inside_out flip of the IFE path). This is
+    // all the two-sided IFE basis (unfitted::IFEBasis in Unfitted.h) needs to build itself.
+    inline CutFrame cut_frame() const
+    {
+      return CutFrame{permutation, phi, inv_Jac, X_0, level_set_normal, inside_out, corner, edge};
+    }
+    // The reference coordinates, in the permuted element, of the point xi_r of the unpermuted reference element whose
+    // physical element has the vertices phi_nodes (the map the moment fits are evaluated through).
+    inline void permuted_reference_point(const double *phi_nodes, const double *xi_r, double *xi) const
+    {
+      double Jac_0[nSpace * nSpace];
+      for (unsigned int i = 0; i < nN - 1; i++)
+        for (unsigned int I = 0; I < nSpace; I++)
+          Jac_0[I * nSpace + i] = phi_nodes[(1 + i) * 3 + I] - phi_nodes[I];
+      double x[nSpace];
+      for (unsigned int I = 0; I < nSpace; I++)
+      {
+        x[I] = phi_nodes[I];
+        for (unsigned int J = 0; J < nSpace; J++)
+          x[I] += Jac_0[I * nSpace + J] * xi_r[J];
+      }
+      for (unsigned int I = 0; I < nSpace; I++)
+      {
+        xi[I] = 0.0;
+        for (unsigned int J = 0; J < nSpace; J++)
+          xi[I] += inv_Jac[I * nSpace + J] * (x[J] - nodes[J]);
+      }
     }
     // Value-initialised: gf_f_cache/gf_s_cache in ADR.h are built once with
     // assign(n, GfType()) and reused, so any entry whose calculate() was not
@@ -297,13 +262,7 @@ namespace equivalent_polynomials
 
   private:
     int P2_ifem_case = 0;
-    // These eight are the arrays VA()/VB()/VA_x()/... hand straight back to the
-    // caller, so they are the read path for the SCIFEM facet terms in ADR.h.
-    // 3567c2a3 initialised the storage arrays (_va, _va_ebq, _a*, _b*) but left
-    // this scratch row alone -- only the three scalars ahead of it got values.
-    double _H_q = 0., _ImH_q = 0., _D_q = 0., _va_q[nP_ifem] = {}, _vb_q[nP_ifem] = {},
-        _va_x_q[nP_ifem] = {}, _va_y_q[nP_ifem] = {}, _va_z_q[nP_ifem] = {},
-        _vb_x_q[nP_ifem] = {}, _vb_y_q[nP_ifem] = {}, _vb_z_q[nP_ifem] = {};
+    double _H_q = 0., _ImH_q = 0., _D_q = 0.;
     // Sized nDOF_phi for the same reason as phi_dof_corrected: the cut geometry
     // permutes nN topological vertices, while the P2 IFEM basis also permutes its
     // mid-side dofs (nP_ifem = 6). Sizing by nP_ifem alone left permutation[nN-1]
@@ -316,16 +275,6 @@ namespace equivalent_polynomials
     // nP_ifem alone left the last vertex unfilled for nP_ifem < nN callers and the
     // Jacobian was built from memory past the end of nodes[].
     double phi[nDOF_phi] = {}, nodes[nDOF_phi * 3] = {};
-    double _a1[nP_ifem] = {}, _a2[nP_ifem] = {}, _a3[nP_ifem] = {}, _b1[nP_ifem] = {}, _b2[nP_ifem] = {}, _b3[nP_ifem] = {};
-    double _a4[nP_ifem] = {}, _a5[nP_ifem] = {}, _a6[nP_ifem] = {}, _b4[nP_ifem] = {}, _b5[nP_ifem] = {}, _b6[nP_ifem] = {};
-    // unit flux-jump lift: coefficients (same monomial order as _a1.._a6; 3D P1 uses the first four:
-    // 1, xi, eta, zeta) and values/gradients
-    // [psi_a, psi_a_x, psi_a_y, psi_a_z, psi_b, psi_b_x, psi_b_y, psi_b_z] at the quadrature points
-    // (z is zero in 2D)
-    double _lift_a[6] = {0., 0., 0., 0., 0., 0.}, _lift_b[6] = {0., 0., 0., 0., 0., 0.};
-    double _psi[nQ * 8] = {}, _psi_ebq[nEBQ * 8] = {}, _psi_q[8] = {0., 0., 0., 0., 0., 0., 0., 0.};
-    inline void _calculate_lift(const double *xi, double *psi);
-    inline void _calculate_basis_coefficients_tet(const double ma, const double mb);
     double Jac[nSpace * nSpace] = {}, inv_Jac[nSpace * nSpace] = {}, det_Jac = 0.;
     double level_set_normal[nSpace], X_0[nSpace], phys_nodes_cut[(nN - 1) * 3], THETA_01, THETA_02, THETA_31, THETA_32, phys_nodes_cut_quad_01[3], phys_nodes_cut_quad_02[3], phys_nodes_cut_quad_31[3], phys_nodes_cut_quad_32[3];
     static const unsigned int nDOF = ((nSpace - 1) / 2) * (nSpace - 2) * (nP + 1) * (nP + 2) * (nP + 3) / 6 + (nSpace - 1) * (3 - nSpace) * (nP + 1) * (nP + 2) / 2 + (2 - nSpace) * ((3 - nSpace) / 2) * (nP + 1);
@@ -336,13 +285,8 @@ namespace equivalent_polynomials
     inline void _calculate_cuts_quad();
     inline void _calculate_C();
     inline void _correct_phi(const double *phi_dof, const double *phi_nodes);
-    double _H[nQ] = {}, _ImH[nQ] = {}, _D[nQ] = {}, _va[nQ * nP_ifem] = {}, _vb[nQ * nP_ifem] = {};
-    double _H_ebq[nEBQ] = {}, _ImH_ebq[nEBQ] = {}, _D_ebq[nEBQ] = {}, _va_ebq[nEBQ * nP_ifem] = {}, _vb_ebq[nEBQ * nP_ifem] = {}; // cek hack: this is confusing because we use no suffice for the q arrays and _ebq for the ebq arrays, then use _q above for generic quad point
-    double _va_x[nQ * nP_ifem] = {}, _va_y[nQ * nP_ifem] = {}, _va_z[nQ * nP_ifem] = {}, _vb_x[nQ * nP_ifem] = {}, _vb_y[nQ * nP_ifem] = {}, _vb_z[nQ * nP_ifem] = {};
-    double _va_x_ebq[nEBQ * nP_ifem] = {}, _va_y_ebq[nEBQ * nP_ifem] = {}, _va_z_ebq[nEBQ * nP_ifem] = {}, _vb_x_ebq[nEBQ * nP_ifem] = {}, _vb_y_ebq[nEBQ * nP_ifem] = {}, _vb_z_ebq[nEBQ * nP_ifem] = {};
-    inline void _calculate_basis_coefficients(const double ma, const double mb, const double jf);
-    inline void _calculate_basis(const double *xi, double *va, double *vb);
-    inline void _calculate_basis_gradients(const double *xi, double *va_x, double *va_y, double *va_z, double *vb_x, double *vb_y, double *vb_z);
+    double _H[nQ] = {}, _ImH[nQ] = {}, _D[nQ] = {};
+    double _H_ebq[nEBQ] = {}, _ImH_ebq[nEBQ] = {}, _D_ebq[nEBQ] = {};
   };
 
   template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
@@ -751,516 +695,6 @@ namespace equivalent_polynomials
   }
 
   template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_basis_coefficients(const double ma, const double mb, const double jf)
-  {
-    if constexpr (nSpace == 3)
-    {
-      (void)jf; // the unit flux-jump lift is built here and scaled by the caller (see below)
-      _calculate_basis_coefficients_tet(ma, mb);
-      return;
-    }
-    assert(nSpace == 2);
-    assert(nN == 3);
-    double nx = 0.0, ny = 0.0;
-    if (inside_out)
-    {
-      nx = -level_set_normal[0];
-      ny = -level_set_normal[1];
-    }
-    else
-    {
-      nx = level_set_normal[0];
-      ny = level_set_normal[1];
-    }
-    double Jit00 = inv_Jac[0 * nSpace + 0],
-           Jit01 = inv_Jac[1 * nSpace + 0],
-           Jit10 = inv_Jac[0 * nSpace + 1],
-           Jit11 = inv_Jac[1 * nSpace + 1];
-    double x0 = X_0[0],
-           y0 = X_0[1];
-    const double *vall = nullptr;
-
-
-    switch (nP_ifem)
-    {
-    case 3:
-    {
-      static const double vall_p1[9] = {
-          1., 0., 0.,
-          0., 1., 0.,
-          0., 0., 1.};
-      vall = vall_p1;
-      for (int j = 0; j < 3; j++)
-      {
-        int i = permutation[j];
-        double v[3] = {0.0, 0.0, 0.0};
-        v[0] = vall[j * 3 + 0];
-        v[1] = vall[j * 3 + 1];
-        v[2] = vall[j * 3 + 2];
-
-        if (corner || edge)
-        {
-          _a1[i] = v[0];
-          _a2[i] = -v[0] + v[1];
-          _a3[i] = -v[0] + v[2];
-          _b1[i] = v[0];
-          _b2[i] = -v[0] + v[1];
-          _b3[i] = -v[0] + v[2];
-        }
-        else
-        {
-          // nathawani: Implement inside out case directly here.
-          const std::array<double, 3> nodal_values = {v[0], v[1], v[2]};
-          if (inside_out)
-          {
-            const std::array<double, 6> coeffs = proteus::solve_ifem_basis_coefficients(
-              1, x0, y0, nx, ny, mb, ma, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
-              
-            _b1[i] = coeffs[0];
-            _b2[i] = coeffs[1];
-            _b3[i] = coeffs[2];
-            _a1[i] = coeffs[3];
-            _a2[i] = coeffs[4];
-            _a3[i] = coeffs[5];
-          }
-          else
-          {
-
-            const std::array<double, 6> coeffs = proteus::solve_ifem_basis_coefficients(
-              1, x0, y0, nx, ny, ma, mb, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
-            
-            _a1[i] = coeffs[0];
-            _a2[i] = coeffs[1];
-            _a3[i] = coeffs[2];
-            _b1[i] = coeffs[3];
-            _b2[i] = coeffs[4];
-            _b3[i] = coeffs[5];
-          }
-        }
-      }
-      break;
-    }
-    case 6:
-    {
-      static const double vall_p2[36] = {
-          1., 0., 0., 0., 0., 0.,
-          0., 1., 0., 0., 0., 0.,
-          0., 0., 1., 0., 0., 0.,
-          0., 0., 0., 1., 0., 0.,
-          0., 0., 0., 0., 1., 0.,
-          0., 0., 0., 0., 0., 1.};
-      vall = vall_p2;
-      
-      for (int j = 0; j < 6; j++)
-      {
-        int i = permutation[j];
-        double v[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};//, grad_va[2] = {0.0, 0.0}, grad_vb[2] = {0.0, 0.0}, grad_va_ref[2] = {0.0, 0.0}, grad_vb_ref[2] = {0.0, 0.0};
-
-        v[0] = vall[j * 6 + 0];
-        v[1] = vall[j * 6 + 1];
-        v[2] = vall[j * 6 + 2];
-        v[3] = vall[j * 6 + 3];
-        v[4] = vall[j * 6 + 4];
-        v[5] = vall[j * 6 + 5];
-
-         if (corner || edge)
-        {
-          _a1[i] = v[0];
-            _a2[i] = - 3 * v[0] - v[1] + 4 * v[3];
-            _a3[i] = - 3 * v[0] - v[2] + 4 * v[5];
-            _a4[i] = 4 * v[0] - 4 * v[3] + 4 * v[4] - 4 * v[5];
-            _a5[i] = 2 * v[0] + 2 * v[1] - 4 * v[3];
-            _a6[i] = 2 * v[0] + 2 * v[2] - 4 * v[5];
-          _b1[i] = v[0];
-            _b2[i] = - 3 * v[0] - v[1] + 4 * v[3];
-            _b3[i] = - 3 * v[0] - v[2] + 4 * v[5];
-            _b4[i] = 4 * v[0] - 4 * v[3] + 4 * v[4] - 4 * v[5];
-            _b5[i] = 2 * v[0] + 2 * v[1] - 4 * v[3];
-            _b6[i] = 2 * v[0] + 2 * v[2] - 4 * v[5]; 
-        }
-        else
-        {
-          if (inside_out)
-          {
-             const std::array<double, 6> nodal_values = {v[0], v[1], v[2], v[3], v[4], v[5]};
-             const std::array<double, 12> coeffs = proteus::solve_ifem_basis_coefficients(
-              2, x0, y0, nx, ny, mb, ma, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
-            
-            _b1[i] = coeffs[0];
-            _b2[i] = coeffs[1];
-            _b3[i] = coeffs[2];
-            _b4[i] = coeffs[3];
-            _b5[i] = coeffs[4];
-            _b6[i] = coeffs[5];
-            _a1[i] = coeffs[6];
-            _a2[i] = coeffs[7];
-            _a3[i] = coeffs[8];
-            _a4[i] = coeffs[9];
-            _a5[i] = coeffs[10];
-            _a6[i] = coeffs[11];
-          }
-          else
-          {
-            const std::array<double, 6> nodal_values = {v[0], v[1], v[2], v[3], v[4], v[5]};
-            const std::array<double, 12> coeffs = proteus::solve_ifem_basis_coefficients(
-              2, x0, y0, nx, ny, ma, mb, 0.0, Jit00, Jit01, Jit10, Jit11, nodal_values);
-
-              _a1[i] = coeffs[0];
-              _a2[i] = coeffs[1];
-              _a3[i] = coeffs[2];
-              _a4[i] = coeffs[3];
-              _a5[i] = coeffs[4];
-              _a6[i] = coeffs[5];
-              _b1[i] = coeffs[6];
-              _b2[i] = coeffs[7];
-              _b3[i] = coeffs[8];
-              _b4[i] = coeffs[9];
-              _b5[i] = coeffs[10];
-              _b6[i] = coeffs[11];
-          }
-        }
-      }
-      break;
-    }
-    default:
-      throw std::runtime_error("Simplex::_calculate_coefficients not implemented for order > 2");
-    }
-    // Unit flux-jump lift: zero nodal values, flux jump 1. The solve is linear in (nodal values,
-    // jf), so a basis built with jf != 0 would carry one copy of this function per basis function;
-    // it is kept separate and added once by the caller, scaled by the prescribed jump.
-    (void)jf;
-    for (int i = 0; i < 6; i++)
-    {
-      _lift_a[i] = 0.0;
-      _lift_b[i] = 0.0;
-    }
-    if (!(corner || edge))
-    {
-      // The solver imposes  m_second*dpsi_second/dn_s - m_first*dpsi_first/dn_s = jf  with
-      // n_s = +-level_set_normal, and level_set_normal is the cut tangent rotated by 90 degrees: its
-      // sign follows the order of the cut points, not the direction of phi. (The homogeneous basis
-      // never notices.) In both inside_out branches the physical jump from a (phi<0) to b (phi>0) is
-      // jf*sign(level_set_normal . grad phi), so that sign is passed as jf for a unit jump.
-      const double gphi_ref[2] = {phi[1] - phi[0], phi[2] - phi[0]};
-      double n_dot_gphi = 0.0;
-      for (int I = 0; I < 2; I++)
-      {
-        double g = 0.0;
-        for (int J = 0; J < 2; J++)
-          g += inv_Jac[J * nSpace + I] * gphi_ref[J];
-        n_dot_gphi += g * level_set_normal[I];
-      }
-      const double jf_unit = (n_dot_gphi >= 0.0) ? 1.0 : -1.0;
-      double *first = inside_out ? _lift_b : _lift_a, *second = inside_out ? _lift_a : _lift_b;
-      const double m_first = inside_out ? mb : ma, m_second = inside_out ? ma : mb;
-      if (nP_ifem == 3)
-      {
-        const std::array<double, 3> zero = {0., 0., 0.};
-        const std::array<double, 6> c = proteus::solve_ifem_basis_coefficients(
-            1, x0, y0, nx, ny, m_first, m_second, jf_unit, Jit00, Jit01, Jit10, Jit11, zero);
-        for (int i = 0; i < 3; i++)
-        {
-          first[i] = c[i];
-          second[i] = c[3 + i];
-        }
-      }
-      else if (nP_ifem == 6)
-      {
-        const std::array<double, 6> zero = {0., 0., 0., 0., 0., 0.};
-        const std::array<double, 12> c = proteus::solve_ifem_basis_coefficients(
-            2, x0, y0, nx, ny, m_first, m_second, jf_unit, Jit00, Jit01, Jit10, Jit11, zero);
-        for (int i = 0; i < 6; i++)
-        {
-          first[i] = c[i];
-          second[i] = c[6 + i];
-        }
-      }
-    }
-  }
-
-  // The two-sided P1 IFEM basis on a tetrahedron, in closed form (C44 phase 2; math plan section 2.1).
-  //
-  // With phi the P1 level set (phi < 0 is branch a, coefficient ma; phi > 0 is branch b, coefficient mb),
-  // psi^+ = sum_{phi_j > 0} phi_j lambda_j and psi^- = phi - psi^+, the basis function of node i is
-  //     v_i^a = lambda_i - c_i psi^+,      v_i^b = lambda_i + c_i psi^-,
-  //     c_i   = (ma - mb) grad(lambda_i).grad(phi) / D,
-  //     D     = mb grad(psi^-).grad(phi) + ma grad(psi^+).grad(phi).
-  // Both pieces take the value delta_ij at node j (psi^+ vanishes at a negative node, psi^- at a positive
-  // one), they differ by c_i phi (so [v] = 0 on the whole planar cut, for the 1-3, 3-1 and 2-2 splits),
-  // and mb dv^b/dn - ma dv^a/dn = 0 by construction; sum_i c_i = 0 gives a partition of unity. The unit
-  // flux-jump lift (zero nodal values, mb d(l^b)/dn - ma d(l^a)/dn = 1, n = grad(phi)/|grad(phi)|) has
-  // the same denominator: l^a = -cJ psi^+, l^b = cJ psi^-, cJ = |grad(phi)| / D.
-  //
-  // The basis exists iff D != 0. D > 0 whenever every dihedral angle between a positive and a negative
-  // vertex's faces is at most 90 degrees; on an obtuse tetrahedron D vanishes at particular contrasts.
-  // That case throws (ifem_singular_error); assert() is compiled out and would give garbage. A zero
-  // vertex value counts for neither side; the result does not depend on which side it is given.
-  struct ifem_singular_error : public std::runtime_error
-  {
-    ifem_singular_error(const std::string &what) : std::runtime_error(what) {}
-  };
-  // |D| below this times max(ma, mb) |grad phi|^2 is "singular". On a tetrahedron without obtuse dihedral
-  // angles D/|grad phi|^2 >= min(ma, mb), so the test only trips for a contrast above 1e10 there.
-  static constexpr double ifem_singular_tol = 1.0e-10;
-
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_basis_coefficients_tet(const double ma, const double mb)
-  {
-    static_assert(nSpace == 3 || nN == 4, "the closed-form tetrahedron basis");
-    if (nP_ifem != 4)
-      throw std::runtime_error("Simplex: the two-sided IFEM basis on tetrahedra is implemented for P1 only");
-    for (int i = 0; i < 6; i++)
-    {
-      _lift_a[i] = 0.0;
-      _lift_b[i] = 0.0;
-    }
-    if (corner || edge)
-    {
-      // not cut: the interface touches the element only at a vertex, edge or face; both branches are the
-      // ordinary linear basis
-      for (int j = 0; j < 4; j++)
-      {
-        const int i = permutation[j];
-        const double v[4] = {j == 0 ? 1.0 : 0.0, j == 1 ? 1.0 : 0.0, j == 2 ? 1.0 : 0.0, j == 3 ? 1.0 : 0.0};
-        _a1[i] = v[0];
-        _a2[i] = v[1] - v[0];
-        _a3[i] = v[2] - v[0];
-        _a4[i] = v[3] - v[0];
-        _b1[i] = _a1[i];
-        _b2[i] = _a2[i];
-        _b3[i] = _a3[i];
-        _b4[i] = _a4[i];
-      }
-      return;
-    }
-    // physical gradients of the barycentric coordinates in the permuted ordering: lambda_{k+1} = xi_k
-    double g[4][3];
-    for (int k = 0; k < 3; k++)
-      for (int I = 0; I < 3; I++)
-        g[k + 1][I] = inv_Jac[k * 3 + I];
-    for (int I = 0; I < 3; I++)
-      g[0][I] = -(g[1][I] + g[2][I] + g[3][I]);
-    double gphi[3] = {0., 0., 0.}, gpsi[3] = {0., 0., 0.}, psi[4];
-    for (int j = 0; j < 4; j++)
-    {
-      psi[j] = phi[j] > 0.0 ? phi[j] : 0.0;
-      for (int I = 0; I < 3; I++)
-      {
-        gphi[I] += phi[j] * g[j][I];
-        gpsi[I] += psi[j] * g[j][I];
-      }
-    }
-    const double gg = gphi[0] * gphi[0] + gphi[1] * gphi[1] + gphi[2] * gphi[2];
-    const double s_plus = gpsi[0] * gphi[0] + gpsi[1] * gphi[1] + gpsi[2] * gphi[2]; // grad(psi^+).grad(phi)
-    const double D = mb * (gg - s_plus) + ma * s_plus;
-    if (!(gg > 0.0) || !(std::fabs(D) >= ifem_singular_tol * std::max(std::fabs(ma), std::fabs(mb)) * gg))
-    {
-      std::ostringstream msg;
-      msg << std::setprecision(6) << "the two-sided P1 IFEM basis does not exist on this tetrahedron: D = mb grad(psi-).grad(phi) + ma "
-          << "grad(psi+).grad(phi) = " << D << " (|grad phi|^2 = " << gg << ", s = grad(psi+).grad(phi)/|grad phi|^2 = "
-          << (gg > 0.0 ? s_plus / gg : 0.0) << ", ma = " << ma << ", mb = " << mb
-          << "). A tetrahedron with a dihedral angle above 90 degrees is singular at the contrast ma/mb = 1 - 1/s; use a mesh without obtuse "
-          << "dihedral angles (e.g. structured tetrahedra) or a different contrast.";
-      throw ifem_singular_error(msg.str());
-    }
-    const double cJ = std::sqrt(gg) / D;
-    for (int j = 0; j < 4; j++)
-    {
-      const int i = permutation[j];
-      const double c_j = (ma - mb) * (g[j][0] * gphi[0] + g[j][1] * gphi[1] + g[j][2] * gphi[2]) / D;
-      // nodal values of the two pieces at the permuted nodes k
-      double wa[4], wb[4];
-      for (int k = 0; k < 4; k++)
-      {
-        wa[k] = (k == j ? 1.0 : 0.0) - c_j * psi[k];
-        wb[k] = (k == j ? 1.0 : 0.0) + c_j * (phi[k] - psi[k]);
-      }
-      _a1[i] = wa[0];
-      _a2[i] = wa[1] - wa[0];
-      _a3[i] = wa[2] - wa[0];
-      _a4[i] = wa[3] - wa[0];
-      _b1[i] = wb[0];
-      _b2[i] = wb[1] - wb[0];
-      _b3[i] = wb[2] - wb[0];
-      _b4[i] = wb[3] - wb[0];
-    }
-    // unit flux-jump lift, coefficients in 1, xi, eta, zeta
-    double la[4], lb[4];
-    for (int k = 0; k < 4; k++)
-    {
-      la[k] = -cJ * psi[k];
-      lb[k] = cJ * (phi[k] - psi[k]);
-    }
-    _lift_a[0] = la[0];
-    _lift_a[1] = la[1] - la[0];
-    _lift_a[2] = la[2] - la[0];
-    _lift_a[3] = la[3] - la[0];
-    _lift_b[0] = lb[0];
-    _lift_b[1] = lb[1] - lb[0];
-    _lift_b[2] = lb[2] - lb[0];
-    _lift_b[3] = lb[3] - lb[0];
-  }
-
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_lift(const double *xi, double *psi)
-  {
-    const double *c[2] = {_lift_a, _lift_b};
-    for (int s = 0; s < 2; s++)
-    {
-      const double *a = c[s];
-      double val, g_ref[3] = {0.0, 0.0, 0.0};
-      if constexpr (nSpace == 3)
-      {
-        val = a[0] + a[1] * xi[0] + a[2] * xi[1] + a[3] * xi[2];
-        g_ref[0] = a[1];
-        g_ref[1] = a[2];
-        g_ref[2] = a[3];
-      }
-      else
-      {
-        val = a[0] + a[1] * xi[0] + a[2] * xi[1] + a[3] * xi[0] * xi[1] + a[4] * xi[0] * xi[0] + a[5] * xi[1] * xi[1];
-        g_ref[0] = a[1] + a[3] * xi[1] + 2.0 * a[4] * xi[0];
-        g_ref[1] = a[2] + a[3] * xi[0] + 2.0 * a[5] * xi[1];
-      }
-      double g[3] = {0.0, 0.0, 0.0};
-      for (int I = 0; I < nSpace && I < 3; I++)
-        for (int J = 0; J < nSpace && J < 3; J++)
-          g[I] += inv_Jac[J * nSpace + I] * g_ref[J];
-      psi[4 * s + 0] = val;
-      psi[4 * s + 1] = g[0];
-      psi[4 * s + 2] = g[1];
-      psi[4 * s + 3] = g[2];
-    }
-  }
-
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_basis(const double *xi, double *va, double *vb)
-  {
-    // Switch on nP_ifem to compute basis functions at given xi
-    if constexpr (nSpace == 3)
-    {
-      // P1 on a tetrahedron (the only 3D order implemented)
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        va[i] = _a1[i] + _a2[i] * xi[0] + _a3[i] * xi[1] + _a4[i] * xi[2];
-        vb[i] = _b1[i] + _b2[i] * xi[0] + _b3[i] * xi[1] + _b4[i] * xi[2];
-      }
-      return;
-    }
-    switch (nP_ifem)
-    {
-    case 3:
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        va[i] = _a1[i] + _a2[i] * xi[0] + _a3[i] * xi[1];
-        vb[i] = _b1[i] + _b2[i] * xi[0] + _b3[i] * xi[1];
-
-                 
-      }
-      break;
-    case 6:
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        va[i] = _a1[i] + _a2[i] * xi[0] + _a3[i] * xi[1] + _a4[i] * xi[0] * xi[1] + _a5[i] * xi[0] * xi[0] + _a6[i] * xi[1] * xi[1];
-        vb[i] = _b1[i] + _b2[i] * xi[0] + _b3[i] * xi[1] + _b4[i] * xi[0] * xi[1] + _b5[i] * xi[0] * xi[0] + _b6[i] * xi[1] * xi[1];
-
-                 
-
-      }
-      break;
-    default:
-      throw std::runtime_error("Simplex::_calculate_basis not implemented for order > 2");
-    }
-  }
-
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
-  inline void Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::_calculate_basis_gradients(const double *xi, double *va_x, double *va_y, double *va_z, double *vb_x, double *vb_y, double *vb_z)
-  {
-    // Switch on nP_ifem to compute basis functions gradients at given xi
-    if constexpr (nSpace == 3)
-    {
-      // P1 on a tetrahedron: constant reference gradients (a2, a3, a4)
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        const double ga_ref[3] = {_a2[i], _a3[i], _a4[i]}, gb_ref[3] = {_b2[i], _b3[i], _b4[i]};
-        double ga[3] = {0.0, 0.0, 0.0}, gb[3] = {0.0, 0.0, 0.0};
-        for (int I = 0; I < 3; I++)
-          for (int J = 0; J < 3; J++)
-          {
-            ga[I] += inv_Jac[J * 3 + I] * ga_ref[J];
-            gb[I] += inv_Jac[J * 3 + I] * gb_ref[J];
-          }
-        va_x[i] = ga[0];
-        va_y[i] = ga[1];
-        va_z[i] = ga[2];
-        vb_x[i] = gb[0];
-        vb_y[i] = gb[1];
-        vb_z[i] = gb[2];
-      }
-      return;
-    }
-    switch (nP_ifem)
-    {
-      case 3:
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        double grad_va[2] = {0.0, 0.0}, grad_vb[2] = {0.0, 0.0}, grad_va_ref[2] = {0.0, 0.0}, grad_vb_ref[2] = {0.0, 0.0};
-
-        grad_va_ref[0] = _a2[i];
-        grad_va_ref[1] = _a3[i];
-        grad_vb_ref[0] = _b2[i];
-        grad_vb_ref[1] = _b3[i];
-        for (int I = 0; I < nSpace; I++)
-        {
-          for (int J = 0; J < nSpace; J++)
-          {
-            grad_va[I] += inv_Jac[J * nSpace + I] * grad_va_ref[J];
-            grad_vb[I] += inv_Jac[J * nSpace + I] * grad_vb_ref[J];
-          }
-        }
-        va_x[i] = grad_va[0];
-        va_y[i] = grad_va[1];
-        va_z[i] = 0.0;
-        vb_x[i] = grad_vb[0];
-        vb_y[i] = grad_vb[1];
-        vb_z[i] = 0.0;
-
-
-      }
-      break;
-    case 6:
-      for (int i = 0; i < nP_ifem; i++)
-      {
-        double grad_va[2] = {0.0, 0.0}, grad_vb[2] = {0.0, 0.0}, grad_va_ref[2] = {0.0, 0.0}, grad_vb_ref[2] = {0.0, 0.0};
-
-        grad_va_ref[0] = _a2[i] + _a4[i] * xi[1] + 2.0 * _a5[i] * xi[0];
-        grad_va_ref[1] = _a3[i] + _a4[i] * xi[0] + 2.0 * _a6[i] * xi[1];
-        grad_vb_ref[0] = _b2[i] + _b4[i] * xi[1] + 2.0 * _b5[i] * xi[0];
-        grad_vb_ref[1] = _b3[i] + _b4[i] * xi[0] + 2.0 * _b6[i] * xi[1];
-
-
-        for (int I = 0; I < nSpace; I++)
-        {
-          for (int J = 0; J < nSpace; J++)
-          {
-            grad_va[I] += inv_Jac[J * nSpace + I] * grad_va_ref[J];
-            grad_vb[I] += inv_Jac[J * nSpace + I] * grad_vb_ref[J];
-          }
-        }
-        va_x[i] = grad_va[0];
-        va_y[i] = grad_va[1];
-        va_z[i] = 0.0;
-        vb_x[i] = grad_vb[0];
-        vb_y[i] = grad_vb[1];
-        vb_z[i] = 0.0;
-      }
-      break;
-    default:
-      throw std::runtime_error("Simplex::_calculate_basis_gradients not implemented for order > 2");
-    }
-  }
-
-  template <int nSpace, int nP_ifem, int nP, int nQ, int nEBQ, bool useIfemBasis>
   inline int Simplex<nSpace, nP_ifem, nP, nQ, nEBQ, useIfemBasis>::calculate(const double *phi_dof, const double *phi_nodes, const double *xi_r, double ma, double mb, double jf, bool isBoundary, bool scale)
   {
     p2_cell_flipped = false;
@@ -1365,31 +799,12 @@ namespace equivalent_polynomials
     }
     _calculate_C(); // coefficients of equiv poly
 
-    double ma_scale, mb_scale;
-    if (scale)
-    {
-      // cek hack - 2D, pressure basis for discontinuous density
-      double jump_scale = level_set_normal[1],
-             m_average = 0.5 * (ma + mb),
-             m_jump = 0.5 * (mb - ma);
-      mb_scale = m_average + jump_scale * m_jump; // mb when jump_scale=1
-      ma_scale = m_average - jump_scale * m_jump; // ma when jump_scale=1
-      //    double mb_scale=mb, ma_scale=ma;
-      // cek hack end
-    }
-    else
-    {
-      ma_scale = ma;
-      mb_scale = mb;
-    }
-    // The two-sided IFEM basis is only implemented for 2D simplices with a P1
-    // (nP_ifem 3) or P2 (nP_ifem 6) trial space; _calculate_basis_coefficients
-    // asserts nSpace==2 and throws for any other nP_ifem. Every non-ADR caller
-    // aliases GeneralizedFunctions_mix<nSpace, nP, nP, ...>, so VOF/MCorr reach
-    // here with nP_ifem 2 and RANS3PF with 1: they need only the H/ImH/D moment
-    // fit and must not enter the basis solve. Guard on nP_ifem, not just nSpace.
-    if (useIfemBasis)
-      _calculate_basis_coefficients(ma_scale, mb_scale, jf);
+    // ma, mb, jf and scale belong to the two-sided IFE basis (unfitted::IFEFunctions in Unfitted.h); the moment fit
+    // does not use them
+    (void)ma;
+    (void)mb;
+    (void)jf;
+    (void)scale;
     // compute the default affine map based on phi_nodes[0]
     double Jac_0[nSpace * nSpace];
     for (unsigned int i = 0; i < nN - 1; i++)
@@ -1426,24 +841,10 @@ namespace equivalent_polynomials
           else if (nSpace == 2)
           {
             _calculate_polynomial_2D<nP>(xi, C_H, C_ImH, C_D, _H[q], _ImH[q], _D[q]);
-            // Only the IFEM instantiations have a two-sided basis; see the guard on
-            // _calculate_basis_coefficients above.
-            if (useIfemBasis)
-            {
-              _calculate_basis(xi, &_va[q * nP_ifem], &_vb[q * nP_ifem]);
-              _calculate_basis_gradients(xi, &_va_x[q * nP_ifem], &_va_y[q * nP_ifem], &_va_z[q * nP_ifem], &_vb_x[q * nP_ifem], &_vb_y[q * nP_ifem], &_vb_z[q * nP_ifem]);
-            }
-            _calculate_lift(xi, &_psi[q * 8]);
           }
           else if (nSpace == 3)
           {
             _calculate_polynomial_3D<nP>(xi, C_H, C_ImH, C_D, _H[q], _ImH[q], _D[q]);
-            if (useIfemBasis)
-            {
-              _calculate_basis(xi, &_va[q * nP_ifem], &_vb[q * nP_ifem]);
-              _calculate_basis_gradients(xi, &_va_x[q * nP_ifem], &_va_y[q * nP_ifem], &_va_z[q * nP_ifem], &_vb_x[q * nP_ifem], &_vb_y[q * nP_ifem], &_vb_z[q * nP_ifem]);
-              _calculate_lift(xi, &_psi[q * 8]);
-            }
           }
       }
       set_quad(0);
@@ -1478,24 +879,10 @@ namespace equivalent_polynomials
         else if (nSpace == 2)
         {
           _calculate_polynomial_2D<nP>(xi, C_H, C_ImH, C_D, _H_ebq[ebq], _ImH_ebq[ebq], _D_ebq[ebq]);
-          // Only the IFEM instantiations have a two-sided basis; see the guard on
-          // _calculate_basis_coefficients above.
-          if (useIfemBasis)
-          {
-            _calculate_basis(xi, &_va_ebq[ebq * nP_ifem], &_vb_ebq[ebq * nP_ifem]);
-            _calculate_basis_gradients(xi, &_va_x_ebq[ebq * nP_ifem], &_va_y_ebq[ebq * nP_ifem], &_va_z_ebq[ebq * nP_ifem], &_vb_x_ebq[ebq * nP_ifem], &_vb_y_ebq[ebq * nP_ifem], &_vb_z_ebq[ebq * nP_ifem]);
-          }
-          _calculate_lift(xi, &_psi_ebq[ebq * 8]);
         }
         else if (nSpace == 3)
         {
           _calculate_polynomial_3D<nP>(xi, C_H, C_ImH, C_D, _H_ebq[ebq], _ImH_ebq[ebq], _D_ebq[ebq]);
-          if (useIfemBasis)
-          {
-            _calculate_basis(xi, &_va_ebq[ebq * nP_ifem], &_vb_ebq[ebq * nP_ifem]);
-            _calculate_basis_gradients(xi, &_va_x_ebq[ebq * nP_ifem], &_va_y_ebq[ebq * nP_ifem], &_va_z_ebq[ebq * nP_ifem], &_vb_x_ebq[ebq * nP_ifem], &_vb_y_ebq[ebq * nP_ifem], &_vb_z_ebq[ebq * nP_ifem]);
-            _calculate_lift(xi, &_psi_ebq[ebq * 8]);
-          }
         }
       }
       set_boundary_quad(0);
@@ -1588,70 +975,25 @@ namespace equivalent_polynomials
       else
         return regularized.D(eps, phi);
     }
-    inline double VA(int i)
-    {
-      if (useExact)
-        return exact.VA(i);
-      else
-        return regularized.VA(i);
-    }
-    inline double VA_x(int i)
-    {
-      if (useExact)
-        return exact.VA_x(i);
-      else
-        return regularized.VA_x(i);
-    }
-    inline double VA_y(int i)
-    {
-      if (useExact)
-        return exact.VA_y(i);
-      else
-        return regularized.VA_y(i);
-    }
-    inline double VA_z(int i)
-    {
-      if (useExact)
-        return exact.VA_z(i);
-      else
-        return regularized.VA_z(i);
-    }
-    inline double VB(int i)
-    {
-      if (useExact)
-        return exact.VB(i);
-      else
-        return regularized.VB(i);
-    }
-    inline double VB_x(int i)
-    {
-      if (useExact)
-        return exact.VB_x(i);
-      else
-        return regularized.VB_x(i);
-    }
-    inline double VB_y(int i)
-    {
-      if (useExact)
-        return exact.VB_y(i);
-      else
-        return regularized.VB_y(i);
-    }
-    inline double VB_z(int i)
-    {
-      if (useExact)
-        return exact.VB_z(i);
-      else
-        return regularized.VB_z(i);
-    }
-    inline double PSIA() { return useExact ? exact.PSIA() : regularized.PSIA(); }
-    inline double PSIA_x() { return useExact ? exact.PSIA_x() : regularized.PSIA_x(); }
-    inline double PSIA_y() { return useExact ? exact.PSIA_y() : regularized.PSIA_y(); }
-    inline double PSIA_z() { return useExact ? exact.PSIA_z() : regularized.PSIA_z(); }
-    inline double PSIB() { return useExact ? exact.PSIB() : regularized.PSIB(); }
-    inline double PSIB_x() { return useExact ? exact.PSIB_x() : regularized.PSIB_x(); }
-    inline double PSIB_y() { return useExact ? exact.PSIB_y() : regularized.PSIB_y(); }
-    inline double PSIB_z() { return useExact ? exact.PSIB_z() : regularized.PSIB_z(); }
+    // The two-sided IFE basis is not part of the moment fit (see unfitted::IFEFunctions in Unfitted.h). The models
+    // that only use H, 1-H and D (the RANS2P debug prints that read VA/VB under #ifndef IFEM) still compile against
+    // these accessors and read what they always read for a fit without a basis: zero.
+    inline double VA(int i) { return 0.0; }
+    inline double VA_x(int i) { return 0.0; }
+    inline double VA_y(int i) { return 0.0; }
+    inline double VA_z(int i) { return 0.0; }
+    inline double VB(int i) { return 0.0; }
+    inline double VB_x(int i) { return 0.0; }
+    inline double VB_y(int i) { return 0.0; }
+    inline double VB_z(int i) { return 0.0; }
+    inline double PSIA() { return 0.0; }
+    inline double PSIA_x() { return 0.0; }
+    inline double PSIA_y() { return 0.0; }
+    inline double PSIA_z() { return 0.0; }
+    inline double PSIB() { return 0.0; }
+    inline double PSIB_x() { return 0.0; }
+    inline double PSIB_y() { return 0.0; }
+    inline double PSIB_z() { return 0.0; }
   };
 } // equivalent_polynomials
 
