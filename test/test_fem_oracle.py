@@ -47,7 +47,7 @@ def degree(space):
 def test_pinned_file_covers_the_requested_spaces():
     have = set(SPACES)
     for cell in SIMPLEX:
-        for p in range(1, 5):
+        for p in range(1, 6):
             for family in ("lagrange_equi", "lagrange_gll", "bernstein"):
                 assert (family, cell, "p%d" % p) in have
     for cell in ("quadrilateral", "hexahedron"):
@@ -200,7 +200,7 @@ def _same_set(a, b, tol=1.0e-12):
 
 
 @pytest.mark.parametrize("cell", ["triangle", "tetrahedron"])
-@pytest.mark.parametrize("p", [1, 2, 3, 4])
+@pytest.mark.parametrize("p", [1, 2, 3, 4, 5])
 def test_gll_nodes_are_symmetric_and_equal_equispaced_through_p2(cell, p):
     lat = T(("lagrange_gll", cell, "p%d" % p), "lattice")
     eq = T(("lagrange_equi", cell, "p%d" % p), "lattice")
@@ -215,7 +215,7 @@ def test_gll_nodes_are_symmetric_and_equal_equispaced_through_p2(cell, p):
     assert (bary > -1.0e-12).all()
 
 
-@pytest.mark.parametrize("p", [3, 4])
+@pytest.mark.parametrize("p", [3, 4, 5])
 def test_gll_triangle_edge_nodes_are_the_1d_gll_points(p):
     lat = T(("lagrange_gll", "triangle", "p%d" % p), "lattice")
     line = T(("lagrange_gll", "interval", "p%d" % p), "lattice")[:, 0]
