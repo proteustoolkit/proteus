@@ -1853,6 +1853,9 @@ class PolynomialOnSimplex(LocalFunctionSpace):
         self.family = family
         self.nodes = nodes
         self.nonzeroHessians = order >= 2
+        self._defineBasisFromSpace()
+    def _defineBasisFromSpace(self):
+        #the per-function callables on top of ``self.space.tabulate`` (shared with PolynomialOnCube)
         self._lastPoint = None
         self._lastTabulation = None
         self.basis = [(lambda xi,i=i: self._tabulateAtPoint(xi).values[0,i]) for i in self.range_dim]
@@ -1876,6 +1879,39 @@ class PolynomialOnSimplex(LocalFunctionSpace):
         nd = self.referenceElement.dim
         nbar = max(nd-1,1)
         return self.space.tabulate_trace(face,numpy.asarray(points_bar,dtype='d').reshape(len(points_bar),-1)[:,:nbar],derivatives)
+
+class PolynomialOnCube(PolynomialOnSimplex):
+    """
+    Tensor-product polynomials Q_p of degree ``order`` on the reference square or cube [-1,1]^nd
+    (nd = 2, 3), any order, with the nodal basis.
+
+    Parameters
+    ----------
+    nd : int
+    order : int
+        Degree p >= 1 in each direction; (p+1)^nd functions.
+    nodes : str
+        ``'gll'`` (default; tensor product of the Gauss-Lobatto-Legendre points) or ``'equispaced'`` (for
+        comparison; ill conditioned for large p). They coincide for p <= 2.
+
+    The local dofs are grouped by entity (vertices, edges, faces, interior). For p = 1 the numbering and
+    the values are those of :class:`LinearOnCubeWithNodalBasis`, and for p = 2 in 3D those of
+    :class:`LagrangeOnCubeWithNodalBasis`; in 2D that class orders its nine functions differently (the
+    space is the same). See :mod:`proteus.CubeSpaces` for the layout and the orientation tables.
+
+    It shares ``tabulate``, ``tabulate_trace`` and the per-function callables with
+    :class:`PolynomialOnSimplex` (only the constructor differs), which is why it derives from it.
+    """
+    def __init__(self,nd=3,order=1,nodes='gll'):
+        from . import CubeSpaces
+        self.referenceElement = ReferenceCube(nd)
+        self.space = CubeSpaces.CubeSpace(nd,order,nodes)
+        LocalFunctionSpace.__init__(self,self.space.dim,self.referenceElement)
+        self.order = order
+        self.family = 'lagrange'
+        self.nodes = nodes
+        self.nonzeroHessians = True #the mixed derivatives of a multilinear function are not zero
+        self._defineBasisFromSpace()
 
 class InterpolationConditions(object):
     """
@@ -2056,7 +2092,8 @@ class PolynomialInterpolationConditions(InterpolationConditions):
         #dof (and sample point) k lies on the closure of local face ebN_local
         return bool(self.space.on_face(k,ebN_local))
     def quadrature2Node_element(self,k):
-        if k <= self.referenceElement.dim:
+        #the first dofs are the vertices: nd+1 on a simplex, 2^nd on a cube
+        if k < self.referenceElement.nNodes:
             return k
         return None
     def projectFiniteElementFunctionFromInterpolationConditions_opt(self,finiteElementFunction,interpolationValues):
@@ -2867,7 +2904,7 @@ class SimplexEntityDOFMap(DOFMap):
         pos = numpy.minimum(numpy.searchsorted(kt[order],kq),len(kt)-1)
         index = order[pos]
         if not (kt[index] == kq).all():
-            raise ValueError("SimplexEntityDOFMap: an edge or face of an element is missing from the subdomain mesh")
+            raise ValueError("entity dof map: an edge or face of an element is missing from the subdomain mesh")
         return index
 
     @staticmethod
@@ -2888,6 +2925,20 @@ class SimplexEntityDOFMap(DOFMap):
                 tables[q,k] = position[tuple(b[perm[i]] for i in range(m))]
         return codes,tables
 
+    #the two things that depend on the cell type (CubeEntityDOFMap overrides them)
+    def _entityIndex(self,dim,g):
+        """The entity index (nE, n) of the n > 1 dofs, in local order, of one entity of dimension ``dim``
+        per element, given the global numbers ``g`` (nE, m) of the entity's m vertices."""
+        m = g.shape[1]
+        codes,tables = self._entityIndexTables(m,self.order)
+        order = numpy.argsort(g,axis=1,kind='stable')
+        return tables[codes[(order*(m**numpy.arange(m))).sum(axis=1)]]
+
+    def _elementDofPoints(self,space,nodeArray,elementNodes):
+        """The physical points (nE, dim, 3) of the local dofs of every element."""
+        barycentric = numpy.column_stack([1.0-space.dof_points.sum(axis=1),space.dof_points])
+        return numpy.einsum('iv,evc->eic',barycentric,nodeArray[elementNodes])
+
     def updateAfterParallelPartitioning(self,globalMesh):
         from . import Comm
         I = cmeshTools.INDEX_DTYPE
@@ -2903,12 +2954,14 @@ class SimplexEntityDOFMap(DOFMap):
         types = [(1,mesh.nNodes_global,globalMesh.nodeOffsets_subdomain_owned,globalMesh.nodeNumbering_subdomain2global,None)]
         boundaryType = (globalMesh.elementBoundaryOffsets_subdomain_owned,globalMesh.elementBoundaryNumbering_subdomain2global)
         cellType = (globalMesh.elementOffsets_subdomain_owned,globalMesh.elementNumbering_subdomain2global)
+        #dofs per entity from the local space: p-1 on an edge; (p-1)(p-2)/2 on a triangle, (p-1)^2 on a quadrilateral
+        nEdgeDOF = len(space.entity_dofs[1][0])
         if nd == 2:
-            types.append((p-1,mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
+            types.append((nEdgeDOF,mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
         elif nd == 3:
-            types.append((p-1,mesh.nEdges_global,globalMesh.edgeOffsets_subdomain_owned,globalMesh.edgeNumbering_subdomain2global,
+            types.append((nEdgeDOF,mesh.nEdges_global,globalMesh.edgeOffsets_subdomain_owned,globalMesh.edgeNumbering_subdomain2global,
                           numpy.asarray(mesh.edgeNodesArray)))
-            types.append(((p-1)*(p-2)//2,mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
+            types.append((len(space.entity_dofs[2][0]),mesh.nElementBoundaries_global)+boundaryType+(numpy.asarray(mesh.elementBoundaryNodesArray),))
         types.append((len(space.entity_dofs[nd][0]),nE)+cellType+(None,))
         nTypes = len(types)
         assert nTypes == nd+1
@@ -2967,24 +3020,56 @@ class SimplexEntityDOFMap(DOFMap):
                     for k,i in enumerate(dofs):
                         self.l2g[:,i] = first + k
                 else:
-                    m = len(vertices)
-                    codes,tables = self._entityIndexTables(m,p)
-                    order = numpy.argsort(nodeNumbering[elementNodes[:,vertices]],axis=1,kind='stable')
-                    entityIndex = tables[codes[(order*(m**numpy.arange(m))).sum(axis=1)]]
+                    entityIndex = self._entityIndex(dim,nodeNumbering[elementNodes[:,vertices]])
                     for k,i in enumerate(dofs):
                         self.l2g[:,i] = first + entityIndex[:,k]
         #dof points (nodes, or control points for Bernstein) and the conformity check
-        barycentric = numpy.column_stack([1.0-space.dof_points.sum(axis=1),space.dof_points])
-        points = numpy.einsum('iv,evc->eic',barycentric,numpy.asarray(mesh.nodeArray)[elementNodes])
+        points = self._elementDofPoints(space,numpy.asarray(mesh.nodeArray),elementNodes)
         self.lagrangeNodesArray = numpy.zeros((self.nDOF,3),'d')
         self.lagrangeNodesArray[self.l2g] = points
         self.conformityDefect = float(numpy.abs(self.lagrangeNodesArray[self.l2g]-points).max()) if nE > 0 else 0.0
         scale = float(numpy.abs(points).max()) + 1.0 if nE > 0 else 1.0
         if self.orient and self.conformityDefect > 1.0e-9*scale:
-            raise RuntimeError("SimplexEntityDOFMap: elements disagree on the position of a shared dof by %g" % (self.conformityDefect,))
+            raise RuntimeError("%s: elements disagree on the position of a shared dof by %g" % (type(self).__name__,self.conformityDefect))
         #the same heuristic as the P1 and P2 maps (the value is only passed along, not used for preallocation)
         self.max_dof_neighbors = p*globalMesh.max_nNodeNeighbors_node
         assert self.nDOF == 0 or self.l2g.max() < self.nDOF
+
+class CubeEntityDOFMap(SimplexEntityDOFMap):
+    """
+    DOF map for C0 tensor-product spaces Q_p of any order on quadrilateral and hexahedral meshes
+    (:class:`PolynomialOnCube`).
+
+    Every mesh entity carries the dofs interior to it: 1 per vertex, p-1 per edge, (p-1)^2 per quadrilateral
+    (the faces of a hexahedron, or the cells in 2D) and (p-1)^3 per hexahedron. The subdomain and the global
+    numbering are those of :class:`SimplexEntityDOFMap` (owned entities first, by type; a closed form in
+    the mesh's global entity numbers, no communication), from which this class inherits everything except
+    the two cell-specific steps.
+
+    **Orientation.** An edge's dofs count from its vertex with the smaller *global* number. A face's
+    (p-1)^2 dofs are indexed in the frame whose origin is the face's vertex with the smallest global number,
+    whose first axis points to the neighbour (of the two on the face) with the smaller global number and
+    whose second axis points to the other: one of the eight symmetries of the square per element and face
+    (:func:`proteus.CubeSpaces.face_tables`). p = 3 is the first degree that needs it on edges and on faces.
+    The cell's own dofs are indexed in the same kind of frame (origin at the vertex with the smallest global
+    number, axes to its neighbours sorted by global number), so the ranks that hold a ghost cell agree on
+    them even if they list its vertices differently.
+
+    The dof points are the images of the tensor nodes under the multilinear map of the element's vertices.
+    """
+    def _entityIndex(self,dim,g):
+        from . import CubeSpaces
+        if dim == self.nd:
+            return CubeSpaces.cell_entity_index(self.nd,self.order,g)
+        m = g.shape[1]
+        codes,tables = CubeSpaces.edge_tables(self.order) if m == 2 else CubeSpaces.face_tables(self.order)
+        order = numpy.argsort(g,axis=1,kind='stable')
+        return tables[codes[(order*(m**numpy.arange(m))).sum(axis=1)]]
+
+    def _elementDofPoints(self,space,nodeArray,elementNodes):
+        from . import CubeSpaces
+        weights = CubeSpaces.vertex_weights(self.nd,space.dof_points)
+        return numpy.einsum('iv,evc->eic',weights,nodeArray[elementNodes])
 
 class p0DOFMap(DOFMap):
     def __init__(self,mesh):
@@ -6021,7 +6106,110 @@ class C0_AffineBernsteinOnSimplex(C0_AffineQuadraticOnSimplexWithNodalBasis):
         from . import Archiver
         self.XdmfWriter=Archiver.XdmfWriter()
 
-class C0_AffinePolynomialOnSimplex(ParametricFiniteElementSpace):
+class _C0_AffinePolynomialSpace(ParametricFiniteElementSpace):
+    """
+    What :class:`C0_AffinePolynomialOnSimplex` and :class:`C0_AffinePolynomialOnCube` share: the archive
+    view of the space (every element split into linear sub-cells whose vertices are the dof points) and the
+    reference tabulation of all basis functions at once. The subclasses build the space and say what the
+    sub-cells are (``_subcells``, ``_xdmfTopology``, ``_archiveName``).
+    """
+    #archiving: the dofs on a piecewise-linear view of the space
+    def writeMeshXdmf(self,ar,name,t=0.0,init=False,meshChanged=False,arGrid=None,tCount=0):
+        """
+        Write the grid the fields of this space are attached to: every element split into order**nd linear
+        (multilinear on cubes) sub-cells whose vertices are the dof points (``dofMap.lagrangeNodesArray``), so a field is stored
+        as its complete dof vector (hot start reads it back exactly) and viewed as the piecewise-linear
+        interpolant of the dof values. For Lagrange spaces those are the nodal values; for Bernstein
+        spaces the picture is the control net (within O(h^2) of the function, inside its bounds).
+        """
+        mesh = self.mesh
+        dofMap = self.dofMap
+        nd = self.nSpace_global
+        mesh.writeMeshXdmf(ar,"Spatial_Domain",t,init,meshChanged,tCount=tCount)
+        spaceSuffix = "_"+self._archiveName()
+        writer = self.XdmfWriter
+        gridName = writer.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
+        if writer._needsGrid(t):
+            subcells = self._subcells()
+            nSub = subcells.shape[0]
+            Xdmf_ElementTopology = self._xdmfTopology()
+            if ar.global_sync:
+                n_elements       = mesh.globalMesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF_all_processes,3]
+                elements_dataset = 'elements'+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+            else:
+                n_elements       = mesh.nElements_global*nSub
+                nodes_dims       = [dofMap.nDOF,3]
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+            elements_dims = [n_elements,subcells.shape[1]]
+            elements_stem = 'elements'+spaceSuffix+str(tCount)
+            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            writer.arGrid = ar.write_grid(writer.arGridCollection,gridName,t,tCount)
+            ar.write_topology(writer.arGrid,Xdmf_ElementTopology,n_elements,
+                              elements_dims,elements_dataset,elements_stem,
+                              dtype=(dofMap.subdomain2global if ar.global_sync else dofMap.l2g))
+            ar.write_geometry(writer.arGrid,nodes_dims,nodes_dataset,nodes_stem,
+                              dtype=dofMap.lagrangeNodesArray)
+            def subElements(nElements):
+                return dofMap.l2g[:nElements][:,subcells].reshape(-1,subcells.shape[1])
+            if not ar.writesDatasets:
+                assert not ar.global_sync, "global_sync is not implemented for text heavy data"
+                if init or meshChanged:
+                    numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",subElements(mesh.nElements_global),fmt='%d')
+                    numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",dofMap.lagrangeNodesArray)
+                return writer.arGrid
+            if init or meshChanged:
+                if ar.global_sync:
+                    owned = dofMap.dof_offsets_subdomain_owned
+                    ar.create_dataset_sync(elements_dataset,
+                                           offsets = nSub*numpy.asarray(mesh.globalMesh.elementOffsets_subdomain_owned),
+                                           data = dofMap.subdomain2global[subElements(mesh.nElements_owned)])
+                    ar.create_dataset_sync(nodes_dataset,
+                                           offsets = owned,
+                                           data = dofMap.lagrangeNodesArray[:owned[ar.rank+1]-owned[ar.rank]])
+                else:
+                    ar.create_dataset_async(elements_dataset,data = subElements(mesh.nElements_global))
+                    ar.create_dataset_async(nodes_dataset,data = dofMap.lagrangeNodesArray)
+        return writer.arGrid
+    def writeFunctionXdmf(self,ar,u,tCount=0,init=True):
+        #the complete dof vector as a nodal field on the grid of writeMeshXdmf (the writer is generic)
+        self.XdmfWriter.writeFunctionXdmf_C0P2Lagrange(ar,u,tCount=tCount,init=init)
+    def readFunctionXdmf(self,ar,u,tCount=0):
+        dataset = ar.field_dataset(u.name,tCount)
+        if ar.global_sync:
+            numbering = u.femSpace.dofMap.subdomain2global
+            permute = np.argsort(numbering)
+            u.dof[permute] = dataset[numbering[permute].tolist()]
+        else:
+            u.dof[:] = dataset[:]
+    def writeVectorFunctionXdmf(self,ar,uList,components,vectorName,tCount=0,init=True):
+        self.XdmfWriter.writeVectorFunctionXdmf_nodal(ar,uList,components,vectorName,
+                                                      self._archiveName(),
+                                                      tCount=tCount,init=init)
+    #tabulate all basis functions at once instead of one callable per function and point
+    def getBasisValuesRef(self,xiArray):
+        self.psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,0).values
+        return self.psi
+    def getBasisGradientValuesRef(self,xiArray):
+        self.grad_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,1).grads
+        return self.grad_psi
+    def getBasisHessianValuesRef(self,xiArray):
+        self.Hessian_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,2).hessians
+        return self.Hessian_psi
+    def getBasisValuesTraceRef(self,xiArray):
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        self.psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,0).values
+                                      for ebN in lfs.referenceElement.range_nElementBoundaries])
+        return self.psi_trace
+    def getBasisGradientValuesTraceRef(self,xiArray):
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        self.grad_psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,1).grads
+                                           for ebN in lfs.referenceElement.range_nElementBoundaries])
+        return self.grad_psi_trace
+
+class C0_AffinePolynomialOnSimplex(_C0_AffinePolynomialSpace):
     """
     A C0 space of piecewise polynomials of degree ``order`` on a simplex mesh, any order.
 
@@ -6072,102 +6260,69 @@ class C0_AffinePolynomialOnSimplex(ParametricFiniteElementSpace):
         #for archiving
         from . import Archiver
         self.XdmfWriter=Archiver.XdmfWriter()
-    #archiving: the dofs on a piecewise-linear view of the space
-    def writeMeshXdmf(self,ar,name,t=0.0,init=False,meshChanged=False,arGrid=None,tCount=0):
-        """
-        Write the grid the fields of this space are attached to: every element split into order**nd linear
-        sub-cells whose vertices are the dof points (``dofMap.lagrangeNodesArray``), so a field is stored
-        as its complete dof vector (hot start reads it back exactly) and viewed as the piecewise-linear
-        interpolant of the dof values. For Lagrange spaces those are the nodal values; for Bernstein
-        spaces the picture is the control net (within O(h^2) of the function, inside its bounds).
-        """
+    def _archiveName(self):
+        return "c0p%d_%s_%s" % (self.order,self.family,self.nodes)
+    def _subcells(self):
         from . import SimplexSpaces
-        mesh = self.mesh
-        dofMap = self.dofMap
-        nd = self.nSpace_global
-        mesh.writeMeshXdmf(ar,"Spatial_Domain",t,init,meshChanged,tCount=tCount)
-        spaceSuffix = "_c0p%d_%s_%s" % (self.order,self.family,self.nodes)
-        writer = self.XdmfWriter
-        gridName = writer.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
-        if writer._needsGrid(t):
-            subcells = SimplexSpaces.subcells(nd,self.order)
-            nSub = subcells.shape[0]
-            Xdmf_ElementTopology = {1:"Polyline",2:"Triangle",3:"Tetrahedron"}[nd]
-            if ar.global_sync:
-                n_elements       = mesh.globalMesh.nElements_global*nSub
-                nodes_dims       = [dofMap.nDOF_all_processes,3]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
-            else:
-                n_elements       = mesh.nElements_global*nSub
-                nodes_dims       = [dofMap.nDOF,3]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
-            elements_dims = [n_elements,nd+1]
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
-            writer.arGrid = ar.write_grid(writer.arGridCollection,gridName,t,tCount)
-            ar.write_topology(writer.arGrid,Xdmf_ElementTopology,n_elements,
-                              elements_dims,elements_dataset,elements_stem,
-                              dtype=(dofMap.subdomain2global if ar.global_sync else dofMap.l2g))
-            ar.write_geometry(writer.arGrid,nodes_dims,nodes_dataset,nodes_stem,
-                              dtype=dofMap.lagrangeNodesArray)
-            def subElements(nElements):
-                return dofMap.l2g[:nElements][:,subcells].reshape(-1,nd+1)
-            if not ar.writesDatasets:
-                assert not ar.global_sync, "global_sync is not implemented for text heavy data"
-                if init or meshChanged:
-                    numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",subElements(mesh.nElements_global),fmt='%d')
-                    numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",dofMap.lagrangeNodesArray)
-                return writer.arGrid
-            if init or meshChanged:
-                if ar.global_sync:
-                    owned = dofMap.dof_offsets_subdomain_owned
-                    ar.create_dataset_sync(elements_dataset,
-                                           offsets = nSub*numpy.asarray(mesh.globalMesh.elementOffsets_subdomain_owned),
-                                           data = dofMap.subdomain2global[subElements(mesh.nElements_owned)])
-                    ar.create_dataset_sync(nodes_dataset,
-                                           offsets = owned,
-                                           data = dofMap.lagrangeNodesArray[:owned[ar.rank+1]-owned[ar.rank]])
-                else:
-                    ar.create_dataset_async(elements_dataset,data = subElements(mesh.nElements_global))
-                    ar.create_dataset_async(nodes_dataset,data = dofMap.lagrangeNodesArray)
-        return writer.arGrid
-    def writeFunctionXdmf(self,ar,u,tCount=0,init=True):
-        #the complete dof vector as a nodal field on the grid of writeMeshXdmf (the writer is generic)
-        self.XdmfWriter.writeFunctionXdmf_C0P2Lagrange(ar,u,tCount=tCount,init=init)
-    def readFunctionXdmf(self,ar,u,tCount=0):
-        dataset = ar.field_dataset(u.name,tCount)
-        if ar.global_sync:
-            numbering = u.femSpace.dofMap.subdomain2global
-            permute = np.argsort(numbering)
-            u.dof[permute] = dataset[numbering[permute].tolist()]
-        else:
-            u.dof[:] = dataset[:]
-    def writeVectorFunctionXdmf(self,ar,uList,components,vectorName,tCount=0,init=True):
-        self.XdmfWriter.writeVectorFunctionXdmf_nodal(ar,uList,components,vectorName,
-                                                      "c0p%d_%s_%s" % (self.order,self.family,self.nodes),
-                                                      tCount=tCount,init=init)
-    #tabulate all basis functions at once instead of one callable per function and point
-    def getBasisValuesRef(self,xiArray):
-        self.psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,0).values
-        return self.psi
-    def getBasisGradientValuesRef(self,xiArray):
-        self.grad_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,1).grads
-        return self.grad_psi
-    def getBasisHessianValuesRef(self,xiArray):
-        self.Hessian_psi = self.referenceFiniteElement.localFunctionSpace.tabulate(xiArray,2).hessians
-        return self.Hessian_psi
-    def getBasisValuesTraceRef(self,xiArray):
-        lfs = self.referenceFiniteElement.localFunctionSpace
-        self.psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,0).values
-                                      for ebN in lfs.referenceElement.range_nElementBoundaries])
-        return self.psi_trace
-    def getBasisGradientValuesTraceRef(self,xiArray):
-        lfs = self.referenceFiniteElement.localFunctionSpace
-        self.grad_psi_trace = numpy.array([lfs.tabulate_trace(ebN,xiArray,1).grads
-                                           for ebN in lfs.referenceElement.range_nElementBoundaries])
-        return self.grad_psi_trace
+        return SimplexSpaces.subcells(self.nSpace_global,self.order)
+    def _xdmfTopology(self):
+        return {1:"Polyline",2:"Triangle",3:"Tetrahedron"}[self.nSpace_global]
+
+class C0_AffinePolynomialOnCube(_C0_AffinePolynomialSpace):
+    """
+    A C0 space of piecewise tensor-product polynomials Q_p of degree ``order`` on a quadrilateral or
+    hexahedral mesh, any order (nodal basis).
+
+    Globally continuous. Like the Q1 and Q2 classes of this module it uses :class:`AffineMaps`, so every
+    element must be a parallelogram or a parallelepiped (rectangular grids are); general multilinear
+    elements are not supported yet.
+
+    Parameters
+    ----------
+    mesh : the (subdomain) quadrilateral or hexahedral mesh
+    nd : int
+        2 or 3.
+    order : int
+        Degree p >= 1 in each direction.
+    nodes : ``'gll'`` (default, tensor Gauss-Lobatto-Legendre points) or ``'equispaced'``
+
+    For order 1 this is the space of :class:`C0_AffineLinearOnCubeWithNodalBasis` and for order 2 that of
+    :class:`C0_AffineLagrangeOnCubeWithNodalBasis` (Q2), with its own dof numbering; those classes stay as
+    they are.
+    """
+    _configuredTypes = {}
+    def __new__(cls,mesh=None,nd=3,order=1,nodes='gll'):
+        #one class per configuration, as C0_AffinePolynomialOnSimplex: Transport keeps one archive grid per class
+        if cls is C0_AffinePolynomialOnCube:
+            key = (int(order),nodes)
+            if key not in cls._configuredTypes:
+                cls._configuredTypes[key] = type("C0_AffinePolynomialOnCube_q%d_%s" % key,(cls,),{})
+            cls = cls._configuredTypes[key]
+        return super(C0_AffinePolynomialOnCube,cls).__new__(cls)
+    def __init__(self,mesh,nd=3,order=1,nodes='gll'):
+        self.order = order
+        self.family = 'lagrange'
+        self.nodes = nodes
+        localFunctionSpace = PolynomialOnCube(nd,order,nodes)
+        localGeometricSpace = LinearOnCubeWithNodalBasis(nd)
+        interpolationConditions = PolynomialInterpolationConditions(localFunctionSpace)
+        ParametricFiniteElementSpace.__init__(self,
+                                              ReferenceFiniteElement(localFunctionSpace,
+                                                                     interpolationConditions),
+                                              AffineMaps(mesh,
+                                                         localGeometricSpace.referenceElement,
+                                                         LinearOnCubeWithNodalBasis(nd)),
+                                              CubeEntityDOFMap(mesh,localFunctionSpace,nd))
+        #for archiving
+        from . import Archiver
+        self.XdmfWriter=Archiver.XdmfWriter()
+    def _archiveName(self):
+        return "c0q%d_%s" % (self.order,self.nodes)
+    def _subcells(self):
+        from . import CubeSpaces
+        return CubeSpaces.subcells(self.nSpace_global,self.order)
+    def _xdmfTopology(self):
+        return {2:"Quadrilateral",3:"Hexahedron"}[self.nSpace_global]
 
 class DG_AffineQuadraticOnSimplexWithNodalBasis(ParametricFiniteElementSpace):
     """

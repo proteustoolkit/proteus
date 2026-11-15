@@ -5,7 +5,7 @@ Poisson with a manufactured solution on the any-order simplex spaces, through NS
 `simplex_mms_mpi.py` solves -div(grad u) = f on the unit square or cube with strong Dirichlet data on the
 whole boundary (data that is neither zero nor linear on any face) and integrates the errors itself.
 
-* Convergence: L2 rate p+1 and H1 rate p, within 0.15, for p = 1..5 on triangles and p = 1..4 on tetrahedra
+* Convergence: L2 rate p+1 and H1 rate p, within 0.15, for p = 1..5 on triangles and on tetrahedra
   (warp-blend Lagrange), on the pair of meshes listed per degree.
 * A solution that is a polynomial of degree p is reproduced to round-off (Lagrange and Bernstein).
 * Bernstein gives the same discrete solution as warp-blend Lagrange (same space, exact boundary conversion);
@@ -71,9 +71,10 @@ def _run(tmp_path, ranks=1, **case):
 
 
 # (nd, p): the two meshes (nodes per direction) the rate is measured on; coarse enough for CI, fine enough
-# to be asymptotic (measured 2026-11-13: L2 rates 1.99 3.00 4.10 4.92 5.99 in 2D, 1.89 3.03 4.03 4.90 in 3D)
+# to be asymptotic (measured 2026-11-13: L2 rates 1.99 3.00 4.10 4.92 5.99 in 2D, 1.89 3.03 4.03 4.90 in 3D;
+# 2026-11-14, tetrahedra p = 5: L2 5.92, H1 4.91 on (5, 6); 5.78 and 4.75 on (3, 4) are not yet asymptotic)
 RATE_MESHES = {(2, 1): (17, 33), (2, 2): (9, 17), (2, 3): (5, 9), (2, 4): (5, 9), (2, 5): (5, 9),
-               (3, 1): (9, 17), (3, 2): (7, 13), (3, 3): (5, 7), (3, 4): (5, 7)}
+               (3, 1): (9, 17), (3, 2): (7, 13), (3, 3): (5, 7), (3, 4): (5, 7), (3, 5): (5, 6)}
 
 
 @pytest.mark.parametrize("nd,p", sorted(RATE_MESHES))
@@ -89,7 +90,8 @@ def test_convergence_rates(tmp_path, nd, p):
 
 
 @pytest.mark.parametrize("nd,p,family", [(2, 1, "lagrange"), (2, 3, "lagrange"), (2, 5, "lagrange"), (2, 4, "bernstein"),
-                                         (3, 2, "lagrange"), (3, 4, "lagrange"), (3, 3, "bernstein")])
+                                         (3, 2, "lagrange"), (3, 4, "lagrange"), (3, 3, "bernstein"),
+                                         (3, 5, "lagrange"), (3, 5, "bernstein")])
 def test_a_polynomial_of_degree_p_is_reproduced(tmp_path, nd, p, family):
     r = _run(tmp_path, ND=nd, P=p, NN=4 if nd == 2 else 3, SOLUTION="poly", FAMILY=family)
     assert r["L2"] < 1.0e-11 and r["H1"] < 1.0e-10 and r["Linf"] < 1.0e-11, r
@@ -116,7 +118,8 @@ def test_bernstein_and_equispaced_give_the_solution_of_the_same_space(tmp_path, 
                                                         (2, 4, 5, "bernstein", "node", 1),
                                                         (3, 3, 5, "lagrange", "node", 1),
                                                         (3, 4, 4, "lagrange", "element", 0),
-                                                        (3, 4, 4, "bernstein", "node", 1)])
+                                                        (3, 4, 4, "bernstein", "node", 1),
+                                                        (3, 5, 3, "lagrange", "node", 1)])
 def test_two_ranks_give_the_serial_solution(tmp_path, nd, p, nn, family, part, layers):
     serial = _run(tmp_path, ND=nd, P=p, NN=nn, FAMILY=family, PART_TYPE=part, NLAYERS=layers)
     parallel = _run(tmp_path, ranks=2, ND=nd, P=p, NN=nn, FAMILY=family, PART_TYPE=part, NLAYERS=layers)
