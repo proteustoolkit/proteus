@@ -124,6 +124,11 @@ void writeErrorLine(const std::string& line)
 [[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
 {
   writeErrorLine(message);
+  //MPICH's launcher (hydra) kills its proxies on MPI_Abort and can exit before
+  //it has forwarded what the ranks wrote: the whole message was lost on the
+  //macOS leg of the scheduled dev run of 2026-11-15 (empty output, nonzero
+  //exit). The run is ending: let the pipe drain first.
+  usleep(200000);
   MPI_Abort(comm, 1);
   std::abort();
 }
