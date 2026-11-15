@@ -1,4 +1,12 @@
 import proteus
+# proteus.X below is attribute access: X has to be imported here, not by
+# whatever happened to import it first. These go before cfemIntegrals: it does
+# not link LAPACK itself (_dgesc2_ comes from whatever loaded first) and
+# importing it first fails on macOS; proteus.Transport pulls LAPACK in.
+import proteus.Transport
+import proteus.NonlinearSolvers
+import proteus.StepControl
+import proteus.TransportCoefficients
 from proteus import cfemIntegrals, Norms, Quadrature
 from proteus.Comm import globalSum
 from proteus.mprans.cMCorr import *
