@@ -171,11 +171,11 @@ public:
   }
 
   void convexLimiting(arguments_dict &args) {
-    const int numDOFs = args.scalar<int>("numDOFs");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus_index_t numDOFs = args.scalar<proteus_index_t>("numDOFs");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     const proteus::pyarray<double> &MassMatrix = args.array<double>("MassMatrix");
     const proteus::pyarray<double> &lumped_mass_matrix =
         args.array<double>("lumped_mass_matrix");
@@ -269,9 +269,9 @@ public:
     ////////////////////////////////////////////////////
     // Loop to define FCT matrices for each component //
     ////////////////////////////////////////////////////
-    int ij = 0;
+    proteus_csr_index_t ij = 0;
     if (phase == 0)
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
       // Read un at ith node
       const double hi = h_old[i];
       const double one_over_hi =
@@ -288,9 +288,9 @@ public:
       const double inv_meshSizei = inverse_mesh[i];
 
       // LOOP OVER THE SPARSITY PATTERN (j-LOOP)//
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-        int j = csrColumnOffsets_DofLoops[offset];
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         if (j == i) {
           FCT_h[ij] = 0.;
@@ -441,7 +441,7 @@ public:
 
       /* Loop to compute limiter l^j_i and l^i_j */
       ij = 0;
-      for (int i = 0; i < numDOFs; i++) {
+      for (proteus_index_t i=0; i<numDOFs; i++) {
 
         // Get low order solution at ith node
         const double hLowi = hLow[i];
@@ -452,9 +452,9 @@ public:
         const double mi = lumped_mass_matrix[i];
 
         // LOOP OVER THE SPARSITY PATTERN (j-LOOP)
-        for (int offset = csrRowIndeces_DofLoops[i];
+        for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
              offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-          int j = csrColumnOffsets_DofLoops[offset];
+          proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
           Lij_array[ij] = 1.;
 
@@ -796,7 +796,7 @@ public:
 
       /* Loop to define limited solution */
       ij = 0;
-      for (int i = 0; i < numDOFs; i++) {
+      for (proteus_index_t i=0; i<numDOFs; i++) {
 
         const double one_over_mi = 1. / lumped_mass_matrix[i];
         double ith_Limiter_times_FCT_matrix1 = 0.;
@@ -807,9 +807,9 @@ public:
         double ith_Limiter_times_FCT_matrix6 = 0.;
 
         // LOOP OVER THE SPARSITY PATTERN (j-LOOP)//
-        for (int offset = csrRowIndeces_DofLoops[i];
+        for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
              offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-          int j = csrColumnOffsets_DofLoops[offset];
+          proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
           // COMPUTE LIMITED FLUX //
           ith_Limiter_times_FCT_matrix1 += Lij_array[ij] * FCT_h[ij];
@@ -892,7 +892,7 @@ public:
     } // end of the limiting iteration
 
     /* Update final solution */
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
 
       const double one_over_mi = 1. / lumped_mass_matrix[i];
 
@@ -942,7 +942,7 @@ public:
   // integrated by parts with zero advective flux through the wall, i.e. row i
   // uses c'_ij = -c_ji in place of c_ij (they differ only on boundary edges).
   // The pressure and bathymetry terms stay on c_ij. See SW2DCV.h.
-  static inline void wallCoefficients(int i, int j, int ij,
+  static inline void wallCoefficients(proteus_index_t i, proteus_csr_index_t j, proteus_csr_index_t ij,
                                       const proteus::pyarray<double> &wall_dof,
                                       const proteus::pyarray<double> &Cx,
                                       const proteus::pyarray<double> &Cy,
@@ -957,14 +957,14 @@ public:
   }
 
   // Porous edges: graph viscosities carry max(phi_i, phi_j) (see SW2DCV.h).
-  static inline double phiBar(int i, int j,
+  static inline double phiBar(proteus_index_t i, proteus_csr_index_t j,
                               const proteus::pyarray<double> &porosity_dof) {
     return fmax(porosity_dof[i], porosity_dof[j]);
   }
 
   double calculateEdgeBasedCFL(arguments_dict &args) {
     const double g = args.scalar<double>("g");
-    const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
+    const proteus_index_t numDOFsPerEqn = args.scalar<proteus_index_t>("numDOFsPerEqn");
     const proteus::pyarray<double> &lumped_mass_matrix =
         args.array<double>("lumped_mass_matrix");
     const proteus::pyarray<double> &h_dof_old = args.array<double>("h_dof_old");
@@ -972,10 +972,10 @@ public:
     const proteus::pyarray<double> &hv_dof_old = args.array<double>("hv_dof_old");
     const proteus::pyarray<double> &heta_dof_old =
         args.array<double>("heta_dof_old");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     const double hEps = args.scalar<double>("hEps");
     const proteus::pyarray<double> &Cx = args.array<double>("Cx");
     const proteus::pyarray<double> &Cy = args.array<double>("Cy");
@@ -990,7 +990,7 @@ public:
     double max_edge_based_cfl = 0.;
     double dLowij = 0.;
 
-    int ij = 0;
+    proteus_csr_index_t ij = 0;
     for (int i = 0; i < numDOFsPerEqn; i++) {
 
       // solution at time tn for the ith DOF
@@ -1010,11 +1010,11 @@ public:
       // boundary vector n_i = sum_j c_ji = int_{dOmega} phi_i n (zero inside)
       double nix = 0., niy = 0.;
 
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
 
         // loop in j (sparsity pattern)
-        const int j = csrColumnOffsets_DofLoops[offset];
+        const proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         // solution at time tn for the jth DOF
         const double hj = h_dof_old[j];
@@ -1087,11 +1087,11 @@ public:
     const proteus::pyarray<double> &heta_dof_old =
         args.array<double>("heta_dof_old");
     const double hEps = args.scalar<double>("hEps");
-    const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus_index_t numDOFsPerEqn = args.scalar<proteus_index_t>("numDOFsPerEqn");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     proteus::pyarray<double> &entropy = args.array<double>("entropy");
     proteus::pyarray<double> &delta_Sqd_h = args.array<double>("delta_Sqd_h");
     proteus::pyarray<double> &delta_Sqd_heta = args.array<double>("delta_Sqd_heta");
@@ -1113,7 +1113,7 @@ public:
     //     * second order differences at i-th node
     //     * dij_small
 
-    int ij = 0;
+    proteus_csr_index_t ij = 0;
     for (int i = 0; i < numDOFsPerEqn; i++) {
 
       // Define things at ith node
@@ -1139,9 +1139,9 @@ public:
       double heta_diff = 0.;
       double kin_diff = 0.;
 
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-        const int j = csrColumnOffsets_DofLoops[offset];
+        const proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         // Define things at jth node
         const double hj = h_dof_old[j];
@@ -1190,11 +1190,11 @@ public:
     const proteus::pyarray<double> &Cy = args.array<double>("Cy");
     const proteus::pyarray<double> &CTx = args.array<double>("CTx");
     const proteus::pyarray<double> &CTy = args.array<double>("CTy");
-    const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus_index_t numDOFsPerEqn = args.scalar<proteus_index_t>("numDOFsPerEqn");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     const proteus::pyarray<double> &lumped_mass_matrix =
         args.array<double>("lumped_mass_matrix");
     const double hEps = args.scalar<double>("hEps");
@@ -1209,7 +1209,7 @@ public:
     // To compute:
     //     * global entropy residual
 
-    int ij = 0;
+    proteus_csr_index_t ij = 0;
     for (int i = 0; i < numDOFsPerEqn; i++) {
 
       // solution at time tn for the ith DOF
@@ -1237,10 +1237,10 @@ public:
           DENTROPY_DHV(g, hi, hui, hvi, 0., one_over_hiReg);
 
       // loop in j (sparsity pattern)
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
 
-        int j = csrColumnOffsets_DofLoops[offset];
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         // solution at time tn for the jth DOF
         const double hj = h_dof_old[j];
@@ -1316,11 +1316,11 @@ public:
     const proteus::pyarray<double> &Cy = args.array<double>("Cy");
     const proteus::pyarray<double> &CTx = args.array<double>("CTx");
     const proteus::pyarray<double> &CTy = args.array<double>("CTy");
-    const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus_index_t numDOFsPerEqn = args.scalar<proteus_index_t>("numDOFsPerEqn");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     const proteus::pyarray<double> &lumped_mass_matrix =
         args.array<double>("lumped_mass_matrix");
     const double hEps = args.scalar<double>("hEps");
@@ -1422,9 +1422,9 @@ public:
     // F_adv(U).n = (u.n) U, so the boundary term only rescales U_i.
     std::valarray<double> wall_nx(0., numDOFsPerEqn), wall_ny(0., numDOFsPerEqn);
     {
-      int ij_w = 0;
+      proteus_csr_index_t ij_w = 0;
       for (int i = 0; i < numDOFsPerEqn; i++)
-        for (int offset = csrRowIndeces_DofLoops[i];
+        for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
              offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
           if (wall_dof[i] > 0.5) {
             wall_nx[i] += CTx[ij_w];
@@ -1439,7 +1439,7 @@ public:
       2. Sources
       3 high-order RHS
      */
-    int ij = 0;
+    proteus_csr_index_t ij = 0;
     for (int i = 0; i < numDOFsPerEqn; i++) {
 
       // define things at ith node
@@ -1541,9 +1541,9 @@ public:
           1. / (csrRowIndeces_DofLoops[i + 1] - csrRowIndeces_DofLoops[i]);
 
       // loop over the sparsity pattern of the i-th DOF
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-        const int j = csrColumnOffsets_DofLoops[offset];
+        const proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         // define things at jth node
         const double hj = h_dof_old[j];
@@ -1914,9 +1914,9 @@ public:
       double sum_dij_hbetabar = 0.;
 
       // loop in j (sparsity pattern)
-      for (int offset = csrRowIndeces_DofLoops[i];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
            offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
-        const int j = csrColumnOffsets_DofLoops[offset];
+        const proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
         const double one_over_hBT =
             2. * hBT[ij] /
@@ -2074,7 +2074,7 @@ public:
     proteus::pyarray<double> &mesh_grad_trial_ref =
         args.array<double>("mesh_grad_trial_ref");
     proteus::pyarray<double> &mesh_dof = args.array<double>("mesh_dof");
-    proteus::pyarray<int> &mesh_l2g = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t> &mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref = args.array<double>("dV_ref");
     proteus::pyarray<double> &h_trial_ref = args.array<double>("h_trial_ref");
     proteus::pyarray<double> &h_grad_trial_ref =
@@ -2113,11 +2113,11 @@ public:
         args.array<double>("boundaryJac_ref");
     proteus::pyarray<double> &elementDiameter =
         args.array<double>("elementDiameter");
-    int nElements_global = args.scalar<int>("nElements_global");
+    proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
     double g = args.scalar<double>("g");
     proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
-    proteus::pyarray<int> &h_l2g = args.array<int>("h_l2g");
-    proteus::pyarray<int> &vel_l2g = args.array<int>("vel_l2g");
+    proteus::pyarray<proteus_index_t> &h_l2g = args.array<proteus_index_t>("h_l2g");
+    proteus::pyarray<proteus_index_t> &vel_l2g = args.array<proteus_index_t>("vel_l2g");
     proteus::pyarray<double> &h_dof_old = args.array<double>("h_dof_old");
     proteus::pyarray<double> &hu_dof_old = args.array<double>("hu_dof_old");
     proteus::pyarray<double> &hv_dof_old = args.array<double>("hv_dof_old");
@@ -2132,41 +2132,41 @@ public:
     proteus::pyarray<double> &hw_dof = args.array<double>("hw_dof");
     proteus::pyarray<double> &hbeta_dof = args.array<double>("hbeta_dof");
     proteus::pyarray<double> &q_cfl = args.array<double>("q_cfl");
-    proteus::pyarray<int> &sdInfo_hu_hu_rowptr =
-        args.array<int>("sdInfo_hu_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hu_colind =
-        args.array<int>("sdInfo_hu_hu_colind");
-    proteus::pyarray<int> &sdInfo_hu_hv_rowptr =
-        args.array<int>("sdInfo_hu_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hv_colind =
-        args.array<int>("sdInfo_hu_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hv_rowptr =
-        args.array<int>("sdInfo_hv_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hv_colind =
-        args.array<int>("sdInfo_hv_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hu_rowptr =
-        args.array<int>("sdInfo_hv_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hu_colind =
-        args.array<int>("sdInfo_hv_hu_colind");
-    int offset_h = args.scalar<int>("offset_h");
-    int offset_hu = args.scalar<int>("offset_hu");
-    int offset_hv = args.scalar<int>("offset_hv");
-    int offset_heta = args.scalar<int>("offset_heta");
-    int offset_hw = args.scalar<int>("offset_hw");
-    int offset_hbeta = args.scalar<int>("offset_hbeta");
-    int stride_h = args.scalar<int>("stride_h");
-    int stride_hu = args.scalar<int>("stride_hu");
-    int stride_hv = args.scalar<int>("stride_hv");
-    int stride_heta = args.scalar<int>("stride_heta");
-    int stride_hw = args.scalar<int>("stride_hw");
-    int stride_hbeta = args.scalar<int>("stride_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_colind");
+    proteus_index_t offset_h = args.scalar<proteus_index_t>("offset_h");
+    proteus_index_t offset_hu = args.scalar<proteus_index_t>("offset_hu");
+    proteus_index_t offset_hv = args.scalar<proteus_index_t>("offset_hv");
+    proteus_index_t offset_heta = args.scalar<proteus_index_t>("offset_heta");
+    proteus_index_t offset_hw = args.scalar<proteus_index_t>("offset_hw");
+    proteus_index_t offset_hbeta = args.scalar<proteus_index_t>("offset_hbeta");
+    proteus_index_t stride_h = args.scalar<proteus_index_t>("stride_h");
+    proteus_index_t stride_hu = args.scalar<proteus_index_t>("stride_hu");
+    proteus_index_t stride_hv = args.scalar<proteus_index_t>("stride_hv");
+    proteus_index_t stride_heta = args.scalar<proteus_index_t>("stride_heta");
+    proteus_index_t stride_hw = args.scalar<proteus_index_t>("stride_hw");
+    proteus_index_t stride_hbeta = args.scalar<proteus_index_t>("stride_hbeta");
     proteus::pyarray<double> &globalResidual = args.array<double>("globalResidual");
-    int nExteriorElementBoundaries_global =
-        args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int> &exteriorElementBoundariesArray =
-        args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int> &elementBoundaryElementsArray =
-        args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t nExteriorElementBoundaries_global =
+        args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t> &exteriorElementBoundariesArray =
+        args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t> &elementBoundaryElementsArray =
+        args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int> &elementBoundaryLocalElementBoundariesArray =
         args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<int> &isDOFBoundary_h = args.array<int>("isDOFBoundary_h");
@@ -2206,11 +2206,11 @@ public:
     const proteus::pyarray<double> &Cy = args.array<double>("Cy");
     const proteus::pyarray<double> &CTx = args.array<double>("CTx");
     const proteus::pyarray<double> &CTy = args.array<double>("CTy");
-    const int numDOFsPerEqn = args.scalar<int>("numDOFsPerEqn");
-    const proteus::pyarray<int> &csrRowIndeces_DofLoops =
-        args.array<int>("csrRowIndeces_DofLoops");
-    const proteus::pyarray<int> &csrColumnOffsets_DofLoops =
-        args.array<int>("csrColumnOffsets_DofLoops");
+    const proteus_index_t numDOFsPerEqn = args.scalar<proteus_index_t>("numDOFsPerEqn");
+    const proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops =
+        args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    const proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
     const proteus::pyarray<double> &lumped_mass_matrix =
         args.array<double>("lumped_mass_matrix");
     const double cfl_run = args.scalar<double>("cfl_run");
@@ -2253,7 +2253,7 @@ public:
     //      * Time derivative term
     //      * Cell based CFL
     //      * Velocity and soln at quad points (for other models)
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       // declare local storage for element residual and initialize
       double elementResidual_h[nDOF_test_element],
           elementResidual_hu[nDOF_test_element],
@@ -2275,7 +2275,7 @@ public:
       //
       for (int k = 0; k < nQuadraturePoints_element; k++) {
         // compute indices and declare local storage
-        int eN_k = eN * nQuadraturePoints_element + k,
+        proteus_index_t eN_k = eN * nQuadraturePoints_element + k,
                      eN_k_nSpace = eN_k * nSpace,
                      eN_nDOF_trial_element = eN * nDOF_trial_element;
         double h = 0.0, hu = 0.0, hv = 0.0, heta = 0.0, hw = 0.0,
@@ -2357,10 +2357,10 @@ public:
       }
       // distribute
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
 
         // global i-th index for h (this is same for vel_l2g)
-        int h_gi = h_l2g[eN_i];
+        proteus_index_t h_gi = h_l2g[eN_i];
 
         // distribute time derivative to global residual
         globalResidual[offset_h + stride_h * h_gi] += elementResidual_h[i];
@@ -2383,7 +2383,7 @@ public:
       // To compute:
       //     * High-order update with neumann series approximation
 
-      int ij = 0;
+      proteus_csr_index_t ij = 0;
       for (int i = 0; i < numDOFsPerEqn; i++) {
 
         // get things at ith node
@@ -2405,10 +2405,10 @@ public:
         double b_ij = 0., b_ji = 0.;
 
         // loop over the sparsity pattern of the i-th DOF
-        for (int offset = csrRowIndeces_DofLoops[i];
+        for (proteus_csr_index_t offset = csrRowIndeces_DofLoops[i];
              offset < csrRowIndeces_DofLoops[i + 1]; offset++) {
 
-          int j = csrColumnOffsets_DofLoops[offset];
+          proteus_csr_index_t j = csrColumnOffsets_DofLoops[offset];
 
           // get things at jth node
           const double mj = lumped_mass_matrix[j];
@@ -2467,11 +2467,10 @@ public:
     if (COMPUTE_NORMALS == 1) {
       // This is to identify the normals and create a vector of normal
       // components
-      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-        int
-            ebN = exteriorElementBoundariesArray[ebNE],
-            eN = elementBoundaryElementsArray[ebN * 2 + 0],
-            ebN_local = elementBoundaryLocalElementBoundariesArray[ebN * 2 + 0];
+      for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+        proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
+            eN = elementBoundaryElementsArray[ebN * 2 + 0];
+        int ebN_local = elementBoundaryLocalElementBoundariesArray[ebN * 2 + 0];
         double normal[3];
         {             // "Loop" in quad points
           int kb = 0; // NOTE: I need to consider just one quad point since
@@ -2494,14 +2493,14 @@ public:
         }
         // distribute the normal vectors
         for (int i = 0; i < nDOF_test_element; i++) {
-          int eN_i = eN * nDOF_test_element + i;
-          int gi = h_l2g[eN_i];
+          proteus_index_t eN_i = eN * nDOF_test_element + i;
+          proteus_index_t gi = h_l2g[eN_i];
           normalx[gi] += 0.5 * normal[0] * (i == ebN_local ? 0. : 1.);
           normaly[gi] += 0.5 * normal[1] * (i == ebN_local ? 0. : 1.);
         }
       }
       // normalize
-      for (int gi = 0; gi < numDOFsPerEqn; gi++) {
+      for (proteus_index_t gi = 0; gi < numDOFsPerEqn; gi++) {
         double norm_factor =
             sqrt(std::pow(normalx[gi], 2) + std::pow(normaly[gi], 2));
         if (norm_factor != 0) {
@@ -2521,7 +2520,7 @@ public:
     proteus::pyarray<double> &mesh_velocity_dof =
         args.array<double>("mesh_velocity_dof");
     double MOVING_DOMAIN = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int> &mesh_l2g = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t> &mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref = args.array<double>("dV_ref");
     proteus::pyarray<double> &h_trial_ref = args.array<double>("h_trial_ref");
     proteus::pyarray<double> &h_grad_trial_ref =
@@ -2561,10 +2560,10 @@ public:
         args.array<double>("boundaryJac_ref");
     proteus::pyarray<double> &elementDiameter =
         args.array<double>("elementDiameter");
-    int nElements_global = args.scalar<int>("nElements_global");
+    proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
     double g = args.scalar<double>("g");
-    proteus::pyarray<int> &h_l2g = args.array<int>("h_l2g");
-    proteus::pyarray<int> &vel_l2g = args.array<int>("vel_l2g");
+    proteus::pyarray<proteus_index_t> &h_l2g = args.array<proteus_index_t>("h_l2g");
+    proteus::pyarray<proteus_index_t> &vel_l2g = args.array<proteus_index_t>("vel_l2g");
     proteus::pyarray<double> &b_dof = args.array<double>("b_dof");
     proteus::pyarray<double> &h_dof = args.array<double>("h_dof");
     proteus::pyarray<double> &hu_dof = args.array<double>("hu_dof");
@@ -2573,174 +2572,174 @@ public:
     proteus::pyarray<double> &hw_dof = args.array<double>("hw_dof");
     proteus::pyarray<double> &hbeta_dof = args.array<double>("hbeta_dof");
     proteus::pyarray<double> &q_cfl = args.array<double>("q_cfl");
-    proteus::pyarray<int> &sdInfo_hu_hu_rowptr =
-        args.array<int>("sdInfo_hu_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hu_colind =
-        args.array<int>("sdInfo_hu_hu_colind");
-    proteus::pyarray<int> &sdInfo_hu_hv_rowptr =
-        args.array<int>("sdInfo_hu_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hv_colind =
-        args.array<int>("sdInfo_hu_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hv_rowptr =
-        args.array<int>("sdInfo_hv_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hv_colind =
-        args.array<int>("sdInfo_hv_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hu_rowptr =
-        args.array<int>("sdInfo_hv_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hu_colind =
-        args.array<int>("sdInfo_hv_hu_colind");
-    proteus::pyarray<int> &csrRowIndeces_h_h = args.array<int>("csrRowIndeces_h_h");
-    proteus::pyarray<int> &csrColumnOffsets_h_h =
-        args.array<int>("csrColumnOffsets_h_h");
-    proteus::pyarray<int> &csrRowIndeces_h_hu =
-        args.array<int>("csrRowIndeces_h_hu");
-    proteus::pyarray<int> &csrColumnOffsets_h_hu =
-        args.array<int>("csrColumnOffsets_h_hu");
-    proteus::pyarray<int> &csrRowIndeces_h_hv =
-        args.array<int>("csrRowIndeces_h_hv");
-    proteus::pyarray<int> &csrColumnOffsets_h_hv =
-        args.array<int>("csrColumnOffsets_h_hv");
-    proteus::pyarray<int> &csrRowIndeces_h_heta =
-        args.array<int>("csrRowIndeces_h_heta");
-    proteus::pyarray<int> &csrColumnOffsets_h_heta =
-        args.array<int>("csrColumnOffsets_h_heta");
-    proteus::pyarray<int> &csrRowIndeces_h_hw =
-        args.array<int>("csrRowIndeces_h_hw");
-    proteus::pyarray<int> &csrColumnOffsets_h_hw =
-        args.array<int>("csrColumnOffsets_h_hw");
-    proteus::pyarray<int> &csrRowIndeces_h_hbeta =
-        args.array<int>("csrRowIndeces_h_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_h_hbeta =
-        args.array<int>("csrColumnOffsets_h_hbeta");
-    proteus::pyarray<int> &csrRowIndeces_hu_h =
-        args.array<int>("csrRowIndeces_hu_h");
-    proteus::pyarray<int> &csrColumnOffsets_hu_h =
-        args.array<int>("csrColumnOffsets_hu_h");
-    proteus::pyarray<int> &csrRowIndeces_hu_hu =
-        args.array<int>("csrRowIndeces_hu_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hu =
-        args.array<int>("csrColumnOffsets_hu_hu");
-    proteus::pyarray<int> &csrRowIndeces_hu_hv =
-        args.array<int>("csrRowIndeces_hu_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hv =
-        args.array<int>("csrColumnOffsets_hu_hv");
-    proteus::pyarray<int> &csrRowIndeces_hu_heta =
-        args.array<int>("csrRowIndeces_hu_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hu_heta =
-        args.array<int>("csrColumnOffsets_hu_heta");
-    proteus::pyarray<int> &csrRowIndeces_hu_hw =
-        args.array<int>("csrRowIndeces_hu_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hw =
-        args.array<int>("csrColumnOffsets_hu_hw");
-    proteus::pyarray<int> &csrRowIndeces_hu_hbeta =
-        args.array<int>("csrRowIndeces_hu_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hbeta =
-        args.array<int>("csrColumnOffsets_hu_hbeta");
-    proteus::pyarray<int> &csrRowIndeces_hv_h =
-        args.array<int>("csrRowIndeces_hv_h");
-    proteus::pyarray<int> &csrColumnOffsets_hv_h =
-        args.array<int>("csrColumnOffsets_hv_h");
-    proteus::pyarray<int> &csrRowIndeces_hv_hu =
-        args.array<int>("csrRowIndeces_hv_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hu =
-        args.array<int>("csrColumnOffsets_hv_hu");
-    proteus::pyarray<int> &csrRowIndeces_hv_hv =
-        args.array<int>("csrRowIndeces_hv_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hv =
-        args.array<int>("csrColumnOffsets_hv_hv");
-    proteus::pyarray<int> &csrRowIndeces_hv_heta =
-        args.array<int>("csrRowIndeces_hv_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hv_heta =
-        args.array<int>("csrColumnOffsets_hv_heta");
-    proteus::pyarray<int> &csrRowIndeces_hv_hw =
-        args.array<int>("csrRowIndeces_hv_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hw =
-        args.array<int>("csrColumnOffsets_hv_hw");
-    proteus::pyarray<int> &csrRowIndeces_hv_hbeta =
-        args.array<int>("csrRowIndeces_hv_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hbeta =
-        args.array<int>("csrColumnOffsets_hv_hbeta");
-    proteus::pyarray<int> &csrRowIndeces_heta_h =
-        args.array<int>("csrRowIndeces_heta_h");
-    proteus::pyarray<int> &csrColumnOffsets_heta_h =
-        args.array<int>("csrColumnOffsets_heta_h");
-    proteus::pyarray<int> &csrRowIndeces_heta_hu =
-        args.array<int>("csrRowIndeces_heta_hu");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hu =
-        args.array<int>("csrColumnOffsets_heta_hu");
-    proteus::pyarray<int> &csrRowIndeces_heta_hv =
-        args.array<int>("csrRowIndeces_heta_hv");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hv =
-        args.array<int>("csrColumnOffsets_heta_hv");
-    proteus::pyarray<int> &csrRowIndeces_heta_heta =
-        args.array<int>("csrRowIndeces_heta_heta");
-    proteus::pyarray<int> &csrColumnOffsets_heta_heta =
-        args.array<int>("csrColumnOffsets_heta_heta");
-    proteus::pyarray<int> &csrRowIndeces_heta_hw =
-        args.array<int>("csrRowIndeces_heta_hw");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hw =
-        args.array<int>("csrColumnOffsets_heta_hw");
-    proteus::pyarray<int> &csrRowIndeces_heta_hbeta =
-        args.array<int>("csrRowIndeces_heta_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hbeta =
-        args.array<int>("csrColumnOffsets_heta_hbeta");
-    proteus::pyarray<int> &csrRowIndeces_hw_h =
-        args.array<int>("csrRowIndeces_hw_h");
-    proteus::pyarray<int> &csrColumnOffsets_hw_h =
-        args.array<int>("csrColumnOffsets_hw_h");
-    proteus::pyarray<int> &csrRowIndeces_hw_hu =
-        args.array<int>("csrRowIndeces_hw_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hu =
-        args.array<int>("csrColumnOffsets_hw_hu");
-    proteus::pyarray<int> &csrRowIndeces_hw_hv =
-        args.array<int>("csrRowIndeces_hw_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hv =
-        args.array<int>("csrColumnOffsets_hw_hv");
-    proteus::pyarray<int> &csrRowIndeces_hw_heta =
-        args.array<int>("csrRowIndeces_hw_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hw_heta =
-        args.array<int>("csrColumnOffsets_hw_heta");
-    proteus::pyarray<int> &csrRowIndeces_hw_hw =
-        args.array<int>("csrRowIndeces_hw_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hw =
-        args.array<int>("csrColumnOffsets_hw_hw");
-    proteus::pyarray<int> &csrRowIndeces_hw_hbeta =
-        args.array<int>("csrRowIndeces_hw_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hbeta =
-        args.array<int>("csrColumnOffsets_hw_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_colind");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_h = args.array<proteus_csr_index_t>("csrRowIndeces_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hbeta");
     //
-    proteus::pyarray<int> &csrRowIndeces_hbeta_h =
-        args.array<int>("csrRowIndeces_hbeta_h");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_h =
-        args.array<int>("csrColumnOffsets_hbeta_h");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_hu =
-        args.array<int>("csrRowIndeces_hbeta_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_hu =
-        args.array<int>("csrColumnOffsets_hbeta_hu");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_hv =
-        args.array<int>("csrRowIndeces_hbeta_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_hv =
-        args.array<int>("csrColumnOffsets_hbeta_hv");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_heta =
-        args.array<int>("csrRowIndeces_hbeta_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_heta =
-        args.array<int>("csrColumnOffsets_hbeta_heta");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_hw =
-        args.array<int>("csrRowIndeces_hbeta_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_hw =
-        args.array<int>("csrColumnOffsets_hbeta_hw");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_hbeta =
-        args.array<int>("csrRowIndeces_hbeta_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_hbeta =
-        args.array<int>("csrColumnOffsets_hbeta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_hbeta");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
     proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
-    int nExteriorElementBoundaries_global =
-        args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int> &exteriorElementBoundariesArray =
-        args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int> &elementBoundaryElementsArray =
-        args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t nExteriorElementBoundaries_global =
+        args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t> &exteriorElementBoundariesArray =
+        args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t> &elementBoundaryElementsArray =
+        args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int> &elementBoundaryLocalElementBoundariesArray =
         args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<int> &isDOFBoundary_h = args.array<int>("isDOFBoundary_h");
@@ -2771,30 +2770,30 @@ public:
     proteus::pyarray<double> &ebqe_bc_hv_ext = args.array<double>("ebqe_bc_hv_ext");
     proteus::pyarray<double> &ebqe_bc_flux_hv_diff_ext =
         args.array<double>("ebqe_bc_flux_hv_diff_ext");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_h =
-        args.array<int>("csrColumnOffsets_eb_h_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_hu =
-        args.array<int>("csrColumnOffsets_eb_h_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_hv =
-        args.array<int>("csrColumnOffsets_eb_h_hv");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_h =
-        args.array<int>("csrColumnOffsets_eb_hu_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_hu =
-        args.array<int>("csrColumnOffsets_eb_hu_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_hv =
-        args.array<int>("csrColumnOffsets_eb_hu_hv");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_h =
-        args.array<int>("csrColumnOffsets_eb_hv_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_hu =
-        args.array<int>("csrColumnOffsets_eb_hv_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_hv =
-        args.array<int>("csrColumnOffsets_eb_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_hv");
     double dt = args.scalar<double>("dt");
     //
     // loop over elements to compute volume integrals and load them into the
     // element Jacobians and global Jacobian
     //
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       double elementJacobian_h_h[nDOF_test_element]
                                          [nDOF_trial_element],
           elementJacobian_hu_hu[nDOF_test_element][nDOF_trial_element],
@@ -2812,7 +2811,7 @@ public:
           elementJacobian_hbeta_hbeta[i][j] = 0.0;
         }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        int eN_k = eN * nQuadraturePoints_element +
+        proteus_index_t eN_k = eN * nQuadraturePoints_element +
                    k, // index to a scalar at a quadrature point
             eN_k_nSpace = eN_k * nSpace,
             eN_nDOF_trial_element =
@@ -2865,9 +2864,9 @@ public:
       // load into element Jacobian into global Jacobian
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          int eN_i_j = eN_i * nDOF_trial_element + j;
+          proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           globalJacobian[csrRowIndeces_h_h[eN_i] +
                          csrColumnOffsets_h_h[eN_i_j]] +=
               elementJacobian_h_h[i][j];
@@ -2899,7 +2898,7 @@ public:
     proteus::pyarray<double> &mesh_velocity_dof =
         args.array<double>("mesh_velocity_dof");
     double MOVING_DOMAIN = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int> &mesh_l2g = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t> &mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref = args.array<double>("dV_ref");
     proteus::pyarray<double> &h_trial_ref = args.array<double>("h_trial_ref");
     proteus::pyarray<double> &h_grad_trial_ref =
@@ -2939,147 +2938,147 @@ public:
         args.array<double>("boundaryJac_ref");
     proteus::pyarray<double> &elementDiameter =
         args.array<double>("elementDiameter");
-    int nElements_global = args.scalar<int>("nElements_global");
+    proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
     double g = args.scalar<double>("g");
-    proteus::pyarray<int> &h_l2g = args.array<int>("h_l2g");
-    proteus::pyarray<int> &vel_l2g = args.array<int>("vel_l2g");
+    proteus::pyarray<proteus_index_t> &h_l2g = args.array<proteus_index_t>("h_l2g");
+    proteus::pyarray<proteus_index_t> &vel_l2g = args.array<proteus_index_t>("vel_l2g");
     proteus::pyarray<double> &b_dof = args.array<double>("b_dof");
     proteus::pyarray<double> &h_dof = args.array<double>("h_dof");
     proteus::pyarray<double> &hu_dof = args.array<double>("hu_dof");
     proteus::pyarray<double> &hv_dof = args.array<double>("hv_dof");
     proteus::pyarray<double> &q_cfl = args.array<double>("q_cfl");
-    proteus::pyarray<int> &sdInfo_hu_hu_rowptr =
-        args.array<int>("sdInfo_hu_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hu_colind =
-        args.array<int>("sdInfo_hu_hu_colind");
-    proteus::pyarray<int> &sdInfo_hu_hv_rowptr =
-        args.array<int>("sdInfo_hu_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hu_hv_colind =
-        args.array<int>("sdInfo_hu_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hv_rowptr =
-        args.array<int>("sdInfo_hv_hv_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hv_colind =
-        args.array<int>("sdInfo_hv_hv_colind");
-    proteus::pyarray<int> &sdInfo_hv_hu_rowptr =
-        args.array<int>("sdInfo_hv_hu_rowptr");
-    proteus::pyarray<int> &sdInfo_hv_hu_colind =
-        args.array<int>("sdInfo_hv_hu_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hu_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hu_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hu_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hv_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hv_colind");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_rowptr =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_rowptr");
+    proteus::pyarray<proteus_csr_index_t> &sdInfo_hv_hu_colind =
+        args.array<proteus_csr_index_t>("sdInfo_hv_hu_colind");
     // h
-    proteus::pyarray<int> &csrRowIndeces_h_h = args.array<int>("csrRowIndeces_h_h");
-    proteus::pyarray<int> &csrColumnOffsets_h_h =
-        args.array<int>("csrColumnOffsets_h_h");
-    proteus::pyarray<int> &csrRowIndeces_h_hu =
-        args.array<int>("csrRowIndeces_h_hu");
-    proteus::pyarray<int> &csrColumnOffsets_h_hu =
-        args.array<int>("csrColumnOffsets_h_hu");
-    proteus::pyarray<int> &csrRowIndeces_h_hv =
-        args.array<int>("csrRowIndeces_h_hv");
-    proteus::pyarray<int> &csrColumnOffsets_h_hv =
-        args.array<int>("csrColumnOffsets_h_hv");
-    proteus::pyarray<int> &csrRowIndeces_h_heta =
-        args.array<int>("csrRowIndeces_h_heta");
-    proteus::pyarray<int> &csrColumnOffsets_h_heta =
-        args.array<int>("csrColumnOffsets_h_heta");
-    proteus::pyarray<int> &csrRowIndeces_h_hw =
-        args.array<int>("csrRowIndeces_h_hw");
-    proteus::pyarray<int> &csrColumnOffsets_h_hw =
-        args.array<int>("csrColumnOffsets_h_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_h = args.array<proteus_csr_index_t>("csrRowIndeces_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_h_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_h_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_h_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_h_hw");
     // hu
-    proteus::pyarray<int> &csrRowIndeces_hu_h =
-        args.array<int>("csrRowIndeces_hu_h");
-    proteus::pyarray<int> &csrColumnOffsets_hu_h =
-        args.array<int>("csrColumnOffsets_hu_h");
-    proteus::pyarray<int> &csrRowIndeces_hu_hu =
-        args.array<int>("csrRowIndeces_hu_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hu =
-        args.array<int>("csrColumnOffsets_hu_hu");
-    proteus::pyarray<int> &csrRowIndeces_hu_hv =
-        args.array<int>("csrRowIndeces_hu_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hv =
-        args.array<int>("csrColumnOffsets_hu_hv");
-    proteus::pyarray<int> &csrRowIndeces_hu_heta =
-        args.array<int>("csrRowIndeces_hu_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hu_heta =
-        args.array<int>("csrColumnOffsets_hu_heta");
-    proteus::pyarray<int> &csrRowIndeces_hu_hw =
-        args.array<int>("csrRowIndeces_hu_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hu_hw =
-        args.array<int>("csrColumnOffsets_hu_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hu_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hu_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hu_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hu_hw");
     // hv
-    proteus::pyarray<int> &csrRowIndeces_hv_h =
-        args.array<int>("csrRowIndeces_hv_h");
-    proteus::pyarray<int> &csrColumnOffsets_hv_h =
-        args.array<int>("csrColumnOffsets_hv_h");
-    proteus::pyarray<int> &csrRowIndeces_hv_hu =
-        args.array<int>("csrRowIndeces_hv_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hu =
-        args.array<int>("csrColumnOffsets_hv_hu");
-    proteus::pyarray<int> &csrRowIndeces_hv_hv =
-        args.array<int>("csrRowIndeces_hv_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hv =
-        args.array<int>("csrColumnOffsets_hv_hv");
-    proteus::pyarray<int> &csrRowIndeces_hv_heta =
-        args.array<int>("csrRowIndeces_hv_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hv_heta =
-        args.array<int>("csrColumnOffsets_hv_heta");
-    proteus::pyarray<int> &csrRowIndeces_hv_hw =
-        args.array<int>("csrRowIndeces_hv_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hv_hw =
-        args.array<int>("csrColumnOffsets_hv_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hv_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hv_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hv_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hv_hw");
     // heta
-    proteus::pyarray<int> &csrRowIndeces_heta_h =
-        args.array<int>("csrRowIndeces_heta_h");
-    proteus::pyarray<int> &csrColumnOffsets_heta_h =
-        args.array<int>("csrColumnOffsets_heta_h");
-    proteus::pyarray<int> &csrRowIndeces_heta_hu =
-        args.array<int>("csrRowIndeces_heta_hu");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hu =
-        args.array<int>("csrColumnOffsets_heta_hu");
-    proteus::pyarray<int> &csrRowIndeces_heta_hv =
-        args.array<int>("csrRowIndeces_heta_hv");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hv =
-        args.array<int>("csrColumnOffsets_heta_hv");
-    proteus::pyarray<int> &csrRowIndeces_heta_heta =
-        args.array<int>("csrRowIndeces_heta_heta");
-    proteus::pyarray<int> &csrColumnOffsets_heta_heta =
-        args.array<int>("csrColumnOffsets_heta_heta");
-    proteus::pyarray<int> &csrRowIndeces_heta_hw =
-        args.array<int>("csrRowIndeces_heta_hw");
-    proteus::pyarray<int> &csrColumnOffsets_heta_hw =
-        args.array<int>("csrColumnOffsets_heta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_heta_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_heta_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_heta_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_heta_hw");
     // hw
-    proteus::pyarray<int> &csrRowIndeces_hw_h =
-        args.array<int>("csrRowIndeces_hw_h");
-    proteus::pyarray<int> &csrColumnOffsets_hw_h =
-        args.array<int>("csrColumnOffsets_hw_h");
-    proteus::pyarray<int> &csrRowIndeces_hw_hu =
-        args.array<int>("csrRowIndeces_hw_hu");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hu =
-        args.array<int>("csrColumnOffsets_hw_hu");
-    proteus::pyarray<int> &csrRowIndeces_hw_hv =
-        args.array<int>("csrRowIndeces_hw_hv");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hv =
-        args.array<int>("csrColumnOffsets_hw_hv");
-    proteus::pyarray<int> &csrRowIndeces_hw_heta =
-        args.array<int>("csrRowIndeces_hw_heta");
-    proteus::pyarray<int> &csrColumnOffsets_hw_heta =
-        args.array<int>("csrColumnOffsets_hw_heta");
-    proteus::pyarray<int> &csrRowIndeces_hw_hw =
-        args.array<int>("csrRowIndeces_hw_hw");
-    proteus::pyarray<int> &csrColumnOffsets_hw_hw =
-        args.array<int>("csrColumnOffsets_hw_hw");
-    proteus::pyarray<int> &csrRowIndeces_hbeta_hbeta =
-        args.array<int>("csrRowIndeces_hbeta_hbeta");
-    proteus::pyarray<int> &csrColumnOffsets_hbeta_hbeta =
-        args.array<int>("csrColumnOffsets_hbeta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_h =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_h");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hu =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hv =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_heta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_heta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_heta");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hw_hw =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hw_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hw_hw =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hw_hw");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_hbeta_hbeta =
+        args.array<proteus_csr_index_t>("csrRowIndeces_hbeta_hbeta");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_hbeta_hbeta =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_hbeta_hbeta");
     proteus::pyarray<double> &globalJacobian = args.array<double>("globalJacobian");
     proteus::pyarray<double> &porosity_dof = args.array<double>("porosity_dof");
-    int nExteriorElementBoundaries_global =
-        args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int> &exteriorElementBoundariesArray =
-        args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int> &elementBoundaryElementsArray =
-        args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t nExteriorElementBoundaries_global =
+        args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t> &exteriorElementBoundariesArray =
+        args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t> &elementBoundaryElementsArray =
+        args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int> &elementBoundaryLocalElementBoundariesArray =
         args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<int> &isDOFBoundary_h = args.array<int>("isDOFBoundary_h");
@@ -3110,30 +3109,30 @@ public:
     proteus::pyarray<double> &ebqe_bc_hv_ext = args.array<double>("ebqe_bc_hv_ext");
     proteus::pyarray<double> &ebqe_bc_flux_hv_diff_ext =
         args.array<double>("ebqe_bc_flux_hv_diff_ext");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_h =
-        args.array<int>("csrColumnOffsets_eb_h_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_hu =
-        args.array<int>("csrColumnOffsets_eb_h_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_h_hv =
-        args.array<int>("csrColumnOffsets_eb_h_hv");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_h =
-        args.array<int>("csrColumnOffsets_eb_hu_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_hu =
-        args.array<int>("csrColumnOffsets_eb_hu_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hu_hv =
-        args.array<int>("csrColumnOffsets_eb_hu_hv");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_h =
-        args.array<int>("csrColumnOffsets_eb_hv_h");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_hu =
-        args.array<int>("csrColumnOffsets_eb_hv_hu");
-    proteus::pyarray<int> &csrColumnOffsets_eb_hv_hv =
-        args.array<int>("csrColumnOffsets_eb_hv_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_h_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_h_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hu_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hu_hv");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_h =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_h");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_hu =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_hu");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_hv_hv =
+        args.array<proteus_csr_index_t>("csrColumnOffsets_eb_hv_hv");
     double dt = args.scalar<double>("dt");
     //
     // loop over elements to compute volume integrals and load them into the
     // element Jacobians and global Jacobian
     //
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       double elementJacobian_h_h[nDOF_test_element]
                                          [nDOF_trial_element],
           elementJacobian_hu_hu[nDOF_test_element][nDOF_trial_element],
@@ -3151,7 +3150,7 @@ public:
           elementJacobian_hbeta_hbeta[i][j] = 0.0;
         }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        int eN_k = eN * nQuadraturePoints_element +
+        proteus_index_t eN_k = eN * nQuadraturePoints_element +
                    k, // index to a scalar at a quadrature point
             eN_k_nSpace = eN_k * nSpace,
             eN_nDOF_trial_element =
@@ -3204,9 +3203,9 @@ public:
       // load into element Jacobian into global Jacobian
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          int eN_i_j = eN_i * nDOF_trial_element + j;
+          proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           globalJacobian[csrRowIndeces_h_h[eN_i] +
                          csrColumnOffsets_h_h[eN_i_j]] +=
               elementJacobian_h_h[i][j];
