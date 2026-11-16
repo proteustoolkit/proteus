@@ -905,7 +905,7 @@ class LevelModel(OneLevelTransport):
         argsDict["cell_interface_locator"] = self.cell_interface_locator
         argsDict["interface_locator"] = self.interface_locator
         argsDict["EXPLICIT_METHOD"] = self.coefficients.EXPLICIT_METHOD
-        argsDict["degree_polynomial"] = float(self.u[0].femSpace.order)
+        argsDict["degree_polynomial"] = self.u[0].femSpace.order
         argsDict["stage"] = self.stage
         argsDict["uTilde_dof"] = self.uTilde_dof
         argsDict["dt"] = self.timeIntegration.dt

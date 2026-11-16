@@ -1067,7 +1067,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useTimeIntegration"] = useTimeIntegration
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
         argsDict["lag_subgridError"] = self.stabilization.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.elementDiameter
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
@@ -1177,7 +1177,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useTimeIntegration"] = useTimeIntegration
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
         argsDict["lag_subgridError"] = int(self.stabilization.lag)
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.elementDiameter
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
@@ -1204,7 +1204,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0, 0)]
         argsDict["ELLIPTIC_REDISTANCING"] = self.coefficients.ELLIPTIC_REDISTANCING
         argsDict["backgroundDissipationEllipticRedist"] = self.coefficients.backgroundDissipationEllipticRedist
-        argsDict["alpha"] = float(self.coefficients.alpha/self.elementDiameter.min())
+        argsDict["alpha"] = self.coefficients.alpha/self.elementDiameter.min()
         self.calculateJacobian(argsDict, self.coefficients.useExact)
 
         # FREEZING INTERFACE #

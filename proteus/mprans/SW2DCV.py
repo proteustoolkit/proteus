@@ -1806,11 +1806,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["extendedSourceTerm_hv"] = self.extendedSourceTerm_hv
         argsDict["dH_minus_dL"] = self.dH_minus_dL
         argsDict["muH_minus_muL"] = self.muH_minus_muL
-        argsDict["cE"] = float(self.coefficients.cE)
+        argsDict["cE"] = self.coefficients.cE
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
         argsDict["dt"] = self.timeIntegration.dt
         argsDict["LINEAR_FRICTION"] = self.coefficients.LINEAR_FRICTION
-        argsDict["mannings"] = float(self.coefficients.mannings)
+        argsDict["mannings"] = self.coefficients.mannings
         argsDict["quantDOFs"] = self.quantDOFs
         argsDict["SECOND_CALL_CALCULATE_RESIDUAL"] = self.secondCallCalculateResidual
         argsDict["COMPUTE_NORMALS"] = self.COMPUTE_NORMALS

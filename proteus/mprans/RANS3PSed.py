@@ -1736,7 +1736,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nu_0"] = self.coefficients.nu_0
         argsDict["rho_1"] = self.coefficients.rho_1
         argsDict["nu_1"] = self.coefficients.nu_1
-        argsDict["rho_s"] = float(self.coefficients.rho_s)
+        argsDict["rho_s"] = self.coefficients.rho_s
         argsDict["smagorinskyConstant"] = self.coefficients.smagorinskyConstant
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
@@ -1763,7 +1763,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["v_dof"] = self.u[1].dof
         argsDict["w_dof"] = self.u[2].dof
         argsDict["g"] = self.coefficients.g
-        argsDict["useVF"] = float(self.coefficients.useVF)
+        argsDict["useVF"] = self.coefficients.useVF
         argsDict["vf"] = self.coefficients.q_vf
         argsDict["phi"] = self.coefficients.q_phi
         argsDict["normal_phi"] = self.coefficients.q_n
@@ -1962,7 +1962,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nu_0"] = self.coefficients.nu_0
         argsDict["rho_1"] = self.coefficients.rho_1
         argsDict["nu_1"] = self.coefficients.nu_1
-        argsDict["rho_s"] = float(self.coefficients.rho_s)
+        argsDict["rho_s"] = self.coefficients.rho_s
         argsDict["smagorinskyConstant"] = self.coefficients.smagorinskyConstant
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge

@@ -1644,7 +1644,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaR"] = self.coefficients.thetaR_types
         argsDict["thetaSR"] = self.coefficients.thetaSR_types
         argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
-        argsDict["prelimiter_power"] = float(self.coefficients.FCT_PRELIMITER_POWER)
+        argsDict["prelimiter_power"] = self.coefficients.FCT_PRELIMITER_POWER
         argsDict["prelimiter_head"] = int(self.coefficients.FCT_PRELIMITER_HEAD)
         argsDict["alpha_nv"] = self.alpha_nv
         argsDict["Rpos"] = self.Rpos
@@ -2414,7 +2414,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             argsDict["STABILIZATTION_TYPE"] = 2
             argsDict["Theta"] = 1.0
             argsDict["globalResidual"] = self._dc_scratch
-            argsDict["LSCHEME_L"] = float(self.coefficients.LSCHEME_L)
+            argsDict["LSCHEME_L"] = self.coefficients.LSCHEME_L
             self.richards.calculateResidual_entropy_viscosity(argsDict)
             argsDict["STABILIZATION_TYPE"] = 0
             argsDict["STABILIZATTION_TYPE"] = 0

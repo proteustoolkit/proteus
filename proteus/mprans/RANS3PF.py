@@ -2469,7 +2469,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dc"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dc"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["ebq_global_phi_solid"] = self.coefficients.ebq_global_phi_s
@@ -2642,7 +2642,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["USE_SUPG"] = int(self.coefficients.USE_SUPG)
         argsDict["ARTIFICIAL_VISCOSITY"] = self.coefficients.ARTIFICIAL_VISCOSITY
         argsDict["cMax"] = self.coefficients.cMax
-        argsDict["cE"] = float(self.coefficients.cE)
+        argsDict["cE"] = self.coefficients.cE
         argsDict["MULTIPLY_EXTERNAL_FORCE_BY_DENSITY"] = self.coefficients.MULTIPLY_EXTERNAL_FORCE_BY_DENSITY
         argsDict["forcex"] = self.q[('force', 0)]
         argsDict["forcey"] = self.q[('force', 1)]
@@ -2655,7 +2655,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["dynamic_viscosity_as_function"] = self.q['dynamic_viscosity']
         argsDict["ebqe_density_as_function"] = self.ebqe['density']
         argsDict["ebqe_dynamic_viscosity_as_function"] = self.ebqe['dynamic_viscosity']
-        argsDict["order_polynomial"] = float(self.u[0].femSpace.order)
+        argsDict["order_polynomial"] = self.u[0].femSpace.order
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["USE_SBM"] = self.coefficients.use_sbm
         argsDict["ncDrag"] = self.ncDrag
@@ -2805,7 +2805,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dg"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dg"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["ebq_global_phi_solid"] = self.coefficients.ebq_global_phi_s
