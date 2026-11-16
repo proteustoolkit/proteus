@@ -1,0 +1,50 @@
+{
+ "kernel": "VOFDeck",
+ "dim": 2,
+ "adr": {
+  "dim": 2,
+  "components": [
+   "χh"
+  ],
+  "equations": [
+   {
+    "component": "χh",
+    "mass": {
+     "m": "χh",
+     "dm": {
+      "χh": "1"
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "χh*v_0",
+      "χh*v_1"
+     ],
+     "df": {
+      "χh": [
+       "v_0",
+       "v_1"
+      ]
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    }
+   }
+  ]
+ },
+ "fields": [
+  "v_0",
+  "v_1"
+ ],
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "shock_capturing": {
+   "lagged": true
+  }
+ }
+}
