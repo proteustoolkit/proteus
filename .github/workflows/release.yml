@@ -1,0 +1,113 @@
+name: release
+
+# Publishes py-proteus (import name: proteus) to TestPyPI (pre-release tags) or
+# PyPI (final tags) with Trusted Publishing: GitHub mints a short-lived OIDC token
+# per job, so there is no API token and no secret anywhere. Same shape as ymf's
+# release.yml. It does nothing until all of these are true:
+#   1. the project and this workflow are registered as a Trusted Publisher on
+#      test.pypi.org and pypi.org (RELEASING.md steps 1-2: cekees's to do),
+#   2. the GitHub environments `testpypi` and `pypi` exist (RELEASING.md step 3),
+#   3. a matching tag is pushed. Nothing here runs on a branch or a pull request.
+# Tags are bare numbers, as proteus's releases always were (RELEASE.md): `2.0.0rc1`,
+# `2.0.0a1`, `2.0.0b1` go to TestPyPI; `2.0.0` goes to PyPI. The tag must equal the
+# version in setup.py (normalised by PEP 440): the build job refuses otherwise.
+#
+# Zenodo: its hook fires on a GitHub *release* being published, never on a tag
+# push, and this workflow neither creates, edits nor deletes a release. A final
+# version is tagged by `gh release create` (RELEASE.md step 6): that one action
+# fires Zenodo once and, because it creates the tag, this workflow once. A
+# release candidate is tagged with `git push` and no release, so it makes no
+# Zenodo version.
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+a[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+b[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+rc[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build and check the sdist (nothing is compiled)
+        env:
+          EXPECT_VERSION: ${{ github.ref_name }}
+        run: |
+          # Build requirements from pyproject.toml, installed so the sdist is built
+          # with --no-isolation exactly as sdist.yml does. mpi4py ships a wheel.
+          python -m pip install --upgrade pip build twine packaging \
+              "setuptools>=77" "cython>=3.0,<4" "pybind11>=2.11,<4" "numpy>=1.25,<3" mpi4py
+          tools/check_sdist.sh "$RUNNER_TEMP/check"
+          mkdir dist
+          cp "$RUNNER_TEMP"/check/dist/* dist/
+
+      - name: Classify the version
+        id: version
+        run: |
+          python - <<'PY'
+          import glob, os, re
+          from packaging.version import Version
+          tag = os.environ["GITHUB_REF_NAME"]
+          sdist = glob.glob("dist/py_proteus-*.tar.gz")
+          assert len(sdist) == 1, sdist
+          built = Version(re.match(r"py_proteus-(.+)\.tar\.gz", os.path.basename(sdist[0])).group(1))
+          assert tag == str(built), f"tag {tag} builds version {built}"
+          assert not built.local and not built.dev, f"not a release version: {built}"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"prerelease={'true' if built.is_prerelease else 'false'}\n")
+          print("version", built, "prerelease", built.is_prerelease)
+          PY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    needs: build
+    if: needs.build.outputs.prerelease == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi          # not created by this PR: RELEASING.md step 3
+      url: https://test.pypi.org/p/py-proteus
+    permissions:
+      id-token: write         # the OIDC token Trusted Publishing exchanges
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi              # not created by this PR: RELEASING.md step 3
+      url: https://pypi.org/p/py-proteus
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
