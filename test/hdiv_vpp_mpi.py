@@ -39,11 +39,11 @@ variant = os.environ.get("VPP_VARIANT", "pwl")
 family = "bdm1" if "bdm" in variant else "rt0"
 nd = 2
 
-space = FemTools.Hdiv_AffineOnSimplex(mesh, nd, family)
+fn = vpp.velocityFunction(0)            # the post-processor's own H(div) field (C10b), no conversion here
+space, dof, known, defect = fn.femSpace, fn.dof, fn.known, fn.normalDefect
 dm = space.dofMap
 owned = np.arange(nOwned)
 samples = vpp.evaluateElementVelocityField(np.ascontiguousarray(dm.elementDofPoints), 0)
-dof, defect, known = space.dofsFromElementValues(samples, elements=owned)
 
 # where the two elements of a face disagree: split the faces by whether one of their elements has a node on
 # the boundary of the domain

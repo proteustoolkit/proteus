@@ -33,7 +33,7 @@ def VelocityPostProcessingChooser(transport):
         pptypes = {}
         for ci in list(transport.conservativeFlux.keys()):
             if (transport.conservativeFlux[ci] == 'p1-nc' and
-                isinstance(transport.u[ci].femSpace,FemTools.NC_AffineLinearOnSimplexWithNodalBasis)):
+                _simplexP1DofMap(transport.u[ci].femSpace,transport.mesh,'face')):
                 ppcomps.append(ci)
                 pptypes[ci] = 'p1-nc'
             #end p1-nc for comp ci
@@ -75,6 +75,27 @@ def _requireOneRank(postProcessingType):
 #####################################################################################################
 #begin pulling out different velocity cases into separate classes to make this more manageable
 #####################################################################################################
+
+def _simplexP1DofMap(femSpace,mesh,kind):
+    """Which first-order simplex space is ``femSpace``, read from its dof map and not from its class: the
+    algorithms need to know where the d+1 local dofs live, so the test is on that.
+
+    kind 'nodal': dof i of an element is its node i (continuous P1); 'element': the dofs are element-wise
+    (discontinuous P1); 'face': dof i is the face opposite node i (Crouzeix-Raviart).
+    """
+    nd = femSpace.referenceFiniteElement.referenceElement.dim
+    l2g = numpy.asarray(femSpace.dofMap.l2g)
+    if l2g.shape != (mesh.nElements_global,nd+1) or mesh.nNodes_element != nd+1:
+        return False
+    if kind == 'nodal':
+        reference = mesh.elementNodesArray
+    elif kind == 'face':
+        reference = mesh.elementBoundariesArray
+    elif kind == 'element':
+        reference = numpy.arange(mesh.nElements_global*(nd+1)).reshape(mesh.nElements_global,nd+1)
+    else:
+        raise ValueError("kind must be 'nodal', 'face' or 'element'")
+    return bool(numpy.array_equal(l2g,numpy.asarray(reference)))
 
 class VelocityPostProcessingAlgorithmBase(object):
     """ Base class for velocity post processing algorithms
@@ -207,13 +228,43 @@ class VelocityPostProcessingAlgorithmBase(object):
         self.velocityWriter = Archiver.XdmfWriter()
     def computeGeometricInfo(self):
         pass
+    #: the H(div) space of FemTools that holds the velocity of this algorithm: 'rt0', 'bdm1', or None (BDM2,
+    #: point values)
+    hdivFamily = None
     def postprocess(self,verbose=0):
         """generate post-processed velocity field for attached VectorTransport
         object and store them in local dictionaries
 
         """
+        self._hdivVelocity = {}
         for ci in self.vtComponents:
             self.postprocess_component(ci,verbose=verbose)
+    def velocityFunction(self,ci):
+        """The post-processed velocity of component ci as a :class:`FemTools.FiniteElementFunction` of the
+        H(div) space of the algorithm (RT0: one dof per face; BDM1: nd per face, ``Hdiv_AffineOnSimplex``),
+        built from the element-wise velocity of the last ``postprocess`` on first use, so a run that never asks
+        pays nothing. Evaluate it with ``f.femSpace.evaluate(f.dof,xi)``; ``f.known`` marks the dofs an owned
+        element gave a value to (all of them in serial; on a rank the faces seen only from ghost elements are 0).
+        Returns None if the algorithm has no H(div) representation (BDM2, point values) or the mesh is not a
+        simplex mesh. The space is built once and assumes a fixed mesh.
+        """
+        if self.hdivFamily is None or self.vt.mesh.nNodes_element != self.vt.nSpace_global+1:
+            return None
+        if not hasattr(self,'_hdivVelocity'):
+            self._hdivVelocity = {}
+        if ci not in self._hdivVelocity:
+            if not hasattr(self,'_hdivSpace'):
+                self._hdivSpace = FemTools.Hdiv_AffineOnSimplex(self.vt.mesh,self.vt.nSpace_global,self.hdivFamily)
+            space = self._hdivSpace
+            owned = numpy.arange(getattr(self.vt.mesh,'nElements_owned',self.vt.mesh.nElements_global))
+            samples = self.evaluateElementVelocityField(numpy.ascontiguousarray(space.dofMap.elementDofPoints),ci)
+            dof,defect,known = space.dofsFromElementValues(samples,elements=owned)
+            f = FemTools.FiniteElementFunction(space,dof=dof,dim_dof=1,name="velocity_%d" % ci,isVector=False)
+            f.known = known
+            #: largest disagreement of the two elements of a face about its dof (0 for a single valued normal)
+            f.normalDefect = defect
+            self._hdivVelocity[ci] = f
+        return self._hdivVelocity[ci]
 
     def postprocess_component(self,ci,verbose=0):
         """
@@ -330,6 +381,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
     other in-tree decks name it (MiscibleDisplacement, poisson_2d, post_processing/import_modules), none in
     air-water-vv or the manuscript decks.
     """
+    hdivFamily = 'rt0'
     from .cpostprocessing import postProcessRT0potentialFromP1nc,postProcessRT0potentialFromP1nc_sd
     from .cpostprocessing import postProcessRT0velocityFromP1nc,postProcessRT0velocityFromP1nc_sd
     from .cpostprocessing import updateRT0velocityWithAveragedPotentialP1nc,updateRT0velocityWithAveragedPotentialP1nc_sd
@@ -378,7 +430,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                         self.elementBarycenters[eN,:] += self.vt.mesh.nodeArray[nN_global,:]
                     self.elementBarycenters[eN,:] /= float(self.vt.mesh.nNodes_element)
             #
-            assert isinstance(self.vt.u[ci].femSpace,FemTools.NC_AffineLinearOnSimplexWithNodalBasis)
+            assert _simplexP1DofMap(self.vt.u[ci].femSpace,self.vt.mesh,'face')
             self._setInteriorFaceRows(ci)
             self.nDOFs_element[ci] = self.vt.nSpace_global+1
             self.q[('velocity_dofs',ci)] = numpy.zeros((self.vt.mesh.nElements_global,self.nDOFs_element[ci]),'d')
@@ -629,6 +681,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
     are :math:`V^i = \int_{e_i}\vec v\dot n_{i}\ds`
 
     """
+    hdivFamily = 'rt0'
 #    TODO:
 #      remove python loops in building mesh infrastructure or get rid of dependence
 #        on these forms of node star info and use data structures in cmesh
@@ -769,14 +822,14 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
                     self.fluxBoundaryNodes[ci][nN] = 1
                 #
             #end omitting flux boundary nodes
-            if not isinstance(self.vt.u[ci].femSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis):
+            if not _simplexP1DofMap(self.vt.u[ci].femSpace,self.vt.mesh,'nodal'):
                 self.solutionTestSpaceIsNotPWL[ci] = True
                 logEvent("pwl post-processing for finite element space"+str(self.vt.u[ci].femSpace))
                 #need to set up w and w*dS_f and weights to build residuals for linears out of R_{e,i}
                 #Point1
                 if self.testSpace is None:
                     self.testSpace = FemTools.C0_AffineLinearOnSimplexWithNodalBasis(self.vt.mesh,self.vt.nSpace_global)
-                assert isinstance(self.testSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis)
+                assert _simplexP1DofMap(self.testSpace,self.vt.mesh,'nodal')
                 self.alpha[ci] = numpy.zeros((self.testSpace.referenceFiniteElement.localFunctionSpace.dim,
                                           self.vt.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim),'d')
                 for j,w in enumerate(self.testSpace.referenceFiniteElement.localFunctionSpace.basis):
@@ -1108,6 +1161,7 @@ class VPP_PWL_BDM(VPP_PWL_RT0):
     Have to use BDM projection to get degrees of freedom
 
     """
+    hdivFamily = 'bdm1'
 #    TODO:
 #      need additional code to compute velocities at ebq and ebq_global if desired
 #      looks like ebq_global, ebqe may not be getting a good approximation if v.n=0 on boundary?
@@ -1207,6 +1261,7 @@ class VPP_PWL_BDM2(VPP_PWL_RT0):
     This class is intended to implement BDM2 elements in proteus
 
     """
+    hdivFamily = None
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_PWL_RT0.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
         self.postProcessingType = 'pwl-bdm2'
@@ -1839,6 +1894,7 @@ class VPP_PWL_BDM_OPT(VPP_PWL_RT0_OPT):
     Have to use BDM projection to get degrees of freedom
 
     """
+    hdivFamily = 'bdm1'
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_PWL_RT0_OPT.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
         #have to directly modify the type now to show bdm
@@ -1876,7 +1932,7 @@ class VPP_PWL_BDM_OPT(VPP_PWL_RT0_OPT):
                                                           self.BDMprojectionMatPivots_element)
     def updateWeights(self):
         for ci in self.vtComponents:
-            if not isinstance(self.vt.u[ci].femSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis):
+            if not _simplexP1DofMap(self.vt.u[ci].femSpace,self.vt.mesh,'nodal'):
                 self.testSpace.getBasisValues(self.vt.elementQuadraturePoints,
                                               self.qv[ci])
                 self.testSpace.getBasisValuesTrace(self.vt.u[0].femSpace.elementMaps.permutations,
@@ -1960,6 +2016,7 @@ class VPP_PWL_BDM2_OPT(VPP_PWL_BDM2):
     Dirichlet conditions are required. The element velocity is then the BDM2 projection of pwl-bdm2: the face
     fluxes plus interior moments of the transport's pointwise velocity. Needs a C0 P2 solution, as pwl-bdm2 does.
     """
+    hdivFamily = None
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_PWL_BDM2.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
         self.postProcessingType = 'pwl-bdm2-opt'
@@ -1987,6 +2044,7 @@ class VPP_PWC_RT0(VelocityPostProcessingAlgorithmBase):
     \int_{e_i}\vec v\dot n_{i}\ds`
 
     """
+    hdivFamily = 'rt0'
 #    TOOD:
 #       make sure works with weak dirichlet conditions
 #       remove python loops in building global Jacobian
@@ -2205,6 +2263,7 @@ class VPP_SUN_RT0(VelocityPostProcessingAlgorithmBase):
     degrees of freedom are :math:`V^i = \int_{e_i}\vec v\dot n_{i}\ds`
 
     """
+    hdivFamily = 'rt0'
 #    TOOD:
 #       make sure works with weak dirichlet conditions
 #       remove python loops in building global Jacobian
@@ -2467,6 +2526,7 @@ class VPP_SUN_GS_RT0(VelocityPostProcessingAlgorithmBase):
     freedom are :math:`V^i = \int_{e_i}\vec v\dot n_{i}\ds`
 
     """
+    hdivFamily = 'rt0'
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         _requireOneRank('sun-gs-rt0')
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='sun-gs-rt0',
@@ -2640,6 +2700,7 @@ class VPP_DG_RT0(VelocityPostProcessingAlgorithmBase):
     onto local :math:`RT_0` space
 
     """
+    hdivFamily = 'rt0'
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VelocityPostProcessingAlgorithmBase.__init__(self,postProcessingType='dg',
                                                      vectorTransport=vectorTransport,
@@ -2731,6 +2792,7 @@ class VPP_DG_BDM(VPP_DG_RT0):
     Have to use BDM projection to get degrees of freedom
 
     """
+    hdivFamily = 'bdm1'
     def __init__(self,vectorTransport=None,vtComponents=[0]):
         VPP_DG_RT0.__init__(self,vectorTransport=vectorTransport,vtComponents=vtComponents)
         #how is the local velocity represented
@@ -2749,10 +2811,10 @@ class VPP_DG_BDM(VPP_DG_RT0):
                 self.q[('velocity_l2g',ci)]  = numpy.arange((self.vt.mesh.nElements_global*self.nDOFs_element[ci]),dtype=cmeshTools.INDEX_DTYPE).reshape((self.vt.mesh.nElements_global,self.nDOFs_element[ci]))
             #build linear test space for BMD projection if test space isn't P1
 
-            if not isinstance(self.vt.u[ci].femSpace,FemTools.DG_AffineLinearOnSimplexWithNodalBasis):
+            if not _simplexP1DofMap(self.vt.u[ci].femSpace,self.vt.mesh,'element'):
                 if self.testSpace is None:
                     self.testSpace = FemTools.C0_AffineLinearOnSimplexWithNodalBasis(self.vt.mesh,self.vt.nSpace_global)
-                assert isinstance(self.testSpace,FemTools.C0_AffineLinearOnSimplexWithNodalBasis)
+                assert _simplexP1DofMap(self.testSpace,self.vt.mesh,'nodal')
                 self.qv[ci] = numpy.zeros(
                     (self.vt.mesh.nElements_global,
                      self.vt.nQuadraturePoints_element,
@@ -3217,6 +3279,14 @@ class AggregateVelocityPostProcessor(object):
             return
         for vpp in self.vpp_algorithms:
             vpp.postprocess(verbose=verbose)
+    def velocityFunction(self,ci):
+        """the velocity of component ci as a function of an H(div) space of FemTools (None if there is none)"""
+        if self.postProcessingTypes is None:
+            return None
+        for vpp in self.vpp_algorithms:
+            if ci in vpp.vtComponents:
+                return vpp.velocityFunction(ci)
+        return None
     def evaluateElementVelocityField(self,x,ci):
         """
         evaluate velocity field assuming velocity_dofs already calculated
