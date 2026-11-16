@@ -358,6 +358,8 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
         self.localVelocityRepresentationFlag = 1
         #
         self.nDOFs_element = {}
+        self.nFreeDOF_element = {}
+        self.freeLocal_element = {}
         #local element residuals
         self.elementResidual = self.vt.elementResidual
         self.elementBarycenters = None
@@ -377,6 +379,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                     self.elementBarycenters[eN,:] /= float(self.vt.mesh.nNodes_element)
             #
             assert isinstance(self.vt.u[ci].femSpace,FemTools.NC_AffineLinearOnSimplexWithNodalBasis)
+            self._setInteriorFaceRows(ci)
             self.nDOFs_element[ci] = self.vt.nSpace_global+1
             self.q[('velocity_dofs',ci)] = numpy.zeros((self.vt.mesh.nElements_global,self.nDOFs_element[ci]),'d')
             if ('velocity_l2g',self.vtComponents[0]) in self.q:
@@ -402,6 +405,71 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
 
     #init
 
+    def _setInteriorFaceRows(self,ci):
+        """The faces whose balance equation fixes the constant part of the velocity of each element, and the
+        elements with an exterior face (``self.exteriorFaceElements``).
+
+        Dirichlet and Neumann conditions are weak on this space, so the vt lists every face dof as free, an
+        exterior face included. The kernel's face flux is the element's own volume term; it equals minus the
+        element's residual at that face only where the weak equation has no boundary term. So the faces handed to
+        the kernel as free are the faces of the domain interior (a face the partition cut, flag -1, is interior to
+        the domain); the exterior faces get the kernel's rows with right hand side 0 and their flux comes from the
+        element balance. ``_correctForWeakBoundaryTerms`` then restores the boundary term of the interior faces.
+        """
+        mesh = self.vt.mesh
+        exterior = numpy.zeros((mesh.nElementBoundaries_global,),dtype=bool)
+        ext = numpy.asarray(mesh.exteriorElementBoundariesArray)
+        exterior[ext] = numpy.asarray(mesh.elementBoundaryMaterialTypes)[ext] != -1
+        nE = mesh.nElements_global
+        nFree = numpy.zeros((nE,),'i')
+        free = numpy.zeros(self.vt.l2g[ci]['freeLocal'].shape,'i')
+        face = numpy.asarray(mesh.elementBoundariesArray)
+        for eN in range(nE):
+            k = 0
+            for i in range(self.vt.l2g[ci]['nFreeDOF'][eN]):
+                j = self.vt.l2g[ci]['freeLocal'][eN,i]
+                if not exterior[face[eN,j]]:
+                    free[eN,k] = j
+                    k += 1
+            nFree[eN] = k
+        self.nFreeDOF_element[ci] = nFree
+        self.freeLocal_element[ci] = free
+        self.elementExteriorFaces = exterior[face]
+        self.exteriorFaceElements = numpy.nonzero(self.elementExteriorFaces.any(axis=1))[0]
+
+    def _correctForWeakBoundaryTerms(self,ci):
+        """Make the flux through the interior faces of the elements that have an exterior face equal minus the
+        element's residual there, as it is for every other element.
+
+        With a weak boundary condition (penalty, Nitsche) the residual of a face dof carries a boundary term
+        for each element with an exterior face, because the Crouzeix-Raviart basis function of an interior face
+        is not zero on the exterior face: it has mean zero there, but the penalty term does not. The kernel
+        does not see it, so the flux it gives through the interior face of such an element missed the neighbour's
+        by that term (up to 1.1e-2 against velocities of 6 on the 13 x 13 vpp_poisson_2d). The kernel's own
+        flux through a face equals minus the residual when there is no boundary term (checked to 2e-16 on the
+        other elements), so the correction ``delta`` solves the same d x d row system as the kernel's constant
+        ``c_E`` with right hand side ``-R_i - flux_i`` on the interior faces and 0 on the exterior faces that
+        complete the rows.
+        """
+        vt,mesh = self.vt,self.vt.mesh
+        d = vt.nSpace_global
+        areaFact = 0.5 if d == 3 else 1.0
+        R = numpy.asarray(vt.elementResidual[ci])
+        dofs = self.q[('velocity_dofs',ci)]
+        nodes = numpy.asarray(mesh.nodeArray)[numpy.asarray(mesh.elementNodesArray)][:,:,:d]
+        for eN in self.exteriorFaceElements:
+            interior = [j for j in vt.l2g[ci]['freeLocal'][eN,:vt.l2g[ci]['nFreeDOF'][eN]] if not self.elementExteriorFaces[eN,j]]
+            rows = interior + [j for j in range(d+1) if self.elementExteriorFaces[eN,j]]
+            rows = rows[:d]
+            G = numpy.zeros((d,d)); rhs = numpy.zeros((d,))
+            for r,j in enumerate(rows):
+                G[r,:] = areaFact*vt.ebq['sqrt(det(g))'][eN,j,0]*vt.ebq['n'][eN,j,0,:d]
+                if j in interior:
+                    mid = (nodes[eN].sum(axis=0) - nodes[eN,j])/d
+                    flux = G[r,:].dot(dofs[eN,:d] + dofs[eN,d]*mid)
+                    rhs[r] = -R[eN,j] - flux
+            dofs[eN,:d] += numpy.linalg.solve(G,rhs)
+
     def postprocess_component(self,ci,verbose=0):
         """compute velocity field in RT_0 assuming a potential field in
         :math:`P^1_{nc}` has already been solved for
@@ -423,8 +491,8 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
             if self.vt.sd:
                 cpostprocessing.postProcessRT0velocityFromP1nc_sd(self.vt.coefficients.sdInfo[(ci,self.potentials[ci][0])][0],
                                                                   self.vt.coefficients.sdInfo[(ci,self.potentials[ci][0])][1],
-                                                                  self.vt.l2g[ci]['nFreeDOF'],
-                                                                  self.vt.l2g[ci]['freeLocal'],
+                                                                  self.nFreeDOF_element[ci],
+                                                                  self.freeLocal_element[ci],
                                                                   self.vt.q['det(J)'],
                                                                   self.vt.ebq['sqrt(det(g))'],
                                                                   self.vt.ebq['n'],
@@ -441,8 +509,8 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                                                                   self.vt.q[('w*dV_m',ci)],
                                                                   self.vt.q[('mt',ci)])
             else:
-                cpostprocessing.postProcessRT0velocityFromP1nc(self.vt.l2g[ci]['nFreeDOF'],
-                                                               self.vt.l2g[ci]['freeLocal'],
+                cpostprocessing.postProcessRT0velocityFromP1nc(self.nFreeDOF_element[ci],
+                                                               self.freeLocal_element[ci],
                                                                self.vt.q['det(J)'],
                                                                self.vt.ebq['sqrt(det(g))'],
                                                                self.vt.ebq['n'],
@@ -462,8 +530,8 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
             if self.vt.sd:
                 cpostprocessing.postProcessRT0velocityFromP1nc_sd(self.vt.coefficients.sdInfo[(ci,self.potentials[ci][0])][0],
                                                                   self.vt.coefficients.sdInfo[(ci,self.potentials[ci][0])][1],
-                                                                  self.vt.l2g[ci]['nFreeDOF'],
-                                                                  self.vt.l2g[ci]['freeLocal'],
+                                                                  self.nFreeDOF_element[ci],
+                                                                  self.freeLocal_element[ci],
                                                                   self.vt.q['det(J)'],
                                                                   self.vt.ebq['sqrt(det(g))'],
                                                                   self.vt.ebq['n'],
@@ -478,8 +546,8 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                                                                   self.vt.q[('r',ci)],
                                                                   self.q[('velocity_dofs',ci)])
             else:
-                cpostprocessing.postProcessRT0velocityFromP1nc(self.vt.l2g[ci]['nFreeDOF'],
-                                                               self.vt.l2g[ci]['freeLocal'],
+                cpostprocessing.postProcessRT0velocityFromP1nc(self.nFreeDOF_element[ci],
+                                                               self.freeLocal_element[ci],
                                                                self.vt.q['det(J)'],
                                                                self.vt.ebq['sqrt(det(g))'],
                                                                self.vt.ebq['n'],
@@ -511,6 +579,7 @@ class VPP_P1nc_RT0(VelocityPostProcessingAlgorithmBase):
                                                                            self.vt.q[('a',ci,cj)],
                                                                            self.q[('velocity_dofs',ci)])
 
+        self._correctForWeakBoundaryTerms(ci)
         cpostprocessing.getElementRT0velocityValues(self.vt.q['x'],
                                                     self.q[('velocity_dofs',ci)],
                                                     self.q[('velocity',ci)])
