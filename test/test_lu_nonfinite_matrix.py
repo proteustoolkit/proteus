@@ -1,4 +1,4 @@
-"""LU.prepare refuses a matrix with a NaN or an Inf instead of handing it to SuperLU.
+"""LU.prepare does not hand a matrix with a NaN or an Inf to SuperLU: the solve is reported as failed.
 
 SuperLU does not look at its input: a NaN matrix gave a NaN pivot and a SIGSEGV in dgstrf (dpivotL) in the
 Richards implicit-FCT levee run, which ended the process without a traceback.
@@ -47,37 +47,59 @@ def test_a_finite_sparse_matrix_is_factored_and_solved():
 
 
 @pytest.mark.parametrize('value', [np.nan, np.inf, -np.inf])
-def test_a_sparse_matrix_with_a_non_finite_entry_is_refused(value):
+def test_a_sparse_matrix_with_a_non_finite_entry_is_not_factored_and_the_solve_fails(value, monkeypatch):
+    called = []
+    monkeypatch.setattr(superluWrappers, 'sparseFactorPrepare', lambda *a: called.append(a))
+    messages = []
+    monkeypatch.setattr(LinearSolvers, 'logEvent', lambda message, level=0: messages.append(message))
     lu = LinearSolvers.LU(_sparse(_tridiagonal(), poison=(7, value)))
-    with pytest.raises(FloatingPointError) as err:
-        lu.prepare()
-    message = str(err.value)
-    assert 'LU.prepare' in message and '6 x 6' in message
-    assert '1 of 16 entries' in message and 'entry 7' in message
+    lu.prepare()
+    assert not called                      # SuperLU never saw the matrix
+    assert lu.failed() is True             # what Newton reads as a failed linear solve
+    assert len(messages) == 1
+    assert 'LU.prepare' in messages[0] and '6 x 6' in messages[0]
+    assert '1 of 16 entries' in messages[0] and 'entry 7' in messages[0]
+    u = np.zeros(6)
+    lu.solve(u, b=np.ones(6))
+    assert np.isnan(u).all()               # a caller that ignores failed() gets NaN, not a stale answer
 
 
-def test_every_entry_nan_is_refused_as_in_the_levee_run():
+def test_the_next_finite_matrix_is_factored_again():
+    A = _sparse(_tridiagonal())
+    lu = LinearSolvers.LU(A)
+    A.nzvals[0] = np.nan
+    lu.prepare()
+    assert lu.failed() is True
+    A.nzvals[0] = 4.0
+    lu.prepare()
+    b = np.arange(1.0, 7.0)
+    u = b.copy()
+    superluWrappers.sparseFactorSolve(lu.sparseFactor, u)
+    np.testing.assert_allclose(_tridiagonal() @ u, b, atol=1.0e-12)
+
+
+def test_every_entry_nan_is_reported_as_in_the_levee_run():
     A = _sparse(_tridiagonal())
     A.nzvals[:] = np.nan
-    with pytest.raises(FloatingPointError, match='16 of 16 entries'):
-        LinearSolvers.LU(A).prepare()
+    assert '16 of 16 entries' in LinearSolvers.nonFiniteMatrixMessage(A.nzvals, 'x')
 
 
 def test_plus_and_minus_inf_do_not_cancel_in_the_sum():
     A = _sparse(_tridiagonal())
     A.nzvals[0], A.nzvals[1] = np.inf, -np.inf
-    with pytest.raises(FloatingPointError, match='2 of 16 entries'):
-        LinearSolvers.LU(A).prepare()
+    assert '2 of 16 entries' in LinearSolvers.nonFiniteMatrixMessage(A.nzvals, 'x')
 
 
 def test_large_but_finite_entries_are_not_refused():
     A = _sparse(_tridiagonal())
     A.nzvals[:] *= 1.0e308 / 4.0    # the sum overflows, no entry does
-    LinearSolvers.refuseNonFiniteMatrix(A.nzvals, 'overflowing sum')
+    assert LinearSolvers.nonFiniteMatrixMessage(A.nzvals, 'overflowing sum') is None
 
 
-def test_a_dense_matrix_with_a_nan_is_refused():
+def test_a_dense_matrix_with_a_nan_is_not_factored():
     A = _tridiagonal()
     A[2, 3] = np.nan
-    with pytest.raises(FloatingPointError, match=r'entry \(2, 3\)'):
-        LinearSolvers.LU(A).prepare()
+    lu = LinearSolvers.LU(A)
+    lu.prepare()
+    assert lu.failed() is True
+    assert 'entry (2, 3)' in LinearSolvers.nonFiniteMatrixMessage(A, 'dense', A.shape)
