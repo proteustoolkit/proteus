@@ -33,7 +33,7 @@ cdef extern from "partitioning.h" namespace "proteus":
                                                                                        vector[double]& nzval)
     extern int c_cartesianSubdomainParents "proteus::cartesianSubdomainParents" (int kind, int triangleFlag, const int* nn,
                                                                                  const int* rankGrid, int level, int rank,
-                                                                                 vector[int]& parents)
+                                                                                 vector[mesh.proteus_index_t]& parents)
     extern int c_cartesianGlobalCounts "proteus::cartesianGlobalCounts" (int kind, int triangleFlag, const int* nn, int level, int* counts)
     extern int c_partitionNodes "proteus::partitionNodes" (const MPI_Comm& PROTEUS_COMM_WORLD,
                                                            mesh.Mesh& mesh,

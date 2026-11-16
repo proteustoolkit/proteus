@@ -355,12 +355,12 @@ def cartesianSubdomainParents(object kind, int triangleFlag, object nn, object r
     its parent's index in rank's subdomain on level-1, or -1."""
     cdef int[3] cnn
     cdef int[3] cgrid
-    cdef vector[int] parents
+    cdef vector[mesh.proteus_index_t] parents
     for d in range(3):
         cnn[d] = _grid3(nn, 1)[d]
         cgrid[d] = _grid3(rankGrid, 1)[d]
     c_cartesianSubdomainParents(CARTESIAN_KINDS[kind], triangleFlag, cnn, cgrid, level, rank, parents)
-    return np.array(parents, dtype=np.intc)
+    return np.array(parents, dtype=INDEX_DTYPE)
 
 def petscInitialized():
     """Whether the PETSc C library has been initialized in this process.
