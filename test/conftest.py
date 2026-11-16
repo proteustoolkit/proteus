@@ -452,17 +452,105 @@ def launch_policy():
     import types
     return types.SimpleNamespace(scaled_timeout=scaled_timeout, died_by_signal=died_by_signal,
                                  launched_environment=launched_environment, retrying_run=retrying_run,
+                                 keep_crashed_launch=keep_crashed_launch,
                                  run_in_own_session=run_in_own_session, session_members=session_members,
                                  os=os)
 
 
-def retrying_run(run):
+FIRST_LAUNCH = 'launch.first'    # launch_output.report names these files in its failure message
+
+
+def _tree(path):
+    """{relative path: (is a directory, size, mtime_ns)} of everything under ``path``."""
+    state = {}
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            full = os.path.join(root, name)
+            try:
+                info = os.lstat(full)
+            except OSError:
+                continue
+            is_dir = os.path.isdir(full) and not os.path.islink(full)
+            state[os.path.relpath(full, path)] = (is_dir, 0 if is_dir else info.st_size,
+                                                  0 if is_dir else info.st_mtime_ns)
+    return state
+
+
+def _under(path, parent):
+    path, parent = os.path.realpath(str(path)), os.path.realpath(str(parent))
+    return path == parent or path.startswith(parent + os.sep)
+
+
+def keep_crashed_launch(result, cwd, before, scratch):
+    """Make ``cwd`` what it was before a launch that died by a signal, and keep the evidence.
+
+    A helper that crashed part-way (a SIGSEGV in the mesh generator, with ``box.1.node`` half
+    written) leaves a directory its relaunch cannot use: the relaunch read the crashed launch's
+    files and failed in a way that hid the crash (``mv: cannot stat 'box.1.node'``, run
+    43773961726 of cekees/proteus#292). Everything the crashed launch created under ``cwd``
+    is moved into ``launch.first.files/`` there, and its whole stdout and stderr are written to
+    ``launch.first.stdout.txt`` and ``launch.first.stderr.txt``, beside the files
+    launch_output.report writes for the launch that fails last. A file that existed before and
+    was changed or deleted is not restored: it is named in the returned note.
+
+    ``before`` is ``_tree(cwd)`` from before the first launch, or None when ``cwd`` is not a
+    directory under ``scratch`` (pytest's basetemp), which this never touches; the output files
+    then go to ``scratch`` if there is one. Returns (paths of the output files, note).
+    """
+    stdout, stderr = (x.decode(errors='replace') if isinstance(x, bytes) else (x or '')
+                      for x in (result.stdout, result.stderr))
+    managed = before is not None
+    home = cwd if managed else scratch
+    paths, note = [], ''
+    if home is None or not os.path.isdir(str(home)):
+        return paths, note
+    stem = os.path.join(str(home), FIRST_LAUNCH)
+    if not managed:
+        import tempfile
+        stem = tempfile.mkdtemp(prefix=FIRST_LAUNCH + '-', dir=str(home)) + os.sep + FIRST_LAUNCH
+        os.makedirs(os.path.dirname(stem), exist_ok=True)
+    for kind, text in (('stdout', stdout), ('stderr', stderr)):
+        try:
+            with open('%s.%s.txt' % (stem, kind), 'w') as f:
+                f.write(text)
+            paths.append('%s.%s.txt' % (stem, kind))
+        except OSError:
+            pass
+    if managed:
+        import shutil
+        now = _tree(str(cwd))
+        new = sorted(name for name in now if name not in before)
+        aside = os.path.join(str(cwd), FIRST_LAUNCH + '.files')
+        moved = []
+        for name in new:
+            if os.path.dirname(name) in new or name.startswith(FIRST_LAUNCH):
+                continue            # inside a directory that moves whole, or this function's own output
+            target = os.path.join(aside, name)
+            try:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.move(os.path.join(str(cwd), name), target)
+                moved.append(name)
+            except OSError:
+                pass
+        changed = sorted(name for name, state in before.items()
+                         if not state[0] and now.get(name) != state)
+        note = ('%d file(s) it created moved to %s' % (len(moved), aside)) if moved else 'it created no files'
+        if changed:
+            note += '; changed or deleted, not restored: %s' % ', '.join(changed[:10])
+    return paths, note
+
+
+def retrying_run(run, scratch=None):
     """``run`` (a ``subprocess.run``), hardened for a shared runner:
 
     * launched again, up to three times in all, if an mpiexec never started
       (MPI_LAUNCH_FAILURES); the pause before a relaunch is PROTEUS_TEST_MPI_RETRY_DELAY
       seconds (default 3), doubled before the last attempt;
-    * launched once more, with a RuntimeWarning, if it died by a signal (died_by_signal);
+    * launched once more, with a RuntimeWarning, if it died by a signal (died_by_signal); when
+      its ``cwd`` is a directory under ``scratch`` (pytest's basetemp), that directory is first
+      put back as it was and the crashed launch's output and files are kept
+      (keep_crashed_launch), so the relaunch neither reads the crash's half-written files nor
+      hides the crash;
     * its ``timeout`` scaled by PROTEUS_TEST_TIMEOUT_SCALE (scaled_timeout);
     * run with PYTHONFAULTHANDLER=1 (launched_environment);
     * given PROTEUS_TEST_DUMP_AFTER, 80% of its timeout, which the multilevel helpers use to
@@ -482,6 +570,9 @@ def retrying_run(run):
             kwargs['env'].setdefault('PROTEUS_TEST_DUMP_AFTER', str(int(0.8 * kwargs['timeout'])))
         crashed_once = False
         attempt = 0
+        cwd = kwargs.get('cwd')
+        before = (_tree(str(cwd)) if scratch is not None and cwd is not None
+                  and os.path.isdir(str(cwd)) and _under(cwd, scratch) else None)
         while True:
             try:
                 result = run(cmd, *args, **kwargs)
@@ -499,11 +590,13 @@ def retrying_run(run):
             signal_name = died_by_signal(result)
             if signal_name is not None and not crashed_once:
                 crashed_once = True
+                kept, note = keep_crashed_launch(result, cwd, before, scratch)
                 warnings.warn(
-                    'relaunching %s: it died by %s (exit status %d); the launched interpreter '
+                    'relaunching %s: it died by %s (exit status %d)%s; the launched interpreter '
                     'ran with PYTHONFAULTHANDLER=1, so its stderr holds the Python stack if the '
                     'crash was in Python: %s'
                     % (' '.join(str(c) for c in cmd), signal_name, result.returncode,
+                       ('; its full output is in %s (%s)' % (', '.join(kept), note)) if kept else '',
                        (result.stderr if isinstance(result.stderr, str) else '')[-1500:]),
                     RuntimeWarning, stacklevel=2)
                 time.sleep(float(os.environ.get('PROTEUS_TEST_MPI_RETRY_DELAY', 3.0)))
@@ -513,10 +606,12 @@ def retrying_run(run):
 
 
 @pytest.fixture(autouse=True)
-def _retry_an_mpi_launch_that_never_started(monkeypatch):
+def _retry_an_mpi_launch_that_never_started(monkeypatch, tmp_path_factory):
     """Every ``subprocess.run`` from a test goes through :func:`retrying_run`, each launch in a
-    session of its own (:func:`run_in_own_session`)."""
-    monkeypatch.setattr(subprocess, 'run', retrying_run(run_in_own_session))
+    session of its own (:func:`run_in_own_session`); a launch in a directory under pytest's
+    basetemp that crashes is relaunched in that directory as it was (keep_crashed_launch)."""
+    monkeypatch.setattr(subprocess, 'run',
+                        retrying_run(run_in_own_session, scratch=str(tmp_path_factory.getbasetemp())))
 
 
 @pytest.fixture(autouse=True)

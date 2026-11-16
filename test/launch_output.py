@@ -45,6 +45,12 @@ def report(cwd, what, argv, stdout, stderr):
             paths.append(path)
         except OSError as e:
             paths.append("%s (not written: %s)" % (path, e))
+    first = [os.path.join(str(cwd), "launch.first.%s.txt" % kind) for kind in ("stdout", "stderr")]
+    first = [path for path in first if os.path.exists(path)]
+    if first:
+        paths.append("the first launch, which crashed and was relaunched, kept its output in " + ", ".join(first)
+                     + (" and the files it created in " + os.path.join(str(cwd), "launch.first.files")
+                        if os.path.isdir(os.path.join(str(cwd), "launch.first.files")) else ""))
     return ("%s: %s\nfull output: %s\n--- stderr, last %d of %d characters ---\n%s\n"
             "--- stdout, last %d of %d characters ---\n%s"
             % (" ".join(str(a) for a in argv), what, ", ".join(paths), STDERR_TAIL, len(stderr),
