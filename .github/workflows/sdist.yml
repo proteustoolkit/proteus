@@ -221,7 +221,7 @@ jobs:
 
       - name: Install sdist with default build isolation
         shell: bash -l {0}
-        run: pip install dist/proteus-*.tar.gz
+        run: pip install dist/*.tar.gz
 
       - name: Smoke test
         shell: bash -l {0}
