@@ -896,7 +896,7 @@ int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, cons
 }
 
 int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                              std::vector<int>& parents)
+                              std::vector<proteus_index_t>& parents)
 {
   /* For each element of this rank's subdomain on level, the element of its
      subdomain on level-1 that contains it, or -1 if that one is not there.
@@ -911,9 +911,9 @@ int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const i
     }
   const std::vector<Index> fineOrder = arithmeticSubdomainElements(fine, rank);
   const std::vector<Index> coarseOrder = arithmeticSubdomainElements(coarse, rank);
-  std::unordered_map<Index,int> coarseLocal;
+  std::unordered_map<Index,proteus_index_t> coarseLocal;
   for (size_t i = 0; i < coarseOrder.size(); i++)
-    coarseLocal[coarseOrder[i]] = int(i);
+    coarseLocal[coarseOrder[i]] = proteus_index_t(i);
   parents.resize(fineOrder.size());
   for (size_t i = 0; i < fineOrder.size(); i++)
     {
@@ -921,7 +921,7 @@ int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const i
       int sub;
       fine.elementFromOld(fineOrder[i], c, sub);
       const Ijk cc{c[0]/2, c[1]/2, c[2]/2}, o{c[0]%2, c[1]%2, c[2]%2};
-      const std::unordered_map<Index,int>::iterator it = coarseLocal.find(coarse.elementOld(cc, coarseSubOf(fine, o, sub)));
+      const std::unordered_map<Index,proteus_index_t>::iterator it = coarseLocal.find(coarse.elementOld(cc, coarseSubOf(fine, o, sub)));
       parents[i] = it == coarseLocal.end() ? -1 : it->second;
     }
   return 0;
