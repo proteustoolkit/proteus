@@ -918,12 +918,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["c_dof"]    = c_dof
         argsDict["Sn_dof"]   = Sn_dof
-        argsDict["rho_n"]    = float(self.rho_n)
-        argsDict["X_sat"]    = float(self.X_sat)
-        argsDict["c_sat"]    = float(self.c_sat)
+        argsDict["rho_n"]    = self.rho_n
+        argsDict["X_sat"]    = self.X_sat
+        argsDict["c_sat"]    = self.c_sat
         # k_d is the dissolution RATE [1/time] of the finite-rate implicit
         # flash; k_d -> inf recovers the instantaneous local-equilibrium flash.
-        argsDict["k_d"]      = float(self.k_d)
+        argsDict["k_d"]      = self.k_d
         argsDict["dt"]       = dt
         argsDict["numDOFs"]  = numDOFs
         argsDict["q_m_tadr"] = q_m_tadr
@@ -932,7 +932,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         argsDict["elementMaterialTypes"] = flow.mesh.elementMaterialTypes
         argsDict["thetaR"]               = self.thetaR_types
         argsDict["thetaSR"]              = self.thetaSR_types
-        argsDict["rho_f"]    = float(getattr(tcoef, 'rho_f', 1.0))
+        argsDict["rho_f"]    = getattr(tcoef, 'rho_f', 1.0)
         argsDict["rho_s"]    = float(getattr(tcoef, 'rho_s',
                                              getattr(tcoef, 'rho_f', 1.0)))
         argsDict["nElements_global"]          = nE_qm
@@ -2043,7 +2043,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature#True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1,coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         # previous-step DOFs for component 1 (S_n).
         # Filled lazily on first getResidual call from u[1].dof (the IC).
@@ -3420,7 +3420,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # only for the diagnostic.
         argsDict["k_d"]   = (0.0 if self.coefficients.dissolution_mode == 'flash'
                              else float(self.coefficients.k_d))
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["c_sat"] = self.coefficients.c_sat
         # CO2 injection: build the per-node source field consumed by the C++
         # gas-equation source term (applied like R_diss, opposite sign).
         # Each port is a small disk: injection_dof = rate (a volumetric source
@@ -4246,7 +4246,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # only for the diagnostic.
         argsDict["k_d"]   = (0.0 if self.coefficients.dissolution_mode == 'flash'
                              else float(self.coefficients.k_d))
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["c_sat"] = self.coefficients.c_sat
         argsDict["globalJacobian"] = jacobian.getCSRrepresentation()[2]
         argsDict["delta_x_ij"] = self.delta_x_ij
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global

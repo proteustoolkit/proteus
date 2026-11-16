@@ -115,7 +115,7 @@ class VariableDensity_mod2_FlowEquationCoefficients(TransportCoefficients.TC_bas
     def preStep(self, t, firstStep=False):
         """Build the consistent rho*g from the current mass fraction, if requested."""
         if self.consistentVelocityFlag == 1 and self.T_model is not None:
-            assert isinstance(self.transModel.u[0].femSpace, FemTools.C0_AffineLinearOnSimplexWithNodalBasis)
+            assert self.transModel.u[0].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex')
             knabnerFrolkovicConsistentVelCorrection_Triangle_P1(self.epsilon,
                                                                 self.transModel.u[0].femSpace.dofMap.l2g,
                                                                 self.transModel.u[0].dof,

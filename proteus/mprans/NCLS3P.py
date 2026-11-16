@@ -339,8 +339,7 @@ class LevelModel(OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[
-                    0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
 
         # Simplicial Mesh
@@ -905,7 +904,7 @@ class LevelModel(OneLevelTransport):
         argsDict["cell_interface_locator"] = self.cell_interface_locator
         argsDict["interface_locator"] = self.interface_locator
         argsDict["EXPLICIT_METHOD"] = self.coefficients.EXPLICIT_METHOD
-        argsDict["degree_polynomial"] = float(self.u[0].femSpace.order)
+        argsDict["degree_polynomial"] = self.u[0].femSpace.order
         argsDict["stage"] = self.stage
         argsDict["uTilde_dof"] = self.uTilde_dof
         argsDict["dt"] = self.timeIntegration.dt

@@ -115,19 +115,54 @@ namespace proteus
         // converted to scalars. If the scalar overload is define before the
         // pyarray overload, it is chosen by pybind11 and the array ends up
         // in the wrong dictionary.
+        // One scalar overload, decided by the kind of the value, not by
+        // pybind11's implicit conversions: with an int64 overload ahead of a
+        // double one, a numpy float32 (not a Python float) is converted to an
+        // int and truncated. Integer kinds (Python int and bool, numpy
+        // integers and bool) are stored as int / int64, AND widened into the
+        // double dict: a Python int handed to a kernel that asks for a double
+        // is a double with the same value, so a caller never has to write
+        // float(x) to reach the double dict. Everything else must convert
+        // to a double (a tuple, None or a string is a TypeError, as before).
+        // A later assignment of a double to the same key replaces the widened
+        // copy.
         cl.def("__setitem__",
-                [](arguments_dict& ad, std::string& k, std::int64_t i)
+                [](arguments_dict& ad, std::string& k, py::object o)
                 {
-                    if (i >= INT32_MIN && i <= INT32_MAX)
+                    bool is_int = PyIndex_Check(o.ptr()) != 0 || PyBool_Check(o.ptr()) != 0;
+                    if (!is_int && !PyFloat_Check(o.ptr()) && py::hasattr(o, "dtype"))
                     {
-                        ad.m_iscalar.insert_or_assign(std::string(k), static_cast<int>(i));
+                        const std::string kind = py::str(o.attr("dtype").attr("kind"));
+                        is_int = (kind == "b" || kind == "i" || kind == "u");
                     }
-                    ad.m_lscalar.insert_or_assign(std::move(k), std::move(i));
-                });
-        cl.def("__setitem__",
-                [](arguments_dict& ad, std::string& k, double d)
-                {
-                    ad.m_dscalar.insert_or_assign(std::move(k), std::move(d));
+                    if (is_int)
+                    {
+                        py::object as_int = py::reinterpret_steal<py::object>(PyNumber_Long(o.ptr()));
+                        if (!as_int)
+                        {
+                            throw py::error_already_set();
+                        }
+                        const long long i = PyLong_AsLongLong(as_int.ptr());
+                        if (i == -1 && PyErr_Occurred())
+                        {
+                            throw py::error_already_set();
+                        }
+                        if (i >= INT32_MIN && i <= INT32_MAX)
+                        {
+                            ad.m_iscalar.insert_or_assign(std::string(k), static_cast<int>(i));
+                        }
+                        ad.m_dscalar.insert_or_assign(std::string(k), static_cast<double>(i));
+                        ad.m_lscalar.insert_or_assign(std::move(k), static_cast<std::int64_t>(i));
+                    }
+                    else
+                    {
+                        const double d = PyFloat_AsDouble(o.ptr());
+                        if (d == -1.0 && PyErr_Occurred())
+                        {
+                            throw py::error_already_set();
+                        }
+                        ad.m_dscalar.insert_or_assign(std::move(k), double(d));
+                    }
                 });
         cl.def("__repr__",
                 [name](arguments_dict& ad)

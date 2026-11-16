@@ -631,7 +631,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.phiTrialIsTrial = True
         self.u = uDict
         self.Hess = False
-        if isinstance(self.u[0].femSpace, FemTools.C0_AffineQuadraticOnSimplexWithNodalBasis):
+        if self.u[0].femSpace.hasBasisHessians():
             self.Hess = True
         self.ua = {}  # analytical solutions
         self.phi = phiDict
@@ -641,7 +641,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         # assume the same mesh for  all components for now
         self.mesh = self.u[0].femSpace.mesh
@@ -1806,11 +1806,11 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["extendedSourceTerm_hv"] = self.extendedSourceTerm_hv
         argsDict["dH_minus_dL"] = self.dH_minus_dL
         argsDict["muH_minus_muL"] = self.muH_minus_muL
-        argsDict["cE"] = float(self.coefficients.cE)
+        argsDict["cE"] = self.coefficients.cE
         argsDict["LUMPED_MASS_MATRIX"] = self.coefficients.LUMPED_MASS_MATRIX
         argsDict["dt"] = self.timeIntegration.dt
         argsDict["LINEAR_FRICTION"] = self.coefficients.LINEAR_FRICTION
-        argsDict["mannings"] = float(self.coefficients.mannings)
+        argsDict["mannings"] = self.coefficients.mannings
         argsDict["quantDOFs"] = self.quantDOFs
         argsDict["SECOND_CALL_CALCULATE_RESIDUAL"] = self.secondCallCalculateResidual
         argsDict["COMPUTE_NORMALS"] = self.COMPUTE_NORMALS

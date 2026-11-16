@@ -597,7 +597,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.phiTrialIsTrial = True
         self.u = uDict
         self.Hess = False
-        if isinstance(self.u[0].femSpace, FemTools.C0_AffineQuadraticOnSimplexWithNodalBasis):
+        if self.u[0].femSpace.hasBasisHessians():
             self.Hess = True
         self.ua = {}  # analytical solutions
         self.phi = phiDict
@@ -607,8 +607,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[
-                    0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         # assume the same mesh for  all components for now
         self.mesh = self.u[0].femSpace.mesh
@@ -1363,7 +1362,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["SourceTerm_hw"] = self.SourceTerm_hw
         argsDict["SourceTerm_hbeta"] = self.SourceTerm_hbeta
         argsDict["dt"] = self.timeIntegration.dt
-        argsDict["mannings"] = float(self.coefficients.mannings)
+        argsDict["mannings"] = self.coefficients.mannings
         argsDict["lstage"] = self.timeIntegration.lstage
         argsDict["global_entropy_residual"] = self.global_entropy_residual
         argsDict["dij_small"] = self.dij_small
@@ -1392,10 +1391,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["size_of_domain"] = self.size_of_domain
         argsDict["delta_Sqd_h"] = self.delta_Sqd_h
         argsDict["delta_Sqd_heta"] = self.delta_Sqd_heta
-        argsDict["gen_length"] = float(self.coefficients.gen_length)
-        argsDict["gen_start"] = float(self.coefficients.gen_start)
-        argsDict["abs_length"] = float(self.coefficients.abs_length)
-        argsDict["abs_start"] = float(self.coefficients.abs_start)
+        argsDict["gen_length"] = self.coefficients.gen_length
+        argsDict["gen_start"] = self.coefficients.gen_start
+        argsDict["abs_length"] = self.coefficients.abs_length
+        argsDict["abs_start"] = self.coefficients.abs_start
         argsDict["h_wave"] = self.h_wave
         argsDict["h_u_wave"] = self.h_u_wave
         argsDict["h_v_wave"] = self.h_v_wave
