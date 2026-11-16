@@ -98,6 +98,10 @@ CASES = {
                        "final_time=5.0 dt_output=1.0 structured=False he=2.0 dam_x_location=16.05 "
                        "reflecting_BCs=False", "dam3bumps_open.ymf", "convex_limited -- split, dispatched to swe SW2DCV",
                        "h_u_t6"),
+    # SWFlow's structured mesh (mesh: {cells: 49} is the deck's nnx = nny = 50) on a flat bed with walls
+    "circular_dam_structured": ("SWFlow", "circular_damBreak.py", "--SWEs",
+                                "sw_model=0 final_time=2.0 dt_output=0.4", "circular_dam.ymf",
+                                "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
 
 
