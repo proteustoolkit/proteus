@@ -530,7 +530,7 @@ class LevelModel(proteus.mprans.RANS2P.LevelModel):
         self.phiTrialIsTrial = True
         self.u = uDict
         self.Hess = False
-        if isinstance(self.u[0].femSpace, C0_AffineQuadraticOnSimplexWithNodalBasis):
+        if self.u[0].femSpace.hasBasisHessians():
             self.Hess = True
         self.ua = {}  # analytical solutions
         self.phi = phiDict
@@ -540,7 +540,7 @@ class LevelModel(proteus.mprans.RANS2P.LevelModel):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
         self.testSpace = testSpaceDict

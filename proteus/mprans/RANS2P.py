@@ -1160,7 +1160,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.phiTrialIsTrial = True
         self.u = uDict
         self.Hess = False
-        if isinstance(self.u[0].femSpace, C0_AffineQuadraticOnSimplexWithNodalBasis):
+        if self.u[0].femSpace.hasBasisHessians():
             self.Hess = True
         self.ua = {}  # analytical solutions
         self.phi = phiDict

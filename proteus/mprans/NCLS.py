@@ -515,7 +515,7 @@ class LevelModel(OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         self.free_u = None
         # Simplicial Mesh
