@@ -1,0 +1,45 @@
+{
+ "kernel": "NCLS",
+ "dim": 1,
+ "fields": [
+  "v_0"
+ ],
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "shock_capturing": {
+   "lagged": true
+  }
+ },
+ "adr": {
+  "dim": 1,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "mass": {
+     "m": "φ",
+     "dm": {
+      "φ": "1"
+     },
+     "depends_on": {
+      "φ": "linear"
+     }
+    },
+    "hamiltonian": {
+     "H": "grad_φ_0*v_0",
+     "dH": {
+      "φ": [
+       "v_0"
+      ]
+     },
+     "depends_on": {
+      "φ": "linear"
+     }
+    }
+   }
+  ]
+ }
+}

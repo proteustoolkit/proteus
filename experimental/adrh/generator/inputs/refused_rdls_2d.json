@@ -1,0 +1,42 @@
+{
+ "kernel": "RDLS",
+ "dim": 2,
+ "adr": {
+  "dim": 2,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "reaction": {
+     "r": "1 - 2*numpy.select([numpy.less(0.75*h, φs),numpy.less(0.75*h, -φs),True], [1,0,(1/2)*numpy.sin(1.3333333333333333*numpy.pi*φs/h)/numpy.pi + 1/2 + 0.6666666666666666*φs/h], default=numpy.nan)",
+     "dr": {},
+     "depends_on": {}
+    },
+    "hamiltonian": {
+     "H": "2*numpy.sqrt(grad_φ_0**2 + grad_φ_1**2)*numpy.select([numpy.less(0.75*h, φs),numpy.less(0.75*h, -φs),True], [1,0,(1/2)*numpy.sin(1.3333333333333333*numpy.pi*φs/h)/numpy.pi + 1/2 + 0.6666666666666666*φs/h], default=numpy.nan) - numpy.sqrt(grad_φ_0**2 + grad_φ_1**2)",
+     "dH": {
+      "φ": [
+       "2*grad_φ_0*numpy.select([numpy.less(0.75*h, φs),numpy.less(0.75*h, -φs),True], [1,0,(1/2)*numpy.sin(1.3333333333333333*numpy.pi*φs/h)/numpy.pi + 1/2 + 0.6666666666666666*φs/h], default=numpy.nan)/numpy.sqrt(grad_φ_0**2 + grad_φ_1**2) - grad_φ_0/numpy.sqrt(grad_φ_0**2 + grad_φ_1**2)",
+       "2*grad_φ_1*numpy.select([numpy.less(0.75*h, φs),numpy.less(0.75*h, -φs),True], [1,0,(1/2)*numpy.sin(1.3333333333333333*numpy.pi*φs/h)/numpy.pi + 1/2 + 0.6666666666666666*φs/h], default=numpy.nan)/numpy.sqrt(grad_φ_0**2 + grad_φ_1**2) - grad_φ_1/numpy.sqrt(grad_φ_0**2 + grad_φ_1**2)"
+      ]
+     },
+     "depends_on": {
+      "φ": "nonlinear"
+     }
+    }
+   }
+  ]
+ },
+ "fields": [
+  "φs"
+ ],
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "shock_capturing": {
+   "lagged": true
+  }
+ }
+}

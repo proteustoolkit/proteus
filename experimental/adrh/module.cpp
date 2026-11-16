@@ -11,6 +11,18 @@
 #include "rdls.h"
 #include "mcorr.h"
 #include "rans2p.h"
+// Generator spike: with -DADRH_GENERATED the VOF and NCLS functors are the ones generator/generate.py emitted from ymf's
+// plain-data ADR form (generated.h), and the module is adrh_gen; without it, the hand-written vof.h/ncls.h ones, adrh_proto.
+#ifdef ADRH_GENERATED
+#include "generated.h"
+#define ADRH_MODULE_NAME adrh_gen
+template <int nS> using VOFFunctor = adrh::generated::VOFCoefficients<nS>;
+template <int nS> using NCLSFunctor = adrh::generated::NCLSCoefficients<nS>;
+#else
+#define ADRH_MODULE_NAME adrh_proto
+template <int nS> using VOFFunctor = adrh::VOFCoefficients<nS>;
+template <int nS> using NCLSFunctor = adrh::NCLSCoefficients<nS>;
+#endif
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -75,7 +87,7 @@ py::tuple dispatchSpace(int nd, const std::string &space, F &&f)
   throw std::invalid_argument("no space '" + space + "' in " + std::to_string(nd) + "D (p1, p2, q1; nd 1 to 3, q1 only 2 or 3)");
 }
 
-PYBIND11_MODULE(adrh_proto, m)
+PYBIND11_MODULE(ADRH_MODULE_NAME, m)
 {
   // exterior faces of the advection-diffusion sine problem in nd = 2 (segments) or 3 (triangles) dimensions, for the
   // space "p1" or "p2"; faceKind (nF) per face: 1 = flux face (diffusive flux given, advection by the interior value on
@@ -445,7 +457,7 @@ PYBIND11_MODULE(adrh_proto, m)
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
       constexpr int nS = S::nS, nD = S::nDOF;
-      using C = adrh::VOFCoefficients<nS>;
+      using C = VOFFunctor<nS>;
       const int nE = xn.shape(0), nQ = qw.shape(0);
       const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
       py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
@@ -468,7 +480,7 @@ PYBIND11_MODULE(adrh_proto, m)
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
       constexpr int nS = S::nS, nD = S::nDOF;
-      using C = adrh::VOFCoefficients<nS>;
+      using C = VOFFunctor<nS>;
       const int nF = xn.shape(0), nQf = qwf.shape(0);
       py::array_t<double> R({nF, nD}), J({nF, nD, nD}), flux({nF, nQf}), uUp({nF, nQf});
       double *Rp = R.mutable_data(), *Jp = J.mutable_data();
@@ -491,7 +503,7 @@ PYBIND11_MODULE(adrh_proto, m)
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
       constexpr int nS = S::nS, nD = S::nDOF;
-      using C = adrh::NCLSCoefficients<nS>;
+      using C = NCLSFunctor<nS>;
       const int nE = xn.shape(0), nQ = qw.shape(0);
       const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
       py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
@@ -517,7 +529,7 @@ PYBIND11_MODULE(adrh_proto, m)
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
       constexpr int nS = S::nS, nD = S::nDOF;
-      using C = adrh::NCLSCoefficients<nS>;
+      using C = NCLSFunctor<nS>;
       const int nF = xn.shape(0), nQf = qwf.shape(0);
       py::array_t<double> R({nF, nD}), J({nF, nD, nD}), uT({nF, nQf}), gN({nF, nQf, nS});
       double *Rp = R.mutable_data(), *Jp = J.mutable_data();

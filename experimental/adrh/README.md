@@ -816,3 +816,12 @@ t = 0.063; the faces are 8.2e-5 of the residual and 3.4e-2 of the Jacobian) give
 | boundary mass flux, ebqe_velocity | 2.2e-16, 1.5e-16 |
 | next Newton iterate (one step with the engine's R and J) | 1.1e-13: the solve's floor (cond(J) = 7.7e8; proteus's own J and r through three LU orderings give 1.3e-13 to 9.1e-13) |
 | residual at the next iterate | 1.1e-14 |
+
+## Generator spike (VOF and NCLS functors from ymf)
+
+`generator/generate.py` emits the coefficient functors `generated.h` (VOF with porosity, NCLS; 1D, 2D, 3D) from ymf's plain-data
+ADR form (`generator/inputs/*.json`, written by `generator/make_inputs.py` from `tests/fixtures/two_phase/dambreak.ymf` and ymf's
+`Space`; `sh generator/regenerate.sh <ymf checkout>`). `sh build.sh gen` builds `adrh_gen`, the module with those functors in
+place of vof.h's and ncls.h's. `python generator_test.py` (`mpiexec -n 2 python generator_test.py` for the partitioned check)
+compares the two modules; `ADRH_MODULE=adrh_gen python vof_test.py` runs the proteus-fixture test on the generated functor.
+The report is `GENERATOR_SPIKE_REPORT_2026-11-16.md` next to the campaign notes.
