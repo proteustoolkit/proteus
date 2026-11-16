@@ -5,6 +5,8 @@ import os
 import proteus
 from .cm_comp_co2 import *
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
@@ -2296,7 +2298,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=np.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=np.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
         #
@@ -2646,7 +2648,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         n_u = self.nFreeDOF_global[0]
         offset_u = self.offset[0]
         stride_u = self.stride[0]
-        rowptr_u = np.zeros((n_u + 1,), dtype='i')
+        rowptr_u = np.zeros((n_u + 1,), dtype=CSR_INDEX_DTYPE)
         colind_u = []
         full_offsets_u = []
         for i_u in range(n_u):
@@ -2662,7 +2664,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     full_offsets_u.append(full_offset)
             rowptr_u[i_u + 1] = len(colind_u)
         self.comp0_rowptr = rowptr_u
-        self.comp0_colind = np.asarray(colind_u, dtype='i')
+        self.comp0_colind = np.asarray(colind_u, dtype=CSR_INDEX_DTYPE)
         self.comp0_full_offsets = np.asarray(full_offsets_u, dtype='i')
 
     def _ensure_component0_compact_csr(self, full_rowptr, full_colind):
@@ -2678,7 +2680,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         n_n = self.u[1].dof.shape[0]
         offset_n = self.offset[1]
         stride_n = self.stride[1]
-        rowptr_n = np.zeros((n_n + 1,), dtype='i')
+        rowptr_n = np.zeros((n_n + 1,), dtype=CSR_INDEX_DTYPE)
         colind_n = []
         for i_n in range(n_n):
             global_row = offset_n + stride_n * i_n
@@ -2692,7 +2694,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     colind_n.append(j_n)
             rowptr_n[i_n + 1] = len(colind_n)
         self.comp1_rowptr       = rowptr_n
-        self.comp1_colind       = np.asarray(colind_n, dtype='i')
+        self.comp1_colind       = np.asarray(colind_n, dtype=CSR_INDEX_DTYPE)
 
     def _ensure_component1_compact_csr(self, full_rowptr, full_colind):
         if (self.comp1_rowptr is None or
