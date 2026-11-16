@@ -2519,7 +2519,7 @@ class DiscontinuousGalerkinDOFMap(DOFMap):
         DOFMap.__init__(self,mesh.nElements_global*localFunctionSpace.dim)
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.local_dim = localFunctionSpace.dim
         self.updateAfterParallelPartitioning(mesh.globalMesh)
         #for eN in range(mesh.nElements_global):
@@ -2607,7 +2607,7 @@ class QuadraticLagrangeCubeDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.nd = nd
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
@@ -2802,7 +2802,7 @@ class QuadraticLagrangeDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.nd = nd
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
@@ -3120,7 +3120,7 @@ class P1BubbleDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof-mesh.nNodes_global,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
         #rest of unknowns associated with global element number

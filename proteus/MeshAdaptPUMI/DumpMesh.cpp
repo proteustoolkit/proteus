@@ -6,19 +6,19 @@
    and cmeshToolsModule.cpp:
    cmeshToolsBuildPythonMeshInterface */
 
-static void print_int_2d(int* a, int h, int w, FILE* f)
+template <class T> static void print_int_2d(const T* a, proteus_index_t h, proteus_index_t w, FILE* f)
 {
-  for (int i = 0; i < h; ++i) {
-    for (int j = 0; j < w; ++j)
-      fprintf(f, "%d ", a[i * w + j]);
+  for (proteus_index_t i = 0; i < h; ++i) {
+    for (proteus_index_t j = 0; j < w; ++j)
+      fprintf(f, "%lld ", (long long)a[i * w + j]);
     fprintf(f, "\n");
   }
 }
 
-static void print_double_2d(double* a, int h, int w, FILE* f)
+static void print_double_2d(double* a, proteus_index_t h, proteus_index_t w, FILE* f)
 {
-  for (int i = 0; i < h; ++i) {
-    for (int j = 0; j < w; ++j)
+  for (proteus_index_t i = 0; i < h; ++i) {
+    for (proteus_index_t j = 0; j < w; ++j)
       fprintf(f, "%f ", a[i * w + j]);
     fprintf(f, "\n");
   }
@@ -26,19 +26,19 @@ static void print_double_2d(double* a, int h, int w, FILE* f)
 
 static void dump_proteus_mesh_header(Mesh* m, FILE* f)
 {
-  fprintf(f, "nElements_global = %d\n", m->nElements_global);
-  fprintf(f, "nNodes_global = %d\n", m->nNodes_global);
-  fprintf(f, "nNodes_element = %d\n", m->nNodes_element);
-  fprintf(f, "nNodes_elementBoundary = %d\n", m->nNodes_elementBoundary);
-  fprintf(f, "nElementBoundaries_element = %d\n", m->nElementBoundaries_element);
-  fprintf(f, "nElementBoundaries_global = %d\n", m->nElementBoundaries_global);
-  fprintf(f, "nInteriorElementBoundaries_global = %d\n",
-      m->nInteriorElementBoundaries_global);
-  fprintf(f, "nExteriorElementBoundaries_global = %d\n",
-      m->nExteriorElementBoundaries_global);
-  fprintf(f, "max_nElements_node = %d\n", m->max_nElements_node);
-  fprintf(f, "nEdges_global = %d\n", m->nEdges_global);
-  fprintf(f, "max_nNodeNeighbors_node = %d\n", m->max_nNodeNeighbors_node);
+  fprintf(f, "nElements_global = %lld\n", (long long)m->nElements_global);
+  fprintf(f, "nNodes_global = %lld\n", (long long)m->nNodes_global);
+  fprintf(f, "nNodes_element = %lld\n", (long long)m->nNodes_element);
+  fprintf(f, "nNodes_elementBoundary = %lld\n", (long long)m->nNodes_elementBoundary);
+  fprintf(f, "nElementBoundaries_element = %lld\n", (long long)m->nElementBoundaries_element);
+  fprintf(f, "nElementBoundaries_global = %lld\n", (long long)m->nElementBoundaries_global);
+  fprintf(f, "nInteriorElementBoundaries_global = %lld\n",
+      (long long)m->nInteriorElementBoundaries_global);
+  fprintf(f, "nExteriorElementBoundaries_global = %lld\n",
+      (long long)m->nExteriorElementBoundaries_global);
+  fprintf(f, "max_nElements_node = %lld\n", (long long)m->max_nElements_node);
+  fprintf(f, "nEdges_global = %lld\n", (long long)m->nEdges_global);
+  fprintf(f, "max_nNodeNeighbors_node = %lld\n", (long long)m->max_nNodeNeighbors_node);
 }
 
 static void dump_proteus_subdomain(Mesh* m, FILE* f)
@@ -51,13 +51,13 @@ static void dump_proteus_subdomain(Mesh* m, FILE* f)
   if (!m->nodeElementOffsets)
     fprintf(f, " NULL\n");
   else {
-    for (int i = 0; i <= m->nNodes_global; ++i)
-      fprintf(f, "%d\n", m->nodeElementOffsets[i]);
-    int total = m->nodeElementOffsets[m->nNodes_global];
+    for (proteus_index_t i = 0; i <= m->nNodes_global; ++i)
+      fprintf(f, "%lld\n", (long long)m->nodeElementOffsets[i]);
+    proteus_index_t total = m->nodeElementOffsets[m->nNodes_global];
     assert(total == m->nElements_global * m->nNodes_element);
     fprintf(f, "nodeElementsArray:\n");
-    for (int i = 0; i < total; ++i)
-      fprintf(f, "%d\n", m->nodeElementsArray[i]);
+    for (proteus_index_t i = 0; i < total; ++i)
+      fprintf(f, "%lld\n", (long long)m->nodeElementsArray[i]);
   }
   fprintf(f, "elementNeighborsArray:\n");
   print_int_2d(m->elementNeighborsArray, m->nElements_global,
@@ -75,54 +75,54 @@ static void dump_proteus_subdomain(Mesh* m, FILE* f)
   print_int_2d(m->elementBoundaryLocalElementBoundariesArray,
                m->nElementBoundaries_global, 2, f);
   fprintf(f, "interiorElementBoundariesArray:\n");
-  for (int i = 0; i < m->nInteriorElementBoundaries_global; ++i)
-    fprintf(f, "%d\n", m->interiorElementBoundariesArray[i]);
+  for (proteus_index_t i = 0; i < m->nInteriorElementBoundaries_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->interiorElementBoundariesArray[i]);
   fprintf(f, "exteriorElementBoundariesArray:\n");
-  for (int i = 0; i < m->nExteriorElementBoundaries_global; ++i)
-    fprintf(f, "%d\n", m->exteriorElementBoundariesArray[i]);
+  for (proteus_index_t i = 0; i < m->nExteriorElementBoundaries_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->exteriorElementBoundariesArray[i]);
   fprintf(f, "edgeNodesArray:\n");
   print_int_2d(m->edgeNodesArray, m->nEdges_global, 2, f);
   fprintf(f, "nodeStarOffsets:\n");
   if (!m->nodeStarOffsets)
     fprintf(f, " NULL\n");
   else {
-    for (int i = 0; i <= m->nNodes_global; ++i)
-      fprintf(f, "%d\n", m->nodeStarOffsets[i]);
-    int total = m->nodeStarOffsets[m->nNodes_global];
+    for (proteus_index_t i = 0; i <= m->nNodes_global; ++i)
+      fprintf(f, "%lld\n", (long long)m->nodeStarOffsets[i]);
+    proteus_index_t total = m->nodeStarOffsets[m->nNodes_global];
     assert(total == m->nEdges_global * 2);
     fprintf(f, "nodeStarArray:\n");
-    for (int i = 0; i < total; ++i)
-      fprintf(f, "%d\n", m->nodeStarArray[i]);
+    for (proteus_index_t i = 0; i < total; ++i)
+      fprintf(f, "%lld\n", (long long)m->nodeStarArray[i]);
   }
   fprintf(f, "elementMaterialTypes:\n");
-  for (int i = 0; i < m->nElements_global; ++i)
+  for (proteus_index_t i = 0; i < m->nElements_global; ++i)
     fprintf(f, "%d\n", m->elementMaterialTypes[i]);
   fprintf(f, "elementBoundaryMaterialTypes:\n");
-  for (int i = 0; i < m->nElementBoundaries_global; ++i)
+  for (proteus_index_t i = 0; i < m->nElementBoundaries_global; ++i)
     fprintf(f, "%d\n", m->elementBoundaryMaterialTypes[i]);
   fprintf(f, "nodeMaterialTypes:\n");
-  for (int i = 0; i < m->nNodes_global; ++i)
+  for (proteus_index_t i = 0; i < m->nNodes_global; ++i)
     fprintf(f, "%d\n", m->nodeMaterialTypes[i]);
   fprintf(f, "nodeArray:\n");
   print_double_2d(m->nodeArray, m->nNodes_global, 3, f);
   fprintf(f, "elementDiametersArray:\n");
-  for (int i = 0; i < m->nElements_global; ++i)
+  for (proteus_index_t i = 0; i < m->nElements_global; ++i)
     fprintf(f, "%f\n", m->elementDiametersArray[i]);
   fprintf(f, "elementInnerDiametersArray:\n");
-  for (int i = 0; i < m->nElements_global; ++i)
+  for (proteus_index_t i = 0; i < m->nElements_global; ++i)
     fprintf(f, "%f\n", m->elementInnerDiametersArray[i]);
   fprintf(f, "elementBoundaryDiametersArray:\n");
-  for (int i = 0; i < m->nElementBoundaries_global; ++i)
+  for (proteus_index_t i = 0; i < m->nElementBoundaries_global; ++i)
     fprintf(f, "%f\n", m->elementBoundaryDiametersArray[i]);
   fprintf(f, "elementBarycentersArray:\n");
   print_double_2d(m->elementBarycentersArray, m->nElements_global, 3, f);
   print_double_2d(m->elementBoundaryBarycentersArray,
       m->nElementBoundaries_global, 3, f);
   fprintf(f, "nodeDiametersArray:\n");
-  for (int i = 0; i < m->nNodes_global; ++i)
+  for (proteus_index_t i = 0; i < m->nNodes_global; ++i)
     fprintf(f, "%f\n", m->nodeDiametersArray[i]);
   fprintf(f, "nodeSupportArray:\n");
-  for (int i = 0; i < m->nNodes_global; ++i)
+  for (proteus_index_t i = 0; i < m->nNodes_global; ++i)
     fprintf(f, "%f\n", m->nodeSupportArray[i]);
   fprintf(f, "h = %f\n", m->h);
   fprintf(f, "hMin = %f\n", m->hMin);
@@ -135,28 +135,28 @@ static void dump_proteus_parallel_arrays(Mesh* m, FILE* f, PCU_t PCUObj)
   int size = PCU_Comm_Peers(PCUObj);
   fprintf(f, "elementOffsets_subdomain_owned:\n");
   for (int i = 0; i <= size; ++i)
-    fprintf(f, "%d\n", m->elementOffsets_subdomain_owned[i]);
+    fprintf(f, "%lld\n", (long long)m->elementOffsets_subdomain_owned[i]);
   fprintf(f, "elementNumbering_subdomain2global:\n");
-  for (int i = 0; i < m->subdomainp->nElements_global; ++i)
-    fprintf(f, "%d\n", m->elementNumbering_subdomain2global[i]);
+  for (proteus_index_t i = 0; i < m->subdomainp->nElements_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->elementNumbering_subdomain2global[i]);
   fprintf(f, "nodeOffsets_subdomain_owned:\n");
   for (int i = 0; i <= size; ++i)
-    fprintf(f, "%d\n", m->nodeOffsets_subdomain_owned[i]);
+    fprintf(f, "%lld\n", (long long)m->nodeOffsets_subdomain_owned[i]);
   fprintf(f, "nodeNumbering_subdomain2global:\n");
-  for (int i = 0; i < m->subdomainp->nNodes_global; ++i)
-    fprintf(f, "%d\n", m->nodeNumbering_subdomain2global[i]);
+  for (proteus_index_t i = 0; i < m->subdomainp->nNodes_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->nodeNumbering_subdomain2global[i]);
   fprintf(f, "elementBoundaryOffsets_subdomain_owned:\n");
   for (int i = 0; i <= size; ++i)
-    fprintf(f, "%d\n", m->elementBoundaryOffsets_subdomain_owned[i]);
+    fprintf(f, "%lld\n", (long long)m->elementBoundaryOffsets_subdomain_owned[i]);
   fprintf(f, "elementBoundaryNumbering_subdomain2global:\n");
-  for (int i = 0; i < m->subdomainp->nElementBoundaries_global; ++i)
-    fprintf(f, "%d\n", m->elementBoundaryNumbering_subdomain2global[i]);
+  for (proteus_index_t i = 0; i < m->subdomainp->nElementBoundaries_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->elementBoundaryNumbering_subdomain2global[i]);
   fprintf(f, "edgeOffsets_subdomain_owned:\n");
   for (int i = 0; i <= size; ++i)
-    fprintf(f, "%d\n", m->edgeOffsets_subdomain_owned[i]);
+    fprintf(f, "%lld\n", (long long)m->edgeOffsets_subdomain_owned[i]);
   fprintf(f, "edgeNumbering_subdomain2global:\n");
-  for (int i = 0; i < m->subdomainp->nEdges_global; ++i)
-    fprintf(f, "%d\n", m->edgeNumbering_subdomain2global[i]);
+  for (proteus_index_t i = 0; i < m->subdomainp->nEdges_global; ++i)
+    fprintf(f, "%lld\n", (long long)m->edgeNumbering_subdomain2global[i]);
 
 }
 

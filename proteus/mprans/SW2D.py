@@ -2,6 +2,7 @@ import proteus
 from proteus.mprans.cSW2D import *
 from proteus.Comm import globalMax
 import numpy as np
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from . import cArgumentsDict
 import proteus.NumericalFlux
@@ -514,7 +515,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #

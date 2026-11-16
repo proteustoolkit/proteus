@@ -291,7 +291,7 @@ namespace proteus
      element) and return the star of each node in [begin,end) and the element
      count. False if the file cannot be opened. */
   extern bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
-                                   int indexBase, proteus_index_t nNodes_global, int begin, int end, proteus_index_t& nElements_global,
+                                   int indexBase, proteus_index_t nNodes_global, proteus_index_t begin, proteus_index_t end, proteus_index_t& nElements_global,
                                    std::vector<std::set<proteus_index_t> >& nodeStar);
 
   /* I/O, local: the vertices of one subdomain from a Triangle (nSpace 2) or
@@ -393,66 +393,66 @@ namespace proteus
                                     const std::vector<int>& elementOwner, StageTimer* timer=NULL);
 
   extern int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                       const int *elementOffsets_subdomain_owned,
-                                                       const int *nodeOffsets_subdomain_owned,
-                                                       const int *elementNumbering_subdomain2global,
-                                                       const int *nodeNumbering_subdomain2global,
-                                                       int& nDOF_all_processes,//total number of dofs in whole domain
-                                                       int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                       int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                       int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                       int * subdomain_l2g, //local to global dof mapping on subdomain
-                                                       int* subdomain2global,//subdomain dof to global (parallel) numbering
+                                                       const proteus_index_t *elementOffsets_subdomain_owned,
+                                                       const proteus_index_t *nodeOffsets_subdomain_owned,
+                                                       const proteus_index_t *elementNumbering_subdomain2global,
+                                                       const proteus_index_t *nodeNumbering_subdomain2global,
+                                                       proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                       proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                       proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                       proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                       proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                       proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                                        double * lagrangeNodesArray);//location of nodes corresponding to dofs
 
   extern int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                       const int *elementBoundaryOffsets_subdomain_owned,
-                                                       const int *nodeOffsets_subdomain_owned,
-                                                       const int *elementBoundaryNumbering_subdomain2global,
-                                                       const int *nodeNumbering_subdomain2global,
-                                                       int& nDOF_all_processes,//total number of dofs in whole domain
-                                                       int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                       int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                       int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                       int *subdomain_l2g, //local to global dof mapping on subdomain
-                                                       int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                                       const proteus_index_t *elementBoundaryOffsets_subdomain_owned,
+                                                       const proteus_index_t *nodeOffsets_subdomain_owned,
+                                                       const proteus_index_t *elementBoundaryNumbering_subdomain2global,
+                                                       const proteus_index_t *nodeNumbering_subdomain2global,
+                                                       proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                       proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                       proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                       proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                       proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                       proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                                        double * lagrangeNodesArray);//location of nodes corresponding to dofs
 
   extern int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                       const int *edgeOffsets_subdomain_owned,
-                                                       const int *nodeOffsets_subdomain_owned,
-                                                       const int *edgeNumbering_subdomain2global,
-                                                       const int *nodeNumbering_subdomain2global,
-                                                       int& nDOF_all_processes,//total number of dofs in whole domain
-                                                       int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                       int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                       int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                       int *subdomain_l2g, //local to global dof mapping on subdomain
-                                                       int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                                       const proteus_index_t *edgeOffsets_subdomain_owned,
+                                                       const proteus_index_t *nodeOffsets_subdomain_owned,
+                                                       const proteus_index_t *edgeNumbering_subdomain2global,
+                                                       const proteus_index_t *nodeNumbering_subdomain2global,
+                                                       proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                       proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                       proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                       proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                       proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                       proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                                        double * lagrangeNodesArray);//location of nodes corresponding to dofs
 
   extern int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                           const int *edgeOffsets_subdomain_owned,
-                                                           const int *nodeOffsets_subdomain_owned,
-                                                           const int *edgeNumbering_subdomain2global,
-                                                           const int *nodeNumbering_subdomain2global,
-                                                           int& nDOF_all_processes,//total number of dofs in whole domain
-                                                           int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                           int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                           int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                           int *subdomain_l2g, //local to global dof mapping on subdomain
-                                                           int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                                           const proteus_index_t *edgeOffsets_subdomain_owned,
+                                                           const proteus_index_t *nodeOffsets_subdomain_owned,
+                                                           const proteus_index_t *edgeNumbering_subdomain2global,
+                                                           const proteus_index_t *nodeNumbering_subdomain2global,
+                                                           proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                           proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                           proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                           proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                           proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                           proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                                            double * lagrangeNodesArray);//location of nodes corresponding to dofs
 
   extern int buildDiscontinuousGalerkinSubdomain2GlobalMappings(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                                const int *elementOffsets_subdomain_owned,
-                                                                const int *elementNumbering_subdomain2global,
+                                                                const proteus_index_t *elementOffsets_subdomain_owned,
+                                                                const proteus_index_t *elementNumbering_subdomain2global,
                                                                 int nDOF_element,
-                                                                int& nDOF_all_processes,//total number of dofs in whole domain
-                                                                int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                                int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                                int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                                int * subdomain_l2g, //local to global dof mapping on subdomain
-                                                                int* subdomain2global);//subdomain dof to global (parallel) numbering
+                                                                proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                                proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                                proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                                proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                                proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                                proteus_index_t *subdomain2global);//subdomain dof to global (parallel) numbering
 }//proteus
 #endif

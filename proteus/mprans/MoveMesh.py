@@ -467,7 +467,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #

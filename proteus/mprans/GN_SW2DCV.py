@@ -4,6 +4,7 @@ from proteus import LinearAlgebraTools as LAT
 from proteus.mprans.cGN_SW2DCV import *
 from proteus.mprans.SW2DCV import bathymetryAtNodes
 import numpy as np
+from proteus import cmeshTools
 from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus.Transport import Quadrature, logEvent, memory, BackwardEuler
@@ -933,7 +934,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #

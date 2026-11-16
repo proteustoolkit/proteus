@@ -484,7 +484,7 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
             assert len(array.flat) == (n+nghosts)*blockSize, "%i  != (%i+%i)*%i \n" % (len(array.flat),  n,nghosts,blockSize)
             if blockVecType == "simple":
                 if ghosts is None:
-                    ghosts = numpy.zeros((blockSize*nghosts),'i')
+                    ghosts = numpy.zeros((blockSize*nghosts),p4pyPETSc.IntType)
                     for j in range(blockSize):
                         ghosts[j::blockSize]=subdomain2global[n:]*blockSize+j
                 self.createGhostWithArray(ghosts,array,size=(blockSize*n,blockSize*N),bsize=1)
@@ -497,7 +497,7 @@ class ParVec_petsc4py(p4pyPETSc.Vec):
                     self.subdomain2global=subdomain2global
             else:
                 #TODO need to debug
-                ghosts = subdomain2global[n:]
+                ghosts = numpy.asarray(subdomain2global[n:], dtype=p4pyPETSc.IntType)
                 self.createGhostWithArray(ghosts,array,size=(blockSize*n,blockSize*N),bsize=blockSize)
                 self.subdomain2global = subdomain2global
             self.setUp()
@@ -961,7 +961,8 @@ class ParMat_petsc4py(p4pyPETSc.Mat):
         else:
             self.csr_rep_local = ghosted_csr_mat.getSubMatCSRrepresentation(0,par_n)
         self.petsc_l2g = p4pyPETSc.LGMap()
-        self.petsc_l2g.create(self.subdomain2global)
+        # PETSc's index type is its own (PetscInt), whatever proteus_index_t is
+        self.petsc_l2g.create(numpy.asarray(self.subdomain2global, dtype=p4pyPETSc.IntType))
         self.setUp()
         self.setLGMap(self.petsc_l2g)
         #

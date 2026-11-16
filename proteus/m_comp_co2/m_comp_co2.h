@@ -100,7 +100,7 @@ public:
   //   S_e = (S_w - S_wr)/(1 - S_wr) = (1 - u_n - S_wr)/(1 - S_wr).
   // dS_e/du_n = -1/(1 - S_wr) (negative); the sign flip propagates through
   // every chain rule (k_rw, theta_w, p_c) when caller uses dSe_du_n.
-  inline void evaluateCoefficients_from_Se(const int rowptr[nSpace], const int colind[nnz],
+  inline void evaluateCoefficients_from_Se(const proteus_csr_index_t rowptr[nSpace], const proteus_csr_index_t colind[nnz],
                                            const double rho0, const double rho_transport, const double beta,
                                            const double gravity[nSpace],
                                            const double alpha, const double n_vg,
@@ -170,7 +170,7 @@ public:
       f[I]       = 0.0;
       df_du_w[I] = 0.0;
       df_du_n[I] = 0.0;
-      for (int ii = rowptr[I]; ii < rowptr[I + 1]; ii++) {
+      for(proteus_csr_index_t ii=rowptr[I]; ii < rowptr[I + 1]; ii++) {
         // Diffusion tensor a_w = rho_w * k_rw * (K/mu_w).
         a[ii]       = rhom * KWr * KWs[ii];
         da_du_w[ii] = drhom * KWr * KWs[ii];
@@ -335,7 +335,7 @@ public:
     numDiff = num / den;
   }
 
-  inline void exteriorNumericalFlux(const double &bc_flux, int rowptr[nSpace], int colind[nnz], int isSeepageFace, int &isDOFBoundary, double n[nSpace], double bc_u, double K[nnz], double grad_psi[nSpace], double u, double K_rho_g[nSpace], double penalty, double &flux)
+  inline void exteriorNumericalFlux(const double &bc_flux, proteus_csr_index_t rowptr[nSpace], proteus_csr_index_t colind[nnz], int isSeepageFace, int &isDOFBoundary, double n[nSpace], double bc_u, double K[nnz], double grad_psi[nSpace], double u, double K_rho_g[nSpace], double penalty, double &flux)
   {
     double v_I, bc_u_seepage = 0.0;
     if (isSeepageFace || isDOFBoundary) {
@@ -344,7 +344,7 @@ public:
         //gravity
         v_I = K_rho_g[I];
         //pressure head
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { v_I -= K[m] * grad_psi[colind[m]]; }
+        for(proteus_csr_index_t m=rowptr[I]; m < rowptr[I + 1]; m++) { v_I -= K[m] * grad_psi[colind[m]]; }
         flux += v_I * n[I];
       }
       if (isSeepageFace) bc_u = bc_u_seepage;
@@ -362,7 +362,7 @@ public:
     } else flux = bc_flux;
   }
 
-  void exteriorNumericalFluxJacobian(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian)
+  void exteriorNumericalFluxJacobian(const proteus_csr_index_t rowptr[nSpace], const proteus_csr_index_t colind[nnz], const int isDOFBoundary, const double n[nSpace], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian)
   {
     if (isDOFBoundary) {
       fluxJacobian = 0.0;
@@ -370,14 +370,14 @@ public:
         //gravity
         fluxJacobian += dK_rho_g[I] * v * n[I];
         //pressure head
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { fluxJacobian -= (K[m] * grad_v[colind[m]] + dK[m] * v * grad_psi[colind[m]]) * n[I]; }
+        for(proteus_csr_index_t m=rowptr[I]; m < rowptr[I + 1]; m++) { fluxJacobian -= (K[m] * grad_v[colind[m]] + dK[m] * v * grad_psi[colind[m]]) * n[I]; }
       }
       //Dirichlet penalty
       fluxJacobian += penalty * v;
     } else fluxJacobian = 0.0;
   }
 
-inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], int colind[nnz], int isSeepageFace, int &isDOFBoundary, double n[nSpace], double bc_u, double K[nnz], double grad_psi[nSpace], double u, double K_rho_g[nSpace], double penalty, double &flux, double &bflux)
+inline void exteriorNumericalFlux2(const double &bc_flux, proteus_csr_index_t rowptr[nSpace], proteus_csr_index_t colind[nnz], int isSeepageFace, int &isDOFBoundary, double n[nSpace], double bc_u, double K[nnz], double grad_psi[nSpace], double u, double K_rho_g[nSpace], double penalty, double &flux, double &bflux)
   {
     double v_I, bc_u_seepage = 0.0;
     if (isSeepageFace || isDOFBoundary) {
@@ -387,7 +387,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //gravity
         v_I = K_rho_g[I];
         //pressure head
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { v_I -= K[m] * grad_psi[colind[m]]; }
+        for(proteus_csr_index_t m=rowptr[I]; m < rowptr[I + 1]; m++) { v_I -= K[m] * grad_psi[colind[m]]; }
         flux += v_I * n[I];
       }
       if (isSeepageFace) bc_u = bc_u_seepage;
@@ -408,13 +408,13 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     }
   }
 
-  void exteriorNumericalFluxJacobian2(const int rowptr[nSpace], const int colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian)
+  void exteriorNumericalFluxJacobian2(const proteus_csr_index_t rowptr[nSpace], const proteus_csr_index_t colind[nnz], const int isDOFBoundary, const double n[nSpace],  const double Ks[nnz], const double K[nnz], const double dK[nnz], const double grad_psi[nSpace], const double grad_v[nSpace], const double dK_rho_g[nSpace], const double v, const double penalty, double &fluxJacobian, double &bfluxJacobian)
   {
     if (isDOFBoundary) {
       fluxJacobian = 0.0;
       bfluxJacobian = 0.0;
       for (int I = 0; I < nSpace; I++) {
-        for (int m = rowptr[I]; m < rowptr[I + 1]; m++) { 
+        for(proteus_csr_index_t m=rowptr[I]; m < rowptr[I + 1]; m++) { 
           fluxJacobian -= Ks[m] * grad_v[colind[m]] * n[I]; 
         }
       }
@@ -439,7 +439,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &mesh_dof                                   = args.array<double>("mesh_dof");
     proteus::pyarray<double> &mesh_velocity_dof                          = args.array<double>("mesh_velocity_dof");
     double               MOVING_DOMAIN                              = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int>    &mesh_l2g                                   = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t>    &mesh_l2g                                   = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref                                     = args.array<double>("dV_ref");
     proteus::pyarray<double> &u_trial_ref                                = args.array<double>("u_trial_ref");
     proteus::pyarray<double> &u_grad_trial_ref                           = args.array<double>("u_grad_trial_ref");
@@ -454,12 +454,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &u_grad_test_trace_ref                      = args.array<double>("u_grad_test_trace_ref");
     proteus::pyarray<double> &normal_ref                                 = args.array<double>("normal_ref");
     proteus::pyarray<double> &boundaryJac_ref                            = args.array<double>("boundaryJac_ref");
-    int                  nElements_global                           = args.scalar<int>("nElements_global");
+    proteus_index_t                  nElements_global                           = args.scalar<proteus_index_t>("nElements_global");
     proteus::pyarray<double> &ebqe_penalty_ext                           = args.array<double>("ebqe_penalty_ext");
     proteus::pyarray<int>    &elementMaterialTypes                       = args.array<int>("elementMaterialTypes");
     proteus::pyarray<int>    &isSeepageFace                              = args.array<int>("isSeepageFace");
-    proteus::pyarray<int>    &a_rowptr                                   = args.array<int>("a_rowptr");
-    proteus::pyarray<int>    &a_colind                                   = args.array<int>("a_colind");
+    proteus::pyarray<proteus_csr_index_t>    &a_rowptr                                   = args.array<proteus_csr_index_t>("a_rowptr");
+    proteus::pyarray<proteus_csr_index_t>    &a_colind                                   = args.array<proteus_csr_index_t>("a_colind");
     double               rho                                        = args.scalar<double>("rho");
     double               beta                                       = args.scalar<double>("beta");
 
@@ -483,7 +483,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               shockCapturingDiffusion                    = args.scalar<double>("shockCapturingDiffusion");
     double               sc_uref                                    = args.scalar<double>("sc_uref");
     double               sc_alpha                                   = args.scalar<double>("sc_alpha");
-    proteus::pyarray<int>    &u_l2g                                      = args.array<int>("u_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g                                      = args.array<proteus_index_t>("u_l2g");
     proteus::pyarray<double> &elementDiameter                            = args.array<double>("elementDiameter");
     proteus::pyarray<double> &u_dof                                      = args.array<double>("u_dof");
     proteus::pyarray<double> &u_dof_old                                  = args.array<double>("u_dof_old");
@@ -496,8 +496,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &cfl                                        = args.array<double>("cfl");
     proteus::pyarray<double> &q_numDiff_u                                = args.array<double>("q_numDiff_u");
     proteus::pyarray<double> &q_numDiff_u_last                           = args.array<double>("q_numDiff_u_last");
-    int                  offset_u                                   = args.scalar<int>("offset_u");
-    int                  stride_u                                   = args.scalar<int>("stride_u");
+    proteus_index_t                  offset_u                                   = args.scalar<proteus_index_t>("offset_u");
+    proteus_index_t                  stride_u                                   = args.scalar<proteus_index_t>("stride_u");
     // component-1 (S_n) mass equation args.
     // Used in the dedicated component-1 element loop appended at the end
     // of this function. Not consumed by the existing component-0 logic.
@@ -511,8 +511,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const double         p_ref_n                                    = args.scalar<double>("p_ref_n");
     const bool           rho_n_compressible                         = (p_ref_n > 0.0);
     const double         c_n                                        = rho_n_compressible ? (rho_n / p_ref_n) : 0.0;
-    const int            offset_n                                   = args.scalar<int>("offset_n");
-    const int            stride_n                                   = args.scalar<int>("stride_n");
+    const proteus_index_t            offset_n                                   = args.scalar<proteus_index_t>("offset_n");
+    const proteus_index_t            stride_n                                   = args.scalar<proteus_index_t>("stride_n");
     // Stage 3b: gas-side kinetic dissolution sink.  R_diss = k_d * S_n *
     // (1 - S_n) * theta_w * rho_w(c) * (c_sat - c) is subtracted from the
     // gas-equation residual at each quadrature point.  c is read from TADR's
@@ -526,9 +526,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // All-zero array when no injection is configured.
     proteus::pyarray<double> &injection_dof                              = args.array<double>("injection_dof");
     proteus::pyarray<double> &globalResidual                             = args.array<double>("globalResidual");
-    int                  nExteriorElementBoundaries_global          = args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int>    &exteriorElementBoundariesArray             = args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int>    &elementBoundaryElementsArray               = args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t                  nExteriorElementBoundaries_global          = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t>    &exteriorElementBoundariesArray             = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t>    &elementBoundaryElementsArray               = args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int>    &elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<double> &ebqe_velocity_ext                          = args.array<double>("ebqe_velocity_ext");
     proteus::pyarray<int>    &isDOFBoundary_u                            = args.array<int>("isDOFBoundary_u");
@@ -552,19 +552,19 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double uL = args.scalar<double>("uL");
     double uR = args.scalar<double>("uR");
     // PARAMETERS FOR EDGE VISCOSITY
-    int               numDOFs                       = args.scalar<int>("numDOFs");
+    proteus_index_t               numDOFs                       = args.scalar<proteus_index_t>("numDOFs");
     // numDOFs is the compact component-0 free-DOF count used by the stabilized
     // DOF loops. Full-matrix slots are recovered from offset/stride-aware CSR
     // indexing against the interleaved global matrix.
     int               numDOFs_u                     = args.scalar<int>("numDOFs_u");
-    int               NNZ                           = args.scalar<int>("NNZ");
-    proteus::pyarray<int> &csrRowIndeces_DofLoops        = args.array<int>("csrRowIndeces_DofLoops");
-    proteus::pyarray<int> &csrColumnOffsets_DofLoops     = args.array<int>("csrColumnOffsets_DofLoops");
-    proteus::pyarray<int> &csrRowIndeces_Full            = args.array<int>("csrRowIndeces_Full");
-    proteus::pyarray<int> &csrColumnOffsets_Full         = args.array<int>("csrColumnOffsets_Full");
-    proteus::pyarray<int> &csrRowIndeces_CellLoops       = args.array<int>("csrRowIndeces_CellLoops");
-    proteus::pyarray<int> &csrColumnOffsets_CellLoops    = args.array<int>("csrColumnOffsets_CellLoops");
-    proteus::pyarray<int> &csrColumnOffsets_eb_CellLoops = args.array<int>("csrColumnOffsets_eb_CellLoops");
+    proteus_csr_index_t               NNZ                           = args.scalar<proteus_csr_index_t>("NNZ");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops        = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops     = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_Full            = args.array<proteus_csr_index_t>("csrRowIndeces_Full");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_Full         = args.array<proteus_csr_index_t>("csrColumnOffsets_Full");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_CellLoops       = args.array<proteus_csr_index_t>("csrRowIndeces_CellLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_CellLoops    = args.array<proteus_csr_index_t>("csrColumnOffsets_CellLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_CellLoops");
     // C matrices
     proteus::pyarray<double> &Cx         = args.array<double>("Cx");
     proteus::pyarray<double> &Cy         = args.array<double>("Cy");
@@ -615,14 +615,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //eN_j is the element trial function index
     //eN_k_j is the quadrature point index for a trial function
     //eN_k_i is the quadrature point index for a trial function
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       //declare local storage for element residual and initialize
       double elementResidual_u[nDOF_test_element];
       for (int i = 0; i < nDOF_test_element; i++) { elementResidual_u[i] = 0.0; } //i
       //loop over quadrature points and compute integrands
       for (int k = 0; k < nQuadraturePoints_element; k++) {
         //compute indeces and declare local storage
-        int eN_k = eN * nQuadraturePoints_element + k, eN_k_nSpace = eN_k * nSpace, eN_nDOF_trial_element = eN * nDOF_trial_element;
+        proteus_index_t eN_k = eN * nQuadraturePoints_element + k, eN_k_nSpace = eN_k * nSpace, eN_nDOF_trial_element = eN * nDOF_trial_element;
         double u = 0.0, grad_u[nSpace], grad_u_old[nSpace], m = 0.0, dm = 0.0, f[nSpace], df[nSpace], a[nnz], da[nnz], as[nnz], m_t = 0.0, dm_t = 0.0, pdeResidual_u = 0.0, tau = 0.0, tau0 = 0.0, tau1 = 0.0, numDiff0 = 0.0, numDiff1 = 0.0, jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], u_grad_trial[nDOF_trial_element * nSpace], u_test_dV[nDOF_trial_element], u_grad_test_dV[nDOF_test_element * nSpace], dV, x, y, z, xt, yt, zt, G[nSpace * nSpace], G_dd_G, tr_G, norm_Rv;
         //
         //compute solution and gradients at quadrature points
@@ -693,8 +693,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         // q_w = -(a/rho_w) * (grad p_w - rho_w g) = -(k_rw K/mu_w) * (grad p_w - rho_w g).
         for (int I=0; I<nSpace; ++I) {
           double acc = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             acc += (a[ii] / rho_velocity) * pressure_gradient[J];
           }
           velocity.data()[eN_k_nSpace + I] = -acc;
@@ -782,8 +782,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double F0[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ua = 0.0, ug = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double gradSa_J = -(fs0.dS_g_dp*grad_u[J] + fs0.dS_g_dz*grad_u_n[J]);
             const double gp_a = grad_u[J]                  - rho_a_mass0*gravity.data()[J];
             const double gp_g = grad_u[J] + pcp0*gradSa_J  - rho_g_mass0*gravity.data()[J];
@@ -796,7 +796,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //update element residual
         //
         for (int i = 0; i < nDOF_test_element; i++) {
-          int eN_k_i = eN_k * nDOF_test_element + i, eN_k_i_nSpace = eN_k_i * nSpace, i_nSpace = i * nSpace;
+          proteus_index_t eN_k_i = eN_k * nDOF_test_element + i, eN_k_i_nSpace = eN_k_i * nSpace;
+          int i_nSpace = i * nSpace;
           // P3c: mass + component flux (divergence form, -= F_0 . grad N_i).
           elementResidual_u[i] += ck.Mass_weak(m_t, u_test_dV[i]) + VMS * ck.NumericalDiffusion(q_numDiff_u_last[eN_k], grad_u, &u_grad_test_dV[i_nSpace]);
           for (int I = 0; I < nSpace; I++)
@@ -810,7 +811,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //load element into global residual and save element residual
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
 
         globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u[i];
       } //i
@@ -821,12 +822,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //ebNE is the Exterior element boundary INdex
     //ebN is the element boundary INdex
     //eN is the element index
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      int    ebN = exteriorElementBoundariesArray.data()[ebNE], eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      proteus_index_t    ebN = exteriorElementBoundariesArray.data()[ebNE], eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+        int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
       double elementResidual_u[nDOF_test_element];
       for (int i = 0; i < nDOF_test_element; i++) { elementResidual_u[i] = 0.0; }
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        int    ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace, ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
+        proteus_index_t ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace;
+        int ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
         double u_ext = 0.0, grad_u_ext[nSpace], m_ext = 0.0, dm_ext = 0.0, f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz], as_ext[nnz], flux_ext = 0.0,
                //anb_seepage_flux=0.0, // for flux calculation
           bc_u_ext = 0.0, bc_grad_u_ext[nSpace], bc_m_ext = 0.0, bc_dm_ext = 0.0, bc_f_ext[nSpace], bc_df_ext[nSpace], bc_a_ext[nnz], bc_da_ext[nnz], bc_as_ext[nnz], jac_ext[nSpace * nSpace], jacDet_ext, jacInv_ext[nSpace * nSpace], boundaryJac[nSpace * (nSpace - 1)], metricTensor[(nSpace - 1) * (nSpace - 1)], metricTensorDetSqrt, dS, u_test_dS[nDOF_test_element], u_grad_trial_trace[nDOF_trial_element * nSpace], normal[3], x_ext, y_ext, z_ext, xt_ext, yt_ext, zt_ext, integralScaling, G[nSpace * nSpace], G_dd_G, tr_G;
@@ -906,8 +909,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
         for (int I=0; I<nSpace; ++I) {
           double acc = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             acc += (a_ext[ii] / rho_velocity_ext) * ext_pressure_gradient[J];
           }
           ebqe_velocity_ext.data()[ebNE_kb_nSpace + I] = -acc;
@@ -956,8 +959,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           double F0n = 0.0;
           for (int I = 0; I < nSpace; I++) {
             double ua = 0.0, ug = 0.0;
-            for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ii++) {
-              const int J = a_colind.data()[ii];
+            for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ii++) {
+              const proteus_csr_index_t J = a_colind.data()[ii];
               const double gradSa_J = -(fsb.dS_g_dp*grad_u_ext[J] + fsb.dS_g_dz*grad_u_n_ext[J]);
               const double gp_a = grad_u_ext[J]                  - rho_a_mass_b*gravity.data()[J];
               const double gp_g = grad_u_ext[J] + pcpb*gradSa_J  - rho_g_mass_b*gravity.data()[J];
@@ -992,7 +995,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //update the element and global residual storage
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
         globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u[i];
       } //i
     } //ebNE
@@ -1013,7 +1016,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // At u_n = 0 (fully wet) the closure returns k_rn = 0 -> all flux contributions
     // vanish, so this loop should reproduce the single-phase result for the
     // Bioswale.
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       const int   mat_eN  = elementMaterialTypes.data()[eN];
       const double phi_eN = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN = alpha.data()[mat_eN];
@@ -1032,8 +1035,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         lumped_w_n[i]        = 0.0;
       }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        const int eN_k = eN * nQuadraturePoints_element + k;
-        const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+        const proteus_index_t eN_k = eN * nQuadraturePoints_element + k;
+        const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
         double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x_q, y_q, z_q;
         ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(),
                                     mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
@@ -1130,8 +1133,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double F1[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ua = 0.0, ug = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double gradSa_J = -(fs_n.dS_g_dp*grad_u_w[J] + fs_n.dS_g_dz*grad_u_n[J]);
             const double gp_a = grad_u_w[J]                  - rho_a_mass*gravity.data()[J];
             const double gp_g = grad_u_w[J] + pcp_a*gradSa_J - rho_g_mass*gravity.data()[J];
@@ -1155,11 +1158,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       }
       // Row-sum lumped CO2 injection: subtract Q_inj at port nodes only.
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int gi = u_l2g.data()[eN * nDOF_test_element + i];
+        const proteus_index_t gi = u_l2g.data()[eN * nDOF_test_element + i];
         elementResidual_n[i] -= injection_dof.data()[gi] * lumped_w_n[i];
       }
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
         globalResidual.data()[offset_n + stride_n * u_l2g.data()[eN_i]] += elementResidual_n[i];
       }
     }
@@ -1180,11 +1183,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // McWhorter-Sunada drives this via getDBC_z at the inlet (z_BC = z(S_n_BC)).
     // Jacobian is the matching (1,1)/(1,0) blocks in calculateJacobian.
     // ============================================================================
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      const int ebN = exteriorElementBoundariesArray.data()[ebNE];
-      const int eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      const proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+      const proteus_index_t eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
       const int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       const int    mat_eN    = elementMaterialTypes.data()[eN];
       const double phi_eN    = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN  = alpha.data()[mat_eN];
@@ -1199,7 +1202,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       for (int i = 0; i < nDOF_test_element; i++) elementResidual_n_eb[i] = 0.0;
 
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        const int ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
+        const proteus_index_t ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb       = ebN_local * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb_nSpace = ebN_local_kb * nSpace;
 
@@ -1277,8 +1280,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double F_n_dot_n = 0.0;
         for (int I = 0; I < nSpace; I++) {
           double ua = 0.0, ug = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double gradSa_J = -(fsb.dS_g_dp*grad_u_w_ext_b[J] + fsb.dS_g_dz*grad_u_n_ext_b[J]);
             const double gp_a = grad_u_w_ext_b[J]                 - rho_a_mass_b*gravity.data()[J];
             const double gp_g = grad_u_w_ext_b[J] + pcpb*gradSa_J - rho_g_mass_b*gravity.data()[J];
@@ -1312,7 +1315,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       } // kb
 
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int gi = u_l2g.data()[eN * nDOF_test_element + i];
+        const proteus_index_t gi = u_l2g.data()[eN * nDOF_test_element + i];
         globalResidual.data()[offset_n + stride_n * gi] += elementResidual_n_eb[i];
       }
     } // ebNE
@@ -1325,7 +1328,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &mesh_dof                  = args.array<double>("mesh_dof");
     proteus::pyarray<double> &mesh_velocity_dof         = args.array<double>("mesh_velocity_dof");
     double               MOVING_DOMAIN             = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int>    &mesh_l2g                  = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t>    &mesh_l2g                  = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref                    = args.array<double>("dV_ref");
     proteus::pyarray<double> &u_trial_ref               = args.array<double>("u_trial_ref");
     proteus::pyarray<double> &u_grad_trial_ref          = args.array<double>("u_grad_trial_ref");
@@ -1340,12 +1343,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &u_grad_test_trace_ref     = args.array<double>("u_grad_test_trace_ref");
     proteus::pyarray<double> &normal_ref                = args.array<double>("normal_ref");
     proteus::pyarray<double> &boundaryJac_ref           = args.array<double>("boundaryJac_ref");
-    int                  nElements_global          = args.scalar<int>("nElements_global");
+    proteus_index_t                  nElements_global          = args.scalar<proteus_index_t>("nElements_global");
     proteus::pyarray<double> &ebqe_penalty_ext          = args.array<double>("ebqe_penalty_ext");
     proteus::pyarray<int>    &elementMaterialTypes      = args.array<int>("elementMaterialTypes");
     proteus::pyarray<int>    &isSeepageFace             = args.array<int>("isSeepageFace");
-    proteus::pyarray<int>    &a_rowptr                  = args.array<int>("a_rowptr");
-    proteus::pyarray<int>    &a_colind                  = args.array<int>("a_colind");
+    proteus::pyarray<proteus_csr_index_t>    &a_rowptr                  = args.array<proteus_csr_index_t>("a_rowptr");
+    proteus::pyarray<proteus_csr_index_t>    &a_colind                  = args.array<proteus_csr_index_t>("a_colind");
     double               rho                       = args.scalar<double>("rho");
     double               beta                      = args.scalar<double>("beta");
 
@@ -1379,7 +1382,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               shockCapturingDiffusion   = args.scalar<double>("shockCapturingDiffusion");
     // VMS
     double               VMS                                        = args.scalar<double>("VMS");
-    proteus::pyarray<int>    &u_l2g                                      = args.array<int>("u_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g                                      = args.array<proteus_index_t>("u_l2g");
     proteus::pyarray<double> &elementDiameter                            = args.array<double>("elementDiameter");
     proteus::pyarray<double> &u_dof                                      = args.array<double>("u_dof");
     // component-1 saturation DOFs (needed by the gas-eq
@@ -1390,8 +1393,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &cfl                                        = args.array<double>("cfl");
     proteus::pyarray<double> &q_numDiff_u                                = args.array<double>("q_numDiff_u");
     proteus::pyarray<double> &q_numDiff_u_last                           = args.array<double>("q_numDiff_u_last");
-    proteus::pyarray<int>    &csrRowIndeces_u_u                          = args.array<int>("csrRowIndeces_u_u");
-    proteus::pyarray<int>    &csrColumnOffsets_u_u                       = args.array<int>("csrColumnOffsets_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_u_u                          = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_u_u                       = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
     proteus::pyarray<double> &globalJacobian                             = args.array<double>("globalJacobian");
     // component-1 (S_n) Jacobian args. Used by
     // the dedicated component-1 element loop appended at the end of this
@@ -1405,35 +1408,35 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const double         p_ref_n                                    = args.scalar<double>("p_ref_n");
     const bool           rho_n_compressible                         = (p_ref_n > 0.0);
     const double         c_n                                        = rho_n_compressible ? (rho_n / p_ref_n) : 0.0;
-    proteus::pyarray<int>    &csrRowIndeces_n_n                          = args.array<int>("csrRowIndeces_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_n                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_n");
     // (1,0) cross-block CSR maps for the gas-eq diffusion
     // against grad u_w. Currently allocated by the framework but unused by
     // the C++ assembly - 3c.2/3c.3 will write into them.
-    proteus::pyarray<int>    &csrRowIndeces_n_w                          = args.array<int>("csrRowIndeces_n_w");
-    proteus::pyarray<int>    &csrColumnOffsets_n_n                       = args.array<int>("csrColumnOffsets_n_n");
-    proteus::pyarray<int>    &csrColumnOffsets_n_w                       = args.array<int>("csrColumnOffsets_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_w                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_n                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_w                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_w");
     // Exterior-boundary CSR column offsets for the comp-1 boundary Jacobian
     // loop ported from calculateResidual_entropy_viscosity (STAB=0 comp-1
     // Dirichlet enforcement). Added to getJacobian's argsDict in Python.
-    proteus::pyarray<int>    &csrColumnOffsets_eb_n_n                    = args.array<int>("csrColumnOffsets_eb_n_n");
-    proteus::pyarray<int>    &csrColumnOffsets_eb_n_w                    = args.array<int>("csrColumnOffsets_eb_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_n_n                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_n_w                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_n_w");
     // (0,1) cross-block CSR maps for the wetting eq.
     //   J_{wv,ij} = (dm/du_n)*N_i*N_j + (df/du_n)*grad N_i*N_j
     //               + (da/du_n)*grad u_w*grad N_i*N_j
     // The wetting equation row index is offset_u + stride_u * dof, and the column
     // index is offset_n + stride_n * dof.
-    proteus::pyarray<int>    &csrRowIndeces_w_n                          = args.array<int>("csrRowIndeces_w_n");
-    proteus::pyarray<int>    &csrColumnOffsets_w_n                       = args.array<int>("csrColumnOffsets_w_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_w_n                          = args.array<proteus_csr_index_t>("csrRowIndeces_w_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_w_n                       = args.array<proteus_csr_index_t>("csrColumnOffsets_w_n");
     // (0,1) cross-block boundary CSR for the wetting-eq
     // exterior-flux Jacobian.
-    proteus::pyarray<int>    &csrColumnOffsets_eb_w_n                    = args.array<int>("csrColumnOffsets_eb_w_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_w_n                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_w_n");
     // PSK closure selector for evaluateCoefficients (read from argsDict).
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
     immiscible_member = (args.scalar<int>("immiscible") != 0);
     T_C_member        = args.scalar<double>("T_C");      // temperature [degC] from input
-    int                  nExteriorElementBoundaries_global          = args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int>    &exteriorElementBoundariesArray             = args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int>    &elementBoundaryElementsArray               = args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t                  nExteriorElementBoundaries_global          = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t>    &exteriorElementBoundariesArray             = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t>    &elementBoundaryElementsArray               = args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int>    &elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<double> &ebqe_velocity_ext                          = args.array<double>("ebqe_velocity_ext");
     proteus::pyarray<int>    &isDOFBoundary_u                            = args.array<int>("isDOFBoundary_u");
@@ -1443,7 +1446,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &ebqe_bc_u_n_ext                            = args.array<double>("ebqe_bc_u_n_ext");
     proteus::pyarray<int>    &isFluxBoundary_u                           = args.array<int>("isFluxBoundary_u");
     proteus::pyarray<double> &ebqe_bc_flux_ext                           = args.array<double>("ebqe_bc_flux_ext");
-    proteus::pyarray<int>    &csrColumnOffsets_eb_u_u                    = args.array<int>("csrColumnOffsets_eb_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_u_u                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_u");
     int                  LUMPED_MASS_MATRIX                         = args.scalar<int>("LUMPED_MASS_MATRIX");
     assert(a_rowptr.data()[nSpace] == nnz);
     assert(a_rowptr.data()[nSpace] == nSpace);
@@ -1452,7 +1455,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //
     //loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
     //
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       double elementJacobian_u_u[nDOF_test_element][nDOF_trial_element];
       // (0,1) cross-block element storage.
       double elementJacobian_u_n[nDOF_test_element][nDOF_trial_element];
@@ -1463,7 +1466,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         }
       }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        int eN_k                  = eN * nQuadraturePoints_element + k, //index to a scalar at a quadrature point
+        proteus_index_t eN_k                  = eN * nQuadraturePoints_element + k, //index to a scalar at a quadrature point
           eN_k_nSpace             = eN_k * nSpace,
             eN_nDOF_trial_element = eN * nDOF_trial_element; //index to a vector at a quadrature point
 
@@ -1567,8 +1570,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double dug0_dp[nSpace], dug0_dz[nSpace], dua0_dp[nSpace], dua0_dz[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ugI=0.0, uaI=0.0, dugp=0.0, dugz=0.0, duap=0.0, duaz=0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double Kii = KWs_eN0[ii];
             const double Mob_g = KNr0*Kii/mu_n, Mob_a = KWr0*Kii;
             const double dMobg_dp = (DKNr0*Kii/mu_n)*dSe0_dp, dMobg_dz = (DKNr0*Kii/mu_n)*dSe0_dz;
@@ -1608,8 +1611,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             double Sgrad_p = 0.0, Sgrad_z = 0.0;
             for (int I = 0; I < nSpace; I++) {
               const double gNiI = u_grad_trial[i_nSpace + I];
-              for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-                const int J = a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+                const proteus_csr_index_t J = a_colind.data()[ii];
                 const double Kii = KWs_eN0[ii];
                 const double Mob_g = KNr0*Kii/mu_n, Mob_a = KWr0*Kii;
                 const double gNjJ = u_grad_trial[j_nSpace + J];
@@ -1632,9 +1635,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //load into element Jacobian into global Jacobian
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          int eN_i_j = eN_i * nDOF_trial_element + j;
+          proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_u_u[eN_i_j]] += elementJacobian_u_u[i][j];
           // load (0,1) cross-block coupling the wetting eq to S_n through
           // dm/du_n, df/du_n, da/du_n.
@@ -1645,11 +1648,13 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //
     //loop over exterior element boundaries to compute the surface integrals and load them into the global Jacobian
     //
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      int ebN = exteriorElementBoundariesArray.data()[ebNE];
-      int eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+      proteus_index_t eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+        int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        int ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace, ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
+        proteus_index_t ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace;
+        int ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
 
         double u_ext = 0.0, grad_u_ext[nSpace], m_ext = 0.0, dm_ext = 0.0, f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz], as_ext[nnz], dflux_u_u_ext = 0.0, bc_u_ext = 0.0,
                //bc_grad_u_ext[nSpace],
@@ -1775,8 +1780,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           double ugb[nSpace], uab[nSpace], dugb_dp[nSpace], dugb_dz[nSpace], duab_dp[nSpace], duab_dz[nSpace];
           for (int I=0;I<nSpace;I++){
             double ugI=0,uaI=0,dugp=0,dugz=0,duap=0,duaz=0;
-            for (int ii=a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
-              const int J=a_colind.data()[ii];
+            for (proteus_csr_index_t ii = a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
+              const proteus_csr_index_t J=a_colind.data()[ii];
               const double Kii=KWs_b[ii];
               const double Mob_g=KNrb*Kii/mu_n, Mob_a=KWrb*Kii;
               const double dMobg_dp=(DKNrb*Kii/mu_n)*dSeb_dp, dMobg_dz=(DKNrb*Kii/mu_n)*dSeb_dz;
@@ -1807,8 +1812,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               const double valp = dAgb_dp*ugb[I]+Agb*dugb_dp[I]+dAab_dp*uab[I]+Aab*duab_dp[I];
               const double valz = dAgb_dz*ugb[I]+Agb*dugb_dz[I]+dAab_dz*uab[I]+Aab*duab_dz[I];
               double gradp=0.0, gradz=0.0;
-              for (int ii=a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
-                const int J=a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
+                const proteus_csr_index_t J=a_colind.data()[ii];
                 const double Kii=KWs_b[ii];
                 const double Mob_g=KNrb*Kii/mu_n, Mob_a=KWrb*Kii;
                 const double gNjJ = u_grad_trial_trace[j_nSpace + J];
@@ -1828,9 +1833,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //update the global Jacobian from the flux Jacobian
         //
         for (int i = 0; i < nDOF_test_element; i++) {
-          int eN_i = eN * nDOF_test_element + i;
+          proteus_index_t eN_i = eN * nDOF_test_element + i;
           for (int j = 0; j < nDOF_trial_element; j++) {
-            int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element + i * nDOF_trial_element + j;
+            proteus_index_t ebN_i_j = ebN * 4 * nDOF_test_X_trial_element + i * nDOF_trial_element + j;
             globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
             // (0,1) cross-block boundary contribution (nonzero only on
             // Dirichlet faces for u_w).
@@ -1855,7 +1860,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // (0,1) cross-block (wetting eq dependence on z) is assembled in the element
     // loop above.  Per-QP flux partials FD-verified in flux_jac_test.cpp.
     // ============================================================================
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       const int    mat_eN    = elementMaterialTypes.data()[eN];
       const double phi_eN    = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN  = alpha.data()[mat_eN];
@@ -1872,8 +1877,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           elementJacobian_n_w[i][j] = 0.0;
         }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        const int eN_k = eN * nQuadraturePoints_element + k;
-        const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+        const proteus_index_t eN_k = eN * nQuadraturePoints_element + k;
+        const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
         double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x_q, y_q, z_q;
         ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(),
                                     mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
@@ -1968,8 +1973,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double dug_dp[nSpace], dug_dz[nSpace], dua_dp[nSpace], dua_dz[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ugI=0.0, uaI=0.0, dugp=0.0, dugz=0.0, duap=0.0, duaz=0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double Kii = KWs_eN[ii];
             const double Mob_g = KNr_a*Kii/mu_n, Mob_a = KWr_a*Kii;
             const double dMobg_dp = (DKNr_a*Kii/mu_n)*dSe_dp, dMobg_dz = (DKNr_a*Kii/mu_n)*dSe_dz;
@@ -2012,8 +2017,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             double Sgrad_p = 0.0, Sgrad_z = 0.0;
             for (int I = 0; I < nSpace; I++) {
               const double gNiI = u_grad_trial_qp[i * nSpace + I];
-              for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-                const int J = a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+                const proteus_csr_index_t J = a_colind.data()[ii];
                 const double Kii = KWs_eN[ii];
                 const double Mob_g = KNr_a*Kii/mu_n, Mob_a = KWr_a*Kii;
                 const double gNjJ = u_grad_trial_qp[j * nSpace + J];
@@ -2035,9 +2040,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         }
       }
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          const int eN_i_j = eN_i * nDOF_trial_element + j;
+          const proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           globalJacobian.data()[csrRowIndeces_n_n.data()[eN_i] + csrColumnOffsets_n_n.data()[eN_i_j]]
               += elementJacobian_n_n[i][j];
           globalJacobian.data()[csrRowIndeces_n_w.data()[eN_i] + csrColumnOffsets_n_w.data()[eN_i_j]]
@@ -2057,11 +2062,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //   (1,0): d(F_1.n)/dp  (value-block * trial_j + grad-block . gradN_j)
     // Gated on isDir_n: no-flow faces contribute nothing (matches the residual).
     // ============================================================================
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      const int ebN = exteriorElementBoundariesArray.data()[ebNE];
-      const int eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      const proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+      const proteus_index_t eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
       const int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       const int    mat_eN    = elementMaterialTypes.data()[eN];
       const double phi_eN    = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN  = alpha.data()[mat_eN];
@@ -2081,7 +2086,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         }
 
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        const int ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
+        const proteus_index_t ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb       = ebN_local * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb_nSpace = ebN_local_kb * nSpace;
 
@@ -2170,8 +2175,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double dug_dp_b[nSpace], dug_dz_b[nSpace], dua_dp_b[nSpace], dua_dz_b[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ugI=0.0, uaI=0.0, dugp=0.0, dugz=0.0, duap=0.0, duaz=0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double Kii = KWs_eN[ii];
             const double Mob_g = KNr_b*Kii/mu_n, Mob_a = KWr_b*Kii;
             const double dMobg_dp = (DKNr_b*Kii/mu_n)*dSe_dp_b, dMobg_dz = (DKNr_b*Kii/mu_n)*dSe_dz_b;
@@ -2214,8 +2219,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
                 ebN_local_kb * nDOF_test_element + j];
             double Sgrad_p_b = 0.0, Sgrad_z_b = 0.0;
             for (int I = 0; I < nSpace; I++) {
-              for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-                const int J = a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+                const proteus_csr_index_t J = a_colind.data()[ii];
                 const double Kii = KWs_eN[ii];
                 const double Mob_g = KNr_b*Kii/mu_n, Mob_a = KWr_b*Kii;
                 const double gNjJ = u_grad_trial_trace_b[j * nSpace + J];
@@ -2240,9 +2245,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       } // kb
 
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          const int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element
+          const proteus_index_t ebN_i_j = ebN * 4 * nDOF_test_X_trial_element
                             + i * nDOF_trial_element + j;
           globalJacobian.data()[csrRowIndeces_n_n.data()[eN_i]
               + csrColumnOffsets_eb_n_n.data()[ebN_i_j]] += elementJacobian_n_n_eb[i][j];
@@ -2284,16 +2289,16 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     if (component == 0) {
       // ======================= wetting (p_w) =======================
       if (pass == 1) {
-        int                  numDOFs                   = args.scalar<int>("numDOFs");
+        proteus_index_t                  numDOFs                   = args.scalar<proteus_index_t>("numDOFs");
         double               dt                        = args.scalar<double>("dt");
         proteus::pyarray<double> &ML                        = args.array<double>("ML");
         proteus::pyarray<double> &mn                        = args.array<double>("mn");
         proteus::pyarray<double> &mLow                      = args.array<double>("mLow");
         proteus::pyarray<double> &mDotLow                   = args.array<double>("mDotLow");
-        proteus::pyarray<int>    &csrRowIndeces_DofLoops    = args.array<int>("csrRowIndeces_DofLoops");
-        proteus::pyarray<int>    &csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
-        proteus::pyarray<int>    &csrRowIndeces_Full        = args.array<int>("csrRowIndeces_Full");
-        proteus::pyarray<int>    &csrColumnOffsets_Full     = args.array<int>("csrColumnOffsets_Full");
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_Full        = args.array<proteus_csr_index_t>("csrRowIndeces_Full");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_Full     = args.array<proteus_csr_index_t>("csrColumnOffsets_Full");
         proteus::pyarray<double> &MC                        = args.array<double>("MC");
         proteus::pyarray<double> &dt_times_fH_minus_fL      = args.array<double>("dt_times_fH_minus_fL");
         proteus::pyarray<double> &min_m_bc                  = args.array<double>("min_m_bc");
@@ -2303,23 +2308,23 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         proteus::pyarray<double> &Rneg                      = args.array<double>("Rneg");
         int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
         int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
-        const int            offset_u                  = args.scalar<int>("offset_u");
-        const int            stride_u                  = args.scalar<int>("stride_u");
-        auto full_offset_from_compact = [&](int i_compact, int j_compact) -> int {
-          const int full_i = offset_u + stride_u * i_compact;
-          const int full_j = offset_u + stride_u * j_compact;
-          for (int offset = csrRowIndeces_Full.at(full_i); offset < csrRowIndeces_Full.at(full_i + 1); ++offset)
+        const proteus_index_t            offset_u                  = args.scalar<proteus_index_t>("offset_u");
+        const proteus_index_t            stride_u                  = args.scalar<proteus_index_t>("stride_u");
+        auto full_offset_from_compact = [&](proteus_index_t i_compact, proteus_csr_index_t j_compact) -> proteus_csr_index_t {
+          const proteus_index_t full_i = offset_u + stride_u * i_compact;
+          const proteus_csr_index_t full_j = static_cast<proteus_csr_index_t>(offset_u + stride_u * j_compact); // a matrix column
+          for (proteus_csr_index_t offset = csrRowIndeces_Full.at(full_i); offset < csrRowIndeces_Full.at(full_i + 1); ++offset)
             if (csrColumnOffsets_Full.at(offset) == full_j) return offset;
           return -1;
         };
-        int ij = 0;
-        for (int i = 0; i < numDOFs; i++) {
+        proteus_csr_index_t ij = 0;
+        for (proteus_index_t i=0; i<numDOFs; i++) {
           double mini = min_m_bc.at(i);
           double maxi = max_m_bc.at(i);
           double Pposi = 0.0, Pnegi = 0.0;
-          for (int offset = csrRowIndeces_DofLoops.at(i); offset < csrRowIndeces_DofLoops.at(i + 1); offset++) {
-            int j = csrColumnOffsets_DofLoops.at(offset);
-            const int full_offset = full_offset_from_compact(i, j);
+          for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.at(i); offset < csrRowIndeces_DofLoops.at(i + 1); offset++) {
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.at(offset);
+            const proteus_csr_index_t full_offset = full_offset_from_compact(i, j);
             assert(full_offset >= 0);
             if (GLOBAL_FCT == 0) {
               if (MONOLITHIC == 0) { mini = fmin(mini, mLow.at(j)); maxi = fmax(maxi, mLow.at(j)); }
@@ -2351,15 +2356,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       } else {
         // comp-0 pass 2
         proteus::pyarray<double> &bc_mask                   = args.array<double>("bc_mask");
-        int                  numDOFs                   = args.scalar<int>("numDOFs");
+        proteus_index_t                  numDOFs                   = args.scalar<proteus_index_t>("numDOFs");
         double               dt                        = args.scalar<double>("dt");
         proteus::pyarray<double> &ML                        = args.array<double>("ML");
         proteus::pyarray<double> &mn                        = args.array<double>("mn");
         proteus::pyarray<double> &mLow                      = args.array<double>("mLow");
-        proteus::pyarray<int>    &csrRowIndeces_DofLoops    = args.array<int>("csrRowIndeces_DofLoops");
-        proteus::pyarray<int>    &csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops");
-        proteus::pyarray<int>    &csrRowIndeces_Full        = args.array<int>("csrRowIndeces_Full");
-        proteus::pyarray<int>    &csrColumnOffsets_Full     = args.array<int>("csrColumnOffsets_Full");
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_Full        = args.array<proteus_csr_index_t>("csrRowIndeces_Full");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_Full     = args.array<proteus_csr_index_t>("csrColumnOffsets_Full");
         proteus::pyarray<double> &MC                        = args.array<double>("MC");
         proteus::pyarray<double> &FluxCorrectionMatrix      = args.array<double>("FluxCorrectionMatrix");
         proteus::pyarray<double> &Rpos                      = args.array<double>("Rpos");
@@ -2368,23 +2373,23 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         proteus::pyarray<double> &limited_solution          = args.array<double>("limited_solution");
         int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
         int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
-        const int            offset_u                  = args.scalar<int>("offset_u");
-        const int            stride_u                  = args.scalar<int>("stride_u");
-        auto full_offset_from_compact = [&](int i_compact, int j_compact) -> int {
-          const int full_i = offset_u + stride_u * i_compact;
-          const int full_j = offset_u + stride_u * j_compact;
-          for (int offset = csrRowIndeces_Full.at(full_i); offset < csrRowIndeces_Full.at(full_i + 1); ++offset)
+        const proteus_index_t            offset_u                  = args.scalar<proteus_index_t>("offset_u");
+        const proteus_index_t            stride_u                  = args.scalar<proteus_index_t>("stride_u");
+        auto full_offset_from_compact = [&](proteus_index_t i_compact, proteus_csr_index_t j_compact) -> proteus_csr_index_t {
+          const proteus_index_t full_i = offset_u + stride_u * i_compact;
+          const proteus_csr_index_t full_j = static_cast<proteus_csr_index_t>(offset_u + stride_u * j_compact); // a matrix column
+          for (proteus_csr_index_t offset = csrRowIndeces_Full.at(full_i); offset < csrRowIndeces_Full.at(full_i + 1); ++offset)
             if (csrColumnOffsets_Full.at(offset) == full_j) return offset;
           return -1;
         };
-        int ij = 0;
-        for (int i = 0; i < numDOFs; i++) {
+        proteus_csr_index_t ij = 0;
+        for (proteus_index_t i=0; i<numDOFs; i++) {
           double ith_Limiter_times_FluxCorrectionMatrix = 0.0;
           const double beta_ij = 1.0;
           const double mDot_i = (mLow.at(i) - mn.at(i)) / dt;
-          for (int offset = csrRowIndeces_DofLoops.at(i); offset < csrRowIndeces_DofLoops.at(i + 1); offset++) {
-            int j = csrColumnOffsets_DofLoops.at(offset);
-            const int full_offset = full_offset_from_compact(i, j);
+          for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.at(i); offset < csrRowIndeces_DofLoops.at(i + 1); offset++) {
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.at(offset);
+            const proteus_csr_index_t full_offset = full_offset_from_compact(i, j);
             assert(full_offset >= 0);
             const double alpha_fA = ((FluxCorrectionMatrix.at(ij) > 0.0)
                   ? fmin(Rpos.at(i), Rneg.at(j)) : fmin(Rneg.at(i), Rpos.at(j)))
@@ -2421,17 +2426,17 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         proteus::pyarray<double> &FluxCorrectionMatrix_n      = args.array<double>("FluxCorrectionMatrix_n");
         proteus::pyarray<double> &Rpos_n                      = args.array<double>("Rpos_n");
         proteus::pyarray<double> &Rneg_n                      = args.array<double>("Rneg_n");
-        proteus::pyarray<int>    &csrRowIndeces_n_DofLoops    = args.array<int>("csrRowIndeces_n_DofLoops");
-        proteus::pyarray<int>    &csrColumnOffsets_n_DofLoops = args.array<int>("csrColumnOffsets_n_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_n_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_n_DofLoops");
         int                  LUMPED_MASS_MATRIX          = args.scalar<int>("LUMPED_MASS_MATRIX");
-        int ij = 0;
+        proteus_csr_index_t ij = 0;
         for (int i = 0; i < numDOFs_n; i++) {
           double mini = min_m_bc_n.at(i);
           double maxi = max_m_bc_n.at(i);
           double Pposi = 0.0, Pnegi = 0.0;
-          for (int offset = csrRowIndeces_n_DofLoops.at(i);
+          for (proteus_csr_index_t offset = csrRowIndeces_n_DofLoops.at(i);
                offset < csrRowIndeces_n_DofLoops.at(i + 1); offset++) {
-            const int j = csrColumnOffsets_n_DofLoops.at(offset);
+            const proteus_csr_index_t j = csrColumnOffsets_n_DofLoops.at(offset);
             if (GLOBAL_FCT == 0) {
               mini = std::fmin(mini, mLow_n.at(j));
               maxi = std::fmax(maxi, mLow_n.at(j));
@@ -2461,14 +2466,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         proteus::pyarray<double> &fluxCorrection_n            = args.array<double>("fluxCorrection_n");
         proteus::pyarray<double> &limited_solution_n          = args.array<double>("limited_solution_n");
         proteus::pyarray<double> &bc_mask_n                   = args.array<double>("bc_mask_n");
-        proteus::pyarray<int>    &csrRowIndeces_n_DofLoops    = args.array<int>("csrRowIndeces_n_DofLoops");
-        proteus::pyarray<int>    &csrColumnOffsets_n_DofLoops = args.array<int>("csrColumnOffsets_n_DofLoops");
-        int ij = 0;
+        proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_n_DofLoops");
+        proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_n_DofLoops");
+        proteus_csr_index_t ij = 0;
         for (int i = 0; i < numDOFs_n; i++) {
           double ith_Limited_FCM = 0.0;
-          for (int offset = csrRowIndeces_n_DofLoops.at(i);
+          for (proteus_csr_index_t offset = csrRowIndeces_n_DofLoops.at(i);
                offset < csrRowIndeces_n_DofLoops.at(i + 1); offset++) {
-            const int j = csrColumnOffsets_n_DofLoops.at(offset);
+            const proteus_csr_index_t j = csrColumnOffsets_n_DofLoops.at(offset);
             const double alpha_fA =
                 ((FluxCorrectionMatrix_n.at(ij) > 0.0)
                      ? std::fmin(Rpos_n.at(i), Rneg_n.at(j))
@@ -2488,8 +2493,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
   void kth_FCT_step(arguments_dict &args)
   {
-    int                  NNZ                       = args.scalar<int>("NNZ");     //number on non-zero entries on sparsity pattern
-    int                  numDOFs                   = args.scalar<int>("numDOFs"); //number of DOFs
+    proteus_csr_index_t                  NNZ                       = args.scalar<proteus_csr_index_t>("NNZ");     //number on non-zero entries on sparsity pattern
+    proteus_index_t                  numDOFs                   = args.scalar<proteus_index_t>("numDOFs"); //number of DOFs
     int                  num_fct_iter              = args.scalar<int>("num_fct_iter");
     double               dt                        = args.scalar<double>("dt");
     proteus::pyarray<double> &lumped_mass_matrix        = args.array<double>("lumped_mass_matrix"); //lumped mass matrix (as vector)
@@ -2504,8 +2509,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &ML                        = args.array<double>("ML");
     proteus::pyarray<double> &FluxMatrix                = args.array<double>("FluxMatrix");
     proteus::pyarray<double> &limitedFlux               = args.array<double>("limited_Flux");
-    proteus::pyarray<int>    &csrRowIndeces_DofLoops    = args.array<int>("csrRowIndeces_DofLoops");    //csr row indeces
-    proteus::pyarray<int>    &csrColumnOffsets_DofLoops = args.array<int>("csrColumnOffsets_DofLoops"); //csr column offsets
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");    //csr row indeces
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops"); //csr column offsets
     proteus::pyarray<double> &MassMatrix                = args.array<double>("MassMatrix");             //mass matrix
     proteus::pyarray<double> &dt_times_fH_minus_fL      = args.array<double>("dt_times_fH_minus_fL");   //low minus high order dissipative matrices
     proteus::pyarray<double> &min_m_bc                  = args.array<double>("min_m_bc");               //min/max value at BCs. If DOF is not at boundary then min=1E10, max=-1E10
@@ -2513,21 +2518,21 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     int                  LUMPED_MASS_MATRIX        = args.scalar<int>("LUMPED_MASS_MATRIX");
     int                  MONOLITHIC                = args.scalar<int>("MONOLITHIC");
     double               Rpos[numDOFs], Rneg[numDOFs];
-    int                  ij = 0;
+    proteus_csr_index_t ij = 0;
 
     //////////////////////////////////////////////////////
     // ********** COMPUTE LOW ORDER SOLUTION ********** //
     //////////////////////////////////////////////////////
     if (num_fct_iter == 0) { // No FCT for global bounds
-      for (int i = 0; i < numDOFs; i++) { solLim.data()[i] = uLow.data()[i]; }
+      for (proteus_index_t i=0; i<numDOFs; i++) { solLim.data()[i] = uLow.data()[i]; }
     } else // do FCT iterations (with global bounds) on low order solution
     {
       for (int iter = 0; iter < num_fct_iter; iter++) {
         ij = 0;
-        for (int i = 0; i < numDOFs; i++) {
+        for (proteus_index_t i=0; i<numDOFs; i++) {
           double maxi = 1.0, Pposi = 0;
-          for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
-            int j = csrColumnOffsets_DofLoops.data()[offset];
+          for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
             // compute Flux correction
             double Fluxij = FluxMatrix.data()[ij] - limitedFlux.data()[ij];
             Pposi += Fluxij * ((Fluxij > 0) ? 1. : 0.);
@@ -2542,11 +2547,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           Rpos[i] = ((Pposi == 0) ? 1. : fmin(1.0, Qposi / Pposi));
         }
         ij = 0;
-        for (int i = 0; i < numDOFs; i++) {
+        for (proteus_index_t i=0; i<numDOFs; i++) {
           double ith_Limiter_times_FluxCorrectionMatrix = 0.;
           double Rposi                                  = Rpos[i];
-          for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
-            int j = csrColumnOffsets_DofLoops.data()[offset];
+          for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
+            proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
             // Flux Correction
             double Fluxij = FluxMatrix.data()[ij] - limitedFlux.data()[ij];
             // compute limiter
@@ -2574,11 +2579,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // ********** HIGH ORDER SOLUTION ********** //
     // ***************************************** //
     ij = 0;
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
       double mini = soln.data()[i], maxi = soln.data()[i];
       double Pposi = 0, Pnegi = 0.;
-      for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
-        int j = csrColumnOffsets_DofLoops.data()[offset];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
         // compute local bounds //
         mini = fmin(mini, soln.data()[j]);
         maxi = fmax(maxi, soln.data()[j]);
@@ -2600,12 +2605,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
     // COMPUTE LIMITERS //
     ij = 0;
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
       double ith_limited_flux_correction = 0;
       double Rposi                       = Rpos[i];
       double Rnegi                       = Rneg[i];
-      for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
-        int j = csrColumnOffsets_DofLoops.data()[offset];
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
         // compute flux correction
         double fij = (MC.data()[ij] * (uDotLow.data()[i] - uDotLow.data()[j]) / dt + dLow.data()[ij] * (uLow.data()[i] - uLow.data()[j]));
 
@@ -2633,7 +2638,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &mesh_dof                  = args.array<double>("mesh_dof");
     proteus::pyarray<double> &mesh_velocity_dof         = args.array<double>("mesh_velocity_dof");
     double               MOVING_DOMAIN             = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int>    &mesh_l2g                  = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t>    &mesh_l2g                  = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref                    = args.array<double>("dV_ref");
     proteus::pyarray<double> &u_trial_ref               = args.array<double>("u_trial_ref");
     proteus::pyarray<double> &u_grad_trial_ref          = args.array<double>("u_grad_trial_ref");
@@ -2649,12 +2654,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &u_grad_test_trace_ref                      = args.array<double>("u_grad_test_trace_ref");
     proteus::pyarray<double> &normal_ref                                 = args.array<double>("normal_ref");
     proteus::pyarray<double> &boundaryJac_ref                            = args.array<double>("boundaryJac_ref");
-    int                  nElements_global                           = args.scalar<int>("nElements_global");
+    proteus_index_t                  nElements_global                           = args.scalar<proteus_index_t>("nElements_global");
     proteus::pyarray<double> &ebqe_penalty_ext                           = args.array<double>("ebqe_penalty_ext");
     proteus::pyarray<int>    &elementMaterialTypes                       = args.array<int>("elementMaterialTypes");
     proteus::pyarray<int>    &isSeepageFace                              = args.array<int>("isSeepageFace");
-    proteus::pyarray<int>    &a_rowptr                                   = args.array<int>("a_rowptr");
-    proteus::pyarray<int>    &a_colind                                   = args.array<int>("a_colind");
+    proteus::pyarray<proteus_csr_index_t>    &a_rowptr                                   = args.array<proteus_csr_index_t>("a_rowptr");
+    proteus::pyarray<proteus_csr_index_t>    &a_colind                                   = args.array<proteus_csr_index_t>("a_colind");
     double               rho                                        = args.scalar<double>("rho");
     double               beta                                       = args.scalar<double>("beta");
     //////////////////////////////Density Coupling ///////////////////////////////
@@ -2679,11 +2684,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               shockCapturingDiffusion                    = args.scalar<double>("shockCapturingDiffusion");
     double               sc_uref                                    = args.scalar<double>("sc_uref");
     double               sc_alpha                                   = args.scalar<double>("sc_alpha");
-    proteus::pyarray<int>    &u_l2g                                      = args.array<int>("u_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g                                      = args.array<proteus_index_t>("u_l2g");
     // Component-1 (z) element-to-DOF map (comp-1's own femSpace.dofMap.l2g).  On
     // the shared P1 mesh it equals u_l2g element-wise.
-    proteus::pyarray<int>    &u_l2g_n                                    = args.array<int>("u_l2g_n");
-    proteus::pyarray<int>    &r_l2g                                     = args.array<int>("r_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g_n                                    = args.array<proteus_index_t>("u_l2g_n");
+    proteus::pyarray<proteus_index_t>    &r_l2g                                     = args.array<proteus_index_t>("r_l2g");
     proteus::pyarray<double> &elementDiameter                            = args.array<double>("elementDiameter");
     int                  degree_polynomial                          = args.scalar<int>("degree_polynomial");
     proteus::pyarray<double> &u_dof                                      = args.array<double>("u_dof");
@@ -2697,8 +2702,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &cfl                                        = args.array<double>("cfl");
     proteus::pyarray<double> &q_numDiff_u                                = args.array<double>("q_numDiff_u");
     proteus::pyarray<double> &q_numDiff_u_last                           = args.array<double>("q_numDiff_u_last");
-    int                  offset_u                                   = args.scalar<int>("offset_u");
-    int                  stride_u                                   = args.scalar<int>("stride_u");
+    proteus_index_t                  offset_u                                   = args.scalar<proteus_index_t>("offset_u");
+    proteus_index_t                  stride_u                                   = args.scalar<proteus_index_t>("stride_u");
     // component-1 (S_n) mass equation args.
     // (dt is already declared at the top of this function for the EV path.)
     proteus::pyarray<double> &u_dof_n                                    = args.array<double>("u_dof_n");
@@ -2717,8 +2722,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const double         p_ref_n                                    = args.scalar<double>("p_ref_n");
     const bool           rho_n_compressible                         = (p_ref_n > 0.0);
     const double         inv_p_ref_n                                = rho_n_compressible ? (1.0 / p_ref_n) : 0.0;
-    const int            offset_n                                   = args.scalar<int>("offset_n");
-    const int            stride_n                                   = args.scalar<int>("stride_n");
+    const proteus_index_t            offset_n                                   = args.scalar<proteus_index_t>("offset_n");
+    const proteus_index_t            stride_n                                   = args.scalar<proteus_index_t>("stride_n");
     // Consistent (Galerkin) point-source injection (MOOSE DiracKernel form):
     //   R^c_i -= Q_port * N_i(x_p)  on the element containing the port.
     // sum_i N_i = 1 (partition of unity) -> total injected mass is EXACT and
@@ -2743,9 +2748,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // All-zero array when no injection is configured.
     proteus::pyarray<double> &injection_dof                              = args.array<double>("injection_dof");
     proteus::pyarray<double> &globalResidual                             = args.array<double>("globalResidual");
-    int                  nExteriorElementBoundaries_global          = args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int>    &exteriorElementBoundariesArray             = args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int>    &elementBoundaryElementsArray               = args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t                  nExteriorElementBoundaries_global          = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t>    &exteriorElementBoundariesArray             = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t>    &elementBoundaryElementsArray               = args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int>    &elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<double> &ebqe_velocity_ext                          = args.array<double>("ebqe_velocity_ext");
     proteus::pyarray<int>    &isDOFBoundary_u                            = args.array<int>("isDOFBoundary_u");
@@ -2767,19 +2772,19 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double uL = args.scalar<double>("uL");
     double uR = args.scalar<double>("uR");
     // PARAMETERS FOR EDGE VISCOSITY
-    int               numDOFs                       = args.scalar<int>("numDOFs");
+    proteus_index_t               numDOFs                       = args.scalar<proteus_index_t>("numDOFs");
     // numDOFs is the compact component-0 free-DOF count used by the stabilized
     // DOF loops. Full matrix slots are recovered from the interleaved global
     // CSR using offset/stride-aware indexing.
     int               numDOFs_u                     = args.scalar<int>("numDOFs_u");
-    int               NNZ                           = args.scalar<int>("NNZ");
-    proteus::pyarray<int> &csrRowIndeces_DofLoops        = args.array<int>("csrRowIndeces_DofLoops");
-    proteus::pyarray<int> &csrColumnOffsets_DofLoops     = args.array<int>("csrColumnOffsets_DofLoops");
-    proteus::pyarray<int> &csrRowIndeces_Full            = args.array<int>("csrRowIndeces_Full");
-    proteus::pyarray<int> &csrColumnOffsets_Full         = args.array<int>("csrColumnOffsets_Full");
-    proteus::pyarray<int> &csrRowIndeces_CellLoops       = args.array<int>("csrRowIndeces_CellLoops");
-    proteus::pyarray<int> &csrColumnOffsets_CellLoops    = args.array<int>("csrColumnOffsets_CellLoops");
-    proteus::pyarray<int> &csrColumnOffsets_eb_CellLoops = args.array<int>("csrColumnOffsets_eb_CellLoops");
+    proteus_csr_index_t               NNZ                           = args.scalar<proteus_csr_index_t>("NNZ");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_DofLoops        = args.array<proteus_csr_index_t>("csrRowIndeces_DofLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_DofLoops     = args.array<proteus_csr_index_t>("csrColumnOffsets_DofLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_Full            = args.array<proteus_csr_index_t>("csrRowIndeces_Full");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_Full         = args.array<proteus_csr_index_t>("csrColumnOffsets_Full");
+    proteus::pyarray<proteus_csr_index_t> &csrRowIndeces_CellLoops       = args.array<proteus_csr_index_t>("csrRowIndeces_CellLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_CellLoops    = args.array<proteus_csr_index_t>("csrColumnOffsets_CellLoops");
+    proteus::pyarray<proteus_csr_index_t> &csrColumnOffsets_eb_CellLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_CellLoops");
     // C matrices
     proteus::pyarray<double> &Cx  = args.array<double>("Cx");
     proteus::pyarray<double> &Cy  = args.array<double>("Cy");
@@ -2840,32 +2845,32 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &q_velocity = args.array<double>("q_velocity");
     double &anb_seepage_flux(args.scalar<double>("anb_seepage_flux"));
     anb_seepage_flux = 0.0;
-    proteus::pyarray<int>    &csrRowIndeces_u_u                          = args.array<int>("csrRowIndeces_u_u");
-    proteus::pyarray<int>    &csrColumnOffsets_u_u                       = args.array<int>("csrColumnOffsets_u_u");
-    proteus::pyarray<int>    &csrColumnOffsets_eb_u_u                    = args.array<int>("csrColumnOffsets_eb_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_u_u                          = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_u_u                       = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_u_u                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_u");
     // CSR maps for the (1,1) Jacobian block. Used by the
     // dedicated component-1 element loop appended at the end to assemble
     // the gas-side mass-matrix Jacobian / dt.
-    proteus::pyarray<int>    &csrRowIndeces_n_n                          = args.array<int>("csrRowIndeces_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_n                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_n");
     // (1,0) cross-block CSR maps for the gas-eq diffusion
     // against grad u_w. Currently allocated by the framework but unused by
     // the C++ assembly - 3c.2/3c.3 will write into them.
-    proteus::pyarray<int>    &csrRowIndeces_n_w                          = args.array<int>("csrRowIndeces_n_w");
-    proteus::pyarray<int>    &csrColumnOffsets_n_n                       = args.array<int>("csrColumnOffsets_n_n");
-    proteus::pyarray<int>    &csrColumnOffsets_n_w                       = args.array<int>("csrColumnOffsets_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_w                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_n                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_w                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_w");
     // P1: comp-0 (H2O) (0,0) and (0,1) block CSR maps -- the framework's
     // authoritative (row,col)->flat-nzval offsets for the water equation's
     // dependence on p (w_w) and z (w_n).  Used by the Richards-style block
     // scatter of the two-sided water flux Jacobian (replaces the Full-CSR
     // column search that dropped the (0,1) off-diagonal coupling).
-    proteus::pyarray<int>    &csrRowIndeces_w_w                          = args.array<int>("csrRowIndeces_w_w");
-    proteus::pyarray<int>    &csrColumnOffsets_w_w                       = args.array<int>("csrColumnOffsets_w_w");
-    proteus::pyarray<int>    &csrRowIndeces_w_n                          = args.array<int>("csrRowIndeces_w_n");
-    proteus::pyarray<int>    &csrColumnOffsets_w_n                       = args.array<int>("csrColumnOffsets_w_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_w_w                          = args.array<proteus_csr_index_t>("csrRowIndeces_w_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_w_w                       = args.array<proteus_csr_index_t>("csrColumnOffsets_w_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_w_n                          = args.array<proteus_csr_index_t>("csrRowIndeces_w_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_w_n                       = args.array<proteus_csr_index_t>("csrColumnOffsets_w_n");
     // Comp-1 boundary CSR maps used by the exterior boundary loop appended
     // at the end of this routine.
-    proteus::pyarray<int>    &csrColumnOffsets_eb_n_n                    = args.array<int>("csrColumnOffsets_eb_n_n");
-    proteus::pyarray<int>    &csrColumnOffsets_eb_n_w                    = args.array<int>("csrColumnOffsets_eb_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_n_n                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_n_w                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_n_w");
     // COMPONENT-1 (m_n = phi*rho_n*u_n) EV plumbing. Mirrors the comp-0
     // EV scaffolding: a compact DOF graph (csrRowIndeces_n_DofLoops), per-edge
     // dLow_n / dEV_n storage, and per-DOF mLow_n / mDotLow_n. Sensor / sensor
@@ -2873,8 +2878,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // m_n through chain rule dm_n/du_n = -phi*rho_n.
     int                  numDOFs_n                  = args.scalar<int>("numDOFs_n");
     int                  NNZ_n                      = args.scalar<int>("NNZ_n");
-    proteus::pyarray<int>    &csrRowIndeces_n_DofLoops    = args.array<int>("csrRowIndeces_n_DofLoops");
-    proteus::pyarray<int>    &csrColumnOffsets_n_DofLoops = args.array<int>("csrColumnOffsets_n_DofLoops");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_DofLoops    = args.array<proteus_csr_index_t>("csrRowIndeces_n_DofLoops");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_DofLoops = args.array<proteus_csr_index_t>("csrColumnOffsets_n_DofLoops");
     proteus::pyarray<double> &dLow_n                    = args.array<double>("dLow_n");
     proteus::pyarray<double> &dEV_n                      = args.array<double>("dEV_n");
     proteus::pyarray<double> &fluxMatrix_n               = args.array<double>("fluxMatrix_n");
@@ -3053,18 +3058,18 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     std::vector<double> ML_rho(numDOFs, 0.0);
     std::fill(velocity_couple.data(), velocity_couple.data() + velocity_couple.size(), 0.0);
     std::fill(ebqe_velocity_ext_couple.data(), ebqe_velocity_ext_couple.data() + ebqe_velocity_ext_couple.size(), 0.0);
-    auto full_offset_from_compact = [&](int i_compact, int j_compact) -> int
+    auto full_offset_from_compact = [&](proteus_index_t i_compact, proteus_csr_index_t j_compact) -> proteus_csr_index_t
     {
-      const int full_i = offset_u + stride_u * i_compact;
-      const int full_j = offset_u + stride_u * j_compact;
-      for (int offset = csrRowIndeces_Full.data()[full_i]; offset < csrRowIndeces_Full.data()[full_i + 1]; ++offset)
+      const proteus_index_t full_i = offset_u + stride_u * i_compact;
+      const proteus_csr_index_t full_j = static_cast<proteus_csr_index_t>(offset_u + stride_u * j_compact); // a matrix column
+      for (proteus_csr_index_t offset = csrRowIndeces_Full.data()[full_i]; offset < csrRowIndeces_Full.data()[full_i + 1]; ++offset)
         if (csrColumnOffsets_Full.data()[offset] == full_j) return offset;
       return -1;
     };
     
-     for (int eN = 0; eN < nElements_global; eN++)
+     for (proteus_index_t eN = 0; eN < nElements_global; eN++)
       for (int j = 0; j < nDOF_trial_element; j++) {
-        int eN_nDOF_trial_element                               = eN * nDOF_trial_element;
+        proteus_index_t eN_nDOF_trial_element                               = eN * nDOF_trial_element;
         u_free_dof[r_l2g.data()[eN_nDOF_trial_element + j]]     = u_dof.data()[u_l2g.data()[eN_nDOF_trial_element + j]];
         u_free_dof_old[r_l2g.data()[eN_nDOF_trial_element + j]] = u_dof_old.data()[u_l2g.data()[eN_nDOF_trial_element + j]];
       }
@@ -3077,25 +3082,25 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
     // Project quadrature density to nodal DOFs before constructing nodal
     // stabilization potentials so Phi uses a true nodal density field.
-    for (int eN = 0; eN < nElements_global; eN++) {
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        const int eN_k = eN * nQuadraturePoints_element + k;
+        const proteus_index_t eN_k = eN * nQuadraturePoints_element + k;
         double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x, y, z;
         ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(),
                                     mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
                                     jac, jacDet, jacInv, x, y, z);
         const double dV = fabs(jacDet) * dV_ref.data()[k];
         for (int i = 0; i < nDOF_test_element; i++) {
-          const int eN_i = eN * nDOF_test_element + i;
-          const int free_gi = r_l2g.data()[eN_i];
+          const proteus_index_t eN_i = eN * nDOF_test_element + i;
+          const proteus_index_t free_gi = r_l2g.data()[eN_i];
           const double u_test_dV = u_test_ref.data()[k * nDOF_trial_element + i] * dV;
           rho_dof[free_gi] += q_rho.data()[eN_k] * u_test_dV;
           ML_rho[free_gi] += u_test_dV;
         }
       }
     }
-    for (int i = 0; i < numDOFs; ++i) {
+    for (proteus_index_t i=0; i<numDOFs; ++i) {
       if (ML_rho[i] > 0.0) rho_dof[i] /= ML_rho[i];
       else rho_dof[i] = rho;
     }
@@ -3129,7 +3134,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     std::vector<double> dpc_uncap_dof(numDOFs_n, 0.0);
     std::vector<double> pc_uncap_dof_old(numDOFs_n, 0.0);
     std::vector<double> ML_n(numDOFs_n, 0.0);
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       const int    mat_eN_proj = elementMaterialTypes.data()[eN];
       const double phi_eN      = thetaR.data()[mat_eN_proj] + thetaSR.data()[mat_eN_proj];
       const double alpha_eN_p  = alpha.data()[mat_eN_proj];
@@ -3138,7 +3143,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       const double S_wr_p      = thetaR.data()[mat_eN_proj] / phi_eN;
       const double one_m_Sr_p  = 1.0 - S_wr_p;
       const double Se_trap_L3043 = 1.0 - S_gr.data()[mat_eN_proj] / one_m_Sr_p;  // gas-only residual trapping
-      const int    eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       for (int k = 0; k < nQuadraturePoints_element; k++) {
         double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x_p, y_p, z_p;
         ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(),
@@ -3200,7 +3205,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         krn_p_old = krn_p_old * krn_end_p / mu_n;
         const double rho_n_p_old = rho_n_compressible ? (rho_n * exp(fmin((u_w_p_old + pc_p_old) * inv_p_ref_n, 50.0))) : rho_n;
         // TADR brine density at this QP.
-        const int    eN_k_proj    = eN * nQuadraturePoints_element + k;
+        const proteus_index_t eN_k_proj    = eN * nQuadraturePoints_element + k;
         const double rho_w_qp_proj = q_rho.data()[eN_k_proj];
         const double p_cl_pr     = fmax(u_w_p, 1.0e2);
         const double p_cl_pr_old = fmax(u_w_p_old, 1.0e2);
@@ -3221,8 +3226,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         const double dphiN_dz_qp = phi_eN * dN_dz_pr;
         const double dphiN_dp_qp = phi_eN * dN_dp_pr;
         for (int i = 0; i < nDOF_test_element; i++) {
-          const int    eN_i = eN * nDOF_test_element + i;
-          const int    gi   = u_l2g_n.data()[eN_i];   // comp-1 DOF (lumped phi*N projection)
+          const proteus_index_t eN_i = eN * nDOF_test_element + i;
+          const proteus_index_t gi   = u_l2g_n.data()[eN_i];   // comp-1 DOF (lumped phi*N projection)
           const double u_test_dV = u_test_ref.data()[k * nDOF_trial_element + i] * dV;
           // P1: phi*N (and derivatives) for the compositional CO2 accumulation.
           rho_n_phi_dof[gi]     += phiN_qp * u_test_dV;
@@ -3276,7 +3281,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
     // compute entropy and init global_entropy_residual and boundary_integral
     double psi[numDOFs], eta[numDOFs], global_entropy_residual[numDOFs], boundary_integral[numDOFs];
-    for (int i = 0; i < numDOFs; i++) {
+    for (proteus_index_t i=0; i<numDOFs; i++) {
       // NODAL ENTROPY //
       if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) //EV stab
       {
@@ -3297,17 +3302,17 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //    * Entropy residual
     //    * Transport matrices
 
-    for (int eN = 0; eN < nElements_global; eN++) {
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
-      const int eN_nDOF_mesh_trial_element = eN * nDOF_mesh_trial_element;
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_mesh_trial_element = eN * nDOF_mesh_trial_element;
       //declare local storage for local contributions and initialize
       double elementResidual_u[nDOF_test_element], element_entropy_residual[nDOF_test_element], Phi[nDOF_trial_element], Phi_n[nDOF_trial_element];
       double elementTransport[nDOF_test_element][nDOF_trial_element], elementTransportConsistent[nDOF_test_element][nDOF_trial_element];
       double elementTransportn[nDOF_test_element][nDOF_trial_element], elementTransportConsistentn[nDOF_test_element][nDOF_trial_element];
       for (int j = 0; j < nDOF_trial_element; j++) {
-        const int u_gj = u_l2g.data()[eN_nDOF_trial_element + j];
-        const int free_gj = r_l2g.data()[eN_nDOF_trial_element + j];
-        const int x_gj = mesh_l2g.data()[eN_nDOF_mesh_trial_element + j];
+        const proteus_index_t u_gj = u_l2g.data()[eN_nDOF_trial_element + j];
+        const proteus_index_t free_gj = r_l2g.data()[eN_nDOF_trial_element + j];
+        const proteus_index_t x_gj = mesh_l2g.data()[eN_nDOF_mesh_trial_element + j];
         const double rho_node_j = rho_dof[free_gj];
         Phi[j]   = u_dof.data()[u_gj];
         Phi_n[j] = u_dof_old.data()[u_gj];
@@ -3330,7 +3335,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //loop over quadrature points and compute integrands
       for (int k = 0; k < nQuadraturePoints_element; k++) {
         //compute indeces and declare local storage
-        int eN_k = eN * nQuadraturePoints_element + k, eN_k_nSpace = eN_k * nSpace;
+        proteus_index_t eN_k = eN * nQuadraturePoints_element + k, eN_k_nSpace = eN_k * nSpace;
         double
           // for entropy residual
           aux_entropy_residual = 0.,
@@ -3417,8 +3422,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
         for (int I = 0; I < nSpace; ++I) {
           double acc = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             acc += (a[ii] / rho_velocity) * pressure_gradient[J];
           }
           velocity.data()[eN_k_nSpace + I] = -acc;
@@ -3443,9 +3448,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //   std::cout << ")" << std::endl;
         //   for (int j = 0; j < nDOF_trial_element; ++j)
         //   {
-        //     const int u_gj = u_l2g.data()[eN_nDOF_trial_element + j];
-        //     const int x_gj = mesh_l2g.data()[eN_nDOF_mesh_trial_element + j];
-        //     const int free_gj = r_l2g.data()[eN_nDOF_trial_element + j];
+        //     const proteus_index_t u_gj = u_l2g.data()[eN_nDOF_trial_element + j];
+        //     const proteus_index_t x_gj = mesh_l2g.data()[eN_nDOF_mesh_trial_element + j];
+        //     const proteus_index_t free_gj = r_l2g.data()[eN_nDOF_trial_element + j];
         //     std::cout << "  [EV fixed dof] j=" << j
         //               << " mapped_u=" << u_dof.data()[u_gj]
         //               << " mapped_u_old=" << u_dof_old.data()[u_gj]
@@ -3489,7 +3494,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //////////////
         for (int i = 0; i < nDOF_test_element; i++) {
           // VECTOR OF ENTROPY RESIDUAL //
-          int eN_i = eN * nDOF_test_element + i;
+          proteus_index_t eN_i = eN * nDOF_test_element + i;
           ML2[r_l2g.data()[eN_i]] += u_test_dV[i];
           if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) // EV stab
           {
@@ -3520,14 +3525,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       // DISTRIBUTE // load cell based element into global residual
       ////////////////
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
-        int gi   = r_l2g.data()[eN_i];
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
+        proteus_index_t gi   = r_l2g.data()[eN_i];
         // distribute entropy_residual
         if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) // EV Stab
           global_entropy_residual[gi] += element_entropy_residual[i];
         // distribute transport matrices
         for (int j = 0; j < nDOF_trial_element; j++) {
-          int eN_i_j = eN_i * nDOF_trial_element + j;
+          proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           TransportMatrix[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementTransport[i][j];
           TransportMatrixConsistent[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementTransportConsistent[i][j];
           TransportMatrixn[csrRowIndeces_CellLoops.data()[eN_i] + csrColumnOffsets_CellLoops.data()[eN_i_j]] += elementTransportn[i][j];
@@ -3560,12 +3565,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //ebNE is the Exterior element boundary INdex
     //ebN is the element boundary INdex
     //eN is the element index
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      int    ebN = exteriorElementBoundariesArray.data()[ebNE], eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      proteus_index_t    ebN = exteriorElementBoundariesArray.data()[ebNE], eN = elementBoundaryElementsArray.data()[ebN * 2 + 0], eN_nDOF_trial_element = eN * nDOF_trial_element;
+        int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
       double elementResidual_u[nDOF_test_element];
       for (int i = 0; i < nDOF_test_element; i++) { elementResidual_u[i] = 0.0; }
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        int    ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace, ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
+        proteus_index_t ebNE_kb = ebNE * nQuadraturePoints_elementBoundary + kb, ebNE_kb_nSpace = ebNE_kb * nSpace;
+        int ebN_local_kb = ebN_local * nQuadraturePoints_elementBoundary + kb, ebN_local_kb_nSpace = ebN_local_kb * nSpace;
         double u_ext = 0.0, un_ext, grad_u_ext[nSpace], m_ext = 0.0, dm_ext = 0.0, f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz], as_ext[nnz], 
         mn_ext = 0.0, dmn_ext = 0.0, fn_ext[nSpace], dfn_ext[nSpace], an_ext[nnz], dan_ext[nnz], asn_ext[nnz], flux_ext = 0.0, bflux_ext = 0.0,
                //anb_seepage_flux=0.0, // for flux calculation
@@ -3666,8 +3673,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
         for (int I = 0; I < nSpace; ++I) {
           double acc = 0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I+1]; ++ii) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             acc += (a_ext[ii] / rho_velocity_ext) * ext_pressure_gradient[J];
           }
           ebqe_velocity_ext.data()[ebNE_kb_nSpace + I] = -acc;
@@ -3698,9 +3705,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             if (u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + a] > 1.0 - 1.0e-12) a_v = a;
           if (a_v < 0)
             throw std::runtime_error("m_comp_co2: per_rock_closure needs vertex (Lobatto) boundary quadrature");
-          const int gv = u_l2g.data()[eN_nDOF_trial_element + a_v];
+          const proteus_index_t gv = u_l2g.data()[eN_nDOF_trial_element + a_v];
           if (node_multi[gv]) {
-            const int o = gv * nRock + mat_b0;
+            const proteus_index_t o = gv * nRock + mat_b0;
             Sgb0 = rS[o];  dSgb0_dp = rS_dp[o];  dSgb0_dz = rS_dz[o];
           }
         }
@@ -3741,8 +3748,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double valp_b[nSpace], valz_b[nSpace];
         for (int I=0;I<nSpace;I++){
           double ugI=0,uaI=0,dugp=0,dugz=0,duap=0,duaz=0;
-          for (int ii=a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
-            const int J=a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
+            const proteus_csr_index_t J=a_colind.data()[ii];
             const double Kii=KWs_b0[ii];
             const double Mob_g=KNrb0*Kii/mu_n, Mob_a=KWrb0*Kii;
             const double dMobg_dp=(DKNrb0*Kii/mu_n)*dSeb0_dp, dMobg_dz=(DKNrb0*Kii/mu_n)*dSeb0_dz;
@@ -3812,8 +3819,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               double accp = 0.0;
               for (int I=0;I<nSpace;I++){
                 accp += normal[I]*valp_b[I]*trial_j;
-                for (int ii=a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
-                  const int J=a_colind.data()[ii];
+                for (proteus_csr_index_t ii = a_rowptr.data()[I];ii<a_rowptr.data()[I+1];ii++){
+                  const proteus_csr_index_t J=a_colind.data()[ii];
                   const double Kii=KWs_b0[ii];
                   const double Mob_g=KNrb0*Kii/mu_n, Mob_a=KWrb0*Kii;
                   const double dFdgp = Agb0*(-Mob_g*(1.0 - pcpb0*dSgb0_dp)) + Aab0*(-Mob_a);
@@ -3839,9 +3846,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //update the element and global residual storage
         //
         for (int i = 0; i < nDOF_test_element; i++) {
-          int eN_i = eN * nDOF_test_element + i;
+          proteus_index_t eN_i = eN * nDOF_test_element + i;
           for (int j = 0; j < nDOF_trial_element; j++) {
-            int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element + i * nDOF_trial_element + j;
+            proteus_index_t ebN_i_j = ebN * 4 * nDOF_test_X_trial_element + i * nDOF_trial_element + j;
             if (useConsistentFlux) {
               globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_eb_u_u[ebN_i_j]] += fluxJacobian_u_u[j] * u_test_dS[i];
             } else {
@@ -3855,7 +3862,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         } //i
       } //kb
       for (int i = 0; i < nDOF_test_element; i++) {
-          int eN_i = eN * nDOF_test_element + i;
+          proteus_index_t eN_i = eN * nDOF_test_element + i;
           globalResidual.data()[offset_u + stride_u * u_l2g.data()[eN_i]] += elementResidual_u[i];
       }//i
     } //ebNE
@@ -3884,9 +3891,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       }
       // for smoothness indicator //
       double alpha_numerator_pos = 0., alpha_numerator_neg = 0., alpha_denominator_pos = 0., alpha_denominator_neg = 0.;
-      for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) { // First loop in j (sparsity pattern)
-        int j = csrColumnOffsets_DofLoops.data()[offset];
-        const int full_offset = full_offset_from_compact(i, j);
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) { // First loop in j (sparsity pattern)
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
+        const proteus_csr_index_t full_offset = full_offset_from_compact(i, j);
         assert(full_offset >= 0);
         const int node_j = freeDOFToNode_u.data()[j];
         if (STABILIZATION_TYPE == STABILIZATION::EV_Stab) //EV Stabilization
@@ -3933,9 +3940,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
       // Now that I have the gi vectors, I can use them for the current i-th DOF
       double SumPos = 0., SumNeg = 0.;
-      for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) { // second loop in j (sparsity pattern)
-        int j = csrColumnOffsets_DofLoops.data()[offset];
-        const int full_offset = full_offset_from_compact(i, j);
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) { // second loop in j (sparsity pattern)
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
+        const proteus_csr_index_t full_offset = full_offset_from_compact(i, j);
         assert(full_offset >= 0);
         // compute gi*(xi-xj)
         double gi_times_x = 0.;
@@ -4050,7 +4057,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // (trivial gas eq) is assembled by the dedicated element loop appended
     // at the end of this function.
     for (int i = 0; i < numDOFs_u; i++) {
-      int    ii = -1;
+      proteus_csr_index_t ii = -1;
       double sum_abs_dt_times_fH_minus_fL = 0.0, MLi = ML.data()[i];
       double Kr, dKr, Krn, dKrn;
       double J_ii = 0.0;
@@ -4074,9 +4081,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
       double thetaW_tmp = 0.0;
       // loop over the sparsity pattern of the i-th DOF
-      for (int offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
-        int j = csrColumnOffsets_DofLoops.data()[offset];
-        const int full_offset = full_offset_from_compact(i, j);
+      for (proteus_csr_index_t offset = csrRowIndeces_DofLoops.data()[i]; offset < csrRowIndeces_DofLoops.data()[i + 1]; offset++) {
+        proteus_csr_index_t j = csrColumnOffsets_DofLoops.data()[offset];
+        const proteus_csr_index_t full_offset = full_offset_from_compact(i, j);
         assert(full_offset >= 0);
         if (i == j) ii = full_offset;
         const double rho_j = rho_dof[j];
@@ -4200,10 +4207,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       // col_n=upwind_node) inside the j-loop above. Together they make the
       // low-order operator fully consistent with d R_w / d u_n.
       {
-        const int row_w   = offset_u + stride_u * i;
-        const int col_n   = offset_n + stride_n * node_i;
-        int off_wv = -1;
-        for (int o = csrRowIndeces_Full.data()[row_w];
+        const proteus_index_t row_w   = offset_u + stride_u * i;
+        const proteus_index_t col_n   = offset_n + stride_n * node_i;
+        proteus_csr_index_t off_wv = -1;
+        for (proteus_csr_index_t o = csrRowIndeces_Full.data()[row_w];
              o < csrRowIndeces_Full.data()[row_w + 1]; o++) {
           if (csrColumnOffsets_Full.data()[o] == col_n) { off_wv = o; break; }
         }
@@ -4238,7 +4245,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     if (STABILIZATION_TYPE == STABILIZATION::Implicit_FCT) {
       // Legacy in-Newton injection (kept for STAB=Implicit_FCT only; the
       // Python Coefficients class rejects Implicit_FCT, so this is dead).
-      for (int i = 0; i < numDOFs; i++) {
+      for (proteus_index_t i=0; i<numDOFs; i++) {
         globalResidual.data()[offset_u + stride_u * i] += fluxCorrection.data()[i];
       }
       for (int i_n = 0; i_n < numDOFs_n; i_n++) {
@@ -4284,9 +4291,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       for (int i_n = 0; i_n < numDOFs_n; i_n++) {
         const double zi = u_dof_n_old.data()[i_n];
         double num = 0.0, den = 0.0;
-        for (int offset = csrRowIndeces_n_DofLoops.data()[i_n];
+        for (proteus_csr_index_t offset = csrRowIndeces_n_DofLoops.data()[i_n];
              offset < csrRowIndeces_n_DofLoops.data()[i_n + 1]; offset++) {
-          const int j_n = csrColumnOffsets_n_DofLoops.data()[offset];
+          const proteus_csr_index_t j_n = csrColumnOffsets_n_DofLoops.data()[offset];
           if (j_n == i_n) continue;
           const double d = zi - u_dof_n_old.data()[j_n];
           num += d;
@@ -4300,17 +4307,17 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     std::vector<int> node_iface(numDOFs_n, 0);
     {
       std::vector<int> node_mat0(numDOFs_n, -1);
-      for (int eN = 0; eN < nElements_global; eN++) {
+      for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
         const int mat_eN_if = elementMaterialTypes.data()[eN];
         for (int a = 0; a < nDOF_trial_element; a++) {
-          const int gN = u_l2g.data()[eN * nDOF_trial_element + a];
+          const proteus_index_t gN = u_l2g.data()[eN * nDOF_trial_element + a];
           if (node_mat0[gN] < 0)            node_mat0[gN] = mat_eN_if;
           else if (node_mat0[gN] != mat_eN_if) node_iface[gN] = 1;
         }
       }
     }
-    auto comp1_offset = [&](int i_n, int j_n) -> int {
-      for (int off = csrRowIndeces_n_DofLoops.data()[i_n];
+    auto comp1_offset = [&](proteus_index_t i_n, proteus_index_t j_n) -> proteus_csr_index_t {
+      for (proteus_csr_index_t off = csrRowIndeces_n_DofLoops.data()[i_n];
            off < csrRowIndeces_n_DofLoops.data()[i_n + 1]; ++off)
         if (csrColumnOffsets_n_DofLoops.data()[off] == j_n) return off;
       return -1;
@@ -4322,7 +4329,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     }
     std::vector<double> node_Kdiag(numDOFs_n, 0.0);
 
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       const int    mat_eN    = elementMaterialTypes.data()[eN];
       const double phi_eN    = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN  = alpha.data()[mat_eN];
@@ -4360,7 +4367,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       // NO rho_n, NO k_rn, NO p_c factors -- those go into lambda_up and
       // delta_Phi at the edge level.
       double elementTransport_n[nDOF_test_element][nDOF_trial_element];
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       for (int i = 0; i < nDOF_test_element; i++) {
         elementResidual_n[i] = 0.0;
         elementResidual_w[i] = 0.0;
@@ -4403,8 +4410,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             double K_trial_ij = 0.0;
             for (int I = 0; I < nSpace; I++) {
               const double grad_Ni_I = u_grad_trial_qp[i * nSpace + I];
-              for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-                const int J = a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+                const proteus_csr_index_t J = a_colind.data()[ii];
                 K_trial_ij += KWs_eN[ii] * u_grad_trial_qp[j * nSpace + J] * grad_Ni_I;
               }
             }
@@ -4421,7 +4428,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //   dm_c/dp = z*phi*dN/dp              (1,0) diagonal
       // Accumulation Jacobian formulas FD-verified in kernel_math_test.cpp (kmtest).
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int    gi        = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
+        const proteus_index_t gi        = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
         node_Kdiag[gi]        += fmax(0.0, elementTransport_n[i][i]);          // K-weighted nodal conductance
         const double phiN_i    = rho_n_phi_dof[gi];       // lumped phi*N (current)
         const double phiN_old_i= rho_n_phi_dof_old[gi];   // lumped phi*N (t^n)
@@ -4451,7 +4458,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               const double w = inj_weight.data()[p * nDOF_test_element + i];
               elementResidual_n[i] -= qp * w;
               if (have_gas_budget) {
-                const int gii = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
+                const proteus_index_t gii = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
                 gas_budget_node.data()[3 * numDOFs_n + gii] -= qp * w;
               }
             }
@@ -4473,8 +4480,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         //   lam_g = (krn_end/mu_n)*rho_g*Y*krn,   lam_a = rho_a*X*krw   (molar)
         //   dPhi_g = d(p+pc) - rho_g_mass_edge*g.dx,  dPhi_a = dp - rho_a_mass_edge*g.dx
         // All flash-derived; FD-verified in edge_flux_test.cpp.
-        int    gN_e[nDOF_trial_element];   // mesh-node id (p, geometry)
-        int    zN_e[nDOF_trial_element];   // comp-1 z-DOF
+        proteus_index_t gN_e[nDOF_trial_element];   // mesh-node id (p, geometry)
+        proteus_index_t zN_e[nDOF_trial_element];   // comp-1 z-DOF
         double uw_e[nDOF_trial_element],   uw_old_e[nDOF_trial_element];
         double pc_e[nDOF_trial_element],   pc_old_e[nDOF_trial_element];
         double dpc_dp_e[nDOF_trial_element], dpc_dz_e[nDOF_trial_element];
@@ -4500,8 +4507,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         const double cg_eN  = krn_end_eN / mu_n;
         const double dMm_e  = ::m_comp_co2::eos::M_CO2_KG - ::m_comp_co2::eos::M_H2O_KG;
         for (int a = 0; a < nDOF_trial_element; a++) {
-          const int gN = u_l2g.data()[eN_nDOF_trial_element + a];      // mesh node: p + geometry
-          const int zN = u_l2g_n.data()[eN_nDOF_trial_element + a];    // comp-1 z-DOF
+          const proteus_index_t gN = u_l2g.data()[eN_nDOF_trial_element + a];      // mesh node: p + geometry
+          const proteus_index_t zN = u_l2g_n.data()[eN_nDOF_trial_element + a];    // comp-1 z-DOF
           gN_e[a]      = gN;
           zN_e[a]      = zN;
           const double p_a   = u_dof.data()[gN];
@@ -4517,7 +4524,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
           // closure's S_r at interface nodes, the flash's S_g elsewhere.
           double Sg_v = f.S_g, dSg_dp_v = f.dS_g_dp, dSg_dz_v = f.dS_g_dz;
           if (per_rock && node_multi[zN]) {
-            const int o = zN * nRock + mat_eN;
+            const proteus_index_t o = zN * nRock + mat_eN;
             Sg_v = rS[o];  dSg_dp_v = rS_dp[o];  dSg_dz_v = rS_dz[o];
           }
           Sg_e[a] = Sg_v;  dSg_dp_e[a] = dSg_dp_v;  dSg_dz_e[a] = dSg_dz_v;
@@ -4567,7 +4574,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               ::m_comp_co2::flash::flashPZ(p_cl_o, z_a_o, T_C_member, m_NaCl_member, ::m_comp_co2::flash::EPS_Z, immiscible_member);
           double Sg_v_o = fo.S_g, dSg_dz_v_o = fo.dS_g_dz;
           if (per_rock && node_multi[zN]) {
-            const int o = zN * nRock + mat_eN;
+            const proteus_index_t o = zN * nRock + mat_eN;
             Sg_v_o = rS_o[o];  dSg_dz_v_o = rS_dz_o[o];
           }
           Sg_old_e[a] = Sg_v_o;
@@ -4712,7 +4719,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               // maps (eN_i_j offset), so the off-diagonal water<-neighbor-z
               // slot is ALWAYS hit (no column search, no dropped coupling).
               // Dirichlet mask uses the comp-0 free-DOF tag of the test node.
-              const int fi = r_l2g.data()[eN_nDOF_trial_element + i];
+              const proteus_index_t fi = r_l2g.data()[eN_nDOF_trial_element + i];
               const double mwi = bc_mask.data()[fi];
               elementJacobian_w_w[i][i] += mwi * (-dFw_dpi);
               elementJacobian_w_w[i][j] += mwi * (-dFw_dpj);
@@ -4754,7 +4761,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
               elementJacobian_n_n[i][j] -= dResid;
             }
             if (FCT_n == 1) {
-              const int off_n = comp1_offset(zN_e[i], zN_e[j]);
+              const proteus_csr_index_t off_n = comp1_offset(zN_e[i], zN_e[j]);
               if (off_n >= 0) {
                 const double dz = u_dof_n.data()[zN_e[j]] - u_dof_n.data()[zN_e[i]];
                 dLow_n.data()[off_n]                 += dLow;
@@ -4768,16 +4775,16 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
       // -------- Distribute element arrays to global storage. --------
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
-        const int gi   = u_l2g_n.data()[eN_i];   // comp-1 DOF (residual + budget)
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t gi   = u_l2g_n.data()[eN_i];   // comp-1 DOF (residual + budget)
         globalResidual.data()[offset_n + stride_n * gi] += elementResidual_n[i];
         if (have_gas_budget)
           gas_budget_node.data()[5 * numDOFs_n + gi] += elementResidual_n[i];
         // P1: comp-0 (H2O) two-sided water flux residual (Dirichlet-masked).
-        const int fi_w = r_l2g.data()[eN_nDOF_trial_element + i];
+        const proteus_index_t fi_w = r_l2g.data()[eN_nDOF_trial_element + i];
         globalResidual.data()[offset_u + stride_u * fi_w] += bc_mask.data()[fi_w] * elementResidual_w[i];
         for (int j = 0; j < nDOF_trial_element; j++) {
-          const int eN_i_j = eN_i * nDOF_trial_element + j;
+          const proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
           globalJacobian.data()[csrRowIndeces_n_n.data()[eN_i] + csrColumnOffsets_n_n.data()[eN_i_j]]
               += elementJacobian_n_n[i][j];
           globalJacobian.data()[csrRowIndeces_n_w.data()[eN_i] + csrColumnOffsets_n_w.data()[eN_i_j]]
@@ -4838,11 +4845,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     // the eventual sharper form; see [[m_comp_co2_stab2_upwind_potential_flux]].
     // Closure dispatch uses PSK_TYPE_member set at the top of this routine.
     // ============================================================================
-    for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
-      const int ebN = exteriorElementBoundariesArray.data()[ebNE];
-      const int eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
+    for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++) {
+      const proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE];
+      const proteus_index_t eN  = elementBoundaryElementsArray.data()[ebN * 2 + 0];
       const int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN * 2 + 0];
-      const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+      const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
       const int    mat_eN    = elementMaterialTypes.data()[eN];
       const double phi_eN    = thetaR.data()[mat_eN] + thetaSR.data()[mat_eN];
       const double alpha_eN  = alpha.data()[mat_eN];
@@ -4865,7 +4872,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       }
 
       for (int kb = 0; kb < nQuadraturePoints_elementBoundary; kb++) {
-        const int ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
+        const proteus_index_t ebNE_kb            = ebNE * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb       = ebN_local * nQuadraturePoints_elementBoundary + kb;
         const int ebN_local_kb_nSpace = ebN_local_kb * nSpace;
 
@@ -4924,9 +4931,9 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             if (u_trial_trace_ref.data()[ebN_local_kb * nDOF_test_element + a] > 1.0 - 1.0e-12) a_v = a;
           if (a_v < 0)
             throw std::runtime_error("m_comp_co2: per_rock_closure needs vertex (Lobatto) boundary quadrature");
-          const int gv = u_l2g.data()[eN_nDOF_trial_element + a_v];
+          const proteus_index_t gv = u_l2g.data()[eN_nDOF_trial_element + a_v];
           if (node_multi[gv]) {
-            const int o = gv * nRock + mat_eN;
+            const proteus_index_t o = gv * nRock + mat_eN;
             S_g_b = rS[o];  dSgb_dp = rS_dp[o];  dSgb_dz = rS_dz[o];
           }
         }
@@ -4975,8 +4982,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         double dug_dp_b[nSpace], dug_dz_b[nSpace], dua_dp_b[nSpace], dua_dz_b[nSpace];
         for (int I = 0; I < nSpace; I++) {
           double ugI=0.0, uaI=0.0, dugp=0.0, dugz=0.0, duap=0.0, duaz=0.0;
-          for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-            const int J = a_colind.data()[ii];
+          for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+            const proteus_csr_index_t J = a_colind.data()[ii];
             const double Kii = KWs_eN[ii];
             const double Mob_g = KNr_b*Kii/mu_n, Mob_a = KWr_b*Kii;
             const double dMobg_dp = (DKNr_b*Kii/mu_n)*dSe_dp_b, dMobg_dz = (DKNr_b*Kii/mu_n)*dSe_dz_b;
@@ -5047,8 +5054,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
             //   sum_{I,ii} (dF_1[I]/dgrad_var[J]) gradN_j[J] n_I.
             double Sgrad_p_b = 0.0, Sgrad_z_b = 0.0;
             for (int I = 0; I < nSpace; I++) {
-              for (int ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
-                const int J = a_colind.data()[ii];
+              for (proteus_csr_index_t ii = a_rowptr.data()[I]; ii < a_rowptr.data()[I + 1]; ii++) {
+                const proteus_csr_index_t J = a_colind.data()[ii];
                 const double Kii = KWs_eN[ii];
                 const double Mob_g = KNr_b*Kii/mu_n, Mob_a = KWr_b*Kii;
                 const double gNjJ = u_grad_trial_trace_b[j * nSpace + J];
@@ -5079,15 +5086,15 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
       // Scatter element-boundary contributions to global storage.
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
-        const int gi   = u_l2g.data()[eN_i];
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t gi   = u_l2g.data()[eN_i];
         globalResidual.data()[offset_n + stride_n * gi] += elementResidual_n_eb[i];
         if (have_gas_budget) {
           gas_budget_node.data()[4 * numDOFs_n + gi] += elementResidual_n_eb[i];
           gas_budget_node.data()[5 * numDOFs_n + gi] += elementResidual_n_eb[i];
         }
         for (int j = 0; j < nDOF_trial_element; j++) {
-          const int ebN_i_j = ebN * 4 * nDOF_test_X_trial_element
+          const proteus_index_t ebN_i_j = ebN * 4 * nDOF_test_X_trial_element
                             + i * nDOF_trial_element + j;
           globalJacobian.data()[csrRowIndeces_n_n.data()[eN_i]
               + csrColumnOffsets_eb_n_n.data()[ebN_i_j]]
@@ -5102,8 +5109,8 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
 
   void invert(arguments_dict &args)
   {
-    proteus::pyarray<int>    &a_rowptr             = args.array<int>("a_rowptr");
-    proteus::pyarray<int>    &a_colind             = args.array<int>("a_colind");
+    proteus::pyarray<proteus_csr_index_t>    &a_rowptr             = args.array<proteus_csr_index_t>("a_rowptr");
+    proteus::pyarray<proteus_csr_index_t>    &a_colind             = args.array<proteus_csr_index_t>("a_colind");
     double               rho                  = args.scalar<double>("rho");        // freshwater reference (fallback)
     double               beta                 = args.scalar<double>("beta");
     proteus::pyarray<double> &gravity              = args.array<double>("gravity");
@@ -5117,7 +5124,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               mu_n                 = args.scalar<double>("mu_n");
     proteus::pyarray<int>    &elementMaterialTypes = args.array<int>("elementMaterialTypes");
     proteus::pyarray<int>    &freeDOFMaterialTypes = args.array<int>("freeDOFMaterialTypes");
-    int                  numDOFs              = args.scalar<int>("numDOFs");
+    proteus_index_t                  numDOFs              = args.scalar<proteus_index_t>("numDOFs");
     proteus::pyarray<double> &mIn  = args.array<double>("limited_solution");
     proteus::pyarray<double> &pOut = args.array<double>("u_dof");
     int                  USE_NEWTON_INVERT = args.scalar<int>("USE_NEWTON_INVERT");
@@ -5207,7 +5214,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &mesh_dof            = args.array<double>("mesh_dof");
     proteus::pyarray<double> &mesh_velocity_dof   = args.array<double>("mesh_velocity_dof");
     double               MOVING_DOMAIN       = args.scalar<double>("MOVING_DOMAIN");
-    proteus::pyarray<int>    &mesh_l2g            = args.array<int>("mesh_l2g");
+    proteus::pyarray<proteus_index_t>    &mesh_l2g            = args.array<proteus_index_t>("mesh_l2g");
     proteus::pyarray<double> &dV_ref              = args.array<double>("dV_ref");
     proteus::pyarray<double> &u_trial_ref         = args.array<double>("u_trial_ref");
     proteus::pyarray<double> &u_grad_trial_ref    = args.array<double>("u_grad_trial_ref");
@@ -5224,13 +5231,13 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &normal_ref                = args.array<double>("normal_ref");
     proteus::pyarray<double> &boundaryJac_ref           = args.array<double>("boundaryJac_ref");
     //physics
-    int nElements_global = args.scalar<int>("nElements_global");
+    proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
     //new
     proteus::pyarray<double> &ebqe_penalty_ext     = args.array<double>("ebqe_penalty_ext");
     proteus::pyarray<int>    &elementMaterialTypes = args.array<int>("elementMaterialTypes");
     proteus::pyarray<int>    &isSeepageFace        = args.array<int>("isSeepageFace");
-    proteus::pyarray<int>    &a_rowptr             = args.array<int>("a_rowptr");
-    proteus::pyarray<int>    &a_colind             = args.array<int>("a_colind");
+    proteus::pyarray<proteus_csr_index_t>    &a_rowptr             = args.array<proteus_csr_index_t>("a_rowptr");
+    proteus::pyarray<proteus_csr_index_t>    &a_colind             = args.array<proteus_csr_index_t>("a_colind");
     double               rho                  = args.scalar<double>("rho");
     double               beta                 = args.scalar<double>("beta");
     // gas-phase reference density and reference pressure for the linear EOS
@@ -5255,11 +5262,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     double               alphaBDF                                   = args.scalar<double>("alphaBDF");
     int                  lag_shockCapturing                         = args.scalar<int>("lag_shockCapturing");
     double               shockCapturingDiffusion                    = args.scalar<double>("shockCapturingDiffusion");
-    proteus::pyarray<int>    &u_l2g                                      = args.array<int>("u_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g                                      = args.array<proteus_index_t>("u_l2g");
     // Comp-1 (z) map -- MUST match the residual's u_l2g_n so the mass / (1,1)
     // tangent is assembled on the same DOFs.
-    proteus::pyarray<int>    &u_l2g_n                                   = args.array<int>("u_l2g_n");
-    proteus::pyarray<int>    &r_l2g                                      = args.array<int>("r_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g_n                                   = args.array<proteus_index_t>("u_l2g_n");
+    proteus::pyarray<proteus_index_t>    &r_l2g                                      = args.array<proteus_index_t>("r_l2g");
     proteus::pyarray<double> &elementDiameter                            = args.array<double>("elementDiameter");
     int                  degree_polynomial                          = args.scalar<int>("degree_polynomial");
     proteus::pyarray<double> &u_dof                                      = args.array<double>("u_dof");
@@ -5270,20 +5277,20 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &q_m_betaBDF                                = args.array<double>("q_m_betaBDF");
     proteus::pyarray<double> &cfl                                        = args.array<double>("cfl");
     proteus::pyarray<double> &q_numDiff_u_last                           = args.array<double>("q_numDiff_u_last");
-    proteus::pyarray<int>    &csrRowIndeces_u_u                          = args.array<int>("csrRowIndeces_u_u");
-    proteus::pyarray<int>    &csrColumnOffsets_u_u                       = args.array<int>("csrColumnOffsets_u_u");
-    proteus::pyarray<int>    &csrRowIndeces_n_n                          = args.array<int>("csrRowIndeces_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_u_u                          = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_u_u                       = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_n                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_n");
     // (1,0) cross-block CSR maps for the gas-eq diffusion
     // against grad u_w. Currently allocated by the framework but unused by
     // the C++ assembly - 3c.2/3c.3 will write into them.
-    proteus::pyarray<int>    &csrRowIndeces_n_w                          = args.array<int>("csrRowIndeces_n_w");
-    proteus::pyarray<int>    &csrColumnOffsets_n_n                       = args.array<int>("csrColumnOffsets_n_n");
-    proteus::pyarray<int>    &csrColumnOffsets_n_w                       = args.array<int>("csrColumnOffsets_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrRowIndeces_n_w                          = args.array<proteus_csr_index_t>("csrRowIndeces_n_w");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_n                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_n");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_n_w                       = args.array<proteus_csr_index_t>("csrColumnOffsets_n_w");
     proteus::pyarray<double> &globalJacobian                             = args.array<double>("globalJacobian");
     proteus::pyarray<double> &delta_x_ij                                 = args.array<double>("delta_x_ij");
-    int                  nExteriorElementBoundaries_global          = args.scalar<int>("nExteriorElementBoundaries_global");
-    proteus::pyarray<int>    &exteriorElementBoundariesArray             = args.array<int>("exteriorElementBoundariesArray");
-    proteus::pyarray<int>    &elementBoundaryElementsArray               = args.array<int>("elementBoundaryElementsArray");
+    proteus_index_t                  nExteriorElementBoundaries_global          = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+    proteus::pyarray<proteus_index_t>    &exteriorElementBoundariesArray             = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+    proteus::pyarray<proteus_index_t>    &elementBoundaryElementsArray               = args.array<proteus_index_t>("elementBoundaryElementsArray");
     proteus::pyarray<int>    &elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
     proteus::pyarray<double> &ebqe_velocity_ext                          = args.array<double>("ebqe_velocity_ext");
     proteus::pyarray<int>    &isDOFBoundary_u                            = args.array<int>("isDOFBoundary_u");
@@ -5293,7 +5300,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &ebqe_bc_u_n_ext                            = args.array<double>("ebqe_bc_u_n_ext");
     proteus::pyarray<int>    &isFluxBoundary_u                           = args.array<int>("isFluxBoundary_u");
     proteus::pyarray<double> &ebqe_bc_flux_ext                           = args.array<double>("ebqe_bc_flux_ext");
-    proteus::pyarray<int>    &csrColumnOffsets_eb_u_u                    = args.array<int>("csrColumnOffsets_eb_u_u");
+    proteus::pyarray<proteus_csr_index_t>    &csrColumnOffsets_eb_u_u                    = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_u");
     int                  LUMPED_MASS_MATRIX                         = args.scalar<int>("LUMPED_MASS_MATRIX");
     // PSK closure selector for evaluateCoefficients (read from argsDict).
     PSK_TYPE_member = args.scalar<int>("PSK_TYPE");
@@ -5303,12 +5310,12 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     //
     //loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
     //
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       double elementJacobian_u_u[nDOF_test_element][nDOF_trial_element];
       for (int i = 0; i < nDOF_test_element; i++)
         for (int j = 0; j < nDOF_trial_element; j++) { elementJacobian_u_u[i][j] = 0.0; }
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        int eN_k                  = eN * nQuadraturePoints_element + k, //index to a scalar at a quadrature point
+        proteus_index_t eN_k                  = eN * nQuadraturePoints_element + k, //index to a scalar at a quadrature point
           eN_k_nSpace             = eN_k * nSpace,
             eN_nDOF_trial_element = eN * nDOF_trial_element; //index to a vector at a quadrature point
         //declare local storage
@@ -5414,11 +5421,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       //load into element Jacobian into global Jacobian
       //
       for (int i = 0; i < nDOF_test_element; i++) {
-        int eN_i = eN * nDOF_test_element + i;
-        int I    = u_l2g.data()[eN_i];
+        proteus_index_t eN_i = eN * nDOF_test_element + i;
+        proteus_index_t I    = u_l2g.data()[eN_i];
         for (int j = 0; j < nDOF_trial_element; j++) {
-          int eN_i_j = eN_i * nDOF_trial_element + j;
-          int J      = u_l2g.data()[eN * nDOF_trial_element + j];
+          proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
+          proteus_index_t J      = u_l2g.data()[eN * nDOF_trial_element + j];
           //globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]] += elementJacobian_u_u[i][j];
           delta_x_ij.data()[3 * (csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]) + 0] = mesh_dof.data()[I * 3 + 0] - mesh_dof.data()[J * 3 + 0];
           delta_x_ij.data()[3 * (csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]) + 1] = mesh_dof.data()[I * 3 + 1] - mesh_dof.data()[J * 3 + 1];
@@ -5436,7 +5443,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const int numDOFs_n_mm = static_cast<int>(u_dof_n.size());
     std::vector<double> rho_n_phi_mm(numDOFs_n_mm, 0.0);
     std::vector<double> ML_n_mm(numDOFs_n_mm, 0.0);
-    for (int eN = 0; eN < nElements_global; eN++) {
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++) {
       double elementJacobian_n_n[nDOF_test_element][nDOF_trial_element];
       for (int i = 0; i < nDOF_test_element; i++)
         for (int j = 0; j < nDOF_trial_element; j++) { elementJacobian_n_n[i][j] = 0.0; }
@@ -5447,7 +5454,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       const double S_wr_mm     = thetaR.data()[mat_eN_mm] / phi_eN_mm;
       const double one_m_Sr_mm = 1.0 - S_wr_mm;
       for (int k = 0; k < nQuadraturePoints_element; k++) {
-        const int eN_nDOF_trial_element = eN * nDOF_trial_element;
+        const proteus_index_t eN_nDOF_trial_element = eN * nDOF_trial_element;
         double jac[nSpace * nSpace], jacDet, jacInv[nSpace * nSpace], x, y, z;
         ck.calculateMapping_element(eN, k, mesh_dof.data(), mesh_l2g.data(),
                                     mesh_trial_ref.data(), mesh_grad_trial_ref.data(),
@@ -5470,7 +5477,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
                                                + fs_mm.rho_a*(1.0 - fs_mm.S_g));
         for (int i = 0; i < nDOF_test_element; i++) {
           const double test_i = u_test_ref.data()[k * nDOF_test_element + i];
-          const int    gi     = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
+          const proteus_index_t gi     = u_l2g_n.data()[eN * nDOF_test_element + i];   // comp-1 DOF
           rho_n_phi_mm[gi] += phi_rho_n_qp * test_i * dV;
           ML_n_mm[gi]      += test_i * dV;
           for (int j = 0; j < nDOF_trial_element; j++) {
@@ -5480,10 +5487,10 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
         }
       }
       for (int i = 0; i < nDOF_test_element; i++) {
-        const int eN_i = eN * nDOF_test_element + i;
+        const proteus_index_t eN_i = eN * nDOF_test_element + i;
         for (int j = 0; j < nDOF_trial_element; j++) {
-          const int eN_i_j = eN_i * nDOF_trial_element + j;
-          const int full_offset = csrRowIndeces_n_n.data()[eN_i] + csrColumnOffsets_n_n.data()[eN_i_j];
+          const proteus_index_t eN_i_j = eN_i * nDOF_trial_element + j;
+          const proteus_csr_index_t full_offset = csrRowIndeces_n_n.data()[eN_i] + csrColumnOffsets_n_n.data()[eN_i_j];
           if (std::fabs(globalJacobian.data()[full_offset]) < 1.0e-14)
             globalJacobian.data()[full_offset] += elementJacobian_n_n[i][j];
         }
@@ -5506,11 +5513,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const double c_sat           = args.scalar<double>("c_sat");
     const double k_d             = args.scalar<double>("k_d");     // dissolution rate [1/time]
     const double dt              = args.scalar<double>("dt");      // step size
-    const int    numDOFs         = args.scalar<int>("numDOFs");
+    const proteus_index_t    numDOFs         = args.scalar<proteus_index_t>("numDOFs");
     if (X_sat <= 0.0 || k_d <= 0.0)
       return;                                    // dissolution disabled
     const double a = X_sat / c_sat;              // dissolved CO2 per unit c
-    for (int i = 0; i < numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       {
         const double Sn = Sn_dof.data()[i];
         const double c  = c_dof.data()[i];
@@ -5530,14 +5537,14 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       }
     // --- PART 2: rebuild TADR's quadrature old-mass from the flashed fields ---
     proteus::pyarray<double> &q_m_tadr             = args.array<double>("q_m_tadr"); // TADR q[('m',0)] (out)
-    proteus::pyarray<int>    &u_l2g                = args.array<int>("u_l2g");
+    proteus::pyarray<proteus_index_t>    &u_l2g                = args.array<proteus_index_t>("u_l2g");
     proteus::pyarray<double> &u_trial_ref          = args.array<double>("u_trial_ref");
     proteus::pyarray<int>    &elementMaterialTypes = args.array<int>("elementMaterialTypes");
     proteus::pyarray<double> &thetaR               = args.array<double>("thetaR");
     proteus::pyarray<double> &thetaSR              = args.array<double>("thetaSR");
     const double rho_f                        = args.scalar<double>("rho_f");
     const double rho_s                        = args.scalar<double>("rho_s");
-    const int nElements_global                = args.scalar<int>("nElements_global");
+    const proteus_index_t nElements_global                = args.scalar<proteus_index_t>("nElements_global");
     // Renamed (nQP_flash / nDOF_flash) to avoid shadowing the struct's
     // template parameters nQuadraturePoints_element / nDOF_trial_element.
     // These come from Python (derived from q[('m',0)].shape and the l2g),
@@ -5545,11 +5552,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     const int nQP_flash                       = args.scalar<int>("nQuadraturePoints_element");
     const int nDOF_flash                      = args.scalar<int>("nDOF_trial_element");
     const double eps = (rho_f != 0.0) ? (rho_s - rho_f) / rho_f : 0.0;
-    for (int eN = 0; eN < nElements_global; eN++)
+    for (proteus_index_t eN = 0; eN < nElements_global; eN++)
       {
         const int    mat    = elementMaterialTypes.data()[eN];
         const double phi_eN  = thetaR.data()[mat] + thetaSR.data()[mat];
-        const int    eN_nDOF = eN * nDOF_flash;
+        const proteus_index_t eN_nDOF = eN * nDOF_flash;
         for (int k = 0; k < nQP_flash; k++)
           {
             double c_k = 0.0, Sn_k = 0.0;
@@ -5577,11 +5584,11 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
     proteus::pyarray<double> &Sg_dof = args.array<double>("Sg_dof");  // out: gas saturation
     proteus::pyarray<double> &X_dof  = args.array<double>("X_dof");   // out: CO2 mole frac in brine
     proteus::pyarray<double> &c_dof  = args.array<double>("c_dof");   // out: brine CO2 mass conc [kg/m^3]
-    const int numDOFs           = args.scalar<int>("numDOFs");
+    const proteus_index_t numDOFs           = args.scalar<proteus_index_t>("numDOFs");
     immiscible_member = (args.scalar<int>("immiscible") != 0);
     T_C_member        = args.scalar<double>("T_C");      // temperature [degC] from input
     const double M_CO2 = 0.04401;                                // CO2 molar mass [kg/mol]
-    for (int i = 0; i < numDOFs; i++)
+    for (proteus_index_t i=0; i<numDOFs; i++)
       {
         const double p_i = (p_dof.data()[i] > 1.0e2) ? p_dof.data()[i] : 1.0e2;
         double z_i = z_dof.data()[i];
@@ -5601,7 +5608,7 @@ inline void exteriorNumericalFlux2(const double &bc_flux, int rowptr[nSpace], in
       proteus::pyarray<double> &Sg_min = args.array<double>("Sg_rock_min_dof");
       proteus::pyarray<double> &Sg_max = args.array<double>("Sg_rock_max_dof");
       const bool have = (static_cast<int>(Sg_rock_min_member.size()) >= numDOFs);
-      for (int i = 0; i < numDOFs; i++) {
+      for (proteus_index_t i=0; i<numDOFs; i++) {
         const bool multi = have && !std::isnan(Sg_rock_min_member[i]);
         Sg_min.data()[i] = multi ? Sg_rock_min_member[i] : Sg_dof.data()[i];
         Sg_max.data()[i] = multi ? Sg_rock_max_member[i] : Sg_dof.data()[i];

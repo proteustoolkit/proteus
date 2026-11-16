@@ -15,23 +15,25 @@ cdef inline double double_min(double a, double b): return a if a <= b else b
 ctypedef numpy.double_t DTYPE_t
 #numpy.intc_t not in cython's numpy.pxd 
 ctypedef int ITYPE_t
+cdef extern from "index_type.h":
+    ctypedef int proteus_index_t  # mesh entity numbers; its true width comes from the header
 
 def setExteriorElementBoundaryTypes(int nExteriorElementBoundaries_global, 
-                                    numpy.ndarray[ITYPE_t,ndim=1] exteriorElementBoundariesArray,
-                                    numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryElementsArray,
+                                    numpy.ndarray[proteus_index_t,ndim=1] exteriorElementBoundariesArray,
+                                    numpy.ndarray[proteus_index_t,ndim=2] elementBoundaryElementsArray,
                                     numpy.ndarray[ITYPE_t,ndim=1] elementMaterialTypes,
                                     numpy.ndarray[ITYPE_t,ndim=1] exteriorElementBoundaryMaterialTypes):
-    cdef int ebNE,ebN,eN
+    cdef proteus_index_t ebNE,ebN,eN
     for ebNE in range(nExteriorElementBoundaries_global):
         ebN = exteriorElementBoundariesArray[ebNE]
         eN  = elementBoundaryElementsArray[ebN,0]
         exteriorElementBoundaryMaterialTypes[ebNE] = elementMaterialTypes[eN]
 
 def setElementBoundariesArray(int nElementBoundaries_global,
-                              numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryElementsArray,
+                              numpy.ndarray[proteus_index_t,ndim=2] elementBoundaryElementsArray,
                               numpy.ndarray[ITYPE_t,ndim=1] elementMaterialTypes,
                               numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryMaterialTypes):
-    cdef int ebN,eN_left,eN_right
+    cdef proteus_index_t ebN,eN_left,eN_right
     for ebN in range(nElementBoundaries_global):
         eN_left = elementBoundaryElementsArray[ebN,0]
         eN_right= elementBoundaryElementsArray[ebN,1]
@@ -48,7 +50,8 @@ def setScalarMaterialFunctionOverElements(numpy.ndarray[ITYPE_t,ndim=1] elementM
     loop over quadrature array and set is material j
     likely little improvement right now without correct typing of material_functions
     """
-    cdef int eN,k,material
+    cdef proteus_index_t eN
+    cdef int k,material
     for eN in range(q_vals.shape[0]):
         material = elementMaterialTypes[eN]
         for k in range(q_vals.shape[1]):
@@ -60,14 +63,15 @@ def setVectorMaterialFunctionOverElements(numpy.ndarray[ITYPE_t,ndim=1] elementM
     """
     loop over quadrature array and set \vec f_j assuming element is material j
     """
-    cdef int eN,k,material
+    cdef proteus_index_t eN
+    cdef int k,material
     for eN in range(q_vals.shape[0]):
         material = elementMaterialTypes[eN]
         for k in range(q_vals.shape[1]):
             q_vals[eN,k,:] = material_functions[material].flat
                                     
 
-def setScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+def setScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                      numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                      numpy.ndarray[DTYPE_t,ndim=3] ebq_vals,
                                                                      dict material_functions):
@@ -78,7 +82,8 @@ def setScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(numpy.ndarr
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int eN,ebN,ebN_local,k,material_left,material_right
+    cdef proteus_index_t eN,ebN
+    cdef int ebN_local,k,material_left,material_right
     
     for eN in range(ebq_vals.shape[0]):
         for ebN_local in range(ebq_vals.shape[1]):
@@ -90,7 +95,7 @@ def setScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(numpy.ndarr
                                                 material_functions[material_right])
 
 def setSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(int nd,
-                                                                         numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                         numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                          numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                          numpy.ndarray[DTYPE_t,ndim=4] ebq_vals,
                                                                          dict material_functions):
@@ -101,7 +106,8 @@ def setSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(int nd,
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int eN,ebN,ebN_local,k,material_left,material_right,I,J
+    cdef proteus_index_t eN,ebN
+    cdef int ebN_local,k,material_left,material_right,I,J
     cdef double numer,denom
 
     for eN in range(ebq_vals.shape[0]):
@@ -116,7 +122,7 @@ def setSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(int nd,
                         denom = material_functions[material_left][I,J] + material_functions[material_right][I,J] + 1.0e-20
                         ebq_vals[eN,ebN_local,k,I*nd+J] = numer/denom
 
-def setScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+def setScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                            numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                            numpy.ndarray[DTYPE_t,ndim=2] ebq_global_vals,
                                                                            dict material_functions):
@@ -127,7 +133,8 @@ def setScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(numpy
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int ebN,material_left,material_right
+    cdef proteus_index_t ebN
+    cdef int material_left,material_right
     
     for ebN in range(ebq_global_vals.shape[0]):
         material_left = elementBoundaryTypes[ebN,0]
@@ -138,7 +145,7 @@ def setScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(numpy
 
 
 def setSparseTensorMaterialFunctionOverGlobalElementBoundaries_harmonicAverage(int nd,
-                                                                               numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                               numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                                numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                                numpy.ndarray[DTYPE_t,ndim=3] ebq_global_vals,
                                                                                dict material_functions):
@@ -149,7 +156,8 @@ def setSparseTensorMaterialFunctionOverGlobalElementBoundaries_harmonicAverage(i
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int ebN,k,material_left,material_right,I,J
+    cdef proteus_index_t ebN
+    cdef int k,material_left,material_right,I,J
     cdef double numer,denom
 
     for ebN in range(ebq_global_vals.shape[0]):
@@ -172,7 +180,8 @@ def evaluateScalarMaterialFunctionOverElements(double t,
     loop over quadrature array and evaluate function f_j(x,t) assuming element is material j
     likely little improvement right now without correct typing of material_functions
     """
-    cdef int eN,k,material
+    cdef proteus_index_t eN
+    cdef int k,material
     for eN in range(x.shape[0]):
         material = elementMaterialTypes[eN]
         for k in range(x.shape[1]):
@@ -186,7 +195,8 @@ def evaluateVectorMaterialFunctionOverElements(double t,
     """
     loop over quadrature array and evaluate function \vec f_j(x,t) assuming element is material j
     """
-    cdef int eN,k,material
+    cdef proteus_index_t eN
+    cdef int k,material
     for eN in range(x.shape[0]):
         material = elementMaterialTypes[eN]
         for k in range(x.shape[1]):
@@ -194,7 +204,7 @@ def evaluateVectorMaterialFunctionOverElements(double t,
                                     
 
 def evaluateScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(double t,
-                                                                          numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                          numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                           numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                           numpy.ndarray[DTYPE_t,ndim=4] x,
                                                                           numpy.ndarray[DTYPE_t,ndim=3] ebq_vals,
@@ -206,7 +216,8 @@ def evaluateScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(double
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int eN,ebN,ebN_local,k,material_left,material_right
+    cdef proteus_index_t eN,ebN
+    cdef int ebN_local,k,material_left,material_right
     
     for eN in range(x.shape[0]):
         for ebN_local in range(x.shape[1]):
@@ -219,7 +230,7 @@ def evaluateScalarMaterialFunctionOverElementBoundaries_arithmeticAverage(double
 
 def evaluateSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(int nd,
                                                                               double t,
-                                                                              numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                              numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                               numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                               numpy.ndarray[DTYPE_t,ndim=4] x,
                                                                               numpy.ndarray[DTYPE_t,ndim=4] ebq_vals,
@@ -231,7 +242,8 @@ def evaluateSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(in
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int eN,ebN,ebN_local,k,material_left,material_right,I,J
+    cdef proteus_index_t eN,ebN
+    cdef int ebN_local,k,material_left,material_right,I,J
     cdef double numer,denom
 
     for eN in range(x.shape[0]):
@@ -247,7 +259,7 @@ def evaluateSparseTensorMaterialFunctionOverElementBoundaries_harmonicAverage(in
                         ebq_vals[eN,ebN_local,k,I*nd+J] = numer/denom
 
 def evaluateScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(double t,
-                                                                                numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                                numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                                 numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                                 numpy.ndarray[DTYPE_t,ndim=3] x,
                                                                                 numpy.ndarray[DTYPE_t,ndim=2] ebq_global_vals,
@@ -259,7 +271,8 @@ def evaluateScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int ebN,material_left,material_right
+    cdef proteus_index_t ebN
+    cdef int material_left,material_right
     
     for ebN in range(x.shape[0]):
         material_left = elementBoundaryTypes[ebN,0]
@@ -271,7 +284,7 @@ def evaluateScalarMaterialFunctionOverGlobalElementBoundaries_arithmeticAverage(
 
 def evaluateSparseTensorMaterialFunctionOverGlobalElementBoundaries_harmonicAverage(int nd,
                                                                                     double t,
-                                                                                    numpy.ndarray[ITYPE_t,ndim=2] elementBoundariesArray,
+                                                                                    numpy.ndarray[proteus_index_t,ndim=2] elementBoundariesArray,
                                                                                     numpy.ndarray[ITYPE_t,ndim=2] elementBoundaryTypes,
                                                                                     numpy.ndarray[DTYPE_t,ndim=4] x,
                                                                                     numpy.ndarray[DTYPE_t,ndim=3] ebq_global_vals,
@@ -283,7 +296,8 @@ def evaluateSparseTensorMaterialFunctionOverGlobalElementBoundaries_harmonicAver
     likely little improvement right now without correct typing of material_functions
  
     """
-    cdef int ebN,k,material_left,material_right,I,J
+    cdef proteus_index_t ebN
+    cdef int k,material_left,material_right,I,J
     cdef double numer,denom
 
     for ebN in range(x.shape[0]):
@@ -325,7 +339,8 @@ def RE_NCP1_evaluateElementCoefficients_Linear(double rho,
          
     """
     #temporaries
-    cdef int eN,eN_neighbor,ii,I,ebN,matID,matID_neig
+    cdef proteus_index_t eN,ebN
+    cdef int eN_neighbor,ii,I,matID,matID_neig
     cdef int nSpace2 = nSpace*nSpace
     cdef int nnz = rowptr[nSpace]
 
@@ -405,7 +420,8 @@ def RE_NCP1_evaluateElementCoefficients_VGM(double rho,
     cdef double vBar,vBar2,DvBar_DpsiC,KWr,DKWr_DpsiC,rho2=rho*rho,thetaS,rhom,drhom,m
     
     cdef double u_j,u_eN,u_neig,kr_eN,kr_neig,phi_eN,phi_neig
-    cdef int eN,eN_neighbor,ebN,ii,I,j,matID
+    cdef proteus_index_t eN,ebN
+    cdef int eN_neighbor,ii,I,j,matID
     #for averaging/integration weights
     cdef double nAvgWeight = 1.0/(nSpace+1.)
 
@@ -533,7 +549,8 @@ def RE_NCP1_getElementResidual(numpy.ndarray[DTYPE_t,ndim=1] gravity,#physical q
     cdef int nnz = rowptr[nSpace]
     #temporaries
     cdef double u_eN,kr_eN,phi_eN,u_neig,kr_neig,phi_neig
-    cdef int eN,eN_neighbor,ii,I,i,ebN
+    cdef proteus_index_t eN,ebN
+    cdef int eN_neighbor,ii,I,i
     cdef numpy.ndarray[DTYPE_t,ndim=1] a_up= numpy.zeros(nnz,'d')
     cdef numpy.ndarray[DTYPE_t,ndim=1] f_up= numpy.zeros(nSpace,'d')
     #for averaging/integration weights
@@ -627,7 +644,8 @@ def RE_NCP1_getElementJacobian(numpy.ndarray[DTYPE_t,ndim=1] gravity,#physical q
     cdef int nnz = rowptr[nSpace]
     #temporaries
     cdef double u_eN,kr_eN,phi_eN,u_neig,kr_neig,phi_neig,dkr_up
-    cdef int eN,eN_neighbor,ii,I
+    cdef proteus_index_t eN
+    cdef int eN_neighbor,ii,I
     cdef numpy.ndarray[DTYPE_t,ndim=1] a_up= numpy.zeros(nnz,'d')
     cdef numpy.ndarray[DTYPE_t,ndim=1] f_up= numpy.zeros(nSpace,'d')
     #for averaging/integration weights
@@ -678,7 +696,8 @@ def updateMass_weakAvg(numpy.ndarray[DTYPE_t,ndim=2] mt,
    """
    approximate element mass term as (\bar{c}_e,w_{h,i})_e
    """
-   cdef int eN,i,k
+   cdef proteus_index_t eN
+   cdef int i,k
    cdef mt_avg,vol
    for eN in range(mt.shape[0]):
       mt_avg = 0.0
@@ -698,7 +717,8 @@ def updateMassJacobian_weakAvg(numpy.ndarray[DTYPE_t,ndim=2] dmt,
    """
    approximate element mass Jacobian term as (\pd{\bar{c}_e}{u_j},w_{h,i})_e
    """
-   cdef int eN,i,j,k
+   cdef proteus_index_t eN
+   cdef int i,j,k
    cdef double dmtj_avg,vol
    for eN in range(dmt.shape[0]):
       vol = 0.0 #should I save a loop? 
@@ -720,7 +740,8 @@ def calculateNormalFlux(numpy.ndarray[DTYPE_t,ndim=4] v,
                         numpy.ndarray[DTYPE_t,ndim=3] dS,
                         numpy.ndarray[DTYPE_t,ndim=2] flux):
    
-   cdef int eN,ebN,kb
+   cdef proteus_index_t eN,ebN
+   cdef int kb
    cdef double integral
    for eN in range(n.shape[0]):
       for ebN in range(n.shape[1]):
@@ -738,7 +759,8 @@ def computeSimpleCharacteristicVelocityFromElementVelocity(numpy.ndarray[DTYPE_t
    """
    simple approximation for \lambda = df/\bar{dm} using \bar{dm} = \frac{1}{\Omega_e} \int_{\Omega_e} dm dV
    """
-   cdef int eN,k,I
+   cdef proteus_index_t eN
+   cdef int k,I
    cdef double omega_e, vol_e
 
    for eN in range(dm.shape[0]):
@@ -753,14 +775,15 @@ def computeSimpleCharacteristicVelocityFromElementVelocity(numpy.ndarray[DTYPE_t
             
 def computeSimpleCharacteristicVelocityFromVelocityDOFs(numpy.ndarray[DTYPE_t,ndim=1] df_dofs,
                                                         numpy.ndarray[DTYPE_t,ndim=1] characteristic_velocity_dofs,
-                                                        numpy.ndarray[ITYPE_t,ndim=2] l2g,
+                                                        numpy.ndarray[proteus_index_t,ndim=2] l2g,
                                                         numpy.ndarray[DTYPE_t,ndim=2] dm,
                                                         numpy.ndarray[DTYPE_t,ndim=2] dV):
 
    """
    simple approximation for \lambda = df/\bar{dm} using \bar{dm} = \frac{1}{\Omega_e} \int_{\Omega_e} dm dV
    """
-   cdef int eN,k,j,J
+   cdef proteus_index_t eN
+   cdef int k,j,J
    cdef double omega_e, vol_e
 
    for eN in range(dm.shape[0]):
@@ -782,7 +805,8 @@ def rotatingGaussianElementVelocityEval3(int transient,
                                          numpy.ndarray[DTYPE_t,ndim=3] x,
                                          numpy.ndarray[DTYPE_t,ndim=3] v,
                                          double zvelocity=0.0):
-   cdef int eN,k
+   cdef proteus_index_t eN
+   cdef int k
    cdef double pi
    pi = M_PI
    if v.shape[2] == 3:
@@ -822,7 +846,8 @@ def rotatingGaussianElementVelocityEval4(int transient,
                                          numpy.ndarray[DTYPE_t,ndim=4] x,
                                          numpy.ndarray[DTYPE_t,ndim=4] v,
                                          double zvelocity=0.0):
-   cdef int eN,ebN,k
+   cdef proteus_index_t eN,ebN
+   cdef int k
    cdef double pi
    pi = M_PI
    if v.shape[v.ndim-1] == 3:
@@ -865,7 +890,8 @@ def helicalElementVelocityEval3(int transient,
                                 double xc, double yc,
                                 numpy.ndarray[DTYPE_t,ndim=3] x,
                                 numpy.ndarray[DTYPE_t,ndim=3] v):
-   cdef int eN,k
+   cdef proteus_index_t eN
+   cdef int k
    cdef double pi
    pi = M_PI
    if transient == 1:
@@ -890,7 +916,8 @@ def helicalElementVelocityEval4(int transient,
                                 double xc, double yc,
                                 numpy.ndarray[DTYPE_t,ndim=4] x,
                                 numpy.ndarray[DTYPE_t,ndim=4] v):
-   cdef int eN,ebN,k
+   cdef proteus_index_t eN,ebN
+   cdef int k
    cdef double pi
    pi = M_PI
    if transient == 1:
@@ -912,7 +939,8 @@ def helicalElementVelocityEval4(int transient,
 def vortexElementVelocityEval3(double t,
                                numpy.ndarray[DTYPE_t,ndim=3] x,
                                numpy.ndarray[DTYPE_t,ndim=3] v):
-   cdef int eN,k
+   cdef proteus_index_t eN
+   cdef int k
    cdef double pi,one8
    pi = M_PI
    one8 = 1.0/8.0
@@ -925,7 +953,8 @@ def vortexElementVelocityEval3(double t,
 def vortexElementVelocityEval4(double t,
                                numpy.ndarray[DTYPE_t,ndim=4] x,
                                numpy.ndarray[DTYPE_t,ndim=4] v):
-   cdef int eN,k,ebN
+   cdef proteus_index_t eN,ebN
+   cdef int k
    cdef double pi,one8
    pi = M_PI
    one8 = 1.0/8.0

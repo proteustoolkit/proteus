@@ -203,9 +203,9 @@ class VelocityPostProcessingAlgorithmBase(object):
 
             ##determine flux boundary information as before to start?
             if self.vt.numericalFlux is not None and self.vt.numericalFlux.useWeakDirichletConditions:
-                self.fluxElementBoundaries[ci] = numpy.ones((self.vt.mesh.nExteriorElementBoundaries_global,),'i')
+                self.fluxElementBoundaries[ci] = numpy.ones((self.vt.mesh.nExteriorElementBoundaries_global,),cmeshTools.INDEX_DTYPE)
             else:
-                self.fluxElementBoundaries[ci] = numpy.zeros((self.vt.mesh.nExteriorElementBoundaries_global,),'i')
+                self.fluxElementBoundaries[ci] = numpy.zeros((self.vt.mesh.nExteriorElementBoundaries_global,),cmeshTools.INDEX_DTYPE)
 
             for cj,fbcObject  in self.vt.fluxBoundaryConditionsObjectsDict.items():
                 for t,g in fbcObject.advectiveFluxBoundaryConditionsDict.items():
@@ -722,7 +722,7 @@ class VPP_PWL_RT0(VelocityPostProcessingAlgorithmBase):
         self.nodeStarElementNeighborsArray = numpy.zeros((self.vt.mesh.nElements_global,
                                                             self.vt.mesh.nNodes_element,
                                                             self.vt.mesh.nElementBoundaries_element),
-                                                           'i')
+                                                           cmeshTools.INDEX_DTYPE)
         for I in range(self.vt.mesh.nNodes_global):
             self.globalNode2globalElementList[I].sort()
             self.nElements_node[I] = len(self.globalNode2globalElementList[I])
@@ -3059,7 +3059,7 @@ class VPP_LOW_K_IB_PWL_RT0(VPP_PWL_RT0):
         ##now setup flux element boundaries including interior information
         self.fluxElementBoundaries_global = {}
         for ci in self.vtComponents:
-            self.fluxElementBoundaries_global[ci] = numpy.zeros((self.vt.mesh.nElementBoundaries_global,),'i')
+            self.fluxElementBoundaries_global[ci] = numpy.zeros((self.vt.mesh.nElementBoundaries_global,),cmeshTools.INDEX_DTYPE)
             #copy over exterior information
             self.fluxElementBoundaries_global[ci][self.vt.mesh.exteriorElementBoundariesArray] = self.fluxElementBoundaries[ci]
             self.setInteriorFluxBoundaries(ci)

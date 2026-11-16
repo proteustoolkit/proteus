@@ -4,6 +4,7 @@ from builtins import range
 import proteus
 from .cRichards import *
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
@@ -2108,7 +2109,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             rows = np.repeat(np.arange(nFree, dtype=np.int64), np.diff(rowptr))
             cols = colind.astype(np.int64)
             keys = rows * N + cols
-            self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype('i')
+            self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype(CSR_INDEX_DTYPE)
             # a structurally symmetric pattern round-trips; if it does not, fall back to
             # the identity rather than indexing out of the array
             t = self.csrTransposeIndices
@@ -2117,7 +2118,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             if not ok:
                 logEvent("Richards: CSR pattern is not structurally symmetric; "
                          "csrTransposeIndices falls back to the identity", level=1)
-                self.csrTransposeIndices = np.arange(len(colind), dtype='i')
+                self.csrTransposeIndices = np.arange(len(colind), dtype=CSR_INDEX_DTYPE)
         # PARALLEL (one-time): freeDOFMaterialTypes is built in __init__ from the
         # FIRST incident element in LOCAL element numbering, so on a node sitting
         # on a soil interface two ranks can pick different rocks.  mat_j selects
