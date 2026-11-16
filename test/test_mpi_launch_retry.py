@@ -168,6 +168,93 @@ def test_a_crash_that_repeats_fails(crashing_launch):
     assert result.returncode != 0 and calls == 2
 
 
+# A helper that dies part-way leaves half-written files its relaunch must not find
+# (run 43773961726 of cekees/proteus#292: the mesh generator crashed with box.1.node half written,
+# and the relaunch failed with "mv: cannot stat 'box.1.node'", which hid the crash).
+HALF_WRITTEN = textwrap.dedent('''\
+    import os, signal, sys
+    if os.path.exists('box.1.node'):
+        sys.stderr.write("mv: cannot stat 'box.1.node': found the crashed launch's files\\n")
+        sys.exit(1)
+    open('box.1.node', 'w').write('half of a mesh')
+    os.makedirs('partial', exist_ok=True)
+    open('partial/x.dat', 'w').write('x')
+    print('first launch output', flush=True)
+    sys.stderr.write('first launch stderr: about to crash\\n')
+    sys.stderr.flush()
+    if os.path.exists('crash.marker'):
+        os.remove('crash.marker')
+        os.kill(os.getpid(), signal.SIGSEGV)
+    print('RESULT clean launch', flush=True)
+    ''')
+
+
+@pytest.fixture
+def half_written(tmp_path, monkeypatch):
+    """(script, working directory with an input file and a marker that makes the first launch crash)."""
+    monkeypatch.setenv('PROTEUS_TEST_MPI_RETRY_DELAY', '0')
+    script = tmp_path / 'half_written.py'
+    script.write_text(HALF_WRITTEN)
+    work = tmp_path / 'work'
+    work.mkdir()
+    (work / 'input.dat').write_text('an input the helper needs')
+    (work / 'crash.marker').write_text('crash on the first launch')
+    return script, work
+
+
+def test_a_crashed_launch_is_relaunched_in_the_directory_as_it_was(half_written):
+    script, work = half_written
+    with pytest.warns(RuntimeWarning, match='died by SIGSEGV') as warned:
+        result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120,
+                                cwd=str(work))
+    assert result.returncode == 0 and 'RESULT clean launch' in result.stdout, result.stderr
+    # the first launch's whole output and its files are kept, and the warning names them
+    first_out, first_err = work / 'launch.first.stdout.txt', work / 'launch.first.stderr.txt'
+    assert first_out.read_text() == 'first launch output\n'
+    assert 'about to crash' in first_err.read_text()
+    assert (work / 'launch.first.files' / 'partial' / 'x.dat').read_text() == 'x'
+    message = str(warned[0].message)
+    assert str(first_out) in message and str(first_err) in message and 'launch.first.files' in message
+    # the second launch made its own box.1.node; the directory kept what it had before
+    assert (work / 'box.1.node').read_text() == 'half of a mesh'
+    assert (work / 'input.dat').read_text() == 'an input the helper needs'
+
+
+def test_a_crash_that_repeats_keeps_both_launches_and_launch_output_names_the_first(tmp_path, half_written):
+    import importlib.util
+    script, work = half_written
+    (work / 'crash.marker').unlink()
+    script.write_text(HALF_WRITTEN.replace("if os.path.exists('crash.marker'):\n    os.remove('crash.marker')\n",
+                                           "if True:\n"))
+    spec = importlib.util.spec_from_file_location('launch_output', os.path.join(os.path.dirname(__file__),
+                                                                                 'launch_output.py'))
+    launch_output = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launch_output)
+    with pytest.warns(RuntimeWarning, match='died by SIGSEGV'):
+        with pytest.raises(AssertionError) as failure:
+            launch_output.run([sys.executable, str(script)], cwd=work, env=dict(os.environ), timeout=120)
+    text = str(failure.value)
+    assert 'killed by SIGSEGV' in text
+    assert str(work / 'launch.first.stdout.txt') in text and str(work / 'launch.first.stderr.txt') in text
+    assert (work / 'launch.stdout.txt').exists() and (work / 'launch.first.stdout.txt').exists()
+
+
+def test_a_directory_outside_pytests_basetemp_is_left_alone(half_written):
+    import tempfile
+    script, _ = half_written
+    outside = tempfile.mkdtemp(prefix='launch-outside-')
+    try:
+        open(os.path.join(outside, 'crash.marker'), 'w').write('crash on the first launch')
+        with pytest.warns(RuntimeWarning, match='died by SIGSEGV'):
+            result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120,
+                                    cwd=outside)
+        # nothing moved: the relaunch found the crashed launch's box.1.node, as it did before this was handled
+        assert result.returncode == 1 and 'found the crashed launch' in result.stderr
+        assert not os.path.exists(os.path.join(outside, 'launch.first.files'))
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+
+
 def test_a_launchers_signal_report_counts_as_a_crash(launch_policy):
     died_by_signal = launch_policy.died_by_signal
     fake = subprocess.CompletedProcess(['mpiexec'], 139, '',
