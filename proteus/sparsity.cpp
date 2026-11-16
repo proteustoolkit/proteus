@@ -160,7 +160,7 @@ namespace proteus
       {
         for(int ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
           {
-            int ebN = exteriorElementBoundariesArray[ebNE],
+            proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
               eN_global   = elementBoundaryElementsArray[ebN*2+0];
             //ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
             for (int ii=0;ii<nFreeDOF_test[eN_global];ii++)
@@ -282,7 +282,7 @@ namespace proteus
       {
         for(int ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
           {
-            int ebN = interiorElementBoundariesArray[ebNI],
+            proteus_index_t ebN = interiorElementBoundariesArray[ebNI],
               left_eN_global   = elementBoundaryElementsArray[ebN*2 + 0],
               right_eN_global  = elementBoundaryElementsArray[ebN*2 + 1];
             //left_ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2 + 0],
@@ -335,7 +335,7 @@ namespace proteus
               {
                 for(int ebN_eN=0;ebN_eN<nElementBoundaries_element;ebN_eN++)
                   {
-                    int left_eN_ebN = elementNeighborsArray[left_eN_global*nElementBoundaries_element+ebN_eN],
+                    proteus_index_t left_eN_ebN = elementNeighborsArray[left_eN_global*nElementBoundaries_element+ebN_eN],
                       right_eN_ebN = elementNeighborsArray[right_eN_global*nElementBoundaries_element+ebN_eN];
                     for(int ii=0;ii<nFreeDOF_test[left_eN_global];ii++)
                       {
@@ -409,7 +409,7 @@ namespace proteus
       {
         for(int ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
           {
-            int ebN = exteriorElementBoundariesArray[ebNE],
+            proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
               eN_global   = elementBoundaryElementsArray[ebN*2+0];
             //ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
             for (int ii=0;ii<nFreeDOF_test[eN_global];ii++)
