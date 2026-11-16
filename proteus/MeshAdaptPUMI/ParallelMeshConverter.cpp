@@ -111,6 +111,7 @@ int MeshAdaptPUMIDrvr::constructFromParallelPUMIMesh(Mesh& mesh, Mesh& subdomain
 } 
 
 #include <cstring>
+#include <vector>
 int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
 {
   /* N^2 data structures and algorithms are terrible for scalability.
@@ -142,8 +143,12 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       }
 
       /* one of the many reasons N^2 algorithms are bad */
+      /* the exchange is in ints (a count of owned entities per rank); allOffsets is proteus_index_t */
+      std::vector<int> gatheredOffsets(PCU_Comm_Peers(PCUObj));
       MPI_Allgather(&localOffset, 1, MPI_INT,
-                    allOffsets, 1, MPI_INT, MPI_COMM_WORLD);
+                    gatheredOffsets.data(), 1, MPI_INT, MPI_COMM_WORLD);
+      for (size_t r = 0; r < gatheredOffsets.size(); ++r)
+        allOffsets[r] = gatheredOffsets[r];
       allOffsets[PCU_Comm_Peers(PCUObj)] = countTotal(m, dim, PCUObj);
   
       std::stringstream ss;
@@ -175,8 +180,12 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       }
 
       /* one of the many reasons N^2 algorithms are bad */
+      /* the exchange is in ints (a count of owned entities per rank); allOffsets is proteus_index_t */
+      std::vector<int> gatheredOffsets(PCU_Comm_Peers(PCUObj));
       MPI_Allgather(&localOffset, 1, MPI_INT,
-                    allOffsets, 1, MPI_INT, MPI_COMM_WORLD);
+                    gatheredOffsets.data(), 1, MPI_INT, MPI_COMM_WORLD);
+      for (size_t r = 0; r < gatheredOffsets.size(); ++r)
+        allOffsets[r] = gatheredOffsets[r];
       allOffsets[PCU_Comm_Peers(PCUObj)] = countTotal(m, dim, PCUObj);
       std::stringstream ss;
       ss << "proteus_global_";

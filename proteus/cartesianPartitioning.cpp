@@ -1220,7 +1220,11 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
   mesh.nElementBoundaries_element = nElementBoundaries_element;
   //the global largest node star: every owned node's star is whole in its
   //subdomain and no ghost's is larger than it is globally
-  MPI_Allreduce(&sd.max_nNodeNeighbors_node,&mesh.max_nNodeNeighbors_node,1,MPI_INT,MPI_MAX,PROTEUS_COMM_WORLD);
+{ // max_nNodeNeighbors_node is proteus_index_t; reduce it in a type MPI knows the width of
+    long long localMax = sd.max_nNodeNeighbors_node, globalMax = 0;
+    MPI_Allreduce(&localMax,&globalMax,1,MPI_LONG_LONG,MPI_MAX,PROTEUS_COMM_WORLD);
+    mesh.max_nNodeNeighbors_node = static_cast<proteus_index_t>(globalMax);
+  }
   delete [] mesh.nodeOffsets_subdomain_owned;
   delete [] mesh.elementOffsets_subdomain_owned;
   delete [] mesh.elementBoundaryOffsets_subdomain_owned;
