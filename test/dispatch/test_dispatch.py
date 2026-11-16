@@ -794,3 +794,23 @@ def test_petsc_options_for_a_serial_direct_solve_are_warned_as_unused_not_droppe
     assert applied == {} and unused["flow"] == {"ksp_type": "cg"}
     applied, unused = _check_petsc_options(found, split, entry, 2)    # SuperLU_DIST goes through PETSc: they are read
     assert unused == {} and applied["flow"] == {"ksp_type": "cg"}
+
+
+# ---- SWFlow's open (outflow) boundaries (C5 step 4 part 2) -------------------------------------------------------
+
+def test_SWFlow_open_boundaries_are_reflectingBCs_off_and_a_mixed_boundary_is_refused(lake):
+    from proteus.DispatchRun import RealizeError, precheck, shallow_water_boundary
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    strong = doc["model"]["strong_form"]
+    strong["boundary_sets"] = [{"region": "all", "set": "outflow"}]
+    split = split_problem(doc, "convex_limited")
+    boundary = shallow_water_boundary(split)
+    assert (boundary["name"], boundary["reflectingBCs"]) == ("outflow", False)
+    precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)
+    # a state imposed on part of the boundary has no SWFlow realization yet
+    strong["boundary_regions"] = [{"name": "all", "where": "∂Ω"}, {"name": "right", "where": "x = 25"}]
+    strong["boundary_conditions"] = [{"region": "right", "variable": "h", "type": "dirichlet", "value": 0.5}]
+    split = split_problem(doc, "convex_limited")
+    with pytest.raises(RealizeError, match="none SWFlow imposes|one boundary treatment"):
+        precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)
