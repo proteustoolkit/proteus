@@ -23,7 +23,7 @@ mismatch. `2.0.0.dev` is not publishable (the workflow refuses a dev version).
 Zenodo fires on a GitHub *release* being published, never on a tag push, and this workflow never creates or edits a
 release. So:
 
-* a **release candidate** (`2.0.0rc1`): push the tag only (`git tag -a 2.0.0rc1 -m ... && git push cekees-or-origin 2.0.0rc1`).
+* a **release candidate** (`2.0.0rc1`): push the tag only (`git tag -a 2.0.0rc1 -m ... && git push origin 2.0.0rc1`).
   No release, so no Zenodo version, and TestPyPI gets the sdist;
 * a **final version**: RELEASE.md step 6 as written (`gh release create X.Y.Z ...`). That creates the tag, which starts
   this workflow once, and publishes the release, which fires Zenodo once. Nothing here can cause the 409 of a
