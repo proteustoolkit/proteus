@@ -67,6 +67,7 @@ To rehearse without publishing: `tools/check_sdist.sh` in an environment with th
 * **conda-forge** builds from the GitHub release and does not use this workflow; the feedstock's `ymf` requirement is
   separate and must exist on conda-forge before a feedstock can depend on it. Nothing PyPI does touches it.
 * **Spack** (`py-proteus`) already uses the same distribution name.
-* **The `sdist.yml` and `pytest-ways.yml` globs** (`dist/proteus-*.tar.gz`) match the old file name. The distribution
-  rename makes setuptools write `py_proteus-*.tar.gz`, so both globs need `dist/*.tar.gz`. Those files belong to C3;
-  see the handoff.
+* **The `sdist.yml` and `pytest-ways.yml` globs** matched the old file name (`dist/proteus-*.tar.gz`); the rename makes
+  setuptools write `py_proteus-*.tar.gz`, so both now read `dist/*.tar.gz` (changed in this PR with cekees's go).
+* **License form.** `[project]` uses `license = { text = "MIT" }`, not the SPDX string: the locked CI environments carry
+  setuptools 73 and build with `--no-isolation`. Switch to `license = "MIT"` once they carry setuptools >= 77.
