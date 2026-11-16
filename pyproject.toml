@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77","cython>=3.0,<4","pybind11>=2.11,<4","numpy>=1.25,<3","mpi4py"]
+requires = ["setuptools>=61.0","cython>=3.0,<4","pybind11>=2.11,<4","numpy>=1.25,<3","mpi4py"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -17,8 +17,10 @@ readme = "README.md"
 # 3.12 is what CI tests (3.12 and 3.13; sdist.yml); the old >=3.9 was never
 # tested and numpy >=2.5.2 / scipy >=1.18 in the CI environments need 3.12.
 requires-python = ">=3.12"
-license = "MIT"
-license-files = ["LICENSE.md"]
+# Table form, not the SPDX string: the CI environments lock setuptools 73 and
+# build with --no-isolation, and PEP 639 (`license = "MIT"`) needs setuptools 77.
+# setuptools packs LICENSE.md by default.
+license = { text = "MIT" }
 authors = [{ name = "The Proteus Developers", email = "proteus-dev@googlegroups.com" }]
 keywords = ["finite element", "multiphysics", "computational fluid dynamics", "PDE", "PETSc"]
 classifiers = [
@@ -26,6 +28,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: C",
     "Programming Language :: C++",
     "Programming Language :: Cython",

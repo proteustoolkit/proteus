@@ -5,7 +5,7 @@
 #   EXPECT_VERSION=2.0.0rc1 tools/check_sdist.sh   # also assert the version
 #
 # Needs the build requirements already installed (pyproject.toml's
-# [build-system].requires: setuptools>=77, cython, pybind11, numpy, mpi4py),
+# [build-system].requires: setuptools>=61, cython, pybind11, numpy, mpi4py),
 # plus `build` and `twine`; it builds with --no-isolation like sdist.yml does.
 # That sdist installs and runs in sdist.yml (every leg), so this script does not
 # repeat that; it checks the file PyPI would receive: size (PyPI's limit is
