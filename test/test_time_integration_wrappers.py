@@ -13,6 +13,7 @@ import re
 import numpy
 
 from proteus import ctimeIntegration
+from proteus.cmeshTools import INDEX_DTYPE
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "proteus")
 
@@ -46,11 +47,11 @@ def _line(u):
     """Four P1 DG elements on [0, 4] with dof values u (two per element)."""
     nodes = numpy.zeros((5, 3))
     nodes[:, 0] = numpy.arange(5.0)
-    elementNodes = numpy.array([[0, 1], [1, 2], [2, 3], [3, 4]], "i")
-    neighbours = numpy.array([[1, -1], [2, 0], [3, 1], [-1, 2]], "i")  # across the face opposite local node 0, 1
+    elementNodes = numpy.array([[0, 1], [1, 2], [2, 3], [3, 4]], INDEX_DTYPE)
+    neighbours = numpy.array([[1, -1], [2, 0], [3, 1], [-1, 2]], INDEX_DTYPE)  # across the face opposite local node 0, 1
     barycentres = numpy.zeros((4, 3))
     barycentres[:, 0] = numpy.arange(4) + 0.5
-    l2g = numpy.arange(8, dtype="i").reshape(4, 2)
+    l2g = numpy.arange(8, dtype=INDEX_DTYPE).reshape(4, 2)
     return elementNodes, neighbours, nodes, barycentres, l2g, numpy.zeros(4, "i"), numpy.array(u, dtype=float)
 
 
