@@ -1183,7 +1183,7 @@ def calculateConservationResidualGlobalBoundaries(np.ndarray interiorElementBoun
                                                      <pp.proteus_index_t*>(exteriorElementBoundaries.data),
                                                      <pp.proteus_index_t*>(elementBoundaryElements.data),
                                                      <int*>(elementBoundaryLocalElementBoundaries.data),
-                                                     <int*>(exteriorElementBoundariesToSkip.data),
+                                                     <pp.proteus_index_t*>(exteriorElementBoundariesToSkip.data),
                                                      <double*>(dS.data),
                                                      <double*>(n.data),
                                                      <double*>(elementResidual.data),

@@ -3622,7 +3622,7 @@ void calculateConservationResidualGlobalBoundaries(proteus_index_t nElements_glo
 						   proteus_index_t* exteriorElementBoundaries,
 						   proteus_index_t* elementBoundaryElements,
 						   int* elementBoundaryLocalElementBoundaries,
-						   int* exteriorElementBoundariesToSkip,
+						   proteus_index_t* exteriorElementBoundariesToSkip,
 						   double* dS,
 						   double* normal,
 						   double* elementResidual,
