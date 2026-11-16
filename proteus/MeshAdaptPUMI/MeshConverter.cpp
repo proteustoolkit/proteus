@@ -645,7 +645,7 @@ namespace apf {
 
   static void constructVerts(
 			     Mesh2* m, int nverts,
-			     int* local2globalMap,
+			     proteus_index_t* local2globalMap,
 			     GlobalToVert& result)
   {
     ModelEntity* interior = m->findModelEntity(m->getDimension(), 0);
@@ -799,7 +799,7 @@ namespace apf {
   }
 
   void construct(Mesh2* m, const Gid* conn, const Gid* conn_b, int nelem,
-		 int nelem_b, int nverts,int etype, int etype_b, int* local2globalMap,
+		 int nelem_b, int nverts,int etype, int etype_b, proteus_index_t* local2globalMap,
 		 GlobalToVert& globalToVert, PCU_t PCUObj)
   {
     constructVerts(m, nverts,local2globalMap,globalToVert);
