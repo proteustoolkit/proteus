@@ -79,7 +79,7 @@ def _check(r, balance_tolerance=1.0e-11):
 
 # variant, order of the potential, space of the potential
 SERIAL = [("pwl", 1, "c0"), ("pwl", 2, "c0"), ("pwl-bdm", 1, "c0"), ("pwl-bdm", 2, "c0"), ("pwc", 1, "c0"),
-          ("sun-rt0", 1, "c0"), ("dg", 1, "dg"), ("dg-bdm", 1, "dg")]
+          ("sun-rt0", 1, "c0"), ("dg", 1, "dg"), ("dg-bdm", 1, "dg"), ("p1-nc", 1, "nc")]
 
 
 @pytest.mark.parametrize("variant,order,space", SERIAL, ids=["%s-P%d" % (v, o) for v, o, s in SERIAL])
@@ -89,23 +89,8 @@ def test_a_post_processed_velocity_is_a_function_of_the_hdiv_space(tmp_path, var
     assert not np.isnan(value).any()
 
 
-def test_p1_nc_is_single_valued_only_away_from_the_boundary(tmp_path):
-    """Found here, not fixed (it is the post-processor's, C10): the RT0 velocity of the p1-nc variant
-    (Crouzeix-Raviart potential) is single valued in its normal component on every face whose two elements
-    have no node on the boundary of the domain, to round-off; on interior faces of elements that touch the
-    boundary the two elements disagree (5.6e-3 against velocities of size 6 on this 13 x 13 mesh; 67 faces
-    of 408; the disagreement drops by 3.7 per halving of the mesh). So that velocity is not a function of the
-    RT0 space as it stands. When this test fails because the defect is gone, move p1-nc into SERIAL."""
-    r, point, value = _run(1, tmp_path, "p1-nc", 1, "nc")
-    assert r["family"] == "rt0" and r["dofs_covered"] == r["nDOF"] == 456
-    assert r["normal_jump_away_from_boundary"] < 1.0e-12 * r["field_scale"], r
-    assert r["residual"] < 1.0e-12, r                 # every element still balances
-    assert 1.0e-4 < r["normal_defect"] < 1.0e-2, r   # measured 5.56e-03
-    assert 0 < r["dofs_with_jump"] < 100, r          # measured 67
-
-
 PARALLEL = [("pwl", 1, "c0", 1), ("pwl", 1, "c0", 0), ("pwl-bdm", 1, "c0", 1), ("pwl-bdm", 1, "c0", 0),
-            ("pwl", 2, "c0", 1), ("dg", 1, "dg", 1), ("dg-bdm", 1, "dg", 1)]
+            ("pwl", 2, "c0", 1), ("dg", 1, "dg", 1), ("dg-bdm", 1, "dg", 1), ("p1-nc", 1, "nc", 1), ("p1-nc", 1, "nc", 0)]
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
