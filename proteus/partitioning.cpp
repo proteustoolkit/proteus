@@ -124,6 +124,11 @@ void writeErrorLine(const std::string& line)
 [[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
 {
   writeErrorLine(message);
+  //MPICH's launcher (hydra) kills its proxies on MPI_Abort and can exit before
+  //it has forwarded what the ranks wrote: the whole message was lost on the
+  //macOS leg of the scheduled dev run of 2026-11-15 (empty output, nonzero
+  //exit). The run is ending: let the pipe drain first.
+  usleep(200000);
   MPI_Abort(comm, 1);
   std::abort();
 }
@@ -3442,10 +3447,16 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
                       NodeTuple<2> et(nodes);
                       const proteus_index_t nN0_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN0];
                       const proteus_index_t nN1_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN1];
-                      bool foundEdge = false;
-                      const int edge_global = nodesEdgeMap_global_new[et];
-                      if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
-                        edges_overlap.insert(edge_global);
+                      //every pair of a hexahedron's nodes is not an edge: operator[] on a
+                      //pair that is not one inserted it as edge 0 (and then every later
+                      //find matched it), so a rank held edge 0 with nodes it did not have
+                      const auto edgeFound = nodesEdgeMap_global_new.find(et);
+                      if (edgeFound != nodesEdgeMap_global_new.end())
+                        {
+                          const int edge_global = edgeFound->second;
+                          if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
+                            edges_overlap.insert(edge_global);
+                        }
                     }//edges
               }
           }

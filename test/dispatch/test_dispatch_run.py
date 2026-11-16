@@ -3,7 +3,7 @@
 Each case two ways, each in a directory of its own:
 
 * the deck through parun: ``parun --TwoPhaseFlow damBreakLevelSet.py -C "final_time=0.03 dt_output=0.01 he=0.08
-  genMesh=True"``, ``parun --SWEs dam3Bumps.py -C "final_time=0.5 dt_output=0.1 structured=False he=2.0"``;
+  genMesh=True"``, ``parun --SWEs dam3Bumps.py -C "final_time=0.5 dt_output=0.1 structured=False he=2.0 dam_x_location=16.05"``;
 * the spec through ``pro run``: proteus.Dispatch maps level_set_five onto RANS2P, VOF, NCLS, RDLS and MCorr, and
   convex_limited onto SW2DCV, and proteus.DispatchRun builds the TwoPhaseFlowProblem or SWFlowProblem from that and
   from ymf's split plain data.
@@ -90,7 +90,7 @@ CASES = {
                             "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short_projection.ymf",
                             "clsvof_projection -- split, dispatched to clsvof CLSVOF, flow RANS3PF, pressureInc "
                             "PresInc, pressure Pres, pressureInit PresInit", "velocity_t4"),
-    "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0",
+    "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0 dam_x_location=16.05",
                   "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
 

@@ -9567,3 +9567,261 @@ if __name__ == '__main__':
 #  #end checkFunctionTrace
     #check if contiuous solution has no jumps?
     #checkFunctionTrace(u,mesh,globalDGspace,traceOp)
+
+# ----------------------------------------------------------------------------------------------
+# H(div)-conforming spaces on simplices: RT0 and BDM1 (C8 round 5)
+# ----------------------------------------------------------------------------------------------
+class HdivOnSimplex(LocalFunctionSpace):
+    """
+    The lowest-order Raviart-Thomas space (``family='rt0'``) or the Brezzi-Douglas-Marini space of degree 1
+    (``family='bdm1'``) on the unit nd-simplex: vector-valued basis functions whose normal component on
+    each face is single valued across elements. See :mod:`proteus.HdivSpaces` for the bases, the degrees of
+    freedom (normal flux densities at points of the faces) and the Piola map.
+
+    ``basis[i](xi)`` returns a vector (nd,); ``tabulate(points)`` returns all of them at once with the
+    (constant) divergences. The scalar gradient and trace lists of :class:`LocalFunctionSpace` are not
+    defined for a vector-valued space and stay empty.
+    """
+    def __init__(self,nd=3,family='rt0'):
+        from . import HdivSpaces
+        self.referenceElement = ReferenceSimplex(nd)
+        self.space = HdivSpaces.HdivSpace(nd,family)
+        LocalFunctionSpace.__init__(self,self.space.dim,self.referenceElement)
+        self.family = family
+        self.order = self.space.order
+        self.vectorValued = True
+        self.basis = [(lambda xi,i=i: self.tabulate([xi]).values[0,i].copy()) for i in self.range_dim]
+        self.basisDivergence = [(lambda xi,i=i: float(self.space.divergence[i])) for i in self.range_dim]
+        self.basisHessians = []
+    def tabulate(self,points):
+        """Reference values (nQ,dim,nd) at points (nQ,>=nd); ``.grads`` holds the divergences (dim,)."""
+        nd = self.referenceElement.dim
+        return self.space.tabulate(numpy.asarray(points,dtype='d').reshape(len(points),-1)[:,:nd])
+
+class HdivInterpolationConditions(InterpolationConditions):
+    """
+    The sample points of :class:`HdivOnSimplex`: one per dof, the face centroid (RT0) or a vertex of the face
+    (BDM1). The dof is the area-weighted normal component of the sampled vector there, which needs the
+    element's normals and the global sign of the face: :meth:`Hdiv_AffineOnSimplex.dofsFromElementValues`
+    applies it.
+    """
+    def __init__(self,localFunctionSpace):
+        space = localFunctionSpace.space
+        InterpolationConditions.__init__(self,space.dim,localFunctionSpace.referenceElement)
+        self.space = space
+        self.quadraturePointArray = numpy.zeros((space.dim,3),'d')
+        self.quadraturePointArray[:,:space.d] = space.dof_points
+        self.nQuadraturePoints = space.dim
+    def definedOnLocalElementBoundary(self,k,ebN_local):
+        return bool(self.space.dof_face[k] == ebN_local)
+
+class FaceDOFMap(DOFMap):
+    """
+    DOF map for H(div) spaces on simplex meshes (:class:`HdivOnSimplex`): every dof belongs to a face (an
+    element boundary), 1 per face for RT0 and nd per face for BDM1.
+
+    **Sign.** A dof is a flux density through its face along the face's *global* normal, which is fixed by
+    the face's vertices sorted by *global* vertex number v_0 < v_1 (< v_2): the edge v_0 -> v_1 turned
+    clockwise in 2D, (v_1 - v_0) x (v_2 - v_0) in 3D, +x in 1D. ``sign[eN,i]`` is +1 where that normal is the
+    element's outward normal and -1 where it is the inward one; the local basis function, whose flux is
+    outward, is multiplied by it. Every rank that holds the face computes the same normal.
+
+    **Order inside a face** (BDM1): the dof of the vertex with the smallest global number first.
+
+    **Numbering.** Faces are numbered by the mesh with every rank's owned faces first and contiguous, so
+    the global dof of face g is ``dpf*g + m`` and the subdomain dof of subdomain face e is ``dpf*e + m``:
+    owned dofs first, no communication.
+
+    ``dofPoints`` (the centroid of the face for RT0, the vertex for BDM1) and ``dofFaceCentroids`` identify
+    a dof geometrically; ``faceAreaNormals`` (nFaces,3) are the area-weighted global normals;
+    ``elementFaces[eN,f]`` is the subdomain face opposite local vertex f, looked up by its vertices.
+    ``conformityDefect`` is the largest disagreement between elements on a dof's point or on a face's
+    normal; construction fails if it is not round-off (``orient=False`` exists only to show that the
+    check and the tests see a wrong map).
+    """
+    def __init__(self,mesh,localFunctionSpace,nd,orient=True):
+        self.nd = nd
+        self.localFunctionSpace = localFunctionSpace
+        self.orient = orient
+        DOFMap.__init__(self,0)
+        globalMesh = mesh.globalMesh if getattr(mesh,'globalMesh',None) is not None else mesh
+        self.updateAfterParallelPartitioning(globalMesh)
+
+    def updateAfterParallelPartitioning(self,globalMesh):
+        from . import Comm
+        from . import HdivSpaces
+        I = cmeshTools.INDEX_DTYPE
+        mesh = globalMesh.subdomainMesh
+        space = self.localFunctionSpace.space
+        nd = self.nd
+        rank = Comm.get().rank()
+        elementNodes = numpy.asarray(mesh.elementNodesArray)
+        nE = elementNodes.shape[0]
+        X = numpy.asarray(mesh.nodeArray)
+        nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        off = numpy.asarray(globalMesh.elementBoundaryOffsets_subdomain_owned,dtype='i8')
+        num = numpy.asarray(globalMesh.elementBoundaryNumbering_subdomain2global,dtype='i8')
+        nF = mesh.nElementBoundaries_global
+        nOwned = int(off[rank+1]-off[rank])
+        assert nF >= nOwned and len(num) >= nF
+        assert (num[:nOwned] == off[rank] + numpy.arange(nOwned)).all(), "FaceDOFMap: owned faces are not numbered contiguously"
+        dpf = len(space.face_dofs[0])
+        self.nDOF = dpf*nF
+        self.range_nDOF = range(self.nDOF)
+        self.nDOF_subdomain = self.nDOF
+        self.nDOF_subdomain_owned = dpf*nOwned
+        self.dof_offsets_subdomain_owned = (dpf*off).astype(I)
+        self.nDOF_all_processes = int(dpf*off[-1])
+        self.subdomain2global = (dpf*num[:nF,None] + numpy.arange(dpf)[None,:]).reshape(-1).astype(I)
+        faceNodes = numpy.asarray(mesh.elementBoundaryNodesArray).reshape(nF,-1)[:,:max(nd,1)]
+        #outward area-weighted normals of every element
+        J = (X[elementNodes[:,1:]] - X[elementNodes[:,:1]])[:,:,:nd].transpose(0,2,1)
+        outwardNormals = HdivSpaces.area_normals(J) if nE > 0 else numpy.zeros((0,nd+1,nd))
+        self.l2g = numpy.zeros((nE,space.dim),I)
+        self.sign = numpy.ones((nE,space.dim),'d')
+        self.elementFaces = numpy.zeros((nE,nd+1),I)
+        self.elementFaceSign = numpy.ones((nE,nd+1),'d')
+        self.faceAreaNormals = numpy.zeros((nF,3),'d')
+        rows = numpy.arange(nE)
+        normalDefect = 0.0
+        for f in range(nd+1):
+            verts = list(space.faces[f])
+            local = elementNodes[:,verts]
+            fe = SimplexEntityDOFMap._matchRows(faceNodes,local,mesh.nNodes_global)
+            self.elementFaces[:,f] = fe
+            order = numpy.argsort(nodeNumbering[local],axis=1,kind='stable')
+            P = X[local[rows[:,None],order]]                       #(nE,nd,3), by global vertex number
+            direction = numpy.zeros((nE,3),'d')
+            if nd == 1:
+                direction[:,0] = 1.0
+            elif nd == 2:
+                t = P[:,1]-P[:,0]
+                direction[:,0] = t[:,1]; direction[:,1] = -t[:,0]
+            else:
+                direction = numpy.cross(P[:,1]-P[:,0],P[:,2]-P[:,0])
+            outward = numpy.sign(numpy.einsum('ec,ec->e',direction[:,:nd],outwardNormals[:,f,:]))
+            assert nE == 0 or (outward != 0.0).all(), "FaceDOFMap: a degenerate face"
+            s = outward if self.orient else numpy.ones(nE)
+            self.elementFaceSign[:,f] = s
+            globalNormal = numpy.zeros((nE,3),'d')
+            globalNormal[:,:nd] = outward[:,None]*outwardNormals[:,f,:]
+            self.faceAreaNormals[fe] = globalNormal
+            normalDefect = max(normalDefect,float(numpy.abs(self.faceAreaNormals[fe]-globalNormal).max()) if nE > 0 else 0.0)
+            rankInFace = numpy.argsort(order,axis=1)              #rankInFace[:,k]: place of verts[k] by global number
+            for i in space.face_dofs[f]:
+                a = space.dof_vertex[i]
+                if a < 0:
+                    index = 0
+                else:
+                    k = verts.index(a)
+                    index = rankInFace[:,k] if self.orient else k
+                self.l2g[:,i] = dpf*fe + index
+                self.sign[:,i] = s
+        #dof points and the conformity check
+        barycentric = numpy.column_stack([1.0-space.dof_points.sum(axis=1),space.dof_points])
+        self.elementDofPoints = numpy.einsum('iv,evc->eic',barycentric,X[elementNodes])
+        self.elementOutwardNormals = outwardNormals
+        self.dofPoints = numpy.zeros((self.nDOF,3),'d')
+        self.dofPoints[self.l2g] = self.elementDofPoints
+        self.lagrangeNodesArray = self.dofPoints
+        self.dofFaceCentroids = numpy.repeat(X[faceNodes].mean(axis=1),dpf,axis=0)
+        pointDefect = float(numpy.abs(self.dofPoints[self.l2g]-self.elementDofPoints).max()) if nE > 0 else 0.0
+        self.conformityDefect = max(pointDefect,normalDefect)
+        scale = float(numpy.abs(X).max()) + 1.0 if nE > 0 else 1.0
+        if self.orient and self.conformityDefect > 1.0e-9*scale:
+            raise RuntimeError("FaceDOFMap: elements disagree on the point of a shared dof or on a face normal by %g" % (self.conformityDefect,))
+        #a face dof couples to the dofs of the faces of its two elements
+        self.max_dof_neighbors = dpf*(2*(nd+1)-1)
+        assert self.nDOF == 0 or self.l2g.max() < self.nDOF
+
+class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
+    """
+    An H(div)-conforming space on a simplex mesh: RT0 (``family='rt0'``, piecewise ``a + b x``, constant
+    normal component on every face) or BDM1 (``family='bdm1'``, piecewise linear vector fields, linear normal
+    component). The normal component is continuous across faces; the tangential one is not.
+
+    The unknowns are scalars, one per face (RT0) or nd per face (BDM1): flux densities along the global
+    normal of the face (:class:`FaceDOFMap`). A :class:`FiniteElementFunction` on this space holds them
+    (``dim_dof=1``); the vector field itself is obtained with :meth:`evaluate`.
+
+    This class provides the space, its dof map and its evaluation; it is not used by any model or
+    post-processor yet, and it does not write the archive.
+
+    ``getVectorBasisValues`` and ``getBasisDivergences`` return the physical basis (contravariant Piola
+    map with |det J|, times the sign of the face) on every element.
+    """
+    _configuredTypes = {}
+    def __new__(cls,mesh=None,nd=3,family='rt0'):
+        #one class per family, as the polynomial spaces: Transport keeps one archive grid per class
+        if cls is Hdiv_AffineOnSimplex:
+            if family not in cls._configuredTypes:
+                cls._configuredTypes[family] = type("Hdiv_AffineOnSimplex_%s" % (family,),(cls,),{})
+            cls = cls._configuredTypes[family]
+        return super(Hdiv_AffineOnSimplex,cls).__new__(cls)
+    def __init__(self,mesh,nd=3,family='rt0'):
+        self.family = family
+        localFunctionSpace = HdivOnSimplex(nd,family)
+        self.order = localFunctionSpace.order
+        ParametricFiniteElementSpace.__init__(self,
+                                              ReferenceFiniteElement(localFunctionSpace,
+                                                                     HdivInterpolationConditions(localFunctionSpace)),
+                                              AffineMaps(mesh,
+                                                         localFunctionSpace.referenceElement,
+                                                         LinearOnSimplexWithNodalBasis(nd)),
+                                              FaceDOFMap(mesh,localFunctionSpace,nd))
+    def elementJacobians(self):
+        """J (nE,nd,nd), J[eN,I,i] = d x_I / d xi_i, from the element vertices."""
+        nd = self.nSpace_global
+        X = numpy.asarray(self.mesh.nodeArray)
+        en = numpy.asarray(self.mesh.elementNodesArray)
+        return (X[en[:,1:]] - X[en[:,:1]])[:,:,:nd].transpose(0,2,1)
+    def getVectorBasisValues(self,xiArray):
+        """Physical basis values (nE,nQ,dim,nd) at reference points xiArray (nQ,>=nd)."""
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        values = lfs.space.piola(self.elementJacobians(),lfs.tabulate(xiArray).values)
+        return values*self.dofMap.sign[:,None,:,None]
+    def getBasisDivergences(self):
+        """Divergence (nE,dim) of every basis function (constant on the element)."""
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        detJ = numpy.abs(numpy.linalg.det(self.elementJacobians()))
+        return self.dofMap.sign*lfs.space.divergence[None,:]/detJ[:,None]
+    def evaluate(self,dof,xiArray):
+        """The vector field (nE,nQ,nd) with dofs ``dof`` at reference points xiArray (nQ,>=nd) of every element."""
+        return numpy.einsum('eqid,ei->eqd',self.getVectorBasisValues(xiArray),numpy.asarray(dof)[self.dofMap.l2g])
+    def divergence(self,dof):
+        """The divergence (nE,) of the field with dofs ``dof`` (constant on each element)."""
+        return numpy.einsum('ei,ei->e',self.getBasisDivergences(),numpy.asarray(dof)[self.dofMap.l2g])
+    def elementFluxes(self,dof):
+        """The outward flux (nE,nd+1) of the field through each face of every element."""
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        local = self.dofMap.sign*numpy.asarray(dof)[self.dofMap.l2g]
+        return numpy.array([local[:,dofs].mean(axis=1) for dofs in lfs.space.face_dofs]).T
+    def dofsFromElementValues(self,values,elements=None):
+        """
+        The dofs of the field whose values at the dof points of every element (``dofMap.elementDofPoints``,
+        (nE,dim,3)) are ``values`` (nE,dim,nd): dof = (area-weighted global normal of the face) . value.
+
+        Each element that holds a dof gives a number for it; a field with a single-valued normal component
+        gives the same number from both. Returns ``(dof, defect, known)``: the mean over the contributing
+        elements, the largest difference between a contribution and that mean, and the mask of the dofs that
+        got a contribution. ``elements`` restricts the contributing elements (e.g. the owned ones, when the
+        values on ghost elements are not to be trusted).
+        """
+        dm = self.dofMap
+        lfs = self.referenceFiniteElement.localFunctionSpace
+        values = numpy.asarray(values,dtype='d')
+        normals = dm.elementOutwardNormals[:,lfs.space.dof_face,:]
+        local = dm.sign*numpy.einsum('eid,eid->ei',normals,values)
+        if elements is None:
+            elements = numpy.arange(local.shape[0])
+        total = numpy.zeros((dm.nDOF,),'d')
+        count = numpy.zeros((dm.nDOF,),'d')
+        numpy.add.at(total,dm.l2g[elements],local[elements])
+        numpy.add.at(count,dm.l2g[elements],1.0)
+        known = count > 0.0
+        dof = numpy.where(known,total/numpy.maximum(count,1.0),0.0)
+        defect = float(numpy.abs(local[elements]-dof[dm.l2g[elements]]).max()) if len(elements) > 0 else 0.0
+        return dof,defect,known
+    def interpolate(self,f):
+        """The dofs of the interpolant of the vector field f(x), x (..,3) -> (..,nd), sampled at the dof points."""
+        return self.dofsFromElementValues(f(self.dofMap.elementDofPoints))[0]

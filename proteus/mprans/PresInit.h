@@ -93,7 +93,7 @@ namespace proteus
                                          double* mesh_trial_ref,
                                          double* mesh_grad_trial_ref,
                                          double* mesh_dof,
-                                         int* mesh_l2g,
+                                         proteus_index_t* mesh_l2g,
                                          double* dV_ref,
                                          double* u_trial_ref,
                                          double* u_grad_trial_ref,
@@ -110,12 +110,12 @@ namespace proteus
                                          double* normal_ref,
                                          double* boundaryJac_ref,
                                          //physics
-                                         int nElements_global,
+                                         proteus_index_t nElements_global,
                                          double useMetrics,
                                          double epsFactHeaviside,
                                          double epsFactDirac,
                                          double epsFactDiffusion,
-                                         int* u_l2g,
+                                         proteus_index_t* u_l2g,
                                          double* elementDiameter,
                                          double* nodeDiametersArray,
                                          double* u_dof,
@@ -130,14 +130,14 @@ namespace proteus
                                          double* ebqe_n,
                                          double* q_r,
                                          double* q_vos,
-                                         int offset_u, int stride_u,
+                                         proteus_index_t offset_u, proteus_index_t stride_u,
                                          double* elementResidual_u,
-                                         int nExteriorElementBoundaries_global,
-                                         int* exteriorElementBoundariesArray,
-                                         int* elementBoundaryElementsArray,
+                                         proteus_index_t nExteriorElementBoundaries_global,
+                                         proteus_index_t* exteriorElementBoundariesArray,
+                                         proteus_index_t* elementBoundaryElementsArray,
                                          int* elementBoundaryLocalElementBoundariesArray,
                                          double* element_u,
-                                         int eN)
+                                         proteus_index_t eN)
     {
       for (int i=0;i<nDOF_test_element;i++)
         {
@@ -148,7 +148,7 @@ namespace proteus
       for  (int k=0;k<nQuadraturePoints_element;k++)
         {
           //compute indeces and declare local storage
-          int eN_k = eN*nQuadraturePoints_element+k,
+          proteus_index_t eN_k = eN*nQuadraturePoints_element+k,
             eN_k_nSpace = eN_k*nSpace;
             //eN_nDOF_trial_element = eN*nDOF_trial_element;
           double u=0.0,grad_u[nSpace],
@@ -260,7 +260,7 @@ namespace proteus
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
         proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-        proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+        proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
         proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
         proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
         proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
@@ -275,12 +275,12 @@ namespace proteus
         proteus::pyarray<double>& u_grad_test_trace_ref = args.array<double>("u_grad_test_trace_ref");
         proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-        int nElements_global = args.scalar<int>("nElements_global");
+        proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         double useMetrics = args.scalar<double>("useMetrics");
         double epsFactHeaviside = args.scalar<double>("epsFactHeaviside");
         double epsFactDirac = args.scalar<double>("epsFactDirac");
         double epsFactDiffusion = args.scalar<double>("epsFactDiffusion");
-        proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
+        proteus::pyarray<proteus_index_t>& u_l2g = args.array<proteus_index_t>("u_l2g");
         proteus::pyarray<double>& elementDiameter = args.array<double>("elementDiameter");
         proteus::pyarray<double>& nodeDiametersArray = args.array<double>("nodeDiametersArray");
         proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
@@ -295,12 +295,12 @@ namespace proteus
         proteus::pyarray<double>& ebqe_n = args.array<double>("ebqe_n");
         proteus::pyarray<double>& q_r = args.array<double>("q_r");
         proteus::pyarray<double>& q_vos = args.array<double>("q_vos");
-        int offset_u = args.scalar<int>("offset_u");
-        int stride_u = args.scalar<int>("stride_u");
+        proteus_index_t offset_u = args.scalar<proteus_index_t>("offset_u");
+        proteus_index_t stride_u = args.scalar<proteus_index_t>("stride_u");
         proteus::pyarray<double>& globalResidual = args.array<double>("globalResidual");
-        int nExteriorElementBoundaries_global = args.scalar<int>("nExteriorElementBoundaries_global");
-        proteus::pyarray<int>& exteriorElementBoundariesArray = args.array<int>("exteriorElementBoundariesArray");
-        proteus::pyarray<int>& elementBoundaryElementsArray = args.array<int>("elementBoundaryElementsArray");
+        proteus_index_t nExteriorElementBoundaries_global = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+        proteus::pyarray<proteus_index_t>& exteriorElementBoundariesArray = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+        proteus::pyarray<proteus_index_t>& elementBoundaryElementsArray = args.array<proteus_index_t>("elementBoundaryElementsArray");
         proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
       //
       //loop over elements to compute volume integrals and load them into element and global residual
@@ -312,13 +312,13 @@ namespace proteus
       //eN_j is the element trial function index
       //eN_k_j is the quadrature point index for a trial function
       //eN_k_i is the quadrature point index for a trial function
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           //declare local storage for element residual and initialize
           double elementResidual_u[nDOF_test_element],element_u[nDOF_trial_element];
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i=eN*nDOF_test_element+i;
+              proteus_index_t eN_i=eN*nDOF_test_element+i;
               element_u[i] = u_dof.data()[u_l2g.data()[eN_i]];
             }//i
           calculateElementResidual(mesh_trial_ref.data(),
@@ -372,7 +372,7 @@ namespace proteus
           //
           for(int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i=eN*nDOF_test_element+i;
+              proteus_index_t eN_i=eN*nDOF_test_element+i;
 
               globalResidual.data()[offset_u+stride_u*u_l2g.data()[eN_i]]+=elementResidual_u[i];
             }//i
@@ -383,24 +383,24 @@ namespace proteus
       //ebNE is the Exterior element boundary INdex
       //ebN is the element boundary INdex
       //eN is the element index
-      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+      for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
         {
-          int ebN = exteriorElementBoundariesArray.data()[ebNE],
-            eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-            ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+          proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE],
+            eN  = elementBoundaryElementsArray.data()[ebN*2+0];
+          int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
             //eN_nDOF_trial_element = eN*nDOF_trial_element;
           //double elementResidual_u[nDOF_test_element];
           double element_u[nDOF_trial_element];
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i=eN*nDOF_test_element+i;
+              proteus_index_t eN_i=eN*nDOF_test_element+i;
               element_u[i] = u_dof.data()[u_l2g.data()[eN_i]];
             }//i
           for  (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
             {
-              int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                ebNE_kb_nSpace = ebNE_kb*nSpace,
-                ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+              proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
+                ebNE_kb_nSpace = ebNE_kb*nSpace;
+              int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                 ebN_local_kb_nSpace = ebN_local_kb*nSpace;
               double u_ext=0.0,
                 grad_u_ext[nSpace],
@@ -461,7 +461,7 @@ namespace proteus
                                          double* mesh_trial_ref,
                                          double* mesh_grad_trial_ref,
                                          double* mesh_dof,
-                                         int* mesh_l2g,
+                                         proteus_index_t* mesh_l2g,
                                          double* dV_ref,
                                          double* u_trial_ref,
                                          double* u_grad_trial_ref,
@@ -478,12 +478,12 @@ namespace proteus
                                          double* normal_ref,
                                          double* boundaryJac_ref,
                                          //physics
-                                         int nElements_global,
+                                         proteus_index_t nElements_global,
                                          double useMetrics,
                                          double epsFactHeaviside,
                                          double epsFactDirac,
                                          double epsFactDiffusion,
-                                         int* u_l2g,
+                                         proteus_index_t* u_l2g,
                                          double* elementDiameter,
                                          double* nodeDiametersArray,
                                          double* u_dof,
@@ -497,7 +497,7 @@ namespace proteus
                                          double* q_vos,
                                          double* elementJacobian_u_u,
                                          double* element_u,
-                                         int eN)
+                                         proteus_index_t eN)
     {
       for (int i=0;i<nDOF_test_element;i++)
         for (int j=0;j<nDOF_trial_element;j++)
@@ -507,7 +507,7 @@ namespace proteus
       double epsHeaviside,epsDirac,epsDiffusion;
       for  (int k=0;k<nQuadraturePoints_element;k++)
         {
-          int eN_k = eN*nQuadraturePoints_element+k; //index to a scalar at a quadrature point
+          proteus_index_t eN_k = eN*nQuadraturePoints_element+k; //index to a scalar at a quadrature point
 
           //declare local storage
           double u=0.0,
@@ -607,7 +607,7 @@ namespace proteus
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
         proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-        proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+        proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
         proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
         proteus::pyarray<double>& u_trial_ref = args.array<double>("u_trial_ref");
         proteus::pyarray<double>& u_grad_trial_ref = args.array<double>("u_grad_trial_ref");
@@ -622,12 +622,12 @@ namespace proteus
         proteus::pyarray<double>& u_grad_test_trace_ref = args.array<double>("u_grad_test_trace_ref");
         proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-        int nElements_global = args.scalar<int>("nElements_global");
+        proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         double useMetrics = args.scalar<double>("useMetrics");
         double epsFactHeaviside = args.scalar<double>("epsFactHeaviside");
         double epsFactDirac = args.scalar<double>("epsFactDirac");
         double epsFactDiffusion = args.scalar<double>("epsFactDiffusion");
-        proteus::pyarray<int>& u_l2g = args.array<int>("u_l2g");
+        proteus::pyarray<proteus_index_t>& u_l2g = args.array<proteus_index_t>("u_l2g");
         proteus::pyarray<double>& elementDiameter = args.array<double>("elementDiameter");
         proteus::pyarray<double>& nodeDiametersArray = args.array<double>("nodeDiametersArray");
         proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
@@ -635,18 +635,18 @@ namespace proteus
         proteus::pyarray<double>& q_normal_phi = args.array<double>("q_normal_phi");
         proteus::pyarray<double>& q_H = args.array<double>("q_H");
         proteus::pyarray<double>& q_vos = args.array<double>("q_vos");
-        proteus::pyarray<int>& csrRowIndeces_u_u = args.array<int>("csrRowIndeces_u_u");
-        proteus::pyarray<int>& csrColumnOffsets_u_u = args.array<int>("csrColumnOffsets_u_u");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_u_u = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_u_u = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
         proteus::pyarray<double>& globalJacobian = args.array<double>("globalJacobian");
       //
       //loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
       //
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           double  elementJacobian_u_u[nDOF_test_element*nDOF_trial_element],element_u[nDOF_trial_element];
           for (int j=0;j<nDOF_trial_element;j++)
             {
-              int eN_j = eN*nDOF_trial_element+j;
+              proteus_index_t eN_j = eN*nDOF_trial_element+j;
               element_u[j] = u_dof.data()[u_l2g.data()[eN_j]];
             }
           calculateElementJacobian(mesh_trial_ref.data(),
@@ -688,10 +688,10 @@ namespace proteus
           //
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i = eN*nDOF_test_element+i;
+              proteus_index_t eN_i = eN*nDOF_test_element+i;
               for (int j=0;j<nDOF_trial_element;j++)
                 {
-                  int eN_i_j = eN_i*nDOF_trial_element+j;
+                  proteus_index_t eN_i_j = eN_i*nDOF_trial_element+j;
 
                   globalJacobian.data()[csrRowIndeces_u_u[eN_i] + csrColumnOffsets_u_u[eN_i_j]] += elementJacobian_u_u[i*nDOF_trial_element+j];
                 }//j

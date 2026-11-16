@@ -47,6 +47,10 @@ def _launch(args, n_ranks, blocked, timeout=300):
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join(
         [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    # The partition is pinned to the contiguous one, as test_parallel_space_multigrid.py pins it: the graph
+    # partitioner's answer depends on the PETSc and MPI build, and on the fleet's (pip PETSc with ParMETIS, MPICH) it
+    # left a rank without elements on the 3-rank dgp1 mesh, which a discontinuous Galerkin space refuses.
+    env['PETSC_OPTIONS'] = (env.get('PETSC_OPTIONS', '') + ' -mat_partitioning_type current').strip()
     # CI runners have two cores; let Open MPI (4.x and 5.x/PRRTE) start more
     # ranks than that. MPICH oversubscribes by default and ignores these.
     env.setdefault('OMPI_MCA_rmaps_base_oversubscribe', '1')

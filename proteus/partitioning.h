@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <iterator>
 #include "mpi.h"
-#include "hdf5.h"
 #include "petsc.h"
 #include "petscsys.h"
 #include "mesh.h"

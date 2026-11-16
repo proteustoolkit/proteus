@@ -1,3 +1,6 @@
+cdef extern from "index_type.h":
+    ctypedef int proteus_index_t
+
 # cython: language_level=3
 cimport cython
 import numpy as np
@@ -5,10 +8,10 @@ cimport numpy as np
 from libcpp cimport bool
 
 cdef void cySmoothNodesLaplace(double[:,:] nodeArray_,
-                               int[:] nodeStarOffsets,
-                               int[:] nodeStarArray,
+                               proteus_index_t[:] nodeStarOffsets,
+                               proteus_index_t[:] nodeStarArray,
                                int[:] nodeMaterialTypes,
-                               int nNodes_owned,
+                               proteus_index_t nNodes_owned,
                                int nd,
                                bool simultaneous=*,
                                bool smoothBoundaries=*,
@@ -16,13 +19,13 @@ cdef void cySmoothNodesLaplace(double[:,:] nodeArray_,
                                double alpha=*)
 
 cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
-                                int[:] nodeElementOffsets,
-                                int[:] nodeElementsArray,
+                                proteus_index_t[:] nodeElementOffsets,
+                                proteus_index_t[:] nodeElementsArray,
                                 int[:] nodeMaterialTypes,
                                 double[:] elementVolumesArray,
                                 double[:,:] elementBarycentersArray,
-                                int[:,:] elementNodesArray,
-                                int nNodes_owned,
+                                proteus_index_t[:,:] elementNodesArray,
+                                proteus_index_t nNodes_owned,
                                 int[:] fixedNodesBoolArray,
                                 bool simultaneous=*,
                                 bool smoothBoundaries=*,
@@ -31,156 +34,156 @@ cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
 cdef void cyUpdateDilationElements(double[:] elementDilationArray_,
                                    double[:] elementVolumeArray,
                                    double[:] elementVolumeTargetArray,
-                                   int nElements)
+                                   proteus_index_t nElements)
 
 cdef void cyUpdateDistortionElements(double[:] elementDistortionArray_,
                                      double[:,:,:,:] J_array,
                                      double[:,:] detJ_array,
                                      int nd,
-                                     int nElements)
+                                     proteus_index_t nElements)
 
 cdef void cyUpdateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
                                                 double[:,:] nodeArray,
-                                                int[:,:] elementNodesArray,
-                                                int[:] nodeElementOffsets,
-                                                int[:] nodeElementsArray,
-                                                int nElements,
-                                                int nNodes,
+                                                proteus_index_t[:,:] elementNodesArray,
+                                                proteus_index_t[:] nodeElementOffsets,
+                                                proteus_index_t[:] nodeElementsArray,
+                                                proteus_index_t nElements,
+                                                proteus_index_t nNodes,
                                                 bool el_average=*)
 
 cdef void cyUpdateInverseMeanRatioTriangleElements(double[:] IMRElementsArray_,
                                                    double[:,:] nodeArray,
-                                                   int[:,:] elementNodesArray,
-                                                   int nElements)
+                                                   proteus_index_t[:,:] elementNodesArray,
+                                                   proteus_index_t nElements)
 
-cdef double cyGetInverseMeanRatioSingleTriangle(int node0,
+cdef double cyGetInverseMeanRatioSingleTriangle(proteus_index_t node0,
                                                 double[:,:] nodeArray,
-                                                int[:,:] elementNodesArray,
-                                                int[:] nodeElementOffsets,
-                                                int[:] nodeElementsArray,
+                                                proteus_index_t[:,:] elementNodesArray,
+                                                proteus_index_t[:] nodeElementOffsets,
+                                                proteus_index_t[:] nodeElementsArray,
                                                 bool el_average=*)
 
 cdef double[:,:] cySmoothNodesQuality(double[:] distortion,
                                       double[:] dilation,
                                       double[:,:] nodeArray,
-                                      int nNodes_owned,
+                                      proteus_index_t nNodes_owned,
                                       int[:] nodeMaterialTypes,
-                                      int[:] nodeElementOffsets,
-                                      int[:] nodeElementsArray,
-                                      int[:,:] elementNodesArray,
+                                      proteus_index_t[:] nodeElementOffsets,
+                                      proteus_index_t[:] nodeElementsArray,
+                                      proteus_index_t[:,:] elementNodesArray,
                                       bool apply_directly=*)
 
 cdef int pyxGetLocalNearestNode(double[:] coords,
                                 double[:,:] nodeArray,
-                                int[:] nodeStarOffsets,
-                                int[:] nodeStarArray,
-                                int node)
+                                proteus_index_t[:] nodeStarOffsets,
+                                proteus_index_t[:] nodeStarArray,
+                                proteus_index_t node)
 
 cdef int pyxGetLocalNearestElement(double[:] coords,
                                    double[:,:] elementBarycentersArray,
-                                   int[:,:] elementNeighborsArray,
-                                   int eN)
+                                   proteus_index_t[:,:] elementNeighborsArray,
+                                   proteus_index_t eN)
 
 cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
                                                   double[:] starting_coords,
                                                   double[:,:,:] elementBoundaryNormalsArray,
-                                                  int[:,:] elementBoundariesArray,
+                                                  proteus_index_t[:,:] elementBoundariesArray,
                                                   double[:,:] elementBoundaryBarycentersArray,
-                                                  int[:,:] elementBoundaryElementsArray,
+                                                  proteus_index_t[:,:] elementBoundaryElementsArray,
                                                   int[:] exteriorElementBoundariesBoolArray,
-                                                  int eN)
+                                                  proteus_index_t eN)
 
 cdef int pyxGetLocalNearestElementAroundNode(double[:] coords,
-                                             int[:] nodeElementOffsets,
-                                             int[:] nodeElementsArray,
+                                             proteus_index_t[:] nodeElementOffsets,
+                                             proteus_index_t[:] nodeElementsArray,
                                              double[:,:] elementBarycentersArray,
-                                             int node)
+                                             proteus_index_t node)
 
 cdef void pyxUpdateElementBoundaryNormalsTetra(double[:,:,:] elementBoundaryNormalsArray_,
                                                double[:,:] nodeArray,
-                                               int[:,:] elementBoundariesArray,
-                                               int[:,:] elementBoundaryNodesArray,
+                                               proteus_index_t[:,:] elementBoundariesArray,
+                                               proteus_index_t[:,:] elementBoundaryNodesArray,
                                                double[:,:] elementBoundaryBarycentersArray,
                                                double[:,:] elementBarycentersArray,
-                                               int nElements)
+                                               proteus_index_t nElements)
 
 cdef void pyxUpdateElementBoundaryNormalsTriangle(double[:,:,:] elementBoundaryNormalsArray_,
                                                   double[:,:] nodeArray,
-                                                  int[:,:] elementBoundariesArray,
-                                                  int[:,:] elementBoundaryNodesArray,
+                                                  proteus_index_t[:,:] elementBoundariesArray,
+                                                  proteus_index_t[:,:] elementBoundaryNodesArray,
                                                   double[:,:] elementBoundaryBarycentersArray,
                                                   double[:,:] elementBarycentersArray,
-                                                  int nElements)
+                                                  proteus_index_t nElements)
 
 cdef void cyUpdateElementVolumesTriangle(double[:] elementVolumesArray_,
-                                         int[:,:] elementNodesArray,
+                                         proteus_index_t[:,:] elementNodesArray,
                                          double[:,:] nodeArray,
-                                         int nElements)
+                                         proteus_index_t nElements)
 
 cdef void cyUpdateElementVolumesTetra(double[:] elementVolumesArray_,
-                                      int[:,:] elementNodesArray,
+                                      proteus_index_t[:,:] elementNodesArray,
                                       double[:,:] nodeArray,
-                                      int nElements)
+                                      proteus_index_t nElements)
 
 cdef void cyUpdateElementBarycenters(double[:,:] elementBarycentersArray_,
-                                     int[:,:] elementNodesArray,
+                                     proteus_index_t[:,:] elementNodesArray,
                                      double[:,:] nodeArray,
-                                     int nElements)
+                                     proteus_index_t nElements)
 
 cdef np.ndarray cyGetCornerNodesTriangle(double[:,:] nodeArray,
-                                         int[:] nodeStarArray,
-                                         int[:] nodeStarOffsets,
+                                         proteus_index_t[:] nodeStarArray,
+                                         proteus_index_t[:] nodeStarOffsets,
                                          int[:] nodeMaterialTypes,
-                                         int nNodes)
+                                         proteus_index_t nNodes)
 
-cdef int[:] cyCheckOwnedVariable(int variable_nb_local,
+cdef int[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
                                  int rank,
-                                 int nVariables_owned,
-                                 int[:] variableNumbering_subdomain2global,
-                                 int[:] variableOffsets_subdomain_owned)
+                                 proteus_index_t nVariables_owned,
+                                 proteus_index_t[:] variableNumbering_subdomain2global,
+                                 proteus_index_t[:] variableOffsets_subdomain_owned)
 
-cdef int[:] cyGetGlobalVariable(int variable_nb_local,
-                                int nVariables_owned,
-                                int[:] variableNumbering_subdomain2global,
-                                int[:] variableOffsets_subdomain_owned)
+cdef int[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
+                                proteus_index_t nVariables_owned,
+                                proteus_index_t[:] variableNumbering_subdomain2global,
+                                proteus_index_t[:] variableOffsets_subdomain_owned)
 
-cdef int cyGetLocalVariable(int variable_nb_global,
+cdef int cyGetLocalVariable(proteus_index_t variable_nb_global,
                             int rank,
-                            int nVariables_owned,
-                            int[:] variableNumbering_subdomain2global,
-                            int[:] variableOffsets_subdomain_owned)
+                            proteus_index_t nVariables_owned,
+                            proteus_index_t[:] variableNumbering_subdomain2global,
+                            proteus_index_t[:] variableOffsets_subdomain_owned)
 
 cdef double[:] cyScalarRecoveryAtNodes(double[:] scalars,
-                                       int[:] nodeElementsArray,
-                                       int[:] nodeElementOffsets)
+                                       proteus_index_t[:] nodeElementsArray,
+                                       proteus_index_t[:] nodeElementOffsets)
 
 cdef double[:] cyScalarRecoveryAtNodesWeighted(double[:] scalars,
-                                               int[:] nodeElementsArray,
-                                               int[:] nodeElementOffsets,
+                                               proteus_index_t[:] nodeElementsArray,
+                                               proteus_index_t[:] nodeElementOffsets,
                                                double[:] detJ_array,
-                                               int nNodes)
+                                               proteus_index_t nNodes)
 
 cdef double[:,:] cyVectorRecoveryAtNodesWeighted(double[:,:] vectors,
-                                                 int[:] nodeElementsArray,
-                                                 int[:] nodeElementOffsets,
+                                                 proteus_index_t[:] nodeElementsArray,
+                                                 proteus_index_t[:] nodeElementOffsets,
                                                  double[:,:] detJ_array,
                                                  int nd)
 
 cdef double[:,:] cyVectorRecoveryAtNodes(double[:,:] vectors,
-                                         int[:] nodeElementsArray,
-                                         int[:] nodeElementOffsets,
+                                         proteus_index_t[:] nodeElementsArray,
+                                         proteus_index_t[:] nodeElementOffsets,
                                          int nd)
 
 cdef void cyFindBoundaryDirectionTriangle(double[:] dir_,
-                                          int node,
+                                          proteus_index_t node,
                                           double[:,:] nodeArray,
-                                          int[:] nodeStarOffsets,
-                                          int[:] nodeStarArray,
+                                          proteus_index_t[:] nodeStarOffsets,
+                                          proteus_index_t[:] nodeStarArray,
                                           int[:] nodeMaterialTypes)
 
 cdef void cyFindBoundaryDirectionTetra(double[:] dir_,
-                                       int node,
+                                       proteus_index_t node,
                                        double[:,:] nodeArray,
-                                       int[:] nodeStarOffsets,
-                                       int[:] nodeStarArray,
+                                       proteus_index_t[:] nodeStarOffsets,
+                                       proteus_index_t[:] nodeStarArray,
                                        int[:] nodeMaterialTypes)
