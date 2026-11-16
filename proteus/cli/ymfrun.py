@@ -382,9 +382,10 @@ def split_blockers(doc, entry):
     if lacking:
         return ["%s is missing %s: %s" % (name, m.what, m.hint) for m in lacking]
     mesh = entry.get("mesh") or {}
-    if "cells" in mesh or any(int(v) != 1 for v in _listed(mesh.get("levels", 1))):
-        # the deck machinery meshes the region with triangle, at element size h, once
-        return ["%s: a split discretization is meshed by element size, one level (mesh: {h: ...}); "
+    if any(int(v) != 1 for v in _listed(mesh.get("levels", 1))):
+        # the deck machinery meshes the region once: by cells per side (SWFlow's structured mesh) or with triangle
+        # at element size h (DispatchRun decides which the family takes)
+        return ["%s: a split discretization is meshed once (mesh: {h: ...} or {cells: ...}, no levels); "
                 "this one gives %s" % (name, ", ".join("%s %s" % kv for kv in sorted(mesh.items())))]
     return []
 

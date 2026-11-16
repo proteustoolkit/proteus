@@ -1,0 +1,38 @@
+# test/SWFlow/dam3Bumps.py with open (outflow) boundaries (reflecting_BCs=False) as a spec: a dam break over three conical bumps,
+# 75 m × 30 m, solved by the convex-limited scheme of proteus_numerics.ymf
+# (SW2DCV), on the deck's unstructured mesh path (structured=False) at h = 2,
+# for five seconds (5 outputs of 1 s: the rarefaction reaches the open end at x = 0 after 3.7 s). test_dispatch_run.py runs it from
+# the spec through ymf_run and from the deck through parun and compares the
+# solutions bitwise. The dam is at x = 16.05 and not at the deck's default 16 (the deck's dam_x_location option):
+# the deck writes the jump as x <= 16 (h = 1.875 at the jump) and ymf's heaviside is 1/2 there, so the two agree
+# only off the jump, and an unstructured mesh that happens to hold a node at x = 16 exactly (the fleet's
+# triangle builds do) would differ in that node alone.
+extends: proteus_numerics.ymf
+
+model:
+  name: "Dam break over three bumps, 75 m × 30 m (dam3Bumps)"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 75] × [0, 30],  t ∈ (0, 5]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_sets:
+      - {region: all, set: outflow}
+    initial_conditions:
+      - {field: h, type: function, formula: "max(1.875 heaviside(16.05 − x) − Z, 0)", units: m}
+      - {field: q, type: constant, value: 0.0}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.02}
+      θ: {value: 1.0}
+      Z: {formula: "max(0, 1 − sqrt((x − 30)² + (y − 6)²)/8, 1 − sqrt((x − 30)² + (y − 24)²)/8, 3 − 3 sqrt((x − 47.5)² + (y − 15)²)/10)"}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: convex_limited
+      mesh: {h: 2.0}
+      step_control: {type: min_cfl, cfl: 0.25}
+      discretization: {outputs: 5}
