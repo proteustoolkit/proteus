@@ -1,6 +1,7 @@
 import proteus
 from proteus import Profiling
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
 import math
 from proteus.Transport import OneLevelTransport
 import os
@@ -1548,17 +1549,17 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.timeIntegration.beta_bdf[
                 2] = self.timeIntegration.beta_bdf[1].copy()
             self.coefficients.sdInfo[(0, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(1, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 1)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.offset.append(self.offset[1])
             self.stride.append(self.stride[1])
             self.numericalFlux.isDOFBoundary[

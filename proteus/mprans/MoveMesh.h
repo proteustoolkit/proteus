@@ -282,7 +282,7 @@ namespace proteus
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
         proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-        proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+        proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
         proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
         proteus::pyarray<double>& disp_trial_ref = args.array<double>("disp_trial_ref");
         proteus::pyarray<double>& disp_grad_trial_ref = args.array<double>("disp_grad_trial_ref");
@@ -297,25 +297,25 @@ namespace proteus
         proteus::pyarray<double>& disp_grad_test_trace_ref = args.array<double>("disp_grad_test_trace_ref");
         proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-        int nElements_global = args.scalar<int>("nElements_global");
+        proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         proteus::pyarray<int>& materialTypes = args.array<int>("materialTypes");
         int nMaterialProperties = args.scalar<int>("nMaterialProperties");
         proteus::pyarray<double>& materialProperties = args.array<double>("materialProperties");
-        proteus::pyarray<int>& disp_l2g = args.array<int>("disp_l2g");
+        proteus::pyarray<proteus_index_t>& disp_l2g = args.array<proteus_index_t>("disp_l2g");
         proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
         proteus::pyarray<double>& v_dof = args.array<double>("v_dof");
         proteus::pyarray<double>& w_dof = args.array<double>("w_dof");
         proteus::pyarray<double>& bodyForce = args.array<double>("bodyForce");
-        int offset_u = args.scalar<int>("offset_u");
-        int offset_v = args.scalar<int>("offset_v");
-        int offset_w = args.scalar<int>("offset_w");
-        int stride_u = args.scalar<int>("stride_u");
-        int stride_v = args.scalar<int>("stride_v");
-        int stride_w = args.scalar<int>("stride_w");
+        proteus_index_t offset_u = args.scalar<proteus_index_t>("offset_u");
+        proteus_index_t offset_v = args.scalar<proteus_index_t>("offset_v");
+        proteus_index_t offset_w = args.scalar<proteus_index_t>("offset_w");
+        proteus_index_t stride_u = args.scalar<proteus_index_t>("stride_u");
+        proteus_index_t stride_v = args.scalar<proteus_index_t>("stride_v");
+        proteus_index_t stride_w = args.scalar<proteus_index_t>("stride_w");
         proteus::pyarray<double>& globalResidual = args.array<double>("globalResidual");
-        int nExteriorElementBoundaries_global = args.scalar<int>("nExteriorElementBoundaries_global");
-        proteus::pyarray<int>& exteriorElementBoundariesArray = args.array<int>("exteriorElementBoundariesArray");
-        proteus::pyarray<int>& elementBoundaryElementsArray = args.array<int>("elementBoundaryElementsArray");
+        proteus_index_t nExteriorElementBoundaries_global = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+        proteus::pyarray<proteus_index_t>& exteriorElementBoundariesArray = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+        proteus::pyarray<proteus_index_t>& elementBoundaryElementsArray = args.array<proteus_index_t>("elementBoundaryElementsArray");
         proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
         proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
         proteus::pyarray<int>& isDOFBoundary_v = args.array<int>("isDOFBoundary_v");
@@ -332,7 +332,7 @@ namespace proteus
       //
       //loop over elements to compute volume integrals and load them into element and global residual
       //
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           //declare local storage for element residual and initialize
           double
@@ -351,7 +351,7 @@ namespace proteus
           for(int k=0;k<nQuadraturePoints_element;k++)
             {
               //compute indices and declare local storage
-              int //eN_k = eN*nQuadraturePoints_element+k,
+              proteus_index_t //eN_k = eN*nQuadraturePoints_element+k,
                 //eN_k_nSpace=eN_k*nSpace,
                 eN_nDOF_trial_element = eN*nDOF_trial_element;
               double u=0.0,v=0.0,w=0.0,
@@ -429,7 +429,7 @@ namespace proteus
           //
           for(int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i=eN*nDOF_test_element+i;
+              proteus_index_t eN_i=eN*nDOF_test_element+i;
 
               globalResidual.data()[offset_u+stride_u*disp_l2g.data()[eN_i]] += elementResidual_u[i];
               globalResidual.data()[offset_v+stride_v*disp_l2g.data()[eN_i]] += elementResidual_v[i];
@@ -442,12 +442,12 @@ namespace proteus
       //ebNE is the Exterior element boundary INdex
       //ebN is the element boundary INdex
       //eN is the element index
-      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+      for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
         {
-          int ebN = exteriorElementBoundariesArray.data()[ebNE],
-            eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-            ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0],
-            eN_nDOF_trial_element = eN*nDOF_trial_element;
+          proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE],
+            eN  = elementBoundaryElementsArray.data()[ebN*2+0];
+          int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+          proteus_index_t eN_nDOF_trial_element = eN*nDOF_trial_element;
           double elementResidual_u[nDOF_test_element],
             elementResidual_v[nDOF_test_element],
             elementResidual_w[nDOF_test_element];
@@ -459,8 +459,8 @@ namespace proteus
             }
           for  (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
             {
-              int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+              proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb;
+              int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                 ebN_local_kb_nSpace = ebN_local_kb*nSpace;
               double u_ext=0.0,
                 v_ext=0.0,
@@ -582,7 +582,7 @@ namespace proteus
           //
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i = eN*nDOF_test_element+i;
+              proteus_index_t eN_i = eN*nDOF_test_element+i;
 
               globalResidual.data()[offset_u+stride_u*disp_l2g.data()[eN_i]]+=elementResidual_u[i];
               globalResidual.data()[offset_v+stride_v*disp_l2g.data()[eN_i]]+=elementResidual_v[i];
@@ -596,7 +596,7 @@ namespace proteus
         proteus::pyarray<double>& mesh_trial_ref = args.array<double>("mesh_trial_ref");
         proteus::pyarray<double>& mesh_grad_trial_ref = args.array<double>("mesh_grad_trial_ref");
         proteus::pyarray<double>& mesh_dof = args.array<double>("mesh_dof");
-        proteus::pyarray<int>& mesh_l2g = args.array<int>("mesh_l2g");
+        proteus::pyarray<proteus_index_t>& mesh_l2g = args.array<proteus_index_t>("mesh_l2g");
         proteus::pyarray<double>& dV_ref = args.array<double>("dV_ref");
         proteus::pyarray<double>& disp_trial_ref = args.array<double>("disp_trial_ref");
         proteus::pyarray<double>& disp_grad_trial_ref = args.array<double>("disp_grad_trial_ref");
@@ -611,37 +611,37 @@ namespace proteus
         proteus::pyarray<double>& disp_grad_test_trace_ref = args.array<double>("disp_grad_test_trace_ref");
         proteus::pyarray<double>& normal_ref = args.array<double>("normal_ref");
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
-        int nElements_global = args.scalar<int>("nElements_global");
+        proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         proteus::pyarray<int>& materialTypes = args.array<int>("materialTypes");
         int nMaterialProperties = args.scalar<int>("nMaterialProperties");
         proteus::pyarray<double>& materialProperties = args.array<double>("materialProperties");
-        proteus::pyarray<int>& disp_l2g = args.array<int>("disp_l2g");
+        proteus::pyarray<proteus_index_t>& disp_l2g = args.array<proteus_index_t>("disp_l2g");
         proteus::pyarray<double>& u_dof = args.array<double>("u_dof");
         proteus::pyarray<double>& v_dof = args.array<double>("v_dof");
         proteus::pyarray<double>& w_dof = args.array<double>("w_dof");
         proteus::pyarray<double>& bodyForce = args.array<double>("bodyForce");
-        proteus::pyarray<int>& csrRowIndeces_u_u = args.array<int>("csrRowIndeces_u_u");
-        proteus::pyarray<int>& csrColumnOffsets_u_u = args.array<int>("csrColumnOffsets_u_u");
-        proteus::pyarray<int>& csrRowIndeces_u_v = args.array<int>("csrRowIndeces_u_v");
-        proteus::pyarray<int>& csrColumnOffsets_u_v = args.array<int>("csrColumnOffsets_u_v");
-        proteus::pyarray<int>& csrRowIndeces_u_w = args.array<int>("csrRowIndeces_u_w");
-        proteus::pyarray<int>& csrColumnOffsets_u_w = args.array<int>("csrColumnOffsets_u_w");
-        proteus::pyarray<int>& csrRowIndeces_v_u = args.array<int>("csrRowIndeces_v_u");
-        proteus::pyarray<int>& csrColumnOffsets_v_u = args.array<int>("csrColumnOffsets_v_u");
-        proteus::pyarray<int>& csrRowIndeces_v_v = args.array<int>("csrRowIndeces_v_v");
-        proteus::pyarray<int>& csrColumnOffsets_v_v = args.array<int>("csrColumnOffsets_v_v");
-        proteus::pyarray<int>& csrRowIndeces_v_w = args.array<int>("csrRowIndeces_v_w");
-        proteus::pyarray<int>& csrColumnOffsets_v_w = args.array<int>("csrColumnOffsets_v_w");
-        proteus::pyarray<int>& csrRowIndeces_w_u = args.array<int>("csrRowIndeces_w_u");
-        proteus::pyarray<int>& csrColumnOffsets_w_u = args.array<int>("csrColumnOffsets_w_u");
-        proteus::pyarray<int>& csrRowIndeces_w_v = args.array<int>("csrRowIndeces_w_v");
-        proteus::pyarray<int>& csrColumnOffsets_w_v = args.array<int>("csrColumnOffsets_w_v");
-        proteus::pyarray<int>& csrRowIndeces_w_w = args.array<int>("csrRowIndeces_w_w");
-        proteus::pyarray<int>& csrColumnOffsets_w_w = args.array<int>("csrColumnOffsets_w_w");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_u_u = args.array<proteus_csr_index_t>("csrRowIndeces_u_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_u_u = args.array<proteus_csr_index_t>("csrColumnOffsets_u_u");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_u_v = args.array<proteus_csr_index_t>("csrRowIndeces_u_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_u_v = args.array<proteus_csr_index_t>("csrColumnOffsets_u_v");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_u_w = args.array<proteus_csr_index_t>("csrRowIndeces_u_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_u_w = args.array<proteus_csr_index_t>("csrColumnOffsets_u_w");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_v_u = args.array<proteus_csr_index_t>("csrRowIndeces_v_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_v_u = args.array<proteus_csr_index_t>("csrColumnOffsets_v_u");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_v_v = args.array<proteus_csr_index_t>("csrRowIndeces_v_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_v_v = args.array<proteus_csr_index_t>("csrColumnOffsets_v_v");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_v_w = args.array<proteus_csr_index_t>("csrRowIndeces_v_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_v_w = args.array<proteus_csr_index_t>("csrColumnOffsets_v_w");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_w_u = args.array<proteus_csr_index_t>("csrRowIndeces_w_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_w_u = args.array<proteus_csr_index_t>("csrColumnOffsets_w_u");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_w_v = args.array<proteus_csr_index_t>("csrRowIndeces_w_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_w_v = args.array<proteus_csr_index_t>("csrColumnOffsets_w_v");
+        proteus::pyarray<proteus_csr_index_t>& csrRowIndeces_w_w = args.array<proteus_csr_index_t>("csrRowIndeces_w_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_w_w = args.array<proteus_csr_index_t>("csrColumnOffsets_w_w");
         proteus::pyarray<double>& globalJacobian = args.array<double>("globalJacobian");
-        int nExteriorElementBoundaries_global = args.scalar<int>("nExteriorElementBoundaries_global");
-        proteus::pyarray<int>& exteriorElementBoundariesArray = args.array<int>("exteriorElementBoundariesArray");
-        proteus::pyarray<int>& elementBoundaryElementsArray = args.array<int>("elementBoundaryElementsArray");
+        proteus_index_t nExteriorElementBoundaries_global = args.scalar<proteus_index_t>("nExteriorElementBoundaries_global");
+        proteus::pyarray<proteus_index_t>& exteriorElementBoundariesArray = args.array<proteus_index_t>("exteriorElementBoundariesArray");
+        proteus::pyarray<proteus_index_t>& elementBoundaryElementsArray = args.array<proteus_index_t>("elementBoundaryElementsArray");
         proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
         proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
         proteus::pyarray<int>& isDOFBoundary_v = args.array<int>("isDOFBoundary_v");
@@ -649,21 +649,21 @@ namespace proteus
         proteus::pyarray<int>& isStressFluxBoundary_u = args.array<int>("isStressFluxBoundary_u");
         proteus::pyarray<int>& isStressFluxBoundary_v = args.array<int>("isStressFluxBoundary_v");
         proteus::pyarray<int>& isStressFluxBoundary_w = args.array<int>("isStressFluxBoundary_w");
-        proteus::pyarray<int>& csrColumnOffsets_eb_u_u = args.array<int>("csrColumnOffsets_eb_u_u");
-        proteus::pyarray<int>& csrColumnOffsets_eb_u_v = args.array<int>("csrColumnOffsets_eb_u_v");
-        proteus::pyarray<int>& csrColumnOffsets_eb_u_w = args.array<int>("csrColumnOffsets_eb_u_w");
-        proteus::pyarray<int>& csrColumnOffsets_eb_v_u = args.array<int>("csrColumnOffsets_eb_v_u");
-        proteus::pyarray<int>& csrColumnOffsets_eb_v_v = args.array<int>("csrColumnOffsets_eb_v_v");
-        proteus::pyarray<int>& csrColumnOffsets_eb_v_w = args.array<int>("csrColumnOffsets_eb_v_w");
-        proteus::pyarray<int>& csrColumnOffsets_eb_w_u = args.array<int>("csrColumnOffsets_eb_w_u");
-        proteus::pyarray<int>& csrColumnOffsets_eb_w_v = args.array<int>("csrColumnOffsets_eb_w_v");
-        proteus::pyarray<int>& csrColumnOffsets_eb_w_w = args.array<int>("csrColumnOffsets_eb_w_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_u_u = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_u_v = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_u_w = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_u_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_v_u = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_v_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_v_v = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_v_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_v_w = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_v_w");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_w_u = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_w_u");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_w_v = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_w_v");
+        proteus::pyarray<proteus_csr_index_t>& csrColumnOffsets_eb_w_w = args.array<proteus_csr_index_t>("csrColumnOffsets_eb_w_w");
       CompKernel<nSpace,nDOF_mesh_trial_element,nDOF_trial_element,nDOF_test_element> ck;
       const int nSymTen(ck.nSymTen);
       //
       //loop over elements to compute volume integrals and load them into the element Jacobians and global Jacobian
       //
-      for(int eN=0;eN<nElements_global;eN++)
+      for(proteus_index_t eN=0;eN<nElements_global;eN++)
         {
           double
             elementJacobian_u_u[nDOF_test_element][nDOF_trial_element],
@@ -690,8 +690,7 @@ namespace proteus
               }
           for  (int k=0;k<nQuadraturePoints_element;k++)
             {
-              const int
-                eN_nDOF_trial_element = eN*nDOF_trial_element; //index to a vector at a quadrature point
+              const proteus_index_t eN_nDOF_trial_element = eN*nDOF_trial_element; //index to a vector at a quadrature point
 
               //declare local storage
               double u=0.0,v=0.0,w=0.0,
@@ -777,10 +776,10 @@ namespace proteus
           //
           for (int i=0;i<nDOF_test_element;i++)
             {
-              int eN_i = eN*nDOF_test_element+i;
+              proteus_index_t eN_i = eN*nDOF_test_element+i;
               for (int j=0;j<nDOF_trial_element;j++)
                 {
-                  int eN_i_j = eN_i*nDOF_trial_element+j;
+                  proteus_index_t eN_i_j = eN_i*nDOF_trial_element+j;
 
                   globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_u_u.data()[eN_i_j]] += elementJacobian_u_u[i][j];
                   globalJacobian.data()[csrRowIndeces_u_v.data()[eN_i] + csrColumnOffsets_u_v.data()[eN_i_j]] += elementJacobian_u_v[i][j];
@@ -799,16 +798,16 @@ namespace proteus
       //
       //loop over exterior element boundaries to compute the surface integrals and load them into the global Jacobian
       //
-      for (int ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
+      for (proteus_index_t ebNE = 0; ebNE < nExteriorElementBoundaries_global; ebNE++)
         {
-          int ebN = exteriorElementBoundariesArray.data()[ebNE],
+          proteus_index_t ebN = exteriorElementBoundariesArray.data()[ebNE],
             eN  = elementBoundaryElementsArray.data()[ebN*2+0],
-            eN_nDOF_trial_element = eN*nDOF_trial_element,
-            ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
+            eN_nDOF_trial_element = eN*nDOF_trial_element;
+          int ebN_local = elementBoundaryLocalElementBoundariesArray.data()[ebN*2+0];
           for  (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
             {
-              int ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb,
-                ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
+              proteus_index_t ebNE_kb = ebNE*nQuadraturePoints_elementBoundary+kb;
+              int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                 ebN_local_kb_nSpace = ebN_local_kb*nSpace;
 
               double
@@ -923,10 +922,10 @@ namespace proteus
               //
               for (int i=0;i<nDOF_test_element;i++)
                 {
-                  int eN_i = eN*nDOF_test_element+i;
+                  proteus_index_t eN_i = eN*nDOF_test_element+i;
                   for (int j=0;j<nDOF_trial_element;j++)
                     {
-                      int ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
+                      proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element + i*nDOF_trial_element + j;
 
                       globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]] += fluxJacobian_u_u[j]*disp_test_dS[i];
                       globalJacobian.data()[csrRowIndeces_u_v.data()[eN_i] + csrColumnOffsets_eb_u_v.data()[ebN_i_j]] += fluxJacobian_u_v[j]*disp_test_dS[i];

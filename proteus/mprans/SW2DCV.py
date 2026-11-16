@@ -3,6 +3,7 @@ from proteus import FemTools
 from proteus import LinearAlgebraTools as LAT
 from proteus.mprans.cSW2DCV import *
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus.Transport import Quadrature, logEvent, memory, BackwardEuler
 from proteus.Transport import FluxBoundaryConditions, Comm, DOFBoundaryConditions
@@ -1219,8 +1220,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # construct nnz_cMatrix, czval_cMatrix, rowptr_cMatrix, colind_cMatrix C matrix
         nnz_cMatrix = nnz // 3 // 3  # This is always true for the SWEs in 2D
         nzval_cMatrix = np.zeros(nnz_cMatrix)  # This is enough since the values are filled later
-        rowptr_cMatrix = np.zeros(self.u[0].dof.size + 1, 'i')  # NOTE that in particular rowptr_cMatrix[0]=0
-        colind_cMatrix = np.zeros(nnz_cMatrix, 'i')
+        rowptr_cMatrix = np.zeros(self.u[0].dof.size + 1, CSR_INDEX_DTYPE)  # NOTE that in particular rowptr_cMatrix[0]=0
+        colind_cMatrix = np.zeros(nnz_cMatrix, CSR_INDEX_DTYPE)
         # fill vector rowptr_cMatrix
         for i in range(1, rowptr_cMatrix.size):
             rowptr_cMatrix[i] = rowptr_cMatrix[i - 1] + (rowptr[3 * (i - 1) + 1] - rowptr[3 * (i - 1)])//3

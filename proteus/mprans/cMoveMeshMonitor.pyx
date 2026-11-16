@@ -4,6 +4,8 @@
 cimport cython
 import numpy as np
 cimport numpy as np
+cdef extern from "index_type.h":
+    ctypedef int proteus_index_t
 from libcpp cimport bool
 from proteus.Profiling import logEvent
 from proteus.mprans import MeshSmoothing as ms
@@ -41,7 +43,7 @@ cdef class cCoefficients:
                     double[:] areas_,
                     double[:, :] q_rci,
                     double[:, :, :] q_fci,
-                    int nElements_owned):
+                    proteus_index_t nElements_owned):
         cdef double integral_1_over_f = 0.
         cdef int N_eN = q_J.shape[0]
         cdef int nE = 0
@@ -76,12 +78,12 @@ cdef class cCoefficients:
         cdef double[:,:] elementBoundaryBarycentersArray = mesh.elementBoundaryBarycentersArray
         cdef double[:,:] elementBarycentersArray = mesh.elementBarycentersArray
         cdef double[:,:] nodeArray = mesh.nodeArray
-        cdef int[:,:] elementBoundaryNodesArray = mesh.elementBoundaryNodesArray
-        cdef int[:,:] elementNodesArray = mesh.elementNodesArray
-        cdef int[:,:] elementBoundariesArray = mesh.elementBoundariesArray
-        cdef int nElementBoundaries_global = mesh.nElementBoundaries_global
+        cdef proteus_index_t[:,:] elementBoundaryNodesArray = mesh.elementBoundaryNodesArray
+        cdef proteus_index_t[:,:] elementNodesArray = mesh.elementNodesArray
+        cdef proteus_index_t[:,:] elementBoundariesArray = mesh.elementBoundariesArray
+        cdef proteus_index_t nElementBoundaries_global = mesh.nElementBoundaries_global
         cdef int nNodes_elementBoundary = mesh.nNodes_elementBoundary
-        cdef int nElements_global = mesh.nElements_global
+        cdef proteus_index_t nElements_global = mesh.nElements_global
         cdef int nNodes_element = mesh.nNodes_element
         cdef double[:,:,:] elementBoundaryNormalsArray = pc.mesh.elementBoundaryNormalsArray
         # update element boundary barycenters
@@ -140,12 +142,12 @@ cdef class cCoefficients:
         cdef double[:,:] elementBoundaryBarycentersArray = mesh.elementBoundaryBarycentersArray
         cdef double[:,:] elementBarycentersArray = mesh.elementBarycentersArray
         cdef double[:,:] nodeArray = mesh.nodeArray
-        cdef int[:,:] elementBoundaryNodesArray = mesh.elementBoundaryNodesArray
-        cdef int[:,:] elementNodesArray = mesh.elementNodesArray
-        cdef int[:,:] elementBoundariesArray = mesh.elementBoundariesArray
-        cdef int nElementBoundaries_global = mesh.nElementBoundaries_global
+        cdef proteus_index_t[:,:] elementBoundaryNodesArray = mesh.elementBoundaryNodesArray
+        cdef proteus_index_t[:,:] elementNodesArray = mesh.elementNodesArray
+        cdef proteus_index_t[:,:] elementBoundariesArray = mesh.elementBoundariesArray
+        cdef proteus_index_t nElementBoundaries_global = mesh.nElementBoundaries_global
         cdef int nNodes_elementBoundary = mesh.nNodes_elementBoundary
-        cdef int nElements_global = mesh.nElements_global
+        cdef proteus_index_t nElements_global = mesh.nElements_global
         cdef int nNodes_element = mesh.nNodes_element
         cdef double[:,:,:] elementBoundaryNormalsArray = pc.mesh.elementBoundaryNormalsArray
         # update element boundary barycenters
@@ -218,7 +220,7 @@ cdef class cCoefficients:
         cdef int flag
         cdef bool fixed
         cdef double area = 0
-        cdef int eN, eeN
+        cdef proteus_index_t eN, eeN
         cdef double ls_phi
         cdef double f
         cdef double Ccoeff = pc.C
@@ -230,41 +232,41 @@ cdef class cCoefficients:
         cdef double[:] areas = pc.areas
         cdef double[:] u_phi = pc.u_phi
         cdef int i, ii
-        cdef int iN
+        cdef proteus_index_t iN
         cdef object femSpace = pc.model.u[0].femSpace
         cdef bool find_nearest_node
         # initialise mesh memoryview before loop
         cdef double[:,:] nodeArray = pc.mesh.nodeArray
-        cdef int[:] nodeStarOffsets = pc.mesh.nodeStarOffsets
-        cdef int[:] nodeStarArray = pc.mesh.nodeStarArray
-        cdef int[:] nodeElementOffsets = pc.mesh.nodeElementOffsets
-        cdef int[:] nodeElementsArray = pc.mesh.nodeElementsArray
+        cdef proteus_index_t[:] nodeStarOffsets = pc.mesh.nodeStarOffsets
+        cdef proteus_index_t[:] nodeStarArray = pc.mesh.nodeStarArray
+        cdef proteus_index_t[:] nodeElementOffsets = pc.mesh.nodeElementOffsets
+        cdef proteus_index_t[:] nodeElementsArray = pc.mesh.nodeElementsArray
         cdef int[:] nodeMaterialTypes = pc.mesh.nodeMaterialTypes
         cdef double[:,:] elementBarycentersArray = pc.mesh.elementBarycentersArray
-        cdef int[:,:] elementBoundaryElementsArray = pc.mesh.elementBoundaryElementsArray
-        cdef int[:,:] elementBoundariesArray = pc.mesh.elementBoundariesArray
-        cdef int[:,:] elementNodesArray = pc.mesh.elementNodesArray
+        cdef proteus_index_t[:,:] elementBoundaryElementsArray = pc.mesh.elementBoundaryElementsArray
+        cdef proteus_index_t[:,:] elementBoundariesArray = pc.mesh.elementBoundariesArray
+        cdef proteus_index_t[:,:] elementNodesArray = pc.mesh.elementNodesArray
         cdef double[:,:] elementBoundaryBarycentersArray = pc.mesh.elementBoundaryBarycentersArray
         cdef int[:] exteriorElementBoundariesBoolArray = np.zeros(pc.mesh.nElementBoundaries_global, dtype=np.int32)
         cdef int bb_i
         for bb_i in pc.mesh.exteriorElementBoundariesArray:
             exteriorElementBoundariesBoolArray[bb_i] = 1
         cdef double[:,:,:] elementBoundaryNormalsArray = pc.mesh.elementBoundaryNormalsArray
-        cdef int nNodes_owned = pc.mesh.nNodes_owned
-        cdef int nNodes_global = pc.mesh.nNodes_global
-        cdef int nElements_owned = pc.mesh.nElements_owned
-        cdef int nElements_global = pc.mesh.nElements_global
-        cdef int[:] nodeNumbering_subdomain2global = pc.mesh.globalMesh.nodeNumbering_subdomain2global
-        cdef int[:] elementNumbering_subdomain2global = pc.mesh.globalMesh.elementNumbering_subdomain2global
-        cdef int[:] nodeOffsets_subdomain_owned = pc.mesh.globalMesh.nodeOffsets_subdomain_owned
-        cdef int[:] elementOffsets_subdomain_owned = pc.mesh.globalMesh.elementOffsets_subdomain_owned
+        cdef proteus_index_t nNodes_owned = pc.mesh.nNodes_owned
+        cdef proteus_index_t nNodes_global = pc.mesh.nNodes_global
+        cdef proteus_index_t nElements_owned = pc.mesh.nElements_owned
+        cdef proteus_index_t nElements_global = pc.mesh.nElements_global
+        cdef proteus_index_t[:] nodeNumbering_subdomain2global = pc.mesh.globalMesh.nodeNumbering_subdomain2global
+        cdef proteus_index_t[:] elementNumbering_subdomain2global = pc.mesh.globalMesh.elementNumbering_subdomain2global
+        cdef proteus_index_t[:] nodeOffsets_subdomain_owned = pc.mesh.globalMesh.nodeOffsets_subdomain_owned
+        cdef proteus_index_t[:] elementOffsets_subdomain_owned = pc.mesh.globalMesh.elementOffsets_subdomain_owned
         cdef int[:] nearestNArray = np.array([i for i in range(len(xx))], dtype=np.int32)
         cdef int[:] typeNArray = np.zeros(nNodes_global, dtype=np.int32)
-        cdef int[:,:] elementNeighborsArray = pc.mesh.elementNeighborsArray
-        cdef int nElementBoundaries_owned = pc.mesh.nElementBoundaries_owned
-        cdef int[:] elementBoundaryNumbering_subdomain2global = pc.mesh.globalMesh.elementBoundaryNumbering_subdomain2global
-        cdef int[:] elementBoundaryOffsets_subdomain_owned = pc.mesh.globalMesh.elementBoundaryOffsets_subdomain_owned
-        cdef int[:,:] elementBoundaryNodesArray = pc.mesh.elementBoundaryNodesArray
+        cdef proteus_index_t[:,:] elementNeighborsArray = pc.mesh.elementNeighborsArray
+        cdef proteus_index_t nElementBoundaries_owned = pc.mesh.nElementBoundaries_owned
+        cdef proteus_index_t[:] elementBoundaryNumbering_subdomain2global = pc.mesh.globalMesh.elementBoundaryNumbering_subdomain2global
+        cdef proteus_index_t[:] elementBoundaryOffsets_subdomain_owned = pc.mesh.globalMesh.elementBoundaryOffsets_subdomain_owned
+        cdef proteus_index_t[:,:] elementBoundaryNodesArray = pc.mesh.elementBoundaryNodesArray
         cdef int[:] fixedNodesBoolArray = pc.mesh.fixedNodesBoolArray
         cdef int nSmoothOut = pc.nSmoothOut
         cdef int nSmoothIn = pc.nSmoothIn
@@ -274,7 +276,7 @@ cdef class cCoefficients:
         cdef double[:] vec2 = np.zeros(3)
         cdef double vec_dist
         cdef double[:] fixed_dir = np.ones(3)
-        cdef int nearestN
+        cdef proteus_index_t nearestN
         cdef int typeN
         comm = Comm.get().comm.tompi4py()
         comm.barrier()
@@ -311,10 +313,10 @@ cdef class cCoefficients:
         cdef int nPending_disp = 0  # number of pending solutions from other ranks
         cdef int nPending_disp_total = 0  # number of pending solutions from other ranks
         # declare variables for speed up
-        cdef int node
-        cdef int node0
-        cdef int nNodes
-        cdef int nOffset
+        cdef proteus_index_t node
+        cdef proteus_index_t node0
+        cdef proteus_index_t nNodes
+        cdef proteus_index_t nOffset
         cdef double dot
         cdef double t
         cdef int j
@@ -323,7 +325,7 @@ cdef class cCoefficients:
         cdef int new_rank
         cdef int nodeEl
         cdef double[:] coords = np.zeros(3)
-        cdef int b_i, b_i_global
+        cdef proteus_index_t b_i, b_i_global
         cdef double[:] bound_bar
         cdef int[3] result
         cdef int[:] result2
@@ -356,13 +358,13 @@ cdef class cCoefficients:
         cdef double[:] nodesSentBoolArray = np.zeros(len(xx))
         cdef bool pending = False
         cdef double[:] starting_coords = np.zeros(3)
-        cdef int nEbn  # number of boundaries per elements
+        cdef proteus_index_t nEbn  # number of boundaries per elements
         cdef double[:] resultd
         if nd == 2:
             nEbn = 3
         elif nd == 3:
             nEbn = 4
-        cdef int nNel  # number of nodes per elements
+        cdef proteus_index_t nNel  # number of nodes per elements
         if nd == 2:
             nNel = 3
         elif nd == 3:
@@ -945,22 +947,22 @@ cdef class cCoefficients:
     #             self.uOfXTatQuadrature[e, k] = f
 
 def recoveryAtNodes(double[:] scalars,
-                    int[:] nodeElementsArray,
-                    int[:] nodeElementOffsets):
+                    proteus_index_t[:] nodeElementsArray,
+                    proteus_index_t[:] nodeElementOffsets):
     return cppRecoveryAtNodes(scalars=scalars,
                               nodeElementsArray=nodeElementsArray,
                               nodeElementOffsets=nodeElementOffsets)
 
 cdef double[:] cppRecoveryAtNodes(double[:] scalars,
-                                  int[:] nodeElementsArray,
-                                  int[:] nodeElementOffsets):
+                                  proteus_index_t[:] nodeElementsArray,
+                                  proteus_index_t[:] nodeElementOffsets):
     """
     scalar:
          Scalar in element
     """
     cdef double[:] recovered_scalars = np.zeros(len(nodeElementOffsets)-1)
-    cdef int nb_el
-    cdef int eOffset
+    cdef proteus_index_t nb_el
+    cdef proteus_index_t eOffset
     cdef double var_sum
     for node in range(len(nodeElementOffsets)-1):
         nb_el = 0
@@ -973,10 +975,10 @@ cdef double[:] cppRecoveryAtNodes(double[:] scalars,
     return recovered_scalars
 
 def recoveryAtNodesWeighted(double[:] scalars,
-                            int[:] nodeElementsArray,
-                            int[:] nodeElementOffsets,
+                            proteus_index_t[:] nodeElementsArray,
+                            proteus_index_t[:] nodeElementOffsets,
                             double[:] detJ_array,
-                            int nNodes):
+                            proteus_index_t nNodes):
     return cppRecoveryAtNodesWeighted(scalars=scalars,
                                       nodeElementsArray=nodeElementsArray,
                                       nodeElementOffsets=nodeElementOffsets,
@@ -984,17 +986,17 @@ def recoveryAtNodesWeighted(double[:] scalars,
                                       nNodes=nNodes)
 
 cdef double[:] cppRecoveryAtNodesWeighted(double[:] scalars,
-                                          int[:] nodeElementsArray,
-                                          int[:] nodeElementOffsets,
+                                          proteus_index_t[:] nodeElementsArray,
+                                          proteus_index_t[:] nodeElementOffsets,
                                           double[:] detJ_array,
-                                          int nNodes):
+                                          proteus_index_t nNodes):
     cdef double[:] recovered_scalars = np.zeros(nNodes)
-    cdef int nb_el
+    cdef proteus_index_t nb_el
     cdef double detJ_patch = 0.
     cdef double scalar_sum = 0.
-    cdef int node
-    cdef int eOffset
-    cdef int eN
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t eN
     for node in range(nNodes):
         nb_el = 0
         detJ_patch = 0.
@@ -1023,11 +1025,11 @@ def gradientRecoveryAtNodes(grads,
                                       nd=nd)
 
 cdef double[:,:] cppGradientRecoveryAtNodes(double[:,:,:] grads,
-                                            int[:] nodeElementsArray,
-                                            int[:] nodeElementOffsets,
+                                            proteus_index_t[:] nodeElementsArray,
+                                            proteus_index_t[:] nodeElementOffsets,
                                             int nd):
     cdef double[:, :] recovered_grads = np.zeros((len(nodeElementOffsets)-1, nd))
-    cdef int nb_el
+    cdef proteus_index_t nb_el
     cdef double[:] grad_sum = np.zeros(nd)
     for node in range(len(nodeElementOffsets)-1):
         nb_el = 0
@@ -1048,8 +1050,8 @@ cdef double[:,:] cppGradientRecoveryAtNodes(double[:,:,:] grads,
     return recovered_grads
 
 def gradientRecoveryAtNodesWeighted(double[:,:,:] grads,
-                                    int[:] nodeElementsArray,
-                                    int[:] nodeElementOffsets,
+                                    proteus_index_t[:] nodeElementsArray,
+                                    proteus_index_t[:] nodeElementOffsets,
                                     double[:,:] detJ_array,
                                     int nd):
     return cppGradientRecoveryAtNodesWeighted(grads=grads,
@@ -1059,12 +1061,12 @@ def gradientRecoveryAtNodesWeighted(double[:,:,:] grads,
                                               nd=nd)
 
 cdef double[:,:] cppGradientRecoveryAtNodesWeighted(double[:,:,:] grads,
-                                                    int[:] nodeElementsArray,
-                                                    int[:] nodeElementOffsets,
+                                                    proteus_index_t[:] nodeElementsArray,
+                                                    proteus_index_t[:] nodeElementOffsets,
                                                     double[:,:] detJ_array,
                                                     int nd):
     cdef double[:, :] recovered_grads = np.zeros((len(nodeElementOffsets)-1, nd))
-    cdef int nb_el
+    cdef proteus_index_t nb_el
     cdef double detJ_patch = 0.
     cdef double[:] grad_sum = np.zeros(nd)
     for node in range(len(nodeElementOffsets)-1):
@@ -1093,8 +1095,8 @@ cdef double[:,:] cppGradientRecoveryAtNodesWeighted(double[:,:,:] grads,
 #                                                      double[:] x,
 #                                                      int[:] exteriorElementBoundariesBoolArray,
 #                                                      double[:,:,:] elementBoundaryNormalsArray,
-#                                                      int nearest_node,
-#                                                      int eN):
+#                                                      proteus_index_t nearest_node,
+#                                                      proteus_index_t eN):
 #     nearest_node = ms.pyxGetLocalNearestNode(coords=x,
 #                                              nodeArray=mesh.nodeArray,
 #                                              nodeStarOffsets=mesh.nodeStarOffsets,
@@ -1126,18 +1128,18 @@ cdef double[:,:] cppGradientRecoveryAtNodesWeighted(double[:,:,:] grads,
 
 # cdef tuple pyxSearchNearestNodeElement(double[:] x,
 #                                        double[:,:] nodeArray,
-#                                        int[:] nodeStarOffsets,
-#                                        int[:] nodeStarArray,
-#                                        int[:] nodeElementOffsets,
-#                                        int[:] nodeElementsArray,
+#                                        proteus_index_t[:] nodeStarOffsets,
+#                                        proteus_index_t[:] nodeStarArray,
+#                                        proteus_index_t[:] nodeElementOffsets,
+#                                        proteus_index_t[:] nodeElementsArray,
 #                                        double[:,:] elementBarycentersArray,
-#                                        int[:,:] elementBoundaryElementsArray,
-#                                        int[:,:] elementBoundariesArray,
+#                                        proteus_index_t[:,:] elementBoundaryElementsArray,
+#                                        proteus_index_t[:,:] elementBoundariesArray,
 #                                        double[:,:] elementBoundaryBarycentersArray,
 #                                        int[:] exteriorElementBoundariesBoolArray,
 #                                        double[:,:,:] elementBoundaryNormalsArray,
-#                                        int nearest_node,
-#                                        int eN,
+#                                        proteus_index_t nearest_node,
+#                                        proteus_index_t eN,
 #                                        bool find_nearest_node=True):
 #     if find_nearest_node is True:
 #         nearest_node = ms.pyxGetLocalNearestNode(coords=x,
@@ -1172,25 +1174,25 @@ cdef double[:,:] cppGradientRecoveryAtNodesWeighted(double[:,:,:] grads,
 #     return eN, nearest_node, inside_eN
 
 
-def pyCheckOwnedVariable(int variable_nb_local,
+def pyCheckOwnedVariable(proteus_index_t variable_nb_local,
                          int rank,
-                         int nVariables_owned,
-                         int[:] variableNumbering_subdomain2global,
-                         int[:] variableOffsets_subdomain_owned):
+                         proteus_index_t nVariables_owned,
+                         proteus_index_t[:] variableNumbering_subdomain2global,
+                         proteus_index_t[:] variableOffsets_subdomain_owned):
     return checkOwnedVariable(variable_nb_local=variable_nb_local,
                               rank=rank,
                               nVariables_owned=nVariables_owned,
                               variableNumbering_subdomain2global=variableNumbering_subdomain2global,
                               variableOffsets_subdomain_owned=variableOffsets_subdomain_owned)
 
-cdef tuple checkOwnedVariable(int variable_nb_local,
+cdef tuple checkOwnedVariable(proteus_index_t variable_nb_local,
                               int rank,
-                              int nVariables_owned,
-                              int[:] variableNumbering_subdomain2global,
-                              int[:] variableOffsets_subdomain_owned):
+                              proteus_index_t nVariables_owned,
+                              proteus_index_t[:] variableNumbering_subdomain2global,
+                              proteus_index_t[:] variableOffsets_subdomain_owned):
     cdef int nSubdomains = len(variableOffsets_subdomain_owned)-1
-    cdef int variable_nb_global
-    cdef int new_variable_nb_local
+    cdef proteus_index_t variable_nb_global
+    cdef proteus_index_t new_variable_nb_local
     cdef int new_rank = -2  # initialised as fake rank
     if variable_nb_local >= nVariables_owned:
         # change rank ownership
@@ -1211,11 +1213,11 @@ cdef tuple checkOwnedVariable(int variable_nb_local,
 
 # cdef retrieveSolution(double[:]x,
 #                       double[:,:] nodeArray,
-#                       int[:] nodeStarOffsets,
-#                       int[:] nodeStarArray,
-#                       int nearest_node,
+#                       proteus_index_t[:] nodeStarOffsets,
+#                       proteus_index_t[:] nodeStarArray,
+#                       proteus_index_t nearest_node,
 #                       int rank,
-#                       int nNodes_owned,
+#                       proteus_index_t nNodes_owned,
 # )
 #                         nearest_node = ms.getLocalNearestNode(coords=x,
 #                                                               nodeArray=nodeArray,
@@ -1360,18 +1362,18 @@ cdef tuple checkOwnedVariable(int variable_nb_local,
 #            object tofind_function,
 #            # mesh variables
 #            double[:,:] nodeArray,
-#            int[:] nodeStarOffsets,
-#            int[:] nodeStarArray,
-#            int nNodes_owned,
-#            int[:] nodeNumbering_subdomain2global,
-#            int[:] nodeOffsets_subdomain_owned,
-#            int[:] nodeElementOffsets,
-#            int[:,:] nodeElementsArray,
+#            proteus_index_t[:] nodeStarOffsets,
+#            proteus_index_t[:] nodeStarArray,
+#            proteus_index_t nNodes_owned,
+#            proteus_index_t[:] nodeNumbering_subdomain2global,
+#            proteus_index_t[:] nodeOffsets_subdomain_owned,
+#            proteus_index_t[:] nodeElementOffsets,
+#            proteus_index_t[:,:] nodeElementsArray,
 #            double[:,:] elementBarycentersArray,
 #            double[:,:,:] elementBoundaryNormalsArray,
-#            int[:,:] elementBoundariesArray,
+#            proteus_index_t[:,:] elementBoundariesArray,
 #            double[:,:] elementBoundaryBarycentersArray,
-#            int[:,:] elementBoundaryElementsArray,
+#            proteus_index_t[:,:] elementBoundaryElementsArray,
 #            int[:] exteriorElementBoundariesBoolArray,
 # ):
 #     if comm_size > 1:
@@ -1633,31 +1635,31 @@ cdef tuple checkOwnedVariable(int variable_nb_local,
 
 cdef void findN(double[:] coords,
                   double[:,:] nodeArray,
-                  int[:] nodeStarOffsets,
-                  int[:] nodeStarArray,
-                  int nearestN,
+                  proteus_index_t[:] nodeStarOffsets,
+                  proteus_index_t[:] nodeStarArray,
+                  proteus_index_t nearestN,
                   int typeN,
                   int my_rank,
-                  int nNodes_owned,
-                  int[:] nodeNumbering_subdomain2global,
-                  int[:] nodeOffsets_subdomain_owned,
-                  int[:] nodeElementOffsets,
-                  int[:] nodeElementsArray,
+                  proteus_index_t nNodes_owned,
+                  proteus_index_t[:] nodeNumbering_subdomain2global,
+                  proteus_index_t[:] nodeOffsets_subdomain_owned,
+                  proteus_index_t[:] nodeElementOffsets,
+                  proteus_index_t[:] nodeElementsArray,
                   double[:,:] elementBarycentersArray,
                   double[:,:,:] elementBoundaryNormalsArray,
-                  int[:,:] elementBoundariesArray,
+                  proteus_index_t[:,:] elementBoundariesArray,
                   double[:,:] elementBoundaryBarycentersArray,
-                  int[:,:] elementBoundaryElementsArray,
+                  proteus_index_t[:,:] elementBoundaryElementsArray,
                   int[:] exteriorElementBoundariesBoolArray,
-                  int nElements_owned,
-                  int[:] elementNumbering_subdomain2global,
-                  int[:] elementOffsets_subdomain_owned,
-                  int nElementBoundaries_owned,
-                  int[:] elementBoundaryNumbering_subdomain2global,
-                  int[:] elementBoundaryOffsets_subdomain_owned,
-                  int[:,:] elementNodesArray,
+                  proteus_index_t nElements_owned,
+                  proteus_index_t[:] elementNumbering_subdomain2global,
+                  proteus_index_t[:] elementOffsets_subdomain_owned,
+                  proteus_index_t nElementBoundaries_owned,
+                  proteus_index_t[:] elementBoundaryNumbering_subdomain2global,
+                  proteus_index_t[:] elementBoundaryOffsets_subdomain_owned,
+                  proteus_index_t[:,:] elementNodesArray,
                   int[:] nodeMaterialTypes,
-                  int nNel,
+                  proteus_index_t nNel,
                   int[3] result_out):
     cdef int[:] result_in
     cdef double[:] starting_coords = np.zeros(3)

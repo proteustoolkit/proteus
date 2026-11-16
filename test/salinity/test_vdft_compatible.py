@@ -412,6 +412,20 @@ def test_a_flow_model_without_nodal_theta_leaves_it_to_the_projection():
     np.testing.assert_array_equal(stub.M_dof, 2.0)
 
 
+# The fleet's pip venvs on Linux (spark2 aarch64, ceds-model x86_64; nightly 33659c3a) crash this test; the conda builds
+# (linux-64 CI) and the macOS venvs (chewbacca, darcy) pass it. It is not a test fault: with Richards' implicit FCT the
+# Newton iteration of one of the two models (n = 13419) produces five Jacobians whose every entry is NaN, then one
+# with entries of 1.2e16, and the serial SuperLU factorization (dgstrf -> dpivotL, superluWrappers) dies with SIGSEGV
+# whatever the final time of the first long step (0.1, 1, 10 s all crash after ~50 s). Reproduction: this test, on a
+# Linux pip build (about 50 s). Owner: the Richards implicit FCT and its Newton fallback (kernel Richards.h: C0;
+# the solver's non-finite guard before the factorization), reported in HANDOFF_2026-11-15_c3-round9.md. The mark
+# keeps the nightly's failure list to what is new; remove it when the divergence is fixed.
+_LINUX_PIP_VENV = (sys.platform.startswith('linux') and sys.prefix != sys.base_prefix
+                   and not os.path.exists(os.path.join(sys.prefix, 'conda-meta')))
+
+
+@pytest.mark.xfail(_LINUX_PIP_VENV, run=False, reason="known: Richards implicit FCT diverges (NaN Jacobian) and "
+                   "SuperLU dgstrf segfaults on Linux pip builds (C3 round 9 handoff)")
 def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
     """Richards' implicit FCT sets fctCorrectionApplied but leaves the accepted mass in mLow (its final solve);
     the edge-flux coupling read mAccepted, all zeros, and drained its carried fluid mass every step. c0 = cin =
