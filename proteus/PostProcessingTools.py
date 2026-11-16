@@ -3232,6 +3232,78 @@ class VPP_LOW_K_IB_PWL_RT0(VPP_PWL_RT0):
 ####################################################
 #class to wrap different algorithms
 #all the types need to be defined for vpp_types declaration
+def traceStreamline(velocity,x0,h,nSteps,element=None,forward=True):
+    """Follow a streamline of an H(div) velocity (a :class:`FemTools.FiniteElementFunction` on
+    ``Hdiv_AffineOnSimplex``, e.g. ``vpp.velocityFunction(0)``) from the point ``x0`` with classical
+    Runge-Kutta steps of pseudo-time ``h``.
+
+    The field is polynomial on each element (``a + b x`` for RT0, linear for BDM1), so a step is exact up to the
+    Runge-Kutta error unless it crosses an element; the element of each stage is found by walking from the last
+    one through the face neighbours (barycentric coordinates), starting from ``element`` or a search of the mesh.
+    The trace stops at ``nSteps`` or when a stage leaves the mesh.
+
+    Returns ``(points, elements)``: the points (n,nd), n <= nSteps+1, and the element holding each.
+    """
+    space = velocity.femSpace
+    mesh = space.mesh
+    nd = space.nSpace_global
+    X = numpy.asarray(mesh.nodeArray)[:,:nd]
+    en = numpy.asarray(mesh.elementNodesArray)
+    nb = numpy.asarray(mesh.elementNeighborsArray)
+    lfs = space.referenceFiniteElement.localFunctionSpace
+    J = space.elementJacobians()
+    Jinv = numpy.linalg.inv(J)
+    dof = numpy.asarray(velocity.dof)
+    l2g = space.dofMap.l2g
+    sign = space.dofMap.sign
+    tol = 1.0e-12
+    def barycentric(e,x):
+        xi = Jinv[e].dot(x - X[en[e,0]])
+        return numpy.concatenate([[1.0 - xi.sum()],xi])
+    def locate(x,e):
+        #walk to the element holding x; None outside the mesh
+        if e is None:
+            lam = numpy.array([barycentric(k,x) for k in range(en.shape[0])])
+            ok = numpy.nonzero(lam.min(axis=1) >= -tol)[0]
+            return int(ok[0]) if len(ok) else None
+        for _ in range(en.shape[0]):
+            lam = barycentric(e,x)
+            if lam.min() >= -tol:
+                return e
+            e = int(nb[e,numpy.argmin(lam)])   #neighbour across the face opposite the most negative coordinate
+            if e < 0:
+                return None
+        return None
+    def field(x,e):
+        xi = Jinv[e].dot(x - X[en[e,0]])
+        phi = lfs.space.piola(J[e:e+1],lfs.tabulate(xi[None,:]).values)[0,0]*sign[e][:,None]
+        return phi.T.dot(dof[l2g[e]])
+    direction = 1.0 if forward else -1.0
+    x = numpy.asarray(x0,dtype=float)[:nd]
+    e = locate(x,element)
+    points,elements = [],[]
+    if e is None:
+        return numpy.zeros((0,nd)),numpy.zeros((0,),'i')
+    points.append(x.copy()); elements.append(e)
+    for _ in range(nSteps):
+        stages,ee = [],e
+        ok = True
+        for frac,w in ((0.0,None),(0.5,0),(0.5,1),(1.0,2)):
+            y = x if w is None else x + direction*h*frac*stages[w]
+            ee = locate(y,ee)
+            if ee is None:
+                ok = False
+                break
+            stages.append(field(y,ee))
+        if not ok:
+            break
+        x = x + direction*h*(stages[0] + 2.0*stages[1] + 2.0*stages[2] + stages[3])/6.0
+        e = locate(x,e)
+        if e is None:
+            break
+        points.append(x.copy()); elements.append(e)
+    return numpy.array(points),numpy.array(elements,dtype='i')
+
 class AggregateVelocityPostProcessor(object):
     """
     collect different velocity postprocessing algorithms for a (possibly) multicomponent system
