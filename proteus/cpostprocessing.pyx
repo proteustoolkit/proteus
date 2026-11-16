@@ -997,7 +997,7 @@ def calculateConservationResidualPWL_primative(np.ndarray interiorElementBoundar
                                                   <pp.proteus_index_t*>(exteriorElementBoundaries.data),
                                                   <pp.proteus_index_t*>(elementBoundaryElements.data),
                                                   <int*>(elementBoundaryLocalElementBoundaries.data),
-                                                  <int*>(skipflag_elementBoundaries.data),
+                                                  <pp.proteus_index_t*>(skipflag_elementBoundaries.data),
                                                   <double*>(elementResidual.data),
                                                   <double*>(dx.data),
                                                   <double*>(n.data),
@@ -1204,7 +1204,7 @@ def updateSelectedExteriorElementBoundaryFlux(np.ndarray exteriorElementBoundari
                                                  <pp.proteus_index_t*>(exteriorElementBoundaries.data),
                                                  <pp.proteus_index_t*>(elementBoundaryElements.data),
                                                  <int*>(elementBoundaryLocalElementBoundaries.data),
-                                                 <int*>(skipflag_elementBoundaries.data),
+                                                 <pp.proteus_index_t*>(skipflag_elementBoundaries.data),
                                                  <double*>(flux.data),
                                                  <double*>(w.data),
                                                  <double*>(residual.data))

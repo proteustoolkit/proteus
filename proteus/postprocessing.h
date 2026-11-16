@@ -41,7 +41,7 @@ extern void updateSelectedExteriorElementBoundaryFlux(proteus_index_t nExteriorE
                                                       proteus_index_t* exteriorElementBoundaries,
                                                       proteus_index_t* elementBoundaryElements,
                                                       int* elementBoundaryLocalElementBoundaries,
-                                                      int* skipflag_elementBoundaries,
+                                                      proteus_index_t* skipflag_elementBoundaries,
                                                       double* flux,
                                                       double* w_dS,
                                                       double* residual);
@@ -637,7 +637,7 @@ extern void calculateConservationResidualPWL_primative(proteus_index_t nElements
                                                        proteus_index_t* exteriorElementBoundaries,
                                                        proteus_index_t* elementBoundaryElements,
                                                        int* elementBoundaryLocalElementBoundaries,
-                                                       int* skipflag_elementBoundaries,
+                                                       proteus_index_t* skipflag_elementBoundaries,
                                                        double* elementResidual,
                                                        double* dX,
                                                        double* normal,
