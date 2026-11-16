@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "index_type.h"
 #include "equivalent_polynomials.h"
 #include "UnfittedKernels.h"
 #include "cutquadric.h"
@@ -998,16 +999,16 @@ namespace proteus
       // Everything prepare() reads, as plain pointers. Arrays are indexed as in the ADR arguments.
       struct Inputs
       {
-        int nElements = 0;
-        const int *l2g = nullptr;               // nElements * nDOF
+        proteus_index_t nElements = 0;
+        const proteus_index_t *l2g = nullptr;               // nElements * nDOF
         const double *phi_s_nodes = nullptr;     // per global dof: the solid level set
         const double *phi_f_nodes = nullptr;     // per global dof: the fluid-interface level set
         const double *mesh_dof = nullptr;        // 3 per global dof
         const double *x_ref = nullptr;           // nQ * 3 reference quadrature points
         const double *xB_ref_faces = nullptr;    // nFaces * nFaceQ * 3 reference-element face quadrature points
         const double *dV_ref = nullptr;          // nQ reference weights
-        const int *elementBoundaries = nullptr;  // nElements * nFaces
-        const int *elementBoundaryElements = nullptr; // 2 per face, -1 if exterior
+        const proteus_index_t *elementBoundaries = nullptr;  // nElements * nFaces
+        const proteus_index_t *elementBoundaryElements = nullptr; // 2 per face, -1 if exterior
         const double *fluxJump_element = nullptr; // prescribed flux jump of each cell (the lift amplitude)
         const double *solutionJump_nodes = nullptr; // per global dof
         bool fluxJumpLift = false;
@@ -1017,28 +1018,28 @@ namespace proteus
       };
 
       // Element classification and weights
-      inline int icaseS(int eN) const { return icase_s_[eN]; }
-      inline int icaseF(int eN) const { return icase_f_[eN]; }
+      inline int icaseS(proteus_index_t eN) const { return icase_s_[eN]; }
+      inline int icaseF(proteus_index_t eN) const { return icase_f_[eN]; }
       // -1 / +1: the buried-Gamma_f logic demoted the element to the fluid on one side of Gamma_f (0: not demoted)
-      inline int demoted(int eN) const { return demoted_[eN]; }
-      inline bool active(int eN) const { return active_[eN] != 0; }
+      inline int demoted(proteus_index_t eN) const { return demoted_[eN]; }
+      inline bool active(proteus_index_t eN) const { return active_[eN] != 0; }
       // (with the curved solid the fits live in cfS(); this object is then only the canonical one the element routines touch)
-      inline GfS &gfS(int eN) { return (slot_s_[eN] >= 0 && !curved_) ? gf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? gf_s_pos_ : gf_s_neg_); }
-      inline GfF &gfF(int eN) { return slot_f_[eN] >= 0 ? gf_f_[slot_f_[eN]] : (icase_f_[eN] > 0 ? gf_f_pos_ : gf_f_neg_); }
-      inline cutquadric::SolidFit &cfS(int eN) { return slot_s_[eN] >= 0 ? cf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? cf_pos_ : cf_neg_); }
+      inline GfS &gfS(proteus_index_t eN) { return (slot_s_[eN] >= 0 && !curved_) ? gf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? gf_s_pos_ : gf_s_neg_); }
+      inline GfF &gfF(proteus_index_t eN) { return slot_f_[eN] >= 0 ? gf_f_[slot_f_[eN]] : (icase_f_[eN] > 0 ? gf_f_pos_ : gf_f_neg_); }
+      inline cutquadric::SolidFit &cfS(proteus_index_t eN) { return slot_s_[eN] >= 0 ? cf_s_[slot_s_[eN]] : (icase_s_[eN] > 0 ? cf_pos_ : cf_neg_); }
       // composite fits of an element cut by both level sets (null where not valid)
-      inline const double *compA(int eN) const { return comp_valid_[eN] ? &comp_A_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
-      inline const double *compB(int eN) const { return comp_valid_[eN] ? &comp_B_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
-      inline const double *compDA(int eN) const { return comp_valid_[eN] ? &comp_DA_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
-      inline const double *compDB(int eN) const { return comp_valid_[eN] ? &comp_DB_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
-      inline const double *compDFa(int eN) const { return comp_DF_valid_[eN] ? &comp_DFa_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compA(proteus_index_t eN) const { return comp_valid_[eN] ? &comp_A_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compB(proteus_index_t eN) const { return comp_valid_[eN] ? &comp_B_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDA(proteus_index_t eN) const { return comp_valid_[eN] ? &comp_DA_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDB(proteus_index_t eN) const { return comp_valid_[eN] ? &comp_DB_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
+      inline const double *compDFa(proteus_index_t eN) const { return comp_DF_valid_[eN] ? &comp_DFa_[(std::size_t)comp_slot_[eN] * nCompMon] : nullptr; }
       // amplitude of the flux-jump lift J*psi on a Gamma_f-cut cell: the per-cell J_f minus the flux jump the
       // solution-jump lift already carries (nonzero only when the solution jump varies over the cell); 0 elsewhere
-      inline double fluxLift(int eN) const { return slot_f_[eN] >= 0 ? flux_lift_[slot_f_[eN]] : 0.0; }
+      inline double fluxLift(proteus_index_t eN) const { return slot_f_[eN] >= 0 ? flux_lift_[slot_f_[eN]] : 0.0; }
       // interior faces, ascending, both elements carrying fluid: the faces of Gamma_s-cut elements (ghost penalty)
       // and the faces Gamma_f cuts (SCIFEM)
-      inline const std::vector<int> &cutfemFaces() const { return cutfem_faces_; }
-      inline const std::vector<int> &ifemFaces() const { return ifem_faces_; }
+      inline const std::vector<proteus_index_t> &cutfemFaces() const { return cutfem_faces_; }
+      inline const std::vector<proteus_index_t> &ifemFaces() const { return ifem_faces_; }
       inline int nCutS() const { return (int)gf_s_.size() + (int)cf_s_.size(); }
       inline int nCutF() const { return (int)gf_f_.size(); }
       inline bool valid() const { return valid_; }
@@ -1049,7 +1050,7 @@ namespace proteus
           return;
         nElements_ = in.nElements;
         curved_ = in.curvedSolid;
-        const int nE = in.nElements;
+        const proteus_index_t nE = in.nElements;
         icase_s_.assign(nE, 0);
         icase_f_.assign(nE, 0);
         demoted_.assign(nE, 0);
@@ -1064,7 +1065,7 @@ namespace proteus
         gf_f_.clear();
         flux_lift_.clear();
         comp_A_.clear(); comp_B_.clear(); comp_DA_.clear(); comp_DB_.clear(); comp_DFm_.clear(); comp_DFa_.clear();
-        std::vector<int> cutfem, ifem;
+        std::vector<proteus_index_t> cutfem, ifem;
         // canonical objects an uncut element reads (an uncut cell's fits are the constants 1 or 0; D and the normal
         // are never used there)
         init_canonical(in);
@@ -1073,12 +1074,12 @@ namespace proteus
         GfF gff_scratch;
         gff_scratch.useExact = true;
         cutquadric::SolidFit cf_scratch;
-        for (int eN = 0; eN < nE; eN++)
+        for (proteus_index_t eN = 0; eN < nE; eN++)
         {
           double phi_s[nDOF], phi_f[nDOF], nodes[nDOF * 3];
           for (int j = 0; j < nDOF; j++)
           {
-            const int dof = in.l2g[eN * nDOF + j];
+            const proteus_index_t dof = in.l2g[eN * nDOF + j];
             phi_s[j] = in.phi_s_nodes[dof];
             phi_f[j] = in.phi_f_nodes[dof];
             for (int I = 0; I < 3; I++)
@@ -1113,7 +1114,7 @@ namespace proteus
             // face term is summed on every rank that has both of its elements)
             for (int f = 0; f < nFaces; f++)
             {
-              const int ebN = in.elementBoundaries[eN * nFaces + f];
+              const proteus_index_t ebN = in.elementBoundaries[eN * nFaces + f];
               if (in.elementBoundaryElements[ebN * 2 + 1] != -1)
                 cutfem.push_back(ebN);
             }
@@ -1140,7 +1141,7 @@ namespace proteus
             // faces Gamma_f cuts. Interior faces only: the SCIFEM facet term needs the trace from both elements.
             for (int f = 0; f < nFaces; f++)
             {
-              const int ebN = in.elementBoundaries[eN * nFaces + f];
+              const proteus_index_t ebN = in.elementBoundaries[eN * nFaces + f];
               if (in.elementBoundaryElements[ebN * 2 + 1] == -1)
                 continue;
               if (nSpace == 2)
@@ -1205,10 +1206,10 @@ namespace proteus
           std::sort(list->begin(), list->end());
           list->erase(std::unique(list->begin(), list->end()), list->end());
         }
-        auto filter = [&](const std::vector<int> &in_list, std::vector<int> &out)
+        auto filter = [&](const std::vector<proteus_index_t> &in_list, std::vector<proteus_index_t> &out)
         {
           out.clear();
-          for (int ebN : in_list)
+          for (proteus_index_t ebN : in_list)
             if (active_[in.elementBoundaryElements[ebN * 2 + 0]] && active_[in.elementBoundaryElements[ebN * 2 + 1]])
               out.push_back(ebN);
         };
@@ -1219,7 +1220,7 @@ namespace proteus
 
     private:
       bool valid_ = false, curved_ = false;
-      int nElements_ = -1;
+      proteus_index_t nElements_ = -1;
       std::vector<int> icase_s_, icase_f_, slot_s_, slot_f_, comp_slot_;
       std::vector<signed char> demoted_;
       std::vector<char> active_, comp_valid_, comp_DF_valid_;
@@ -1231,7 +1232,7 @@ namespace proteus
       GfS gf_s_pos_, gf_s_neg_;
       GfF gf_f_pos_, gf_f_neg_;
       cutquadric::SolidFit cf_pos_, cf_neg_;
-      std::vector<int> cutfem_faces_, ifem_faces_;
+      std::vector<proteus_index_t> cutfem_faces_, ifem_faces_;
 
       // The reference element's own geometry, with the level set all positive or all negative: calculate() takes its
       // early exit and leaves the constants H = 1 / 0, D = 0
@@ -1267,7 +1268,7 @@ namespace proteus
       // gf_f.calculate() for the interior quadrature points, naming the element if the two-sided P1 basis on a
       // tetrahedron does not exist there (obtuse tetrahedron at a particular contrast, C44 decision C4). Only that error
       // is rethrown; the rank that throws stops, so run such a mesh in serial to read it.
-      inline int fluid_calculate(int eN, GfF &gf, const double *phi_f, const double *nodes, const double *x_ref, double mua, double mub, double jf)
+      inline int fluid_calculate(proteus_index_t eN, GfF &gf, const double *phi_f, const double *nodes, const double *x_ref, double mua, double mub, double jf)
       {
         try
         {
@@ -1285,7 +1286,7 @@ namespace proteus
         }
       }
 
-      inline void fluid_calculate_faces(int eN, GfF &gf, const double *phi_f, const double *nodes, const double *xB_ref_faces, double mua, double mub, double jf)
+      inline void fluid_calculate_faces(proteus_index_t eN, GfF &gf, const double *phi_f, const double *nodes, const double *xB_ref_faces, double mua, double mub, double jf)
       {
         try
         {
@@ -1301,7 +1302,7 @@ namespace proteus
       // polynomial per intersected region instead. Returns the demotion (-1/+1) when the fluid interface lies entirely
       // inside the solid and the fluid is undivided (the empty region then gets exactly zero), else 0 with the
       // composite fits stored.
-      inline int composite_setup(int eN, const double *phi_s, const double *phi_f, const double *nodes)
+      inline int composite_setup(proteus_index_t eN, const double *phi_s, const double *phi_f, const double *nodes)
       {
         if constexpr (nSpace == 2)
         {
@@ -1352,7 +1353,7 @@ namespace proteus
       // J_f - [mu dj_h/dn], so that the trial function has the prescribed flux jump either way. n is the normal of the
       // cell's Gamma_f chord from phi_f < 0 to phi_f > 0. Cells with a constant J_s are untouched; only cells ADR.py
       // gives a lift (both signs at the vertices, none exactly zero) are corrected.
-      inline double fluxLiftAmplitude(int eN, const Inputs &in, const double *phi_f, const double *nodes)
+      inline double fluxLiftAmplitude(proteus_index_t eN, const Inputs &in, const double *phi_f, const double *nodes)
       {
         double fluxLiftJ = in.fluxJump_element[eN];
         bool liftCell = false;
@@ -1564,7 +1565,7 @@ namespace proteus
       int branches = 0;
 
       template <class Geom>
-      inline void evaluate(Geom &geom, const int eN, const int k, const double *x_ref, const bool curvedSolid)
+      inline void evaluate(Geom &geom, const proteus_index_t eN, const int k, const double *x_ref, const bool curvedSolid)
       {
         auto &gf_s = geom.gfS(eN);
         auto &gf_f = geom.gfF(eN);
