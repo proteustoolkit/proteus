@@ -67,6 +67,21 @@ def constructed(doc, equation, lagged=None):
 
 #: the constructed problems: name -> equation; each is written unlagged, lagged to the previous iterate and to the previous step
 CONSTRUCTED = {"transport": "∂φ/∂t + ∇·(κ v φ) = 0"}
+#: constructed problems with no lagging, for the slots of C19 slice 2: a reaction and a diffusion that depend on u (kappa(u)), linear
+#: advection (so the Jacobian is exactly what the slots give)
+SLOTS = {"reacdiff": "∂φ/∂t + ∇·(v φ) − ∇·(κ ∇φ) + κ φ = 0"}
+
+
+def without_shock_capturing(doc, subproblem):
+    """The spec's sub-problem with `shock_capturing: none` (nu = 0), so that the Jacobian of a nonlinear Hamiltonian can be checked
+    against finite differences of the residual: the viscosity is not differentiated by the template (it is lagged, or proteus's)."""
+    doc = copy.deepcopy(doc)
+    entry = next(e for e in doc["solution_paths"]["discretizations"] if e["name"] == DISCRETIZATION)
+    sub = next(s for s in entry["subproblems"] if s["name"] == subproblem)
+    stab = dict(sub.get("stabilization") or entry.get("stabilization") or {"method": "SUPG", "tau": "metric"})
+    stab["shock_capturing"] = "none"
+    sub["stabilization"] = stab
+    return doc
 
 
 def main(fixtures, only=None):
@@ -76,6 +91,12 @@ def main(fixtures, only=None):
             split = split_problem(constructed(base, equation, lagged), DISCRETIZATION)
             sub = next(s for s in split["subproblems"] if s["name"] == "ncls")
             write("%s%s_2d" % (name, suffix), kernel_input(split, sub, (name + suffix).title().replace("_", "")))
+    for name, equation in SLOTS.items():
+        split = split_problem(constructed(base, equation), DISCRETIZATION)
+        sub = next(s for s in split["subproblems"] if s["name"] == "ncls")
+        write("%s_2d" % name, kernel_input(split, sub, name.title()))
+    split = split_problem(without_shock_capturing(base, "rdls"), DISCRETIZATION)
+    write("rdls_nosc_2d", kernel_input(split, next(s for s in split["subproblems"] if s["name"] == "rdls"), "RdlsNosc"))
     if only == "variants":
         return
     for name, prefix, dims in SPECS:

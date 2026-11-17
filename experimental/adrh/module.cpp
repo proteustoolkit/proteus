@@ -26,6 +26,10 @@ template <int nS> using PorousNCLSFunctor = adrh::generated::PorousNCLSCoefficie
 template <int nS> using TransportFunctor = adrh::generated::TransportCoefficients<nS>;
 template <int nS> using TransportLaggedFunctor = adrh::generated::TransportLaggedCoefficients<nS>;
 template <int nS> using TransportStepFunctor = adrh::generated::TransportStepCoefficients<nS>;
+// slice 2 slots: a reaction and a diffusion that depend on u (constructed), and the spec's RDLS without shock capturing (a
+// Hamiltonian nonlinear in grad u: d(dH)/d(grad u) by dual numbers)
+template <int nS> using ReacdiffFunctor = adrh::generated::ReacdiffCoefficients<nS>;
+template <int nS> using RdlsNoscFunctor = adrh::generated::RdlsNoscCoefficients<nS>;
 #else
 #define ADRH_MODULE_NAME adrh_proto
 template <int nS> using VOFFunctor = adrh::VOFCoefficients<nS>;
@@ -194,6 +198,8 @@ py::object withGenerated(const std::string &kernel, F &&f)
   if (kernel == "transport") return f(TransportFunctor<nS>{});
   if (kernel == "transport_lagged") return f(TransportLaggedFunctor<nS>{});
   if (kernel == "transport_step") return f(TransportStepFunctor<nS>{});
+  if (kernel == "reacdiff") return f(ReacdiffFunctor<nS>{});
+  if (kernel == "rdls_nosc") return f(RdlsNoscFunctor<nS>{});
   throw std::invalid_argument("no generated kernel " + kernel);
 }
 #endif
@@ -823,7 +829,8 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
   // The generated functors by name (the sub-problem of the spec the generator read): each of these calls takes `kernel` and the
   // spec's dimension nd. functor_info: what the spec states, as the engine reads it (the stabilization constants, the face kernel,
   // the per-point inputs). *_supg_spec: the element loop with the stabilization the spec states (no sc_* arguments; alpha is the
-  // time integrator's). generated_faces: the face kernel the functor selects.
+  // time integrator's; exactJacobian differentiates the subgrid term through a nonlinear Hamiltonian where the functor has the
+  // slot). generated_faces: the face kernel the functor selects.
   m.def("functor_info", [](const std::string &kernel, int nd) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       return withGenerated<decltype(spaceTag)::nS>(kernel, [&](auto functor) -> py::object {
@@ -842,13 +849,13 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
     });
   });
   m.def("generated_supg", [](const std::string &kernel, int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr numDiffLast,
-                             Arr h, double alpha) {
+                             Arr h, double alpha, bool exactJacobian) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
       return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
         using C = decltype(functor);
         if constexpr (!adrh::Available<C>::value) throw std::invalid_argument("not generated in this dimension");
-        else return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, C::supgParameters(alpha), true);
+        else return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, C::supgParameters(alpha, exactJacobian), true);
         return py::tuple();
       });
     });

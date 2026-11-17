@@ -15,8 +15,8 @@ role `porosity`, here a function of x inlined by the spec, so the hand-written k
    largest value and the share of entries that are bitwise equal; the faces, same comparison.
 4. Partition independence: each rank assembles its share of the elements with the generated functor; the sum over ranks agrees
    with the serial hand-written assembly.
-5. What the generator refuses: stabilizations and boundary kinds the template cannot take, and the spec's RDLS (a Hamiltonian
-   nonlinear in grad u), MCorr (no stabilization stated: Galerkin) and flow (three equations).
+5. What the generator refuses: stabilizations and boundary kinds the template cannot take, and the spec's MCorr (no stabilization
+   stated: Galerkin; slice 3) and flow (three equations).
 6. One run-time comparison: the element kernels on the fixture tiled to ~73 000 elements, minimum of 7 repeats.
 """
 import copy
@@ -43,7 +43,7 @@ RANK, SIZE = (comm.Get_rank(), comm.Get_size()) if comm else (0, 1)
 OK = True
 ALPHA, SC_C, SC_UREF, SC_BETA, DROP = 2.5, 0.5, 1.0, 1.5, 0.0     # what dambreak_formulation.ymf states of VOF and NCLS (alpha: the integrator's)
 GENERATED = ['vof_2d', 'ncls_2d', 'porous_vof_2d', 'porous_vof_3d', 'porous_ncls_2d', 'porous_ncls_3d', 'transport_2d',
-             'transport_lagged_2d', 'transport_step_2d']
+             'transport_lagged_2d', 'transport_step_2d', 'reacdiff_2d', 'rdls_nosc_2d']
 
 
 def say(*a):
@@ -149,9 +149,16 @@ def hand_fields(d, kernel, por):
     return np.concatenate([d['v'], por[..., None]], axis=-1) if kernel == 'vof' else d['v']
 
 
+def per_point_h(d, rng):
+    """h at each point (nE, nQ): the mesh symbol h of the spec is a per-point input (the driver says which size: proteus's node
+    diameters interpolated to the point, here an element diameter jittered point by point), not the element's constant."""
+    d['hq'] = d['h'][:, None] * rng.uniform(0.7, 1.3, d['v'].shape[:2])
+    return d
+
+
 def gen_fields(d, layout):
-    """The generated functor's: the velocity, then the mesh symbol h (the element diameter) where the spec's coefficients use it."""
-    hq = np.broadcast_to(d['h'][:, None, None], d['v'].shape[:2] + (1,))
+    """The generated functor's: the velocity, then the mesh symbol h at the point where the spec's coefficients use it."""
+    hq = d['hq'][..., None]
     return np.ascontiguousarray(np.concatenate([d['v'], hq], axis=-1) if layout == 'h' else d['v'])
 
 
@@ -164,7 +171,7 @@ def run_hand(kernel, d, por):
 def run_gen(name, d, layout):
     """The generated functor with the stabilization the spec states (no sc_* arguments)."""
     return gen.generated_supg(name, d['nd'], d['xn'], d['u'], d['qp'], d['qw'], gen_fields(d, layout), d['beta'], d['nl'], d['h'],
-                              ALPHA)[:4]
+                              ALPHA, False)[:4]
 
 
 def compare_case(label, d, tol=1e-13):
@@ -172,7 +179,7 @@ def compare_case(label, d, tol=1e-13):
     one = np.ones(d['qw'].shape[:1] + (0,))
     x = points(d)
     por1 = np.ones(x.shape[:2])
-    porθ = theta(x[..., 0], x[..., 1], d['h'][:, None])
+    porθ = theta(x[..., 0], x[..., 1], d['hq'])
     nd = d['nd']
     out = {}
     if nd == 2:
@@ -242,7 +249,7 @@ def lagged():
         uq = np.einsum('qb,eb->eq', w, d['u'])
         fields_step = np.ascontiguousarray(np.concatenate([d['v'], (1.0 + uq * uq)[..., None]], axis=-1))
         args = (d['nd'], d['xn'], d['u'], d['qp'], d['qw'])
-        tail = (d['beta'], d['nl'], d['h'], ALPHA)
+        tail = (d['beta'], d['nl'], d['h'], ALPHA, False)
         free = gen.generated_supg('transport', *args, d['v'], *tail)
         prev_it = gen.generated_supg('transport_lagged', *args, d['v'], *tail)
         prev_step = gen.generated_supg('transport_step', *args, fields_step, *tail)
@@ -250,6 +257,46 @@ def lagged():
         dJ = np.abs(free[1] - prev_it[1]).max() / np.abs(free[1]).max()
         say('  %-70s %.2e' % ('Jacobian of the free problem vs the lagged one: d kappa / d u (must differ)', dJ))
         check('the lagged Jacobian drops the dependence of kappa on u', dJ > 1e-2)
+
+
+def finite_difference(name, d, fields, alpha, exact, eps=1e-6):
+    """The element Jacobian of the generated functor against central differences of its residual in each nodal value (the viscosity
+    is off in these specs, so the residual is the whole weak form): largest difference over largest entry."""
+    args = (d['nd'], d['xn'])
+    tail = (d['qp'], d['qw'], fields, d['beta'], d['nl'], d['h'], alpha, exact)
+    R, J = gen.generated_supg(name, *args[:1], d['xn'], d['u'], *tail)[:2]
+    fd = np.zeros_like(J)
+    for j in range(J.shape[2]):
+        up, um = d['u'].copy(), d['u'].copy()
+        up[:, j] += eps
+        um[:, j] -= eps
+        Rp = gen.generated_supg(name, d['nd'], d['xn'], up, *tail)[0]
+        Rm = gen.generated_supg(name, d['nd'], d['xn'], um, *tail)[0]
+        fd[:, :, j] = (Rp - Rm) / (2 * eps)
+    return np.abs(J - fd).max() / np.abs(fd).max()
+
+
+def slots():
+    """Slice 2: the slots the SUPG template gained, read from specs. (a) a reaction r(u) and an isotropic diffusion a(u) (reacdiff:
+    dr/du and da/du from ymf, linear advection): the Jacobian is exact. (b) a Hamiltonian nonlinear in grad u (the spec's RDLS, shock
+    capturing off, no time term): proteus's Jacobian freezes a = dH in the subgrid term; with the slot d(dH)/d(grad u) (dual numbers)
+    and exactJacobian it is exact."""
+    rng = np.random.default_rng(11)
+    d = per_point_h(random_case(rng, 2, n=3), rng)
+    err = finite_difference('reacdiff', d, np.ascontiguousarray(d['v']), ALPHA, False)
+    say('  %-70s %.2e' % ('reaction + diffusion depending on u: Jacobian vs finite differences', err))
+    check('dr and diffusion slots give an exact Jacobian (< 1e-7)', err < 1e-7)
+    nE, nQ = d['qw'].shape[0], d['qw'].shape[0]
+    nE = d['xn'].shape[0]
+    phi = rng.normal(size=(nE, nQ)) * d['hq']                                    # the level set near the interface: |phi| ~ h
+    fields = np.ascontiguousarray(np.stack([phi, d['hq']], axis=-1))
+    d['beta'] = np.zeros((nE, nQ))
+    d['nl'] = np.zeros((nE, nQ))
+    off = finite_difference('rdls_nosc', d, fields, 0.0, False)
+    on = finite_difference('rdls_nosc', d, fields, 0.0, True)
+    say('  %-70s %.2e' % ('RDLS (nonlinear H): proteus Jacobian (a frozen) vs finite differences', off))
+    say('  %-70s %.2e' % ('RDLS with d(dH)/d(grad u) (exactJacobian) vs finite differences', on))
+    check('the d(dH)/d(grad u) slot makes the Jacobian exact (< 1e-6), and the frozen one is not (> 1e-3)', on < 1e-6 and off > 1e-3)
 
 
 def timing(d, name, layout, kernel):
@@ -278,7 +325,7 @@ def partitioned(d, name, layout, kernel):
     l2g = np.array([[keys[tuple(p)] for p in e] for e in d['xn']])
     nN = len(keys)
     x = points(d)
-    por = theta(x[..., 0], x[..., 1], d['h'][:, None]) if name == 'porous_vof' else np.ones(x.shape[:2])
+    por = theta(x[..., 0], x[..., 1], d['hq']) if name == 'porous_vof' else np.ones(x.shape[:2])
 
     def assemble(which, sel):
         sub = {k: (v[sel] if isinstance(v, np.ndarray) and v.ndim and v.shape[0] == nE else v) for k, v in d.items()}
@@ -321,7 +368,7 @@ def refusals():
     refused('strong Dirichlet on the whole boundary', lambda s: s['boundary_conditions'][0].pop('only'), ['whole boundary'])
     refused('an unknown field', lambda s: s.update(reads={}), ['the name v_0 is not'])
     # the other sub-problems of the same spec, as they are
-    for n, words in {'rdls': ['nonlinear in grad u'], 'mcorr': ['no stabilization is stated'], 'flow': ['one equation, not 3']}.items():
+    for n, words in {'mcorr': ['no stabilization is stated'], 'flow': ['one equation, not 3']}.items():
         p = subprocess.run([sys.executable, os.path.join(HERE, 'generator', 'generate.py'), os.devnull,
                             os.path.join(INPUTS, '%s_2d.json' % n)], capture_output=True, text=True)
         check('%s (the spec\'s own sub-problem) is refused, naming: %s' % (n, ', '.join(words)), p.returncode == 1 and all(w in p.stderr for w in words))
@@ -338,16 +385,19 @@ def main(argv):
     say('3. generated vs hand-written functor (the porosity the spec states is theta(x_q) in the hand-written field)')
     for p in fixtures:
         f, d = fixture_case(p)
+        per_point_h(d, rng)
         compare_case('(damBreak fixture, %d elements)' % d['xn'].shape[0], d)
         faces(f)
     for nd in (2, 3):
-        r = random_case(rng, nd)
+        r = per_point_h(random_case(rng, nd), rng)
         compare_case('(random, %dD, %d elements)' % (nd, r['xn'].shape[0]), r)
     say('3b. lagged coefficients (ymf round 5: previous_iterate, previous_step)')
     lagged()
+    say('3c. slots: h per point, dr, diffusion, d(dH)/d(grad u)')
+    slots()
     say('4. partition independence (%d rank(s))' % SIZE)
     for nd in (2, 3):
-        r = random_case(rng, nd, n=4)
+        r = per_point_h(random_case(rng, nd, n=4), rng)
         partitioned(r, 'porous_vof', 'h', 'vof')
         partitioned(r, 'porous_ncls', 'v', 'ncls')
     if RANK == 0:
@@ -356,6 +406,7 @@ def main(argv):
     if RANK == 0 and SIZE == 1:
         say('6. run time')
         f, d = fixture_case(fixtures[0])
+        per_point_h(d, rng)
         timing(d, 'vof', 'v', 'vof')
         timing(d, 'ncls', 'v', 'ncls')
     OK_all = comm.allreduce(int(OK), op=MPI.MIN) if comm else int(OK)

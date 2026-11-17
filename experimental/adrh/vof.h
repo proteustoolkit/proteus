@@ -27,11 +27,21 @@
 
 namespace adrh
 {
-  // Which optional inputs a coefficient functor declares (static constexpr bool members; absent = false).
+  // Which optional slots and inputs a coefficient functor declares (static constexpr bool members; absent = false). The kernels
+  // below compile a term only for the slots the functor has, so a functor that does not use one pays nothing for it.
+  //   hasF, hasH, hasR   advective flux f, Hamiltonian H, reaction r (below)
+  //   hasDR              dr = dr/du: the reaction depends on u (the Jacobian gets dr w_j w_i, the strong residual dr w_j)
+  //   hasA               isotropic diffusion ad (and dad = d ad/du), weak form ad grad u . grad w (Galerkin: it does not enter
+  //                      tau or the strong residual, which is exact for P1)
+  //   hasDDH             ddH[I][K] = d dH_I / d grad u_K: with SUPGParameters::exactJacobian the Jacobian of the subgrid term
+  //                      follows the dependence of a = dH on grad u (RDLS's S |grad u|); without it, proteus's Jacobian
   //   usesPoint          evaluate also takes the point's physical coordinates x[3] (a coefficient that is a function of x)
 #define ADRH_FUNCTOR_FLAG(name)                                                              \
   template <class C, class = void> struct Flag_##name : std::false_type {};                  \
   template <class C> struct Flag_##name<C, std::void_t<decltype(C::name)>> : std::bool_constant<C::name> {};
+  ADRH_FUNCTOR_FLAG(hasDR)
+  ADRH_FUNCTOR_FLAG(hasA)
+  ADRH_FUNCTOR_FLAG(hasDDH)
   ADRH_FUNCTOR_FLAG(usesPoint)
 #undef ADRH_FUNCTOR_FLAG
   // A generated functor exists only for the dimensions its spec was read in: the others are the primary template with
@@ -41,8 +51,9 @@ namespace adrh
 
   // The face kernel a functor's boundary words select (generator: from the boundary kind and the form of the equation; the
   // hand-written functors state theirs): Upwind = scalarUpwindFace (a conservative flux f, strong Dirichlet on inflow),
-  // InflowPenalty = scalarInflowPenaltyFace (a Hamiltonian without flux: penalize inflow towards the boundary state).
-  enum class FaceKind : int { Upwind = 0, InflowPenalty = 1 };
+  // InflowPenalty = scalarInflowPenaltyFace (a Hamiltonian without flux: penalize inflow towards the boundary state), None = no
+  // boundary term (a Hamiltonian nonlinear in grad u: RDLS's eikonal; the faces only hand the trace on).
+  enum class FaceKind : int { Upwind = 0, InflowPenalty = 1, None = 2 };
 
   // What a scalar coefficient functor returns at a point: mass m(u), an advective flux f(u) (weak form -f . grad w) and a
   // Hamiltonian H(u, grad u) (weak form H w), with their derivatives. A functor declares which of f and H it has (hasF, hasH);
@@ -53,6 +64,7 @@ namespace adrh
   struct ScalarTerms
   {
     double m, dm, f[nS], df[nS], H, dH[nS], r, nuExtra;
+    double dr, ad, dad, ddH[nS][nS];   // optional slots, set only by a functor that declares hasDR, hasA, hasDDH
   };
 
   // The call of a functor's evaluate: with the point's coordinates when it declares usesPoint.
@@ -94,6 +106,7 @@ namespace adrh
     double sc_drop_time;
     double Ct_sge;      // 4 in proteus
     int lag_sc = 1;     // 1: nu = numDiffLast (VOF, NCLS); 0: nu = the numDiff computed here (RDLS)
+    int exactJacobian = 0;   // 1: differentiate the subgrid term through a = dH(grad u) when the functor has hasDDH (nu is never)
   };
 
   // One element. X (nDOF,3) node coordinates; ue (nDOF); per point q: fields (nQ, nFields), beta (nQ), numDiffLast (nQ);
@@ -160,6 +173,37 @@ namespace adrh
       else tau = 1.0 / std::sqrt(P.Ct_sge * dm_t * dm_t + vGv + 1.0e-8);
       double pdeResidual = m_t + dfgu;
       if constexpr (Coefficients::hasR) pdeResidual += T.r;
+      // exact Jacobian through a(grad u) = dH (hasDDH, exactJacobian): B gw_j = ddH gw_j, gu . B gw_j and a G B gw_j per node
+      constexpr bool exactSlot = Flag_hasDDH<Coefficients>::value;
+      double gubgw[nD], aGBgw[nD], gwBgw[nD][nD];
+      if constexpr (exactSlot)
+        if (P.exactJacobian)
+        {
+          double aG[nS];
+          for (int K = 0; K < nS; ++K)
+          {
+            aG[K] = 0.0;
+            for (int I = 0; I < nS; ++I) aG[K] += a[I] * Gm[I][K];
+          }
+          double Bgw[nD][nS];
+          for (int j = 0; j < nD; ++j)
+          {
+            gubgw[j] = 0.0; aGBgw[j] = 0.0;
+            for (int I = 0; I < nS; ++I)
+            {
+              Bgw[j][I] = 0.0;
+              for (int K = 0; K < nS; ++K) Bgw[j][I] += T.ddH[I][K] * gw[j][K];
+              gubgw[j] += gu[I] * Bgw[j][I];
+              aGBgw[j] += aG[I] * Bgw[j][I];
+            }
+          }
+          for (int i = 0; i < nD; ++i)
+            for (int j = 0; j < nD; ++j)
+            {
+              gwBgw[i][j] = 0.0;
+              for (int I = 0; I < nS; ++I) gwBgw[i][j] += gw[i][I] * Bgw[j][I];
+            }
+        }
       const double subgridError = -tau * pdeResidual;
       {
         const double h1 = 1.0 / std::sqrt(guGgu + 1.0e-12);
@@ -176,6 +220,7 @@ namespace adrh
         for (int I = 0; I < nS; ++I) agw += a[I] * gw[i][I];
         Lstar[i] = -agw * dV;
         dR[i] = dm_t * w[i] + agw;
+        if constexpr (Flag_hasDR<Coefficients>::value) dR[i] += T.dr * w[i];
       }
       for (int i = 0; i < nD; ++i)
       {
@@ -190,6 +235,7 @@ namespace adrh
         }
         if constexpr (Coefficients::hasH) weak += T.H * w[i] * dV;
         if constexpr (Coefficients::hasR) weak += T.r * w[i] * dV;
+        if constexpr (Flag_hasA<Coefficients>::value) weak += T.ad * gugw * dV;
         Rloc[i] += weak + subgridError * Lstar[i] + nu * gugw * dV;
         for (int j = 0; j < nD; ++j)
         {
@@ -208,7 +254,21 @@ namespace adrh
             for (int I = 0; I < nS; ++I) dHgwj += T.dH[I] * gw[j][I];
             dweak += dHgwj * w[i] * dV;
           }
-          Jloc[i][j] += dweak - tau * dR[j] * Lstar[i] + nu * gwjgwi * dV;
+          if constexpr (Flag_hasDR<Coefficients>::value) dweak += T.dr * w[j] * w[i] * dV;
+          if constexpr (Flag_hasA<Coefficients>::value) dweak += (T.ad * gwjgwi + T.dad * w[j] * gugw) * dV;
+          double dsub = -tau * dR[j] * Lstar[i];
+          if constexpr (exactSlot)
+            if (P.exactJacobian)
+            {
+              // d/du_j of tau R(u) (a . gw_i): dR gets gu . B gw_j, a . gw_i gets gw_i . B gw_j, tau gets -tau^2 (a G B gw_j)/|a|_G
+              // (tauForm 1) or -tau^3 (a G B gw_j) (tauForm 0)
+              double dtau = 0.0;
+              if constexpr (Coefficients::tauForm == 1) dtau = vGv > 0.0 ? -tau * tau * aGBgw[j] / std::sqrt(vGv) : 0.0;
+              else dtau = -tau * tau * tau * aGBgw[j];
+              const double agwi = -Lstar[i] / dV;
+              dsub += (tau * gubgw[j] * agwi + tau * pdeResidual * gwBgw[i][j] + dtau * pdeResidual * agwi) * dV;
+            }
+          Jloc[i][j] += dweak + dsub + nu * gwjgwi * dV;
         }
       }
     }

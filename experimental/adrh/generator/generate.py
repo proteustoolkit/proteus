@@ -279,9 +279,13 @@ def _lagged_lines(spec, inputs, lagged, problems):
         for k in range(dim):
             lines += ["{ const %s fD = %s; T.f[%d] = fD.v; T.df[%d] = fD.d[0]; }" % (D, slot(entry["advection"]["f"][k], "f[%d]" % k), k, k)]
     if "reaction" in entry:
-        problems.append("a reaction together with lagged coefficients: ScalarTerms carries r(x) but no dr/du")
+        has["R"] = has["DR"] = True
+        lines += ["{ const %s rD = %s; T.r = rD.v; T.dr = rD.d[0]; }" % (D, slot(entry["reaction"]["r"], "r")), "T.nuExtra = 0.0;"]
     if "diffusion" in entry:
-        problems.append("a diffusive flux: scalarSUPGElement has no a(u) grad u slot (ScalarTerms carries no a)")
+        iso = _isotropic({unknown: dict(entry["diffusion"][unknown], da={})}, dim, unknown, problems, "%s" % spec["kernel"])
+        if iso:
+            has["A"] = True
+            lines += ["{ const %s aD = %s; T.ad = aD.v; T.dad = aD.d[0]; }" % (D, slot(iso[0], "a"))]
     return lines, has
 
 
@@ -338,17 +342,21 @@ def _specialization_supg(spec):
             dh_exprs = dH
             lines += ["T.dH[%d] = %s;" % (k, e) for k, e in enumerate(dH)]
             if h["depends_on"].get(unknown) == "nonlinear":
-                problems.append("a Hamiltonian nonlinear in grad u: ScalarTerms returns dH but no d(dH)/d(grad u) (RDLS's S|grad u|); the "
-                                "Jacobian would be inexact")
+                has["DDH"] = True
         if "reaction" in entry:
             r = entry["reaction"]
             has["R"] = True
             lines.append("T.r = %s;" % tr(r["r"], "r"))
             lines.append("T.nuExtra = 0.0;")
             if r.get("dr", {}).get(unknown):
-                problems.append("a reaction that depends on u: ScalarTerms carries r(x) but no dr/du")
+                has["DR"] = True
+                lines.append("T.dr = %s;" % tr(r["dr"][unknown], "dr"))
         if "diffusion" in entry:
-            problems.append("a diffusive flux: scalarSUPGElement has no a(u) grad u slot (ScalarTerms carries no a)")
+            iso = _isotropic(entry["diffusion"], dim, unknown, problems, where)
+            if iso:
+                has["A"] = True
+                lines.append("T.ad = %s;" % tr(iso[0], "a"))
+                lines.append("T.dad = %s;" % (tr(iso[1], "da") if iso[1] else "0.0"))
     if problems:
         raise GeneratorError("%s cannot be generated:\n  - %s" % (where, "\n  - ".join(problems)))
     # the tau form follows the equation: a time term gives the metric tau with dm_t, none gives the steady form (proteus's
@@ -365,11 +373,14 @@ def _emit_supg(s):
     dim, kernel = s["dim"], s["kernel"]
     has = s["has"]
     flags = ", ".join("%s = %s" % (n, str(has[k]).lower()) for n, k in (("hasF", "F"), ("hasH", "H"), ("hasR", "R")))
+    extra = ", ".join("%s = true" % n for n, k in (("hasDR", "DR"), ("hasA", "A"), ("hasDDH", "DDH")) if has[k])
     sc = s["sc"]
     out = ["  template <>", "  struct %sCoefficients<%d>" % (kernel, dim), "  {",
            "    // per-point inputs fld[]: %s" % (", ".join("%s" % f for f in s["layout"]) or "none"),
            "    static constexpr int nSpace = %d, nFields = %d;" % (dim, len(s["layout"])),
            "    static constexpr bool %s;" % flags]
+    if extra:
+        out.append("    static constexpr bool %s;" % extra)
     out += ["    static constexpr bool usesPoint = %s;" % str(s["uses_x"]).lower(),
             "    static constexpr int tauForm = %d;" % s["tau"],
             "    static constexpr FaceKind face = FaceKind::%s;" % s["face"],
@@ -377,16 +388,33 @@ def _emit_supg(s):
                                                                       if s["defaulted"] else "all stated"),
             "    static constexpr double scFactor = %r, scBeta = %r, scReference = %r;" % (sc["factor"], float(sc["beta"]), float(sc["reference"])),
             "    static constexpr bool scLagged = %s;" % str(bool(sc["lagged"])).lower(),
-            "    ADRH_FN static SUPGParameters supgParameters(double alpha)",
+            "    ADRH_FN static SUPGParameters supgParameters(double alpha, bool exactJacobian = false)",
             "    {",
             "      SUPGParameters P{alpha, scFactor, scReference, scBeta, 0.0, 4.0};",
             "      P.lag_sc = scLagged ? 1 : 0;",
+            "      P.exactJacobian = exactJacobian ? 1 : 0;",
             "      return P;",
             "    }"]
+    if s["ddh"]:
+        out += ["    // dH_I (the expressions of ymf's dH) over a scalar type S: double for the Hamiltonian, Dual for d(dH)/d(grad u)",
+                "    template <class S>",
+                "    ADRH_FN ADRH_FORCE_INLINE static void dHExpressions(const double *fld, const double *X, S u, const S *gu, S *dH)",
+                "    {", "      (void)fld; (void)X; (void)u;"]
+        out += ["      dH[%d] = %s;" % (k, e) for k, e in enumerate(s["dh"])]
+        out += ["    }"]
     xarg = "X" if s["uses_x"] else "nullptr"
     sig = "const double *fld, double u, const double *gu, %sScalarTerms<%d> &T" % ("const double *X, " if s["uses_x"] else "", dim)
     out += ["    ADRH_FN ADRH_FORCE_INLINE void evaluate(%s) const" % sig, "    {", "      (void)fld; (void)u; (void)gu;"]
     body = list(s["lines"])
+    if s["ddh"]:
+        # the Hamiltonian's derivative slot and its derivative with respect to grad u come from the same expressions
+        body = [l for l in body if not l.startswith("T.dH[")]
+        body += ["dHExpressions<double>(fld, %s, u, gu, T.dH);" % xarg, "{",
+                 "  Dual<%d> g[%d], dh[%d];" % (dim, dim, dim),
+                 "  for (int K = 0; K < %d; ++K) g[K] = Dual<%d>::seed(gu[K], K);" % (dim, dim),
+                 "  dHExpressions<Dual<%d>>(fld, %s, Dual<%d>(u), g, dh);" % (dim, xarg, dim),
+                 "  for (int I = 0; I < %d; ++I)" % dim,
+                 "    for (int K = 0; K < %d; ++K) T.ddH[I][K] = dh[I].d[K];" % dim, "}"]
     out += ["      " + l for l in body]
     out += ["    }", "  };", ""]
     return out
