@@ -820,8 +820,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     elif structured:
         # SWFlow's structured path (the decks' structured=True): the rectangle itself, cells per side as the decks'
         # nnx - 1 = nny - 1, he the deck's L[0]/(nnx - 1)
-        cells = int(realization["cells"])
-        nnx = nny = cells + 1
+        from ymf.discretizations import cells_per_axis
+        nnx, nny = [c + 1 for c in cells_per_axis(realization["cells"], dim)]
         he = (upper[0] - lower[0]) / float(nnx - 1)
         domain = rectangle
     else:

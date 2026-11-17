@@ -101,6 +101,11 @@ CASES = {
     "circular_dam_dispersive": ("SWFlow", "circular_damBreak.py", "--SWEs",
                                 "sw_model=1 final_time=2.0 dt_output=0.4", "circular_dam_dispersive_short.ymf",
                                 "relaxed_convex_limited -- split, dispatched to gn GN_SW2DCV", "h_u_t6"),
+    # structured meshes with a cell count per axis: the deck's refinement 4 is nnx = 81, nny = 41 nodes (80 x 40 cells)
+    "dam3Bumps_structured": ("SWFlow", "dam3Bumps.py", "--SWEs",
+                             "final_time=0.5 dt_output=0.1 structured=True dam_x_location=16.05",
+                             "dam3bumps_structured.ymf", "convex_limited -- split, dispatched to swe SW2DCV",
+                             "h_u_t6"),
     # the dam3Bumps spec on the mesh of the deck's own run (dam3bumps.node, .ele ... in the deck's directory): read with
     # genMesh off, it must give the run of the mesh it was made by
     "dam3Bumps_stored": ("SWFlow", "dam3Bumps.py", "--SWEs",
@@ -250,3 +255,11 @@ def test_a_relaxation_auxiliary_starts_from_the_depth_it_is_an_expression_of():
     assert _AuxiliaryInitial("h x", "h", Depth(), 2).uOfXT((0.5, 0.0), 0.0) == 1.0
     with pytest.raises(RealizeError, match="reads u"):
         _AuxiliaryInitial("u^2", "h", Depth(), 2)
+
+
+def test_cells_per_axis_reach_the_solver_that_takes_them_and_are_refused_by_the_one_that_does_not():
+    from proteus.cli.ymfrun import cells_along_x, one_count
+    assert cells_along_x({"x": 80, "y": 40}) == 80 and cells_along_x(49) == 49
+    assert one_count(49, "d") == 49 and one_count({"x": 8, "y": 8}, "d") == 8
+    with pytest.raises(ValueError, match="unequal per axis"):
+        one_count({"x": 80, "y": 40}, "adr_box")
