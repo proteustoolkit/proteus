@@ -448,9 +448,9 @@ def install():
                     i = int(np.argmax(c))
                     vm = getattr(tr, 'vModel', None)
                     P('DT0 RKEV.choose_dt#%d runCFL=%g -> dt=%.5e; edge_based_cfl max=%.4e at node %d x=%s; ML=%.4e M_low=%.6g '
-                      'M_dof=%.6g nodalBoundaryFlux=%.4e; flow model attached=%s; transport dt=%.4e t=%.4e' % (
+                      'M_dof=%.6g nodalBoundaryFlux=%.4e; flow model attached=%s; _use_edge_flux=%s; transport dt=%.4e t=%.4e' % (
                           n + 1, self.runCFL, self.dt, c.max(), i, tr.mesh.nodeArray[i][:2].tolist(), tr.ML[i], tr.M_low[i],
-                          tr.M_dof[i], tr.nodalBoundaryFlux[i], vm is not None, tr.timeIntegration.dt, tr.timeIntegration.t))
+                          tr.M_dof[i], tr.nodalBoundaryFlux[i], vm is not None, getattr(tr, '_use_edge_flux', None), tr.timeIntegration.dt, tr.timeIntegration.t))
                     P('DT0   edge_based_cfl: nodes above 1e6: %d, above 1e10: %d, median %.3e; max|nodalBoundaryFlux|=%.4e; '
                       'max|M_low-M_dof|=%.4e' % ((c > 1e6).sum(), (c > 1e10).sum(), np.median(c), amax(tr.nodalBoundaryFlux),
                                                amax(tr.M_low - tr.M_dof)))
