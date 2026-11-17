@@ -196,3 +196,30 @@ def test_the_hook_aborts_when_stdout_and_the_log_cannot_be_written(monkeypatch):
     monkeypatch.setattr(sys, "stdout", _BrokenStream())
     _hook(monkeypatch, comm, _BrokenStream())
     assert comm.aborted == [1]
+
+
+def test_the_hook_drains_before_it_aborts(monkeypatch):
+    """The wait comes after the message and before Abort: a launcher that is killed by the abort has forwarded it."""
+    from proteus import runtime
+    order = []
+    monkeypatch.setattr(runtime, "drain_before_abort", lambda *a: order.append("drain"))
+    comm = _FakeComm(0, 2)
+    comm.Abort = lambda code: order.append("abort")
+    _hook(monkeypatch, comm)
+    assert order == ["drain", "abort"]
+
+
+def test_drain_before_abort_flushes_and_waits(monkeypatch):
+    import time
+    from proteus import runtime
+    flushed = []
+
+    class _Stream:
+        def flush(self):
+            flushed.append(1)
+    monkeypatch.setattr(sys, "stdout", _Stream())
+    monkeypatch.setattr(sys, "stderr", _Stream())
+    t0 = time.time()
+    runtime.drain_before_abort()
+    assert len(flushed) == 2
+    assert time.time() - t0 >= runtime.ABORT_DRAIN_SECONDS * 0.9

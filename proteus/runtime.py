@@ -21,7 +21,7 @@ import math
 import sys
 from dataclasses import dataclass
 
-__all__ = ["RunOptions", "petsc_argv", "init", "start", "abort_on_uncaught_exception"]
+__all__ = ["RunOptions", "petsc_argv", "init", "start", "abort_on_uncaught_exception", "drain_before_abort"]
 
 
 @dataclass
@@ -142,6 +142,36 @@ def start(log="proteus.log", log_level=1):
     return comm
 
 
+#: Seconds to let a launcher forward what the ranks wrote before ``MPI_Abort``.
+#: MPICH's hydra kills its proxies on abort and can exit before it has forwarded
+#: the ranks' output (empty stderr, exit 1: ``abortWith`` in partitioning.cpp,
+#: macOS 2026-11-15; this hook, ceds-model nightly 2026-11-16 at load 31).
+#: partitioning.cpp's ``abortWith`` waits the same 0.2 s.
+ABORT_DRAIN_SECONDS = 0.2
+
+
+def drain_before_abort(seconds=None):
+    """Flush every output buffer, then wait for the launcher to forward it.
+
+    Flushes Python's stdout and stderr and, through libc, every C stdio
+    stream (``fflush(NULL)``: PETSc and the extensions print through it),
+    then sleeps :data:`ABORT_DRAIN_SECONDS`. Call it right before
+    ``MPI_Abort``, when the run is ending anyway. Never raises.
+    """
+    import time
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    try:
+        import ctypes
+        ctypes.CDLL(None).fflush(None)
+    except Exception:
+        pass
+    time.sleep(ABORT_DRAIN_SECONDS if seconds is None else seconds)
+
+
 def abort_on_uncaught_exception(program):
     """Make an exception that no code catches end the whole MPI job, not one rank.
 
@@ -182,6 +212,7 @@ def abort_on_uncaught_exception(program):
         except Exception:
             pass
         if size > 1:
+            drain_before_abort()
             comm.comm.tompi4py().Abort(1)
     sys.excepthook = hook
     return hook

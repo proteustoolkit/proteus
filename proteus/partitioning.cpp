@@ -128,6 +128,7 @@ void writeErrorLine(const std::string& line)
   //it has forwarded what the ranks wrote: the whole message was lost on the
   //macOS leg of the scheduled dev run of 2026-11-15 (empty output, nonzero
   //exit). The run is ending: let the pipe drain first.
+  //runtime.drain_before_abort waits the same 0.2 s (ABORT_DRAIN_SECONDS)
   usleep(200000);
   MPI_Abort(comm, 1);
   std::abort();
