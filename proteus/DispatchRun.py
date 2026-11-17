@@ -344,12 +344,58 @@ def _surface_tension(doc, spec, found):
     return sigma
 
 
+#: SpatialTools.Tank2D's boundary flags: the flags a stored mesh of a tank carries (the sides of a box mesh)
+TANK2D_FLAGS = {"y-": 1, "x+": 2, "y+": 3, "x-": 4}
+
+
+def _stored(split):
+    """The prefix of the stored mesh the domain names (``kind: file, format: tetgen``: ``<prefix>.node``, ``.ele``,
+    ``.edge``, as triangle writes them and as the decks read them with ``genMesh=False``), or None for a box
+    that is meshed. Refused for any other region."""
+    region = split["domain"].get("region")
+    if region is None:
+        return None
+    if region.get("kind") != "file" or region.get("format") != "tetgen":
+        raise RealizeError("the realizer builds a box domain, or reads a stored triangle/tetgen mesh (kind: file, "
+                           "format: tetgen); this one is a %s region%s"
+                           % (region.get("kind"), " in format %s" % region["format"] if region.get("format") else ""))
+    prefix = region["path"]
+    if prefix.endswith((".node", ".ele")):
+        prefix = os.path.splitext(prefix)[0]
+    if split["domain"].get("lower") is None:
+        raise RealizeError("a stored mesh is realized as the tank of its box: state the file domain's bounds "
+                           "(bounds: {lower, upper})")
+    return prefix
+
+
+def stored_element_size(prefix):
+    """The element size of a stored triangle mesh: the longest edge of its elements, which is what Proteus's
+    ``mesh.h`` is. (A mesh that is already made has no h to state; the run's tolerances and regularization widths
+    read the size, so it is measured.)"""
+    import numpy
+
+    def rows(suffix):
+        with open(prefix + suffix) as f:
+            lines = [l.split("#")[0].split() for l in f]
+        lines = [l for l in lines if l]
+        return lines[0], lines[1:]
+    head, nodes = rows(".node")
+    dim = int(head[1])
+    x = numpy.array([[float(v) for v in l[1:1 + dim]] for l in nodes[:int(head[0])]])
+    first = int(nodes[0][0])
+    head, elements = rows(".ele")
+    cells = numpy.array([[int(v) - first for v in l[1:1 + int(head[1])]] for l in elements[:int(head[0])]])
+    longest = 0.0
+    for a in range(cells.shape[1]):
+        for b in range(a + 1, cells.shape[1]):
+            longest = max(longest, float(numpy.linalg.norm(x[cells[:, a]] - x[cells[:, b]], axis=1).max()))
+    return longest
+
+
 def _box(split):
-    """(lower, upper) of a 2-D box domain; refused otherwise."""
+    """(lower, upper) of a 2-D box domain, or of the bounds of a stored mesh's file domain; refused otherwise."""
+    _stored(split)
     domain_data = split["domain"]
-    if domain_data.get("region") is not None:
-        raise RealizeError("the realizer builds a box domain; this one is a %s region"
-                           % domain_data["region"].get("kind"))
     lower, upper = [float(v) for v in domain_data["lower"]], [float(v) for v in domain_data["upper"]]
     if len(lower) != 2:
         raise RealizeError("the realizer builds 2-D boxes so far; this domain is %d-D" % len(lower))
@@ -369,18 +415,29 @@ def tank_sides(split):
     # two sides, so they are not asked)
     sides = {"x-": lambda s: (lower[0], lower[1] + s * size[1]), "x+": lambda s: (upper[0], lower[1] + s * size[1]),
              "y-": lambda s: (lower[0] + s * size[0], lower[1]), "y+": lambda s: (lower[0] + s * size[0], upper[1])}
+    stored = _stored(split) is not None
+    flag_of = TANK2D_FLAGS
     regions = {}
     for c in conditions:
-        regions.setdefault(c["region"], {"where": _where(c, dim, tol), "conditions": []})
+        regions.setdefault(c["region"], {"where": _where(c, dim, tol), "flags": c.get("flags"), "conditions": []})
         key = (c["variable"], c["type"], c.get("component"), c.get("only"), repr(c.get("value")))
         if key not in [k for k, _ in regions[c["region"]]["conditions"]]:
             regions[c["region"]]["conditions"].append((key, c))
+    if any(data["flags"] is not None for data in regions.values()) and not stored:
+        raise RealizeError("a region named by mesh tags needs a stored mesh to carry them (domain: kind: file)")
+
+    def claims(data, side, point):
+        """(all of the side, part of it) for a region."""
+        if data["flags"] is not None:
+            hit = flag_of[side] in {int(f) for f in data["flags"]}
+            return hit, False
+        hits = [data["where"](point(s)) for s in (0.25, 0.5, 0.75)]
+        return all(hits), any(hits) and not all(hits)
+
     out = {}
     for side, point in sides.items():
-        found = sorted(r for r, data in regions.items()
-                       if all(data["where"](point(s)) for s in (0.25, 0.5, 0.75)))
-        partial = sorted(r for r, data in regions.items() if r not in found
-                         and any(data["where"](point(s)) for s in (0.25, 0.5, 0.75)))
+        found = sorted(r for r, data in regions.items() if claims(data, side, point)[0])
+        partial = sorted(r for r, data in regions.items() if r not in found and claims(data, side, point)[1])
         if partial or len(found) != 1:
             raise RealizeError("side %s of the tank is in %s; the realizer sets one boundary condition per side"
                                % (side, "no boundary region" if not found and not partial else
@@ -424,6 +481,16 @@ def _tank(split, he, name, outdir, comm):
     domain.MeshOptions.he = he
     domain.MeshOptions.triangleOptions = mesh_constraint(he, 2)
     domain.MeshOptions.triangleFlag = 0
+    stored = _stored(split)
+    if stored is not None:
+        # a stored mesh, read as the decks read theirs with genMesh=False; its flags are the tank's (tank_sides
+        # chose each side's setter from them), he the element size it was made at
+        for suffix in (".node", ".ele"):
+            if not os.path.exists(stored + suffix):
+                raise RealizeError("the stored mesh %s%s does not exist" % (stored, suffix))
+        domain.MeshOptions.genMesh = False
+        domain.polyfile = os.path.abspath(stored)
+        return domain, record
     domain.MeshOptions.genMesh = True
     domain.polyfile = os.path.join(outdir, name)
     if comm.isMaster():
@@ -506,10 +573,11 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
     from proteus import Comm, LinearSolvers
     import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
     entry = _entry(doc, found.discretization)
-    if "h" not in realization:
+    stored = _stored(split)
+    if stored is None and "h" not in realization:
         raise RealizeError("%s: the two-phase realizer meshes the tank by element size; give mesh: {h: ...}"
                            % found.discretization)
-    he = float(realization["h"])
+    he = stored_element_size(stored) if stored is not None else float(realization["h"])
     if int(realization.get("levels", 1)) != 1:
         raise RealizeError("%s: mesh levels > 1 are not wired up for a split discretization" % found.discretization)
     comm = Comm.get()
@@ -539,6 +607,8 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
 
     subs = {s["name"]: s for s in split["subproblems"]}
     record = {"boundary": sides, "initial": {}, "system": {
+        "mesh": ("stored %s, h = %g" % (_stored(split), he)) if _stored(split) is not None else
+        "triangle, h = %g" % he,
         "final_time": final_time, "outputs": outputs, "linear_solver": "%s (%s)" % (solver, direct),
         **{k: values[k] for k in ("rho_0", "nu_0", "rho_1", "nu_1", "gravity", "surface_tension")}}}
     for model in found:
@@ -634,6 +704,13 @@ def shallow_water_boundary(split):
     conditions = sub.get("boundary_conditions") or []
     if any(c.get("where") is not None for c in conditions):
         raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω)")
+    region = split["domain"].get("region")
+    if any(c.get("flags") is not None for c in conditions):
+        tags = {int(v) for v in (region or {}).get("boundary_tags", {}).values()}
+        if any(not tags <= {int(f) for f in c["flags"]} for c in conditions):
+            raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary: "
+                               "name every boundary tag of the mesh (%s) in each condition's region"
+                               % ", ".join(sorted(map(str, tags))))
     signature = _signature(conditions)
     boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
     if boundary is None:
@@ -678,14 +755,19 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("%s: SWFlow has no p and n modules for %s" % (model.subproblem, model.module))
     models = table.SHALLOW_WATER_MODELS[model.module]
     entry = _entry(doc, found.discretization)
-    if ("h" in realization) == ("cells" in realization) or int(realization.get("levels", 1)) != 1:
+    stored = _stored(split)
+    if stored is not None:
+        if "h" in realization or "cells" in realization or int(realization.get("levels", 1)) != 1:
+            raise RealizeError("%s: a stored mesh is read as it is, one level (mesh: {levels: 1})"
+                               % found.discretization)
+    elif ("h" in realization) == ("cells" in realization) or int(realization.get("levels", 1)) != 1:
         raise RealizeError("%s: the shallow-water realizer meshes the box by cells per side (SWFlow's structured "
                            "mesh) or by element size (triangle), one level; give mesh: {cells: ...} or "
                            "mesh: {h: ...}" % found.discretization)
     structured = "cells" in realization
     dim = split["dim"]
-    if split["domain"].get("region") is not None or dim != 2:
-        raise RealizeError("the shallow-water realizer builds a 2-D box (RectangularDomain)")
+    if dim != 2 or (split["domain"].get("region") is not None and stored is None):
+        raise RealizeError("the shallow-water realizer builds a 2-D box (RectangularDomain) or reads a stored mesh")
     comm = Comm.get()
     final_time, outputs = _time(split, entry)
     solves, how = _shallow_water_linear_solver(entry, ranks)
@@ -696,7 +778,16 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
     lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
     rectangle = Domain.RectangularDomain(L=[u - l for u, l in zip(upper, lower)], x=lower)
-    if structured:
+    if stored is not None:
+        for suffix in (".node", ".ele"):
+            if not os.path.exists(stored + suffix):
+                raise RealizeError("the stored mesh %s%s does not exist" % (stored, suffix))
+        he = stored_element_size(stored)
+        nnx = nny = None
+        domain = Domain.PlanarStraightLineGraphDomain(fileprefix=os.path.abspath(stored))
+        domain.MeshOptions.genMesh = False
+        domain.polyfile = os.path.abspath(stored)
+    elif structured:
         # SWFlow's structured path (the decks' structured=True): the rectangle itself, cells per side as the decks'
         # nnx - 1 = nny - 1, he the deck's L[0]/(nnx - 1)
         cells = int(realization["cells"])
@@ -733,7 +824,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         outputStepping=SWF.OutputStepping(final_time, dt_output=final_time / outputs),
         structured=structured, he=he, nnx=nnx, nny=nny, domain=domain, initialConditions=initial,
         boundaryConditions={v: (lambda x, flag: None) for v in variables},
-        reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry)
+        reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry, genMesh=stored is None)
     # copies: SWFlowProblem hands out its module's default dicts, which a deck then edits in place
     problem.physical_parameters = physical
     problem.swe_parameters = dict(SWF.default_swe_parameters)
@@ -766,7 +857,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
                            % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
     record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"]},
               "initial": dict(zip(variables, components)),
-              "system": {"final_time": final_time, "outputs": outputs, "mesh": ("structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (
+              "system": {"final_time": final_time, "outputs": outputs, "mesh": ("stored %s, h = %g" % (stored, he) if stored is not None else
+                       "structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (
                   domain.MeshOptions.triangleOptions,)),
                   "linear_solver": "%s (%s)" % (solves, how),
                   **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()

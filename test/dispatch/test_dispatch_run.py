@@ -90,6 +90,18 @@ CASES = {
                             "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True", "dambreak_short_projection.ymf",
                             "clsvof_projection -- split, dispatched to clsvof CLSVOF, flow RANS3PF, pressureInc "
                             "PresInc, pressure Pres, pressureInit PresInit", "velocity_t4"),
+    # the same dam break on the stored mesh of test/TwoPhaseFlow (meshDambreak: the mesh of he=0.08) read as the deck reads it
+    # with genMesh=False; a mesh that is already made has no h, the run measures its longest edge (STORED_HE) and
+    # the deck is given the same he
+    "damBreakLevelSet_stored": ("TwoPhaseFlow", "damBreakLevelSet.py", "--TwoPhaseFlow",
+                                "final_time=0.03 dt_output=0.01 he={he} genMesh=False", "dambreak_short_stored.ymf",
+                                "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
+                                "mcorr MCorr", "velocity_t4"),
+    # the dam3Bumps spec on the mesh of the deck's own run (dam3bumps.node, .ele ... in the deck's directory): read with
+    # genMesh off, it must give the run of the mesh it was made by
+    "dam3Bumps_stored": ("SWFlow", "dam3Bumps.py", "--SWEs",
+                         "final_time=0.5 dt_output=0.1 structured=False he=2.0 dam_x_location=16.05",
+                         "dam3bumps_stored.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
     "dam3Bumps": ("SWFlow", "dam3Bumps.py", "--SWEs", "final_time=0.5 dt_output=0.1 structured=False he=2.0 dam_x_location=16.05",
                   "dam3bumps.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
     # the same dam break with open (outflow) boundaries: SWFlow's reflectingBCs off, no Dirichlet data; the
@@ -119,12 +131,43 @@ def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     spec.mkdir()
     # the deck meshes in (or beside) its own directory: a copy, so the stored mesh files stay as they are
     shutil.copy(os.path.join(os.path.dirname(HERE), folder, script), str(deck))
+    spec_path = os.path.join(HERE, spec_file)
+    if "{he}" in options:
+        # a stored mesh: the deck reads meshDambreak beside itself, the spec names it by path (MESH_PREFIX), and the
+        # deck's he is the element size the run measures on the mesh (its longest edge)
+        from proteus.DispatchRun import stored_element_size
+        stored = os.path.join(DECKS, "meshDambreak")
+        for suffix in (".node", ".ele", ".edge", ".poly"):
+            shutil.copy(stored + suffix, str(deck / ("meshDambreak" + suffix)))
+        measured = stored_element_size(stored)
+        he = measured / 3.22
+        while 3.22 * he != measured and 3.22 * he < measured * (1 + 1e-9):      # the deck's he is 3.22 * opts.he
+            he = numpy.nextafter(he, 1.0)
+        options = options.replace("{he}", repr(float(he)))
+        for name in os.listdir(HERE):
+            if name.endswith(".ymf"):
+                shutil.copy(os.path.join(HERE, name), str(spec / name))
+        text = (spec / spec_file).read_text().replace("MESH_PREFIX", stored)
+        (spec / spec_file).write_text(text)
+        spec_path = str(spec / spec_file)
     ran = _run(_parun() + [flag, script, "-l1", "-C", options], deck, ranks)
     assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
-    ran = _run([sys.executable, "-m", "proteus.cli", "run", os.path.join(HERE, spec_file), "--outdir", str(spec)],
+    if "{he}" not in CASES[case][3] and case.endswith("_stored"):
+        # the mesh the deck just made, read by the spec
+        for name in os.listdir(HERE):
+            if name.endswith(".ymf"):
+                shutil.copy(os.path.join(HERE, name), str(spec / name))
+        text = (spec / spec_file).read_text().replace("MESH_PREFIX", str(deck / "dam3bumps"))
+        (spec / spec_file).write_text(text)
+        spec_path = str(spec / spec_file)
+    ran = _run([sys.executable, "-m", "proteus.cli", "run", spec_path, "--outdir", str(spec)],
                spec, ranks)
     assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
     assert banner in ran.stdout
+    if case.endswith("_stored"):
+        # the run's record says the mesh was read, not made (bitwise equal arrays cannot tell: it is the same mesh)
+        (record,) = [f for f in os.listdir(str(spec)) if f.endswith(".archive.ymf")]
+        assert "mesh: stored " in (spec / record).read_text()
     (archive,) = [f for f in os.listdir(str(spec)) if f.endswith(".h5")]
     expected = _arrays(deck / (script[:-3] + ".h5"), script[:-3])
     found = _arrays(spec / archive, archive[:-3])
@@ -132,3 +175,61 @@ def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     assert float(numpy.abs(found[moving]).max()) > 0.1          # the water moved
     different = [key for key in expected if not numpy.array_equal(found[key], expected[key])]
     assert not different, "%d of %d datasets differ: %s" % (len(different), len(expected), different[:10])
+
+
+def _stored_split(tmp_path, mutate=None):
+    """ymf's split of the stored-mesh dam break (MESH_PREFIX replaced), for the realizer's data-only parts."""
+    from ymf.closure import load, plain
+    from ymf.symbolic.split import split_problem
+    for name in os.listdir(HERE):
+        if name.endswith(".ymf"):
+            shutil.copy(os.path.join(HERE, name), str(tmp_path / name))
+    spec = tmp_path / "dambreak_short_stored.ymf"
+    spec.write_text(spec.read_text().replace("MESH_PREFIX", os.path.join(DECKS, "meshDambreak")))
+    doc, _, _ = load(str(spec))
+    doc = plain(doc)
+    if mutate:
+        mutate(doc)
+    return doc, split_problem(doc, "level_set_five")
+
+
+def test_a_stored_mesh_is_read_not_made(tmp_path):
+    """The file domain's tank: genMesh off, the polyfile the stored prefix, the element size measured on the mesh,
+    each side's setter chosen from the flags the mesh stores (walls = bottom, right, left; top = atmosphere)."""
+    from proteus.DispatchRun import _tank, stored_element_size, tank_sides
+
+    class Comm(object):
+        def isMaster(self):
+            raise AssertionError("a stored mesh writes no PSLG")
+
+        def barrier(self):
+            pass
+    _, split = _stored_split(tmp_path)
+    sides = tank_sides(split)
+    assert {s: v[1] for s, v in sides.items()} == {"y+": "setAtmosphere", "x+": "setFreeSlip", "x-": "setFreeSlip",
+                                                    "y-": "setFreeSlip"}
+    assert {s: v[0] for s, v in sides.items()} == {"y+": "top", "x+": "walls", "x-": "walls", "y-": "walls"}
+    domain, _ = _tank(split, stored_element_size(os.path.join(DECKS, "meshDambreak")), "x", str(tmp_path), Comm())
+    assert domain.MeshOptions.genMesh is False
+    assert domain.polyfile == os.path.join(DECKS, "meshDambreak")
+    assert abs(stored_element_size(os.path.join(DECKS, "meshDambreak")) - 0.45) < 1e-12
+
+
+def test_a_stored_mesh_whose_file_is_missing_is_refused(tmp_path):
+    from proteus.DispatchRun import RealizeError, _tank
+
+    def move(doc):
+        doc["model"]["strong_form"]["domain"]["path"] = str(tmp_path / "nowhere")
+    _, split = _stored_split(tmp_path, move)
+    with pytest.raises(RealizeError, match="does not exist"):
+        _tank(split, 0.1, "x", str(tmp_path), None)
+
+
+def test_a_stored_mesh_in_another_format_is_refused(tmp_path):
+    from proteus.DispatchRun import RealizeError, tank_sides
+
+    def other(doc):
+        doc["model"]["strong_form"]["domain"]["format"] = "hex"
+    _, split = _stored_split(tmp_path, other)
+    with pytest.raises(RealizeError, match="stored triangle/tetgen mesh"):
+        tank_sides(split)

@@ -1,0 +1,8 @@
+# dambreak_short.ymf without its box regions and its element size: the base of the specs that name the boundary
+# another way (by a stored mesh's tags) on a mesh that is already made. A file can remove only from what it composes, not from itself, so the regions are removed here and the
+# extending file states its own (dambreak_short_stored.ymf).
+extends: dambreak_short.ymf
+remove:
+  - "model.strong_form.boundary_regions[walls]"
+  - "model.strong_form.boundary_regions[top]"
+  - "solution_paths.discretizations[level_set_five].mesh"
