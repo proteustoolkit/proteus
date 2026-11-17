@@ -23,6 +23,7 @@ from . import cfemIntegrals
 from .csparsity import CSR_INDEX_DTYPE
 from .TransportCoefficients import *
 from . import NumericalFlux
+from . import BoundaryKinds
 from . import cnumericalFlux
 from . import Comm
 from . import csparsity
@@ -100,6 +101,13 @@ class OneLevelTransport(NonlinearEquation):
         a discontinous velocity field.
 
     """
+    #The per-face boundary kinds of BoundaryKinds. A subclass (a model with its own residual) does not inherit
+    #the support: it implements it and says so with ``implementsBoundaryKinds = True`` in its own class body, and
+    #NumericalFlux.NF_base refuses a declared setter for a model that did not.
+    implementsBoundaryKinds = True
+    @property
+    def supportsBoundaryKinds(self):
+        return bool(type(self).__dict__.get('implementsBoundaryKinds',False))
     #share the storage of weighted shape arrays whose quadrature weights are equal
     #(see makeAliasForEqualWeights in __init__); a class attribute so it can be turned off
     shareWeightedArrays = True
@@ -940,9 +948,25 @@ class OneLevelTransport(NonlinearEquation):
         logEvent(memory("global exterior element boundary quadrature","OneLevelTransport"),level=4)
         self.forceStrongConditions= numericalFluxType.useStrongDirichletConstraints
         self.dirichletConditionsForceDOF = {}
+        #Per-face kinds (C12): under a flux class that is weak by default, the faces of a declared setter that say
+        #'strong' are imposed by replacing the rows of their dofs (the dofs stay unknowns: the layout of a weak
+        #class, which is also the parallel one); a bare function stays weak, as it always was. Whether the rows of
+        #some component are replaced is decided by the declaration, not by what this rank holds, because the
+        #parallel authority of a shared dof (LinearAlgebraTools.attachStrongDirichletAuthority) is collective.
+        self.declaredBoundaryKinds = [BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(cj)) for cj in range(self.nc)]
+        strongFacesOnly = (not numericalFluxType.useStrongDirichletConstraints and
+                           numericalFluxType.useWeakDirichletConditions and any(self.declaredBoundaryKinds))
+        if strongFacesOnly:
+            self.forceStrongConditions = True
         if self.forceStrongConditions:
             for cj in range(self.nc):
-                self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
+                if strongFacesOnly:
+                    if self.declaredBoundaryKinds[cj]:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False,strongFacesOnly=True)
+                    else:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,None,weakDirichletConditions=True)
+                else:
+                    self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
                 # A DOF of a periodic pair is one unknown shared with its
                 # partner, and periodicity wins over a Dirichlet value there,
                 # as it does where Dirichlet DOFs are eliminated.

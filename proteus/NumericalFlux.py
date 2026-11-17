@@ -6,6 +6,7 @@ A class hierarchy for numerical flux (numerical trace) computations
 """
 from . import cfemIntegrals,cnumericalFlux
 from . import MeshTools
+from . import BoundaryKinds
 import numpy
 from .Profiling import logEvent,memory
 from .EGeometry import enorm
@@ -71,7 +72,17 @@ class NF_base(object):
     penalty_order_scaling = True
     useWeakDirichletConditions=True
     useStrongDirichletConstraints=False
+    #Per-face kinds (C12, BoundaryKinds): whether the class has a weak Dirichlet term, so that a face
+    #declared 'weak' means something; and so the kind of a bare function in a declared setter (a class
+    #that has none imposes its faces strongly, as it always did).
+    supportsWeakFaces=True
     hasInterior=True
+
+    @classmethod
+    def defaultDirichletKind(cls):
+        """What a face whose Dirichlet function names no kind is: weak under a class that
+        imposes weakly (no existing result moves), strong under one that does not."""
+        return BoundaryKinds.WEAK if cls.supportsWeakFaces else BoundaryKinds.STRONG
 
     @property
     def rankInterfaceExteriorMask(self):
@@ -244,8 +255,19 @@ class NF_base(object):
                 assert(False)
             def __ne__(self,other):
                 assert(False)
+        #per-face kinds: faces (and points) that declared themselves strong or open; see BoundaryKinds.
+        #isDOFBoundary is set from the weak faces only, so a strong face never also gets the weak term.
+        self.isStrongBoundary = {}
+        self.isOpenBoundary = {}
         for ci in range(self.nc):
             self.isDOFBoundary[ci] = numpy.zeros((self.mesh.nExteriorElementBoundaries_global,vt.nElementBoundaryQuadraturePoints_elementBoundary),'i')
+            self.isStrongBoundary[ci] = numpy.zeros((self.mesh.nExteriorElementBoundaries_global,vt.nElementBoundaryQuadraturePoints_elementBoundary),'i')
+            self.isOpenBoundary[ci] = numpy.zeros((self.mesh.nExteriorElementBoundaries_global,vt.nElementBoundaryQuadraturePoints_elementBoundary),'i')
+            declaredKinds = BoundaryKinds.declaresKinds(getPointwiseBoundaryConditions[ci])
+            if declaredKinds and not getattr(vt,'supportsBoundaryKinds',False):
+                raise NotImplementedError(
+                    "%s does not implement per-face boundary kinds (BoundaryKinds.declare on the Dirichlet "
+                    "setter of component %d); the models that do set supportsBoundaryKinds" % (type(vt).__name__,ci))
             self.isDiffusiveFluxBoundary[ci] = numpy.zeros((self.mesh.nExteriorElementBoundaries_global,vt.nElementBoundaryQuadraturePoints_elementBoundary),'i')
             self.isAdvectiveFluxBoundary[ci] = numpy.zeros((self.mesh.nExteriorElementBoundaries_global,vt.nElementBoundaryQuadraturePoints_elementBoundary),'i')
             logEvent(memory("isDOF,DiffFlux,AdvFluxBoundary[%s]" % (ci),"NumericalFlux"),level=4)
@@ -282,9 +304,7 @@ class NF_base(object):
                             else:
                                 self.periodicBoundaryConditionsDictList[ci][ptuple(p)]=[(ebNE,k)]
                         elif g is not None:
-                            self.isDOFBoundary[ci][ebNE,k]=gFlag
-                            self.DOFBoundaryConditionsDictList[ci][(ebNE,k)] = g
-                            self.DOFBoundaryPointDictList[ci][(ebNE,k)]=x
+                            self._setDirichletFace(ci,ebNE,k,g,gFlag,x,declaredKinds)
                     except TypeError:
                         logEvent("""WARNING NumericalFlux Pointwise conditions should take arguments (x,flag) now trying without flag""")
                         #again try to get boundary condition flag too
@@ -305,9 +325,7 @@ class NF_base(object):
                             else:
                                 self.periodicBoundaryConditionsDictList[ci][ptuple(p)]=[(ebNE,k)]#[ptuple(p).hash()]=[(ebNE,k)]
                         elif g is not None:
-                            self.isDOFBoundary[ci][ebNE,k]=gFlag
-                            self.DOFBoundaryConditionsDictList[ci][(ebNE,k)] = g
-                            self.DOFBoundaryPointDictList[ci][(ebNE,k)]=x
+                            self._setDirichletFace(ci,ebNE,k,g,gFlag,x,declaredKinds)
                     if ci in getAdvectiveFluxBoundaryConditions:
                         try:
                             g = getAdvectiveFluxBoundaryConditions[ci](x,materialFlag)
@@ -329,6 +347,10 @@ class NF_base(object):
                                 g = getDiffusiveFluxBoundaryConditions[ci][ck](x)
                                 if g is not None:
                                     self.isDiffusiveFluxBoundary[ci][ebNE,k]=1
+            openAndFlux = self.isOpenBoundary[ci] * (self.isAdvectiveFluxBoundary[ci] + self.isDiffusiveFluxBoundary[ci])
+            if openAndFlux.any():
+                raise ValueError("component %d: %d face points are declared 'none' (BoundaryKinds.OPEN) and also carry a "
+                                 "flux boundary condition; a declared open face has no datum" % (ci,int((openAndFlux > 0).sum())))
         #ci
         #import pdb
         #pdb.set_trace()
@@ -346,6 +368,40 @@ class NF_base(object):
             self.HamiltonJacobiNumericalFlux[ci] = False
 
         logEvent(memory("boundary condition data structures","NumericalFlux"),level=4)
+
+    def _setDirichletFace(self,ci,ebNE,k,g,gFlag,x,declaredKinds):
+        """Record the Dirichlet function ``g`` of exterior face point (ebNE, k) by its kind.
+
+        Weak (the default of a weak class, and what every undeclared setter has always been): ``isDOFBoundary``
+        and the function, as before. Strong, named by the face: ``isStrongBoundary`` (and the function, for a model that
+        wants the value), but not ``isDOFBoundary``, so the flux adds no weak term (the model replaces the rows
+        of the dofs). None (``BoundaryKinds.OPEN``): ``isOpenBoundary``
+        only. A setter that was not declared cannot name a kind; a function that carries one there is refused,
+        because nothing downstream would read it."""
+        explicit = getattr(g,'kind',None)
+        if not declaredKinds:
+            if explicit is not None:
+                raise ValueError("a Dirichlet condition names its kind (%r) in a setter that was not declared: "
+                                 "pass the setter through BoundaryKinds.declare" % (g,))
+            kind = None
+        else:
+            kind = BoundaryKinds.kind_of(g,self.defaultDirichletKind())
+        if kind == BoundaryKinds.NONE:
+            self.isOpenBoundary[ci][ebNE,k] = 1
+            return
+        if kind == BoundaryKinds.STRONG and explicit is not None:
+            #no weak term: isDOFBoundary stays 0. The data is kept (a model that loads the boundary value of a
+            #strong face into its own kernel arrays, e.g. TADR's advective inflow, reads it from here).
+            self.isStrongBoundary[ci][ebNE,k] = 1
+            self.DOFBoundaryConditionsDictList[ci][(ebNE,k)] = g
+            self.DOFBoundaryPointDictList[ci][(ebNE,k)]=x
+            return
+        if kind == BoundaryKinds.WEAK and not self.supportsWeakFaces:
+            raise ValueError("%s has no weak Dirichlet term: a face cannot be declared 'weak' under it (use a weak "
+                             "flux class, or 'strong')" % type(self).__name__)
+        self.isDOFBoundary[ci][ebNE,k]=gFlag
+        self.DOFBoundaryConditionsDictList[ci][(ebNE,k)] = g
+        self.DOFBoundaryPointDictList[ci][(ebNE,k)]=x
 
     #: Whether OneLevelTransport should merge the DOFs of a periodic pair for
     #: this flux (serial periodic conditions, not ``parallelPeriodic``). A
@@ -504,6 +560,7 @@ class NoFlux(NF_base):
 class StrongDirichlet(NF_base):
     hasInterior=False
     useWeakDirichletConditions=False
+    supportsWeakFaces=False
     def __init__(self,vt,getPointwiseBoundaryConditions,
                  getAdvectiveFluxBoundaryConditions,
                  getDiffusiveFluxBoundaryConditions,
@@ -518,11 +575,24 @@ class StrongDirichlet(NF_base):
     def setFluxBoundaryConditions(self):
         # the p module's fluxBoundaryConditions; StrongDirichletFactory overrides this
         self.fluxBoundaryConditions = dict(getattr(self.vt,'fluxBoundaryConditions',None) or {})
+    def hasOutflow(self,ci):
+        """Whether component ci has an advective outflow term on some face: its ``fluxBoundaryConditions``
+        says outFlow (every face), or some face is declared open (``BoundaryKinds.OPEN``: that face only)."""
+        return (self.fluxBoundaryConditions.get(ci) in ('outFlow','mixedFlow') or
+                bool(self.isOpenBoundary[ci].any()))
+    def zeroAdvectiveFluxOffOpenFaces(self,ebqe,ci,cj):
+        """A component with ``noFlow`` and some face declared open has the outflow flux on the open faces only."""
+        if self.fluxBoundaryConditions.get(ci) in ('outFlow','mixedFlow'):
+            return
+        notOpen = self.isOpenBoundary[ci] == 0
+        if ('advectiveFlux',ci) in ebqe:
+            ebqe[('advectiveFlux',ci)][notOpen] = 0.0
+        if ('dadvectiveFlux_left',ci,cj) in ebqe:
+            ebqe[('dadvectiveFlux_left',ci,cj)][notOpen] = 0.0
     def calculateExteriorNumericalFlux(self,inflowFlag,q,ebqe):
-        # a component without an entry has no outflow term ('noFlow')
+        # a component without an entry has no outflow term ('noFlow'), unless some face is declared open
         for ci,cjDict in self.vt.coefficients.advection.items():
-            if (self.fluxBoundaryConditions.get(ci) == 'outFlow' or
-                self.fluxBoundaryConditions.get(ci) == 'mixedFlow'):
+            if self.hasOutflow(ci):
                 for cj in cjDict:
                     cnumericalFlux.calculateExteriorNumericalAdvectiveFlux_NoBC(self.mesh.exteriorElementBoundariesArray,
                                                                                 self.mesh.elementBoundaryElementsArray,
@@ -533,14 +603,15 @@ class StrongDirichlet(NF_base):
                                                                                 ebqe[('df',ci,cj)],
                                                                                 ebqe[('advectiveFlux',ci)],
                                                                                 ebqe[('dadvectiveFlux_left',ci,cj)])
+                    self.zeroAdvectiveFluxOffOpenFaces(ebqe,ci,cj)
                     self.zeroAdvectiveFluxOnRankInterfaces(ebqe,ci,cj)
     def updateExteriorNumericalFluxJacobian(self,l2g,inflowFlag,q,ebqe,dphi,fluxJacobian_exterior,fluxJacobian_eb,fluxJacobian_hj):
         for ci,cjDict in self.vt.coefficients.advection.items():
-            if ((self.fluxBoundaryConditions.get(ci) == 'outFlow' or
-                 self.fluxBoundaryConditions.get(ci) == 'mixedFlow') and
+            if (self.hasOutflow(ci) and
                 self.vt.timeIntegration.advectionIsImplicit[ci]):
                 for cj in cjDict:
                     # not an ordering assumption on calculateExteriorNumericalFlux
+                    self.zeroAdvectiveFluxOffOpenFaces(ebqe,ci,cj)
                     self.zeroAdvectiveFluxOnRankInterfaces(ebqe,ci,cj)
                     cnumericalFlux.updateExteriorNumericalAdvectiveFluxJacobian(self.mesh.exteriorElementBoundariesArray,
                                                                                 self.mesh.elementBoundaryElementsArray,
@@ -562,6 +633,7 @@ def StrongDirichletFactory(fluxBoundaryConditionsDict={}, keepDOFs=False):
         hasInterior=False
         useWeakDirichletConditions=keepDOFs
         useStrongDirichletConstraints=keepDOFs
+        supportsWeakFaces=False
         def setFluxBoundaryConditions(self):
             self.fluxBoundaryConditions=fluxBoundaryConditionsDict
     return MyStrongDirichlet

@@ -10,6 +10,7 @@ from .LinearAlgebraTools import *
 from .Quadrature import *
 from . import cfemIntegrals
 from . import cpartitioning
+from . import BoundaryKinds
 from .Profiling import logEvent
 import numpy as np
 from proteus import cmeshTools
@@ -7527,6 +7528,16 @@ class DOFBoundaryConditions(object):
     specified, then it returns the function of t,x, and the unknown
     that computes the boundary condition.
 
+    Per-face kinds (C12, :mod:`proteus.BoundaryKinds`): when the setter is declared
+    (``BoundaryKinds.declare``) a face names how its condition is imposed, and these are
+    the only faces whose degrees of freedom are collected here: a face that returns
+    ``BoundaryKinds.strong(g)`` (or a bare ``g``, which takes ``strong`` because this
+    class is asked to hold strong conditions) -- never a ``weak(g)`` face and never an
+    ``OPEN`` face. ``strongFacesOnly`` is for a flux class that is weak by default (a
+    declared setter's bare ``g`` is then a *weak* face, as it always was, and only the
+    faces that say ``strong`` are collected); it also leaves periodicity to the flux
+    class, as a weak class always did. A setter that is not declared is read as before.
+
     TODO
      For now allow for flag to specify type of dirichlet condition to allow
      say nonlinear function of solution to be specified
@@ -7534,7 +7545,7 @@ class DOFBoundaryConditions(object):
     """
     def __init__(self,femSpace,getPointwiseBoundaryConditions=None,weakDirichletConditions=False,
                  getPeriodicBoundaryConditions=None,allowNodalMaterialBoundaryTypes=True,
-                 mergeKeptPeriodicDOFs=False):
+                 mergeKeptPeriodicDOFs=False,strongFacesOnly=False):
         self.DOFBoundaryConditionsDict={}
         self.DOFBoundaryPointDict={}
         self.DOFBoundaryMaterialFlag={}
@@ -7554,7 +7565,19 @@ class DOFBoundaryConditions(object):
         #Bernstein spaces with exact conversion (PolynomialInterpolationConditions, nodal False): a boundary
         #dof is a combination of the data at the sample points of its entity, not the value at one point
         exactConversion = getattr(femSpace.referenceFiniteElement.interpolationConditions,'nodal',True) is False
-        if getPointwiseBoundaryConditions is not None and femSpace.strongDirichletConditions and not weakDirichletConditions:
+        declared = getPointwiseBoundaryConditions is not None and BoundaryKinds.declaresKinds(getPointwiseBoundaryConditions)
+        if strongFacesOnly and not declared:
+            raise ValueError("strongFacesOnly reads the kinds of a declared setter (BoundaryKinds.declare)")
+        defaultKind = BoundaryKinds.WEAK if strongFacesOnly else BoundaryKinds.STRONG
+        def impose(g):
+            """g, or None when the face imposes it any other way than strongly."""
+            if g is not None and declared and BoundaryKinds.kind_of(g,defaultKind) != BoundaryKinds.STRONG:
+                return None
+            return g
+        if strongFacesOnly:
+            getPeriodicBoundaryConditions = None
+        if (getPointwiseBoundaryConditions is not None and femSpace.strongDirichletConditions and
+            (not weakDirichletConditions or strongFacesOnly)):
             for eN in range(femSpace.elementMaps.mesh.nElements_global):
             # mesh = femSpace.elementMaps.mesh
             # for ebNE in range(mesh.nExteriorElementBoundaries_global):
@@ -7582,6 +7605,7 @@ class DOFBoundaryConditions(object):
                                 except TypeError:
                                     g = gReturn
                                     gFlag = 1
+                                g = impose(g)
                                 if gFlag != 1:
                                     logEvent("WARNING strong Dirichlet conditions do not enforce nonlinear bcs")
                                 p = None
@@ -7594,7 +7618,7 @@ class DOFBoundaryConditions(object):
                                         self.periodicDOFDict[ptuple(p)] = set([dofN])
                                 elif g is not None:
                                     if exactConversion:
-                                        g = self.exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions)
+                                        g = self.exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions,impose)
                                     self.DOFBoundaryConditionsDict[dofN] = g
                                     self.DOFBoundaryPointDict[dofN]=x
                                     self.DOFBoundaryMaterialFlag[dofN] = materialFlag
@@ -7619,6 +7643,7 @@ class DOFBoundaryConditions(object):
                         except TypeError:
                             g = gReturn
                             gFlag = 1
+                        g = impose(g)
                         if gFlag != 1:
                             logEvent("WARNING strong Dirichlet conditions do not enforce nonlinear bcs")
                         p = None
@@ -7655,6 +7680,7 @@ class DOFBoundaryConditions(object):
                             except TypeError:
                                 g = gReturn
                                 gFlag = 1
+                            g = impose(g)
                             if gFlag != 1:
                                 logEvent("WARNING strong Dirichlet conditions do not enforce nonlinear bcs")
                             p = None
@@ -7738,7 +7764,7 @@ class DOFBoundaryConditions(object):
 
 
     @staticmethod
-    def exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions):
+    def exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions,impose=lambda g: g):
         """
         The Dirichlet condition of local dof i of element eN for a space whose dofs are not point values
         (Bernstein with exact conversion): ``sum_j weights[i,j] g_j(x_j,t)`` over the sample points of
@@ -7761,6 +7787,7 @@ class DOFBoundaryConditions(object):
                     g_j = gReturn[0]
                 except TypeError:
                     g_j = gReturn
+                g_j = impose(g_j)
             if g_j is None:
                 logEvent("WARNING DOFBoundaryConditions exact conversion: no Dirichlet condition at a sample point of a boundary dof; using the value at the dof's own sample point")
                 return g
