@@ -355,12 +355,12 @@ def cartesianSubdomainParents(object kind, int triangleFlag, object nn, object r
     its parent's index in rank's subdomain on level-1, or -1."""
     cdef int[3] cnn
     cdef int[3] cgrid
-    cdef vector[int] parents
+    cdef vector[mesh.proteus_index_t] parents
     for d in range(3):
         cnn[d] = _grid3(nn, 1)[d]
         cgrid[d] = _grid3(rankGrid, 1)[d]
     c_cartesianSubdomainParents(CARTESIAN_KINDS[kind], triangleFlag, cnn, cgrid, level, rank, parents)
-    return np.array(parents, dtype=np.intc)
+    return np.array(parents, dtype=INDEX_DTYPE)
 
 def petscInitialized():
     """Whether the PETSc C library has been initialized in this process.
@@ -604,9 +604,9 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
                                        np.ndarray quadratic_subdomain_l2g,
                                        np.ndarray quadraticNumbering_subdomain2global,
                                        np.ndarray quadratic_lagrangeNodes):
-    cdef int nDOF_all_processes=0
-    cdef int nDOF_subdomain=0
-    cdef int max_dof_neighbors=0
+    cdef mesh.proteus_index_t nDOF_all_processes=0
+    cdef mesh.proteus_index_t nDOF_subdomain=0
+    cdef mesh.proteus_index_t max_dof_neighbors=0
     if nSpace == 1:
         buildQuadraticSubdomain2GlobalMappings_1d(comm.ob_mpi,
                                                   cmesh.mesh,
@@ -617,9 +617,9 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
-                                                  <int*>(quadratic_dof_offsets_subdomain_owned.data),
-                                                  <int*>(quadratic_subdomain_l2g.data),
-                                                  <int*>(quadraticNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(quadratic_dof_offsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(quadratic_subdomain_l2g.data),
+                                                  <mesh.proteus_index_t*>(quadraticNumbering_subdomain2global.data),
                                                   <double*>(quadratic_lagrangeNodes.data));
     elif nSpace == 2:
         buildQuadraticSubdomain2GlobalMappings_2d(comm.ob_mpi,
@@ -631,9 +631,9 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
-                                                  <int*>(quadratic_dof_offsets_subdomain_owned.data),
-                                                  <int*>(quadratic_subdomain_l2g.data),
-                                                  <int*>(quadraticNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(quadratic_dof_offsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(quadratic_subdomain_l2g.data),
+                                                  <mesh.proteus_index_t*>(quadraticNumbering_subdomain2global.data),
                                                   <double*>(quadratic_lagrangeNodes.data))
     else:
         buildQuadraticSubdomain2GlobalMappings_3d(comm.ob_mpi,
@@ -645,9 +645,9 @@ def buildQuadraticLocal2GlobalMappings(Comm comm,
                                                   nDOF_all_processes,
                                                   nDOF_subdomain,
                                                   max_dof_neighbors,
-                                                  <int*>(quadratic_dof_offsets_subdomain_owned.data),
-                                                  <int*>(quadratic_subdomain_l2g.data),
-                                                  <int*>(quadraticNumbering_subdomain2global.data),
+                                                  <mesh.proteus_index_t*>(quadratic_dof_offsets_subdomain_owned.data),
+                                                  <mesh.proteus_index_t*>(quadratic_subdomain_l2g.data),
+                                                  <mesh.proteus_index_t*>(quadraticNumbering_subdomain2global.data),
                                                   <double*>(quadratic_lagrangeNodes.data))
     return (nDOF_all_processes,
             nDOF_subdomain,
@@ -669,9 +669,9 @@ def buildQuadraticCubeLocal2GlobalMappings(Comm comm,
                                            np.ndarray quadratic_subdomain_l2g,
                                            np.ndarray quadraticNumbering_subdomain2global,
                                            np.ndarray quadratic_lagrangeNodes):
-    cdef int nDOF_all_processes=0
-    cdef int nDOF_subdomain=0
-    cdef int max_dof_neighbors=0
+    cdef mesh.proteus_index_t nDOF_all_processes=0
+    cdef mesh.proteus_index_t nDOF_subdomain=0
+    cdef mesh.proteus_index_t max_dof_neighbors=0
     if nSpace == 1:
         assert(False),"buildQuadraticCubeSubdomain2GlobalMappings_1d not implemented!!"
     elif nSpace == 2:
@@ -686,9 +686,9 @@ def buildQuadraticCubeLocal2GlobalMappings(Comm comm,
                                                       nDOF_all_processes,
                                                       nDOF_subdomain,
                                                       max_dof_neighbors,
-                                                      <int*>(quadratic_dof_offsets_subdomain_owned.data),
-                                                      <int*>(quadratic_subdomain_l2g.data),
-                                                      <int*>(quadraticNumbering_subdomain2global.data),
+                                                      <mesh.proteus_index_t*>(quadratic_dof_offsets_subdomain_owned.data),
+                                                      <mesh.proteus_index_t*>(quadratic_subdomain_l2g.data),
+                                                      <mesh.proteus_index_t*>(quadraticNumbering_subdomain2global.data),
                                                       <double*>(quadratic_lagrangeNodes.data))
     return (nDOF_all_processes,
             nDOF_subdomain,
@@ -703,9 +703,9 @@ def buildDiscontinuousGalerkinLocal2GlobalMappings(Comm comm,
                                                    np.ndarray dg_dof_offsets_subdomain_owned,
                                                    np.ndarray dg_subdomain_l2g,
                                                    np.ndarray dgNumbering_subdomain2global):
-    cdef int nDOF_all_processes=0
-    cdef int nDOF_subdomain=0
-    cdef int max_dof_neighbors=0
+    cdef mesh.proteus_index_t nDOF_all_processes=0
+    cdef mesh.proteus_index_t nDOF_subdomain=0
+    cdef mesh.proteus_index_t max_dof_neighbors=0
     buildDiscontinuousGalerkinSubdomain2GlobalMappings(comm.ob_mpi,
                                                        cmesh.mesh,
                                                        <mesh.proteus_index_t*>(elementOffsets_subdomain_owned.data),
@@ -714,9 +714,9 @@ def buildDiscontinuousGalerkinLocal2GlobalMappings(Comm comm,
                                                        nDOF_all_processes,
                                                        nDOF_subdomain,
                                                        max_dof_neighbors,
-                                                       <int*>(dg_dof_offsets_subdomain_owned.data),
-                                                       <int*>(dg_subdomain_l2g.data),
-                                                       <int*>(dgNumbering_subdomain2global.data))
+                                                       <mesh.proteus_index_t*>(dg_dof_offsets_subdomain_owned.data),
+                                                       <mesh.proteus_index_t*>(dg_subdomain_l2g.data),
+                                                       <mesh.proteus_index_t*>(dgNumbering_subdomain2global.data))
     return (nDOF_all_processes,
             nDOF_subdomain,
             max_dof_neighbors)

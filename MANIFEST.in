@@ -1,4 +1,6 @@
 graft proteus
 graft docs
 graft scripts
-global-exclude .gitignore MANIFEST.in docs/* *.log *.xmf *.h5
+# The 1 MB issue-tracker export is not needed to build or run proteus.
+prune docs/issue_archive
+global-exclude .gitignore MANIFEST.in *.log *.xmf *.h5 *.so *.pyc .DS_Store

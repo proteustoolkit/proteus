@@ -3,6 +3,7 @@ from proteus import TimeIntegration
 from proteus.mprans.cRDLS import *
 from proteus.Comm import globalMax
 import numpy as np
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport, memory
 from proteus.Transport import TC_base, NonlinearEquation, Quadrature, logEvent
 from proteus.Transport import cfemIntegrals
@@ -545,7 +546,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
         self.testSpace = testSpaceDict
@@ -750,7 +751,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #
@@ -794,11 +795,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             assert options.levelNonlinearSolver == proteus.NonlinearSolvers.TwoStageNewton, "If ELLIPTIC REDISTANCING>0, use levelNonlinearSolver=TwoStageNewton"
         # ASSERT: if order>1 and ELLIPTIC_REDISTANCING>0 then use bernstein polynomials
         if self.coefficients.ELLIPTIC_REDISTANCING>0 and self.u[0].femSpace.order>1:
-            isBernsteinOnCube = isinstance(self.u[0].femSpace,
-                                           proteus.FemTools.C0_AffineBernsteinOnCube)
-            isBernsteinOnSimplex = isinstance(self.u[0].femSpace,
-                                              proteus.FemTools.C0_AffineBernsteinOnSimplex)
-            isBernstein = isBernsteinOnCube or isBernsteinOnSimplex
+            isBernstein = self.u[0].femSpace.isSpace('C0','bernstein')
             assert isBernstein==True, "If order>1 and ELLIPTIC_REDISTANCING=True, use Bernstein polynomials"
 
         logEvent(memory("stride+offset", "OneLevelTransport"), level=4)
@@ -1067,7 +1064,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useTimeIntegration"] = useTimeIntegration
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
         argsDict["lag_subgridError"] = self.stabilization.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.elementDiameter
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
@@ -1177,7 +1174,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useTimeIntegration"] = useTimeIntegration
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
         argsDict["lag_subgridError"] = int(self.stabilization.lag)
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.elementDiameter
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
@@ -1204,7 +1201,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["csrColumnOffsets_eb_u_u"] = self.csrColumnOffsets_eb[(0, 0)]
         argsDict["ELLIPTIC_REDISTANCING"] = self.coefficients.ELLIPTIC_REDISTANCING
         argsDict["backgroundDissipationEllipticRedist"] = self.coefficients.backgroundDissipationEllipticRedist
-        argsDict["alpha"] = float(self.coefficients.alpha/self.elementDiameter.min())
+        argsDict["alpha"] = self.coefficients.alpha/self.elementDiameter.min()
         self.calculateJacobian(argsDict, self.coefficients.useExact)
 
         # FREEZING INTERFACE #

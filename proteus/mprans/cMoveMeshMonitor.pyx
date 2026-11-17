@@ -8,6 +8,8 @@ cdef extern from "index_type.h":
     ctypedef int proteus_index_t
 from libcpp cimport bool
 from proteus.Profiling import logEvent
+
+INDEX_DTYPE = np.dtype('i%d' % sizeof(proteus_index_t))  # dtype of proteus_index_t (index_type.h)
 from proteus.mprans import MeshSmoothing as ms
 from proteus.mprans cimport MeshSmoothing as ms
 from proteus import Comm
@@ -213,7 +215,7 @@ cdef class cCoefficients:
                  level=3)
         cdef double[:] t_range = np.linspace(t_min, t_max, int((t_max-t_min)/eps+1))[1:]
         cdef int ntimesteps = len(t_range)
-        cdef int[:] eN_phi = np.zeros(len(xx), dtype=np.int32)
+        cdef proteus_index_t[:] eN_phi = np.zeros(len(xx), dtype=INDEX_DTYPE)
         cdef double[:] normal = np.zeros(3)
         cdef double t_last = t_min
         cdef double dt = 0
@@ -260,7 +262,7 @@ cdef class cCoefficients:
         cdef proteus_index_t[:] elementNumbering_subdomain2global = pc.mesh.globalMesh.elementNumbering_subdomain2global
         cdef proteus_index_t[:] nodeOffsets_subdomain_owned = pc.mesh.globalMesh.nodeOffsets_subdomain_owned
         cdef proteus_index_t[:] elementOffsets_subdomain_owned = pc.mesh.globalMesh.elementOffsets_subdomain_owned
-        cdef int[:] nearestNArray = np.array([i for i in range(len(xx))], dtype=np.int32)
+        cdef proteus_index_t[:] nearestNArray = np.array([i for i in range(len(xx))], dtype=INDEX_DTYPE)
         cdef int[:] typeNArray = np.zeros(nNodes_global, dtype=np.int32)
         cdef proteus_index_t[:,:] elementNeighborsArray = pc.mesh.elementNeighborsArray
         cdef proteus_index_t nElementBoundaries_owned = pc.mesh.nElementBoundaries_owned
@@ -327,8 +329,8 @@ cdef class cCoefficients:
         cdef double[:] coords = np.zeros(3)
         cdef proteus_index_t b_i, b_i_global
         cdef double[:] bound_bar
-        cdef int[3] result
-        cdef int[:] result2
+        cdef proteus_index_t[3] result
+        cdef proteus_index_t[:] result2
         cdef bool found
         cdef double array_size_local = 0
         if comm_size > 1:
@@ -1660,8 +1662,8 @@ cdef void findN(double[:] coords,
                   proteus_index_t[:,:] elementNodesArray,
                   int[:] nodeMaterialTypes,
                   proteus_index_t nNel,
-                  int[3] result_out):
-    cdef int[:] result_in
+                  proteus_index_t[3] result_out):
+    cdef proteus_index_t[:] result_in
     cdef double[:] starting_coords = np.zeros(3)
     cdef int rank = my_rank # rank of owning processor
     cdef bool stop = False

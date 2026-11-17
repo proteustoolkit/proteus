@@ -1,0 +1,54 @@
+{
+ "kernel": "VOF",
+ "dim": 3,
+ "fields": [
+  "v_0",
+  "v_1",
+  "v_2",
+  "ε"
+ ],
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "shock_capturing": {
+   "lagged": true
+  }
+ },
+ "adr": {
+  "dim": 3,
+  "components": [
+   "χ"
+  ],
+  "equations": [
+   {
+    "component": "χ",
+    "mass": {
+     "m": "χ*ε",
+     "dm": {
+      "χ": "ε"
+     },
+     "depends_on": {
+      "χ": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "χ*v_0*ε",
+      "χ*v_1*ε",
+      "χ*v_2*ε"
+     ],
+     "df": {
+      "χ": [
+       "v_0*ε",
+       "v_1*ε",
+       "v_2*ε"
+      ]
+     },
+     "depends_on": {
+      "χ": "linear"
+     }
+    }
+   }
+  ]
+ }
+}

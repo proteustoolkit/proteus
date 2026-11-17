@@ -1143,51 +1143,11 @@ def setup_given_extensions(extensions):
     for ext in extensions:
         if getattr(ext, 'library_dirs', None):
             ext.library_dirs = list(dict.fromkeys(ext.library_dirs))
-    setup(name='proteus',
-          version='2.0.0.dev',
-          classifiers=[
-              'Development Status :: 4 - Beta',
-              'Environment :: Console',
-              'Environment :: Web Environment',
-              'Intended Audience :: End Users/Desktop',
-              'Intended Audience :: Developers',
-              'Intended Audience :: Science/Research',
-              'License :: OSI Approved :: MIT License',
-              'Programming Language :: Python :: 3',
-              'Programming Language :: Python :: 3 :: Only',
-              'Programming Language :: Python :: Implementation :: CPython',
-              'Topic :: Scientific/Engineering :: Mathematics',
-              'Topic :: Scientific/Engineering :: Physics',
-              'Operating System :: MacOS :: MacOS X',
-              'Operating System :: POSIX',
-          ],
-          description='Python tools for multiphysics modeling',
-          author='The Proteus Developers',
-          author_email='proteus-dev@googlegroups.com',
-          url='http://proteustoolkit.org',
-          python_requires='>=3.9',
-          install_requires=[
-              'numpy',
-              'scipy',
-              'mpi4py',
-              'petsc4py',
-              'h5py',
-              # The archive of record is a .ymf file written through
-              # ymf.archive (pyyaml only). The heavy front end,
-              # ymf[symbolic]/ymf[frontend] (sympy, strictyaml, pint), is
-              # deliberately not required. ymf is not on PyPI or
-              # conda-forge yet, so install it first (the environment
-              # files do, from git). Not a direct "ymf @ git+..."
-              # reference: pip re-fetches those even when ymf is
-              # installed, which fails on offline compute nodes and
-              # replaces an editable checkout. No version floor either:
-              # a --no-build-isolation build without setuptools_scm
-              # reports ymf as 0.0.0.
-              'ymf',
-          ],
-          extras_require={
-              'test': ['pytest', 'pytest-cov', 'pytest-xdist', 'pytest-forked', 'matplotlib'],
-          },
+    # Distribution metadata (name, description, readme, license, authors, URLs,
+    # classifiers, python floor, dependencies, extras, the `pro` console script) lives in pyproject.toml's
+    # [project] table. The version stays here: RELEASE.md names the three files
+    # that carry it, and [project] declares it dynamic.
+    setup(version='2.0.0.dev',
           packages = ['proteus',
                       'proteus.fenton',
                       'proteus.mprans',
@@ -1205,7 +1165,6 @@ def setup_given_extensions(extensions):
                       'proteus.MeshAdaptPUMI',
                       'proteus.cli',
           ],
-          entry_points={'console_scripts': ['pro = proteus.cli:main']},
           cmdclass = {'build_ext':custom_build_ext},
           ext_package='proteus',
           ext_modules=extensions,

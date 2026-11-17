@@ -678,10 +678,11 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("%s: SWFlow has no p and n modules for %s" % (model.subproblem, model.module))
     models = table.SHALLOW_WATER_MODELS[model.module]
     entry = _entry(doc, found.discretization)
-    if "h" not in realization or int(realization.get("levels", 1)) != 1:
-        raise RealizeError("%s: the shallow-water realizer meshes the region by element size, one level; give "
+    if ("h" in realization) == ("cells" in realization) or int(realization.get("levels", 1)) != 1:
+        raise RealizeError("%s: the shallow-water realizer meshes the box by cells per side (SWFlow's structured "
+                           "mesh) or by element size (triangle), one level; give mesh: {cells: ...} or "
                            "mesh: {h: ...}" % found.discretization)
-    he = float(realization["h"])
+    structured = "cells" in realization
     dim = split["dim"]
     if split["domain"].get("region") is not None or dim != 2:
         raise RealizeError("the shallow-water realizer builds a 2-D box (RectangularDomain)")
@@ -695,12 +696,22 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
     lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
     rectangle = Domain.RectangularDomain(L=[u - l for u, l in zip(upper, lower)], x=lower)
-    prefix = os.path.join(outdir, name)
-    if comm.isMaster():
-        rectangle.writePoly(prefix)
-    comm.barrier()
-    domain = Domain.PlanarStraightLineGraphDomain(fileprefix=prefix)
-    domain.MeshOptions.triangleOptions = mesh_constraint(he, dim)
+    if structured:
+        # SWFlow's structured path (the decks' structured=True): the rectangle itself, cells per side as the decks'
+        # nnx - 1 = nny - 1, he the deck's L[0]/(nnx - 1)
+        cells = int(realization["cells"])
+        nnx = nny = cells + 1
+        he = (upper[0] - lower[0]) / float(nnx - 1)
+        domain = rectangle
+    else:
+        he = float(realization["h"])
+        nnx = nny = None
+        prefix = os.path.join(outdir, name)
+        if comm.isMaster():
+            rectangle.writePoly(prefix)
+        comm.barrier()
+        domain = Domain.PlanarStraightLineGraphDomain(fileprefix=prefix)
+        domain.MeshOptions.triangleOptions = mesh_constraint(he, dim)
 
     # initial data and the coefficients
     unknowns = sub["unknowns"]
@@ -720,7 +731,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     problem = SWF.SWFlowProblem(
         sw_model=models["sw_model"], cfl=found.system["runCFL"],
         outputStepping=SWF.OutputStepping(final_time, dt_output=final_time / outputs),
-        structured=False, he=he, domain=domain, initialConditions=initial,
+        structured=structured, he=he, nnx=nnx, nny=nny, domain=domain, initialConditions=initial,
         boundaryConditions={v: (lambda x, flag: None) for v in variables},
         reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry)
     # copies: SWFlowProblem hands out its module's default dicts, which a deck then edits in place
@@ -755,8 +766,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
                            % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
     record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"]},
               "initial": dict(zip(variables, components)),
-              "system": {"final_time": final_time, "outputs": outputs, "mesh": "triangle, %s" % (
-                  domain.MeshOptions.triangleOptions,),
+              "system": {"final_time": final_time, "outputs": outputs, "mesh": ("structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (
+                  domain.MeshOptions.triangleOptions,)),
                   "linear_solver": "%s (%s)" % (solves, how),
                   **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()
                      if k in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta")}}}

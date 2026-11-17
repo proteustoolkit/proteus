@@ -5,6 +5,8 @@ import os
 import proteus
 from .cm_comp_co2 import *
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
@@ -918,12 +920,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["c_dof"]    = c_dof
         argsDict["Sn_dof"]   = Sn_dof
-        argsDict["rho_n"]    = float(self.rho_n)
-        argsDict["X_sat"]    = float(self.X_sat)
-        argsDict["c_sat"]    = float(self.c_sat)
+        argsDict["rho_n"]    = self.rho_n
+        argsDict["X_sat"]    = self.X_sat
+        argsDict["c_sat"]    = self.c_sat
         # k_d is the dissolution RATE [1/time] of the finite-rate implicit
         # flash; k_d -> inf recovers the instantaneous local-equilibrium flash.
-        argsDict["k_d"]      = float(self.k_d)
+        argsDict["k_d"]      = self.k_d
         argsDict["dt"]       = dt
         argsDict["numDOFs"]  = numDOFs
         argsDict["q_m_tadr"] = q_m_tadr
@@ -932,7 +934,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         argsDict["elementMaterialTypes"] = flow.mesh.elementMaterialTypes
         argsDict["thetaR"]               = self.thetaR_types
         argsDict["thetaSR"]              = self.thetaSR_types
-        argsDict["rho_f"]    = float(getattr(tcoef, 'rho_f', 1.0))
+        argsDict["rho_f"]    = getattr(tcoef, 'rho_f', 1.0)
         argsDict["rho_s"]    = float(getattr(tcoef, 'rho_s',
                                              getattr(tcoef, 'rho_f', 1.0)))
         argsDict["nElements_global"]          = nE_qm
@@ -2043,7 +2045,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature#True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1,coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         # previous-step DOFs for component 1 (S_n).
         # Filled lazily on first getResidual call from u[1].dof (the IC).
@@ -2296,7 +2298,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=np.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=np.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
         #
@@ -2646,7 +2648,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         n_u = self.nFreeDOF_global[0]
         offset_u = self.offset[0]
         stride_u = self.stride[0]
-        rowptr_u = np.zeros((n_u + 1,), dtype='i')
+        rowptr_u = np.zeros((n_u + 1,), dtype=CSR_INDEX_DTYPE)
         colind_u = []
         full_offsets_u = []
         for i_u in range(n_u):
@@ -2662,7 +2664,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     full_offsets_u.append(full_offset)
             rowptr_u[i_u + 1] = len(colind_u)
         self.comp0_rowptr = rowptr_u
-        self.comp0_colind = np.asarray(colind_u, dtype='i')
+        self.comp0_colind = np.asarray(colind_u, dtype=CSR_INDEX_DTYPE)
         self.comp0_full_offsets = np.asarray(full_offsets_u, dtype='i')
 
     def _ensure_component0_compact_csr(self, full_rowptr, full_colind):
@@ -2678,7 +2680,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         n_n = self.u[1].dof.shape[0]
         offset_n = self.offset[1]
         stride_n = self.stride[1]
-        rowptr_n = np.zeros((n_n + 1,), dtype='i')
+        rowptr_n = np.zeros((n_n + 1,), dtype=CSR_INDEX_DTYPE)
         colind_n = []
         for i_n in range(n_n):
             global_row = offset_n + stride_n * i_n
@@ -2692,7 +2694,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     colind_n.append(j_n)
             rowptr_n[i_n + 1] = len(colind_n)
         self.comp1_rowptr       = rowptr_n
-        self.comp1_colind       = np.asarray(colind_n, dtype='i')
+        self.comp1_colind       = np.asarray(colind_n, dtype=CSR_INDEX_DTYPE)
 
     def _ensure_component1_compact_csr(self, full_rowptr, full_colind):
         if (self.comp1_rowptr is None or
@@ -3420,7 +3422,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # only for the diagnostic.
         argsDict["k_d"]   = (0.0 if self.coefficients.dissolution_mode == 'flash'
                              else float(self.coefficients.k_d))
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["c_sat"] = self.coefficients.c_sat
         # CO2 injection: build the per-node source field consumed by the C++
         # gas-equation source term (applied like R_diss, opposite sign).
         # Each port is a small disk: injection_dof = rate (a volumetric source
@@ -4246,7 +4248,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # only for the diagnostic.
         argsDict["k_d"]   = (0.0 if self.coefficients.dissolution_mode == 'flash'
                              else float(self.coefficients.k_d))
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["c_sat"] = self.coefficients.c_sat
         argsDict["globalJacobian"] = jacobian.getCSRrepresentation()[2]
         argsDict["delta_x_ij"] = self.delta_x_ij
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global

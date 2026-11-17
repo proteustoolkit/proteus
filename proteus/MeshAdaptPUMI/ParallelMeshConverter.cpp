@@ -111,14 +111,15 @@ int MeshAdaptPUMIDrvr::constructFromParallelPUMIMesh(Mesh& mesh, Mesh& subdomain
 } 
 
 #include <cstring>
+#include <vector>
 int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
 {
   /* N^2 data structures and algorithms are terrible for scalability.
      Going along because Proteus is structured this way. */
-  mesh.elementOffsets_subdomain_owned = new int[comm_size+1];
-  mesh.elementBoundaryOffsets_subdomain_owned = new int[comm_size+1];
-  mesh.edgeOffsets_subdomain_owned = new int[comm_size+1];
-  mesh.nodeOffsets_subdomain_owned = new int[comm_size+1];
+  mesh.elementOffsets_subdomain_owned = new proteus_index_t[comm_size+1];
+  mesh.elementBoundaryOffsets_subdomain_owned = new proteus_index_t[comm_size+1];
+  mesh.edgeOffsets_subdomain_owned = new proteus_index_t[comm_size+1];
+  mesh.nodeOffsets_subdomain_owned = new proteus_index_t[comm_size+1];
 
   if(m->getDimension()==3){
     for (int dim = 0; dim <= m->getDimension(); ++dim) {
@@ -127,7 +128,7 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       int localOffset = nLocalOwned;
       PCU_Exscan_Ints(PCUObj, &localOffset, 1);
 
-      int* allOffsets;
+      proteus_index_t* allOffsets;
       if(dim==3){
         allOffsets = mesh.elementOffsets_subdomain_owned;
       }
@@ -142,8 +143,12 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       }
 
       /* one of the many reasons N^2 algorithms are bad */
+      /* the exchange is in ints (a count of owned entities per rank); allOffsets is proteus_index_t */
+      std::vector<int> gatheredOffsets(PCU_Comm_Peers(PCUObj));
       MPI_Allgather(&localOffset, 1, MPI_INT,
-                    allOffsets, 1, MPI_INT, MPI_COMM_WORLD);
+                    gatheredOffsets.data(), 1, MPI_INT, MPI_COMM_WORLD);
+      for (size_t r = 0; r < gatheredOffsets.size(); ++r)
+        allOffsets[r] = gatheredOffsets[r];
       allOffsets[PCU_Comm_Peers(PCUObj)] = countTotal(m, dim, PCUObj);
   
       std::stringstream ss;
@@ -163,7 +168,7 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       int localOffset = nLocalOwned;
       PCU_Exscan_Ints(PCUObj, &localOffset, 1);
 
-      int* allOffsets;
+      proteus_index_t* allOffsets;
       if(dim==2){
         allOffsets = mesh.elementOffsets_subdomain_owned;
       }
@@ -175,8 +180,12 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
       }
 
       /* one of the many reasons N^2 algorithms are bad */
+      /* the exchange is in ints (a count of owned entities per rank); allOffsets is proteus_index_t */
+      std::vector<int> gatheredOffsets(PCU_Comm_Peers(PCUObj));
       MPI_Allgather(&localOffset, 1, MPI_INT,
-                    allOffsets, 1, MPI_INT, MPI_COMM_WORLD);
+                    gatheredOffsets.data(), 1, MPI_INT, MPI_COMM_WORLD);
+      for (size_t r = 0; r < gatheredOffsets.size(); ++r)
+        allOffsets[r] = gatheredOffsets[r];
       allOffsets[PCU_Comm_Peers(PCUObj)] = countTotal(m, dim, PCUObj);
       std::stringstream ss;
       ss << "proteus_global_";
@@ -194,14 +203,14 @@ int MeshAdaptPUMIDrvr::constructGlobalNumbering(Mesh &mesh)
 
 int MeshAdaptPUMIDrvr::constructGlobalStructures(Mesh &mesh)
 {
-  mesh.elementNumbering_subdomain2global = new int[mesh.subdomainp->nElements_global];
-  mesh.elementBoundaryNumbering_subdomain2global = new int[mesh.subdomainp->nElementBoundaries_global];
-  mesh.nodeNumbering_subdomain2global = new int[mesh.subdomainp->nNodes_global];
-  mesh.edgeNumbering_subdomain2global = new int[mesh.subdomainp->nEdges_global];
+  mesh.elementNumbering_subdomain2global = new proteus_index_t[mesh.subdomainp->nElements_global];
+  mesh.elementBoundaryNumbering_subdomain2global = new proteus_index_t[mesh.subdomainp->nElementBoundaries_global];
+  mesh.nodeNumbering_subdomain2global = new proteus_index_t[mesh.subdomainp->nNodes_global];
+  mesh.edgeNumbering_subdomain2global = new proteus_index_t[mesh.subdomainp->nEdges_global];
   
   if(m->getDimension()==3){
     for (int d = 0; d <= m->getDimension(); ++d) {
-     int* temp_subdomain2global;
+     proteus_index_t* temp_subdomain2global;
      if(d==3) temp_subdomain2global = mesh.elementNumbering_subdomain2global;
      if(d==2) temp_subdomain2global = mesh.elementBoundaryNumbering_subdomain2global;
      if(d==1) temp_subdomain2global = mesh.edgeNumbering_subdomain2global;
@@ -219,8 +228,8 @@ int MeshAdaptPUMIDrvr::constructGlobalStructures(Mesh &mesh)
   }
   else if(m->getDimension()==2){
     for (int d = 0; d <= m->getDimension(); ++d) {
-     int* temp_subdomain2global;
-     int* temp_subdomain2global2; //just for the edge and element boundary array overlap
+     proteus_index_t* temp_subdomain2global;
+     proteus_index_t* temp_subdomain2global2; //just for the edge and element boundary array overlap
      if(d==2) temp_subdomain2global = mesh.elementNumbering_subdomain2global;
      if(d==1) temp_subdomain2global = mesh.elementBoundaryNumbering_subdomain2global;
      if(d==0) temp_subdomain2global = mesh.nodeNumbering_subdomain2global;

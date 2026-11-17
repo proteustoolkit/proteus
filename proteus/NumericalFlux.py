@@ -67,6 +67,8 @@ PERIODIC_SEAM_REFUSED = frozenset([
 
 
 class NF_base(object):
+    #the weak-Dirichlet (Nitsche) penalty grows with the degree of the space (see penaltyOrderFactor)
+    penalty_order_scaling = True
     useWeakDirichletConditions=True
     useStrongDirichletConstraints=False
     hasInterior=True
@@ -403,6 +405,24 @@ class NF_base(object):
                   getattr(dbc[ci],'periodicDOFsMerged',False))            # the parallel periodic numbering
         return merged and len(self.periodicSeamPoints(ci)[0]) > 0
 
+    def penaltyOrderFactor(self):
+        """Factor on penalty_constant for the degree of the unknowns' spaces (C0 round 12, weak Dirichlet on any-order spaces).
+
+        The Nitsche penalty of the *_exterior classes is penalty_constant/h**penalty_power. Coercivity needs it to grow
+        like p**2/h (the inverse trace inequality); measured on -div(grad u) = f, smooth u, unit square, h = 1/8, SIPG
+        with penalty_constant = 10 and no scaling: the L2 error against strong Dirichlet is 0.9 at p = 2, 7 at p = 3, 7 at
+        p = 4 (the smallest constant that matches strong is about 10, 20, 40 for p = 2, 3, 4). Degrees 1 and 2 keep the
+        constant they always had (so no existing result moves); above 2 the factor is p**2, p the largest degree among
+        the continuous (C0 Lagrange, Bernstein) spaces of the unknowns. Discontinuous spaces are left alone: their
+        interior penalty needs the same factor, measured on no case yet (DG P3 and above exist as monomial spaces, whose
+        pinned results would move). Set penalty_order_scaling = False to switch it off.
+        """
+        if not self.penalty_order_scaling or getattr(self,'vt',None) is None:      #the strong-condition flux has no penalty
+            return 1.0
+        degrees = [getattr(u.femSpace,'order',None) for u in self.vt.u.values()
+                   if u.femSpace.isSpace('C0',('lagrange','bernstein'))]
+        p = max([d for d in degrees if d is not None] or [1])
+        return float(p)**2 if p > 2 else 1.0
     def diffusionDOFBoundary(self,ci):
         """isDOFBoundary[ci] for the diffusive flux: 0 at the periodic face points of a merged seam.
 

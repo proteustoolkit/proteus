@@ -84,7 +84,7 @@ cdef int pyxGetLocalNearestElement(double[:] coords,
                                    proteus_index_t[:,:] elementNeighborsArray,
                                    proteus_index_t eN)
 
-cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
+cdef proteus_index_t[:] pyxGetLocalNearestElementIntersection(double[:] coords,
                                                   double[:] starting_coords,
                                                   double[:,:,:] elementBoundaryNormalsArray,
                                                   proteus_index_t[:,:] elementBoundariesArray,
@@ -136,13 +136,13 @@ cdef np.ndarray cyGetCornerNodesTriangle(double[:,:] nodeArray,
                                          int[:] nodeMaterialTypes,
                                          proteus_index_t nNodes)
 
-cdef int[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
+cdef proteus_index_t[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
                                  int rank,
                                  proteus_index_t nVariables_owned,
                                  proteus_index_t[:] variableNumbering_subdomain2global,
                                  proteus_index_t[:] variableOffsets_subdomain_owned)
 
-cdef int[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
+cdef proteus_index_t[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
                                 proteus_index_t nVariables_owned,
                                 proteus_index_t[:] variableNumbering_subdomain2global,
                                 proteus_index_t[:] variableOffsets_subdomain_owned)

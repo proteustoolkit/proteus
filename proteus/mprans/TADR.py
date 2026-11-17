@@ -3,6 +3,7 @@
 An optimized Advection-Diffusion-Reaction  transport module
 """
 import numpy as np
+from proteus import cmeshTools
 from proteus import cfemIntegrals, Quadrature, Norms, Comm, TimeIntegration
 from proteus.NonlinearSolvers import NonlinearEquation
 from proteus.FemTools import (DOFBoundaryConditions,
@@ -1084,7 +1085,7 @@ class LevelModel(OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
         self.testSpace = testSpaceDict
@@ -1306,7 +1307,7 @@ class LevelModel(OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=np.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=np.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
             
@@ -2518,13 +2519,13 @@ class LevelModel(OneLevelTransport):
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
         argsDict["sc_alpha"] = self.coefficients.sc_beta
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
-        argsDict["degree_polynomial"] = float(self.degree_polynomial)
+        argsDict["degree_polynomial"] = self.degree_polynomial
         argsDict["u_dof"] = self.u[0].dof
         argsDict["u_dof_old"] = self.u_dof_old
         argsDict["velocity"] = self.coefficients.q_v
@@ -2641,8 +2642,8 @@ class LevelModel(OneLevelTransport):
         # added to the per-DOF mass update in the C++ residual.  Sn_dof comes
         # from the flow model's u[1].dof when it's two-phase, else zeros.
         argsDict["Sn_dof"] = self.coefficients.Sn_dof
-        argsDict["k_d"] = float(self.coefficients.k_d)
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["k_d"] = self.coefficients.k_d
+        argsDict["c_sat"] = self.coefficients.c_sat
         argsDict["forceStrongConditions"] = int(self.forceStrongConditions)
         #argsDict["D"] = self.coefficients.DTypes
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
@@ -2900,7 +2901,7 @@ class LevelModel(OneLevelTransport):
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
@@ -2949,8 +2950,8 @@ class LevelModel(OneLevelTransport):
         # added to the per-DOF mass update in the C++ residual.  Sn_dof comes
         # from the flow model's u[1].dof when it's two-phase, else zeros.
         argsDict["Sn_dof"] = self.coefficients.Sn_dof
-        argsDict["k_d"] = float(self.coefficients.k_d)
-        argsDict["c_sat"] = float(self.coefficients.c_sat)
+        argsDict["k_d"] = self.coefficients.k_d
+        argsDict["c_sat"] = self.coefficients.c_sat
         # Extra keys consumed only by the STABILIZATION_TYPE==ImplicitEV (5)
         # branch of calculateJacobian, which assembles the implicit edge-based
         # Jacobian using the DOF-loop CSR, lumped mass, time step and the
@@ -3174,9 +3175,9 @@ class LevelModel(OneLevelTransport):
         argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
         argsDict["a_rowptr"] = self.coefficients.sdInfo[(0, 0)][0]
         argsDict["a_colind"] = self.coefficients.sdInfo[(0, 0)][1]
-        argsDict["alpha_L"] = float(self.coefficients.alpha_L)
-        argsDict["alpha_T"] = float(self.coefficients.alpha_T)
-        argsDict["Dm"] = float(self.coefficients.Dm)
+        argsDict["alpha_L"] = self.coefficients.alpha_L
+        argsDict["alpha_T"] = self.coefficients.alpha_T
+        argsDict["Dm"] = self.coefficients.Dm
         argsDict["rho_f"] = self.coefficients.rho_f
         argsDict["rho_s"] = self.coefficients.rho_s
         argsDict["q_porosity"] = self.coefficients.vModel.q[('theta', 0)]

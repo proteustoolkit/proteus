@@ -8,6 +8,10 @@ from libc.math cimport sin, cos, acos, exp, sqrt, fabs, M_PI, abs
 from mpi4py import MPI
 from proteus.Profiling import logEvent
 
+# dtype and MPI datatype of proteus_index_t (index_type.h); counts and displacements stay int, as MPI requires
+INDEX_DTYPE = np.dtype("i%d" % sizeof(proteus_index_t))
+MPI_INDEX = MPI.INT if sizeof(proteus_index_t) == 4 else MPI.INT64_T
+
 def smoothNodesLaplace(double[:,:] nodeArray_,
                        proteus_index_t[:] nodeStarOffsets,
                        proteus_index_t[:] nodeStarArray,
@@ -561,15 +565,15 @@ def getNonOwnedNodeValues(args_,
                           proteus_index_t nNodes_global,
                           proteus_index_t[:] nodeNumbering_subdomain2global,
                           proteus_index_t[:] nodeOffsets_subdomain_owned):
-        nodeNumbering_subdomain2global = np.array(nodeNumbering_subdomain2global, dtype=np.int32)
-        nodeOffsets_subdomain_owned = np.array(nodeOffsets_subdomain_owned, dtype=np.int32)
+        nodeNumbering_subdomain2global = np.array(nodeNumbering_subdomain2global, dtype=INDEX_DTYPE)
+        nodeOffsets_subdomain_owned = np.array(nodeOffsets_subdomain_owned, dtype=INDEX_DTYPE)
         from proteus import Comm
         cdef object comm = Comm.get().comm.tompi4py()
         cdef int comm_size = comm.size
         cdef int my_rank = comm.rank
         cdef dict arg_2rank = {}
         cdef dict nodes_2rank = {}
-        cdef int[:] result
+        cdef proteus_index_t[:] result
         # the counts and displacements for nodes coming in from other processors
         cdef int[:] counts_in = np.zeros(comm_size, dtype=np.int32)
         cdef int[:] displacements_in = np.zeros(comm_size, dtype=np.int32)
@@ -582,16 +586,17 @@ def getNonOwnedNodeValues(args_,
         cdef int arg_shape_len = len(arg_shape)
         cdef int shape_factor = 1
         cdef int disp = 0
-        cdef int rank, rank_recv, ii, ir, iN, node_new_rank, new_rank
+        cdef int rank, rank_recv, ii, ir, new_rank
+        cdef proteus_index_t iN, node_new_rank
         cdef int sumtot
-        cdef int[:] nodes_2rank_values
-        cdef int[:] nodes_2doArray = np.zeros(0, dtype=np.int32)
+        cdef proteus_index_t[:] nodes_2rank_values
+        cdef proteus_index_t[:] nodes_2doArray = np.zeros(0, dtype=INDEX_DTYPE)
         if arg_shape_len > 1:
             for i in range(1, arg_shape_len):
                 shape_factor = shape_factor*arg_shape[i]
         if comm_size > 1:
             for rank in range(comm_size):
-                nodes_2rank[rank] = np.zeros(0, dtype=np.int32)
+                nodes_2rank[rank] = np.zeros(0, dtype=INDEX_DTYPE)
             for node in range(nNodes_owned, nNodes_global):
                 result = cyCheckOwnedVariable(variable_nb_local=node,
                                               rank=my_rank,
@@ -605,12 +610,12 @@ def getNonOwnedNodeValues(args_,
             for rank_recv in range(comm_size):
                 # -----
                 # find length of array to do on processor rank_recv
-                nodes_2rank_values = (nodes_2rank[rank_recv][:]).astype(np.int32)
+                nodes_2rank_values = (nodes_2rank[rank_recv][:]).astype(INDEX_DTYPE)
                 nodes_2rank_len = len(nodes_2rank_values)
                 array_size = comm.allreduce(nodes_2rank_len, op=MPI.SUM)
                 # initialise node_2doArray on receiving processor
                 if rank_recv == my_rank:
-                    nodes_2doArray = np.zeros(array_size, dtype=np.int32)
+                    nodes_2doArray = np.zeros(array_size, dtype=INDEX_DTYPE)
                 # -----
                 # get count and disp info for retrieving info from rank_recv later
                 # counts_out[rank_recv] = nodes_2rank_len
@@ -643,7 +648,7 @@ def getNonOwnedNodeValues(args_,
                              [nodes_2doArray,
                               counts_in,
                               displacements_in,
-                              MPI.INT],
+                              MPI_INDEX],
                               root=rank_recv)
             # SEND VALUE BACK TO ORIGINAL PROCESSORS
             arg_shape_copy[0] = 0
@@ -1230,7 +1235,7 @@ cdef int pyxGetLocalNearestElement(double[:] coords,
         i += 1
     return nearest_eN
 
-cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
+cdef proteus_index_t[:] pyxGetLocalNearestElementIntersection(double[:] coords,
                                                   double[:] starting_coords,
                                                   double[:,:,:] elementBoundaryNormalsArray,
                                                   proteus_index_t[:,:] elementBoundariesArray,
@@ -1239,7 +1244,7 @@ cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
                                                   int[:] exteriorElementBoundariesBoolArray,
                                                   proteus_index_t eN):
     # determine local nearest node distance
-    cdef int[2] result
+    cdef proteus_index_t[2] result
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = -1
     result[1] = -1
@@ -1542,7 +1547,7 @@ cdef np.ndarray cyGetCornerNodesTriangle(double[:,:] nodeArray,
                             cornerNodesArray = np.append(cornerNodesArray, node)
     return cornerNodesArray
 
-cdef int[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
+cdef proteus_index_t[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
                                  int rank,
                                  proteus_index_t nVariables_owned,
                                  proteus_index_t[:] variableNumbering_subdomain2global,
@@ -1552,7 +1557,7 @@ cdef int[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
     cdef proteus_index_t new_variable_nb_local
     cdef int new_rank = -2  # initialised as fake rank
     cdef int i
-    cdef int[2] result = [-1000, -1000]
+    cdef proteus_index_t[2] result = [-1000, -1000]
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = variable_nb_local
     result[1] = new_rank
@@ -1642,7 +1647,7 @@ cdef void cyFindBoundaryDirectionTetra(
     dir_[1] = abs(1-dir_[1])
     dir_[2] = abs(1-dir_[2])
 
-cdef int[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
+cdef proteus_index_t[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
                                 proteus_index_t nVariables_owned,
                                 proteus_index_t[:] variableNumbering_subdomain2global,
                                 proteus_index_t[:] variableOffsets_subdomain_owned):
@@ -1652,7 +1657,7 @@ cdef int[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
     # change rank ownership
     variable_nb_global = variableNumbering_subdomain2global[variable_nb_local]
     cdef int i
-    cdef int[2] result
+    cdef proteus_index_t[2] result
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = variable_nb_global
     result[1] = new_rank

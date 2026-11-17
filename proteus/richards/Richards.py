@@ -4,6 +4,7 @@ from builtins import range
 import proteus
 from .cRichards import *
 import numpy as np
+from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
@@ -978,7 +979,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature#True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1,coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         ## Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh #assume the same mesh for  all components for now
@@ -1644,7 +1645,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["thetaR"] = self.coefficients.thetaR_types
         argsDict["thetaSR"] = self.coefficients.thetaSR_types
         argsDict["freeDOFMaterialTypes"] = self.freeDOFMaterialTypes
-        argsDict["prelimiter_power"] = float(self.coefficients.FCT_PRELIMITER_POWER)
+        argsDict["prelimiter_power"] = self.coefficients.FCT_PRELIMITER_POWER
         argsDict["prelimiter_head"] = int(self.coefficients.FCT_PRELIMITER_HEAD)
         argsDict["alpha_nv"] = self.alpha_nv
         argsDict["Rpos"] = self.Rpos
@@ -2108,7 +2109,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             rows = np.repeat(np.arange(nFree, dtype=np.int64), np.diff(rowptr))
             cols = colind.astype(np.int64)
             keys = rows * N + cols
-            self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype('i')
+            self.csrTransposeIndices = np.searchsorted(keys, cols * N + rows).astype(CSR_INDEX_DTYPE)
             # a structurally symmetric pattern round-trips; if it does not, fall back to
             # the identity rather than indexing out of the array
             t = self.csrTransposeIndices
@@ -2117,7 +2118,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             if not ok:
                 logEvent("Richards: CSR pattern is not structurally symmetric; "
                          "csrTransposeIndices falls back to the identity", level=1)
-                self.csrTransposeIndices = np.arange(len(colind), dtype='i')
+                self.csrTransposeIndices = np.arange(len(colind), dtype=CSR_INDEX_DTYPE)
         # PARALLEL (one-time): freeDOFMaterialTypes is built in __init__ from the
         # FIRST incident element in LOCAL element numbering, so on a node sitting
         # on a soil interface two ranks can pick different rocks.  mat_j selects
@@ -2414,7 +2415,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             argsDict["STABILIZATTION_TYPE"] = 2
             argsDict["Theta"] = 1.0
             argsDict["globalResidual"] = self._dc_scratch
-            argsDict["LSCHEME_L"] = float(self.coefficients.LSCHEME_L)
+            argsDict["LSCHEME_L"] = self.coefficients.LSCHEME_L
             self.richards.calculateResidual_entropy_viscosity(argsDict)
             argsDict["STABILIZATION_TYPE"] = 0
             argsDict["STABILIZATTION_TYPE"] = 0

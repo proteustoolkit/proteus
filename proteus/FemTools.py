@@ -2519,7 +2519,7 @@ class DiscontinuousGalerkinDOFMap(DOFMap):
         DOFMap.__init__(self,mesh.nElements_global*localFunctionSpace.dim)
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.local_dim = localFunctionSpace.dim
         self.updateAfterParallelPartitioning(mesh.globalMesh)
         #for eN in range(mesh.nElements_global):
@@ -2607,7 +2607,7 @@ class QuadraticLagrangeCubeDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.nd = nd
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
@@ -2802,7 +2802,7 @@ class QuadraticLagrangeDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         self.nd = nd
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
@@ -3120,7 +3120,7 @@ class P1BubbleDOFMap(DOFMap):
         self.lagrangeNodesArray = numpy.zeros((ndof-mesh.nNodes_global,3),'d')
         self.l2g = numpy.zeros((mesh.nElements_global,
                                 localFunctionSpace.dim),
-                               'i')
+                               cmeshTools.INDEX_DTYPE)
         #do simplest numbering first, which is to assign first d+1
         #unknowns the corresponding global node number.
         #rest of unknowns associated with global element number
@@ -4129,6 +4129,47 @@ class ParametricFiniteElementSpace(object):
     indexed by element number
     dofMap -- a DOF
     """
+    #-- the space interface (C0 round 12) ---------------------------------------------------------
+    #What a caller asks of a space instead of testing for its concrete class (C8_ELEMENT_SPACE_INTERFACE.md
+    #section 2: family, degree; plus the continuity). Every class states them (table at the end of this
+    #module); an instance may override, e.g. ``order`` is set per instance for the any-order spaces.
+    #  continuity: 'C0' (globally continuous), 'NC' (continuous at face barycenters), 'DG' (discontinuous),
+    #              'Hdiv' (continuous normal component)
+    #  family:     'lagrange', 'bernstein', 'monomial', 'constant', 'crouzeix-raviart', 'p1-bubble',
+    #              'p1p0-bubble', 'rt0', 'bdm1'
+    #  order:      polynomial degree of the local space (0 for the constants)
+    continuity = 'C0'
+    family = 'lagrange'
+    #  cell:       'simplex' or 'cube'
+    order = None
+    nodes = None
+    cell = 'simplex'
+    def isSpace(self,continuity=None,family=None,order=None,cell=None):
+        """True if the space has this continuity, family, degree and cell kind; None matches anything, a tuple any of its members."""
+        for have,want in ((self.continuity,continuity),(self.family,family),(self.order,order),(self.cell,cell)):
+            if want is None:
+                continue
+            if not isinstance(want,(tuple,list,set)):
+                want = (want,)
+            if have not in want:
+                return False
+        return True
+    def hasBasisHessians(self):
+        """True if the basis has nonzero second derivatives: a continuous polynomial space on simplices of degree >= 2."""
+        return self.isSpace('C0',('lagrange','bernstein'),cell='simplex') and self.order is not None and self.order >= 2
+    def dofCoordinates(self):
+        """(n, 3) coordinates of the dofs of a nodal C0 space: the mesh vertices when the dofs are the vertex
+        values (P1), the dof map's Lagrange nodes otherwise (every higher order space)."""
+        nodes = getattr(self.dofMap,'lagrangeNodesArray',None)
+        return self.mesh.nodeArray if nodes is None else nodes
+    def sameSpaceAs(self,other):
+        """True if the two spaces are the same space on the same kind of cell and map: same interface
+        description, local dimension and element-map type (what the old test, equal class names, stood for)."""
+        def key(s):
+            return (s.continuity,s.family,s.order,s.nodes,s.cell,s.nSpace_global,
+                    s.referenceFiniteElement.localFunctionSpace.dim,
+                    type(s.referenceFiniteElement.referenceElement),type(s.elementMaps))
+        return key(self) == key(other)
     def __init__(self, referenceFiniteElement, elementMaps, dofMap):
         self.strongDirichletConditions = True
         self.dim=dofMap.nDOF
@@ -5062,6 +5103,7 @@ class C0_AffineBernsteinOnCube(ParametricFiniteElementSpace):
 
 class DG_AffinePolynomialsOnSimplexWithMonomialBasis(ParametricFiniteElementSpace):
     def __init__(self,mesh,nd=3,k=0):
+        self.order = k
         localFunctionSpace = Monomials(nd,k)
         interpolationConditions = MonomialInterpolationConditions(localFunctionSpace.referenceElement,localFunctionSpace)
         ParametricFiniteElementSpace.__init__(self,
@@ -9825,3 +9867,40 @@ class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
     def interpolate(self,f):
         """The dofs of the interpolant of the vector field f(x), x (..,3) -> (..,nd), sampled at the dof points."""
         return self.dofsFromElementValues(f(self.dofMap.elementDofPoints))[0]
+
+
+#-- the space interface table (C0 round 12): see ParametricFiniteElementSpace ---------------------------------
+def _declareSpaceInterface():
+    """(continuity, family, order) of every space class; order None where the instance sets it."""
+    table = {
+        C0_AffineLinearOnSimplexWithNodalBasis: ('C0','lagrange',1),
+        C0_LinearOnCubeWithNodalBasis: ('C0','lagrange',1),
+        C0_AffineLinearOnCubeWithNodalBasis: ('C0','lagrange',1),
+        C0_LagrangeOnCubeWithNodalBasis: ('C0','lagrange',2),
+        C0_AffineLagrangeOnCubeWithNodalBasis: ('C0','lagrange',None),
+        C0_BernsteinOnCube: ('C0','bernstein',2),
+        C0_AffineBernsteinOnCube: ('C0','bernstein',None),
+        C0_AffineQuadraticOnSimplexWithNodalBasis: ('C0','lagrange',2),
+        C0_AffineBernsteinOnSimplex: ('C0','bernstein',2),
+        C0_AffinePolynomialOnSimplex: ('C0','lagrange',None),
+        C0_AffinePolynomialOnCube: ('C0','lagrange',None),
+        DG_AffineLinearOnSimplexWithNodalBasis: ('DG','lagrange',1),
+        DG_AffineQuadraticOnSimplexWithNodalBasis: ('DG','lagrange',2),
+        DG_AffinePolynomialsOnSimplexWithMonomialBasis: ('DG','monomial',None),
+        DG_Constants: ('DG','constant',0),
+        NC_AffineLinearOnSimplexWithNodalBasis: ('NC','crouzeix-raviart',1),
+        C0_AffineP1BubbleOnSimplexWithNodalBasis: ('C0','p1-bubble',1),
+        C0_AffineP1P0BubbleOnSimplexWithNodalBasis: ('C0','p1p0-bubble',1),
+        Hdiv_AffineOnSimplex: ('Hdiv',None,None),
+    }
+    cubes = (C0_LinearOnCubeWithNodalBasis,C0_AffineLinearOnCubeWithNodalBasis,C0_LagrangeOnCubeWithNodalBasis,
+             C0_AffineLagrangeOnCubeWithNodalBasis,C0_BernsteinOnCube,C0_AffineBernsteinOnCube,C0_AffinePolynomialOnCube)
+    for cls in cubes:
+        cls.cell = 'cube'
+    for cls,(continuity,family,order) in table.items():
+        cls.continuity = continuity
+        if family is not None:
+            cls.family = family
+        if order is not None:
+            cls.order = order
+_declareSpaceInterface()

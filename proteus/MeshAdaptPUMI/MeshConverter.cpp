@@ -129,7 +129,7 @@ int MeshAdaptPUMIDrvr::constructNodes(Mesh& mesh)
 
 int MeshAdaptPUMIDrvr::constructElements(Mesh& mesh)
 {
-  mesh.elementNodesArray = new int[mesh.nElements_global*mesh.nNodes_element];
+  mesh.elementNodesArray = new proteus_index_t[mesh.nElements_global*mesh.nNodes_element];
   apf::MeshIterator* it = m->begin(m->getDimension());
   apf::MeshEntity* e;
   while ((e = m->iterate(it))) {
@@ -185,15 +185,15 @@ int MeshAdaptPUMIDrvr::constructBoundaries(Mesh& mesh)
   std::set<int> exteriorElementBoundaries;
 
   mesh.elementBoundaryNodesArray =
-    new int[mesh.nElementBoundaries_global * mesh.nNodes_elementBoundary];
+    new proteus_index_t[mesh.nElementBoundaries_global * mesh.nNodes_elementBoundary];
   mesh.elementBoundaryElementsArray =
-    new int[mesh.nElementBoundaries_global * 2];
+    new proteus_index_t[mesh.nElementBoundaries_global * 2];
   mesh.elementBoundaryLocalElementBoundariesArray =
     new int[mesh.nElementBoundaries_global * 2];
   mesh.elementNeighborsArray =
-    new int[mesh.nElements_global * mesh.nElementBoundaries_element];
+    new proteus_index_t[mesh.nElements_global * mesh.nElementBoundaries_element];
   mesh.elementBoundariesArray =
-    new int[mesh.nElements_global * mesh.nElementBoundaries_element];
+    new proteus_index_t[mesh.nElements_global * mesh.nElementBoundaries_element];
   //exteriorGlobaltoLocalElementBoundariesArray = 
   //  new int[mesh.nElementBoundaries_global];
   //int exterior_count = 0; //counter for external boundaries
@@ -266,9 +266,9 @@ int MeshAdaptPUMIDrvr::constructBoundaries(Mesh& mesh)
  
   //construct interior and exterior element boundaries array 
   mesh.nInteriorElementBoundaries_global = interiorElementBoundaries.size();
-  mesh.interiorElementBoundariesArray = new int[mesh.nInteriorElementBoundaries_global];
+  mesh.interiorElementBoundariesArray = new proteus_index_t[mesh.nInteriorElementBoundaries_global];
   mesh.nExteriorElementBoundaries_global = exteriorElementBoundaries.size();
-  mesh.exteriorElementBoundariesArray = new int[mesh.nExteriorElementBoundaries_global];
+  mesh.exteriorElementBoundariesArray = new proteus_index_t[mesh.nExteriorElementBoundaries_global];
 
   int ebNI=0,ebNE=0;
   for (std::set<int>::iterator ebN=interiorElementBoundaries.begin();ebN != interiorElementBoundaries.end(); ebN++,ebNI++)
@@ -285,7 +285,7 @@ int MeshAdaptPUMIDrvr::constructBoundaries(Mesh& mesh)
    from the edge to vertex and element to vertex tables */
 static void createStars(Mesh& mesh)
 {
-  std::vector<std::set<int> > nodeStar(mesh.nNodes_global);
+  std::vector<std::set<proteus_index_t> > nodeStar(mesh.nNodes_global);
   for (int edgeN = 0; edgeN < mesh.nEdges_global; edgeN++) {
     nodeStar[mesh.edgeNodesArray[edgeN * 2 + 0]].insert(
 							mesh.edgeNodesArray[edgeN * 2 + 1]);
@@ -293,15 +293,15 @@ static void createStars(Mesh& mesh)
 							mesh.edgeNodesArray[edgeN * 2 + 0]);
   }
 
-  mesh.nodeStarOffsets = new int[mesh.nNodes_global + 1];
+  mesh.nodeStarOffsets = new proteus_index_t[mesh.nNodes_global + 1];
   mesh.nodeStarOffsets[0] = 0;
   for (int nN = 1; nN <= mesh.nNodes_global; nN++)
     mesh.nodeStarOffsets[nN] =
       mesh.nodeStarOffsets[nN - 1] + nodeStar[nN - 1].size();
   
-  mesh.nodeStarArray = new int[mesh.nodeStarOffsets[mesh.nNodes_global]];
+  mesh.nodeStarArray = new proteus_index_t[mesh.nodeStarOffsets[mesh.nNodes_global]];
   for (int nN = 0, offset = 0; nN < mesh.nNodes_global; nN++)
-    for (std::set<int>::iterator nN_star=nodeStar[nN].begin();
+    for (std::set<proteus_index_t>::iterator nN_star=nodeStar[nN].begin();
          nN_star!=nodeStar[nN].end();
          nN_star++, offset++)
       mesh.nodeStarArray[offset] = *nN_star;
@@ -318,12 +318,12 @@ static void createStars(Mesh& mesh)
       nodeElementsStar[
 		       mesh.elementNodesArray[eN * mesh.nNodes_element + nN]
 		       ].insert(eN);
-  mesh.nodeElementOffsets = new int[mesh.nNodes_global + 1];
+  mesh.nodeElementOffsets = new proteus_index_t[mesh.nNodes_global + 1];
   mesh.nodeElementOffsets[0] = 0;
   for (int nN = 0; nN < mesh.nNodes_global; nN++)
     mesh.nodeElementOffsets[nN + 1] =
       mesh.nodeElementOffsets[nN] + nodeElementsStar[nN].size();
-  mesh.nodeElementsArray = new int[mesh.nodeElementOffsets[mesh.nNodes_global]];
+  mesh.nodeElementsArray = new proteus_index_t[mesh.nodeElementOffsets[mesh.nNodes_global]];
   for (int nN=0,offset=0; nN < mesh.nNodes_global; nN++)
     for (std::set<int>::iterator eN_star = nodeElementsStar[nN].begin();
          eN_star != nodeElementsStar[nN].end();
@@ -333,7 +333,7 @@ static void createStars(Mesh& mesh)
 
 int MeshAdaptPUMIDrvr::constructEdges(Mesh& mesh)
 {
-  mesh.edgeNodesArray = new int[mesh.nEdges_global * 2];
+  mesh.edgeNodesArray = new proteus_index_t[mesh.nEdges_global * 2];
   apf::MeshIterator* it = m->begin(1);
   apf::MeshEntity* e;
   while ((e = m->iterate(it))) {
@@ -645,7 +645,7 @@ namespace apf {
 
   static void constructVerts(
 			     Mesh2* m, int nverts,
-			     int* local2globalMap,
+			     proteus_index_t* local2globalMap,
 			     GlobalToVert& result)
   {
     ModelEntity* interior = m->findModelEntity(m->getDimension(), 0);
@@ -799,7 +799,7 @@ namespace apf {
   }
 
   void construct(Mesh2* m, const Gid* conn, const Gid* conn_b, int nelem,
-		 int nelem_b, int nverts,int etype, int etype_b, int* local2globalMap,
+		 int nelem_b, int nverts,int etype, int etype_b, proteus_index_t* local2globalMap,
 		 GlobalToVert& globalToVert, PCU_t PCUObj)
   {
     constructVerts(m, nverts,local2globalMap,globalToVert);
@@ -888,7 +888,7 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus(Mesh& mesh, Mesh& globalMesh,int h
   int numModelRegions;
 
   int nBoundaryNodes=0; //number of total boundary nodes regardless of ownership
-  int nNodes_owned = globalMesh.nodeOffsets_subdomain_owned[PCU_Comm_Self(PCUObj)+1]-globalMesh.nodeOffsets_subdomain_owned[PCU_Comm_Self(PCUObj)];
+  proteus_index_t nNodes_owned = globalMesh.nodeOffsets_subdomain_owned[PCU_Comm_Self(PCUObj)+1]-globalMesh.nodeOffsets_subdomain_owned[PCU_Comm_Self(PCUObj)];
 
   for(int i =0;i<mesh.nNodes_global;i++){
     if(mesh.nodeMaterialTypes[i]>0){
@@ -916,8 +916,8 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus(Mesh& mesh, Mesh& globalMesh,int h
   }
   else{
     numModelNodes = nBoundaryNodes;
-    numModelEdges = mesh.nEdges_global;
-    numModelBoundaries = mesh.nExteriorElementBoundaries_global;
+    numModelEdges = static_cast<int>(mesh.nEdges_global);
+    numModelBoundaries = static_cast<int>(mesh.nExteriorElementBoundaries_global);
     numModelRegions = numModelEntities[3];
   }
   
@@ -1001,7 +1001,7 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus(Mesh& mesh, Mesh& globalMesh,int h
   
   //construct the mesh
   apf::construct(m,local2global_elementNodes,local2global_elementBoundaryNodes,
-		 mesh.nElements_global,mesh.nElementBoundaries_global,mesh.nNodes_global,etype,etype_b,
+		 static_cast<int>(mesh.nElements_global),static_cast<int>(mesh.nElementBoundaries_global),static_cast<int>(mesh.nNodes_global),etype,etype_b,
 		 globalMesh.nodeNumbering_subdomain2global,outMap,PCUObj);
 
   //Get the global model offsets after the mesh has been created
@@ -1045,7 +1045,7 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus(Mesh& mesh, Mesh& globalMesh,int h
   }
   else{
     numModelNodes = nBoundaryNodes;
-    numModelEdges = mesh.nEdges_global;
+    numModelEdges = static_cast<int>(mesh.nEdges_global);
     numModelBoundaries = nExteriorElementBoundaries_owned;
     numModelRegions = numModelEntities[3]; 
   }
@@ -1350,7 +1350,7 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus2(Mesh& mesh,int* isModelVert,int* 
   }
 
   isReconstructed = 2;
-  int nBFaces = mesh.nExteriorElementBoundaries_global;
+  proteus_index_t nBFaces = mesh.nExteriorElementBoundaries_global;
   bool isModelVert_bool[mesh.nNodes_global];
   for(int i=0;i<mesh.nNodes_global;i++){
     isModelVert_bool[i] = isModelVert[i] != 0;
@@ -1391,9 +1391,9 @@ int MeshAdaptPUMIDrvr::reconstructFromProteus2(Mesh& mesh,int* isModelVert,int* 
   for(int i=0;i<mesh.nElements_global*apf::Mesh::adjacentCount[elementType][0];i++){
     elementNodesArray[i] = mesh.elementNodesArray[i];
   }
-  apf::construct(m,&elementNodesArray[0],mesh.nElements_global,elementType,outMap);
+  apf::construct(m,&elementNodesArray[0],static_cast<int>(mesh.nElements_global),elementType,outMap);
 
-  apf::setCoords(m,mesh.nodeArray,mesh.nNodes_global,outMap);
+  apf::setCoords(m,mesh.nodeArray,static_cast<int>(mesh.nNodes_global),outMap);
 
   std::map<int,apf::MeshEntity*> globalToRegion;
   apf::MeshIterator* it = m->begin(dim);

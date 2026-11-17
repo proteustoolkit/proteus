@@ -2,6 +2,74 @@
 requires = ["setuptools>=61.0","cython>=3.0,<4","pybind11>=2.11,<4","numpy>=1.25,<3","mpi4py"]
 build-backend = "setuptools.build_meta"
 
+[project]
+# The distribution is py-proteus (Spack and Nix use the same name); the import
+# name stays `proteus`. Tryton's client library is the PyPI project `proteus` and
+# also installs a top-level module `proteus`: the two cannot share an environment.
+name = "py-proteus"
+# The version is set in setup.py (see RELEASE.md: three files carry it).
+# `2.0.0.dev` normalises to 2.0.0.dev0 under PEP 440. A release tag (bare
+# number, `2.0.0rc1` or `2.0.0`) must equal the built version; release.yml
+# checks that before it uploads.
+dynamic = ["version"]
+description = "Python tools for multiphysics modeling"
+readme = "README.md"
+# 3.12 is what CI tests (3.12 and 3.13; sdist.yml); the old >=3.9 was never
+# tested and numpy >=2.5.2 / scipy >=1.18 in the CI environments need 3.12.
+requires-python = ">=3.12"
+# Table form, not the SPDX string: the CI environments lock setuptools 73 and
+# build with --no-isolation, and PEP 639 (`license = "MIT"`) needs setuptools 77.
+# setuptools packs LICENSE.md by default.
+license = { text = "MIT" }
+authors = [{ name = "The Proteus Developers", email = "proteus-dev@googlegroups.com" }]
+keywords = ["finite element", "multiphysics", "computational fluid dynamics", "PDE", "PETSc"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: C",
+    "Programming Language :: C++",
+    "Programming Language :: Cython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX",
+]
+# A source build: it needs a compiler, an MPI, and PETSc, petsc4py and an
+# MPI-enabled HDF5 that match each other (README.md, "Installation").
+dependencies = [
+    "numpy",
+    "scipy",
+    "mpi4py",
+    "petsc4py",
+    "h5py",
+    # The archive of record is a .ymf file written through ymf.archive
+    # (pyyaml only); the heavy front end ymf[frontend] is not required.
+    # No version floor: a --no-build-isolation build of ymf without
+    # setuptools_scm reports 0.0.0.
+    "ymf",
+]
+
+[project.scripts]
+pro = "proteus.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov", "pytest-xdist", "pytest-forked", "matplotlib"]
+
+[project.urls]
+Homepage = "https://proteustoolkit.org"
+Source = "https://github.com/proteustoolkit/proteus"
+Issues = "https://github.com/proteustoolkit/proteus/issues"
+Releases = "https://github.com/proteustoolkit/proteus/releases"
+Citation = "https://doi.org/10.5281/zenodo.1004620"
+
 [tool.pytest.ini_options]
 # CI runs with --import-mode=importlib, which does not put a test's own
 # directory on sys.path. Without this, local runs use the default prepend
