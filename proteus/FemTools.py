@@ -9689,18 +9689,14 @@ class FaceDOFMap(DOFMap):
         globalMesh = mesh.globalMesh if getattr(mesh,'globalMesh',None) is not None else mesh
         self.updateAfterParallelPartitioning(globalMesh)
 
-    def updateAfterParallelPartitioning(self,globalMesh):
+    def _layout(self,globalMesh,dpf,dpc):
+        """Sets nDOF, the owned counts, offsets and subdomain2global for ``dpf`` dofs on every face and ``dpc``
+        in every element; returns (faceDOF,cellDOF), the first subdomain dof of subdomain faces / elements."""
         from . import Comm
-        from . import HdivSpaces
         I = cmeshTools.INDEX_DTYPE
         mesh = globalMesh.subdomainMesh
-        space = self.localFunctionSpace.space
-        nd = self.nd
         rank = Comm.get().rank()
-        elementNodes = numpy.asarray(mesh.elementNodesArray)
-        nE = elementNodes.shape[0]
-        X = numpy.asarray(mesh.nodeArray)
-        nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        nE = mesh.nElements_global
         faceOff = numpy.asarray(globalMesh.elementBoundaryOffsets_subdomain_owned,dtype='i8')
         faceNum = numpy.asarray(globalMesh.elementBoundaryNumbering_subdomain2global,dtype='i8')
         cellOff = numpy.asarray(globalMesh.elementOffsets_subdomain_owned,dtype='i8')
@@ -9710,9 +9706,6 @@ class FaceDOFMap(DOFMap):
         nOwnedC = int(cellOff[rank+1]-cellOff[rank])
         assert nF >= nOwnedF and len(faceNum) >= nF
         assert (faceNum[:nOwnedF] == faceOff[rank] + numpy.arange(nOwnedF)).all(), "FaceDOFMap: owned faces are not numbered contiguously"
-        dpf = len(space.face_dofs[0])          #face dofs per face
-        dpc = space.n_interior_dofs            #interior dofs per element
-        nf = space.n_face_dofs
         if dpc > 0:
             assert nE >= nOwnedC and len(cellNum) >= nE
             assert (cellNum[:nOwnedC] == cellOff[rank] + numpy.arange(nOwnedC)).all(), "FaceDOFMap: owned elements are not numbered contiguously"
@@ -9740,6 +9733,23 @@ class FaceDOFMap(DOFMap):
             firstCell = dofOffsets[owner] + dpf*(faceOff[owner+1]-faceOff[owner]) + dpc*(cellNum[:nE]-cellOff[owner])
             for m in range(dpc):
                 self.subdomain2global[cellDOF(numpy.arange(nE))+m] = firstCell + m
+        return faceDOF,cellDOF
+
+    def updateAfterParallelPartitioning(self,globalMesh):
+        from . import HdivSpaces
+        I = cmeshTools.INDEX_DTYPE
+        mesh = globalMesh.subdomainMesh
+        space = self.localFunctionSpace.space
+        nd = self.nd
+        elementNodes = numpy.asarray(mesh.elementNodesArray)
+        nE = elementNodes.shape[0]
+        X = numpy.asarray(mesh.nodeArray)
+        nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        nF = mesh.nElementBoundaries_global
+        dpf = len(space.face_dofs[0])          #face dofs per face
+        dpc = space.n_interior_dofs            #interior dofs per element
+        nf = space.n_face_dofs
+        faceDOF,cellDOF = self._layout(globalMesh,dpf,dpc)
         faceNodes = numpy.asarray(mesh.elementBoundaryNodesArray).reshape(nF,-1)[:,:max(nd,1)]
         #outward area-weighted normals of every element
         J = (X[elementNodes[:,1:]] - X[elementNodes[:,:1]])[:,:,:nd].transpose(0,2,1)
@@ -9956,6 +9966,151 @@ class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
         return (dof,defect,known) if returnDefect else dof
 
 
+
+# ----------------------------------------------------------------------------------------------
+# RT0 on quadrilaterals and hexahedra (C8 round 7)
+# ----------------------------------------------------------------------------------------------
+def cubeElementJacobians(X,elementNodes,nd,tol=1.0e-9):
+    """
+    J (nE,nd,nd), centre c (nE,3) of the parallelepipeds x = c + J xi, xi in [-1,1]^nd, from the element
+    vertices (CubeSpaces order: vertex 1 is +xi_1, 3 is +xi_2, 4 is +xi_3). Raises ValueError for an element
+    that is not a parallelogram / parallelepiped, which the Piola map used here (constant J) does not cover.
+    """
+    from . import CubeSpaces
+    en = numpy.asarray(elementNodes)
+    X = numpy.asarray(X)
+    P = X[en]                                          #(nE,2^nd,3)
+    axes = (1,3,4)[:nd]
+    J = numpy.stack([(P[:,a,:nd]-P[:,0,:nd])/2.0 for a in axes],axis=2)     #J[e,I,i]
+    c = P.mean(axis=1)
+    corners = 2.0*numpy.array(CubeSpaces.CORNERS[nd],dtype='d')-1.0
+    model = c[:,None,:nd] + numpy.einsum('eIi,vi->evI',J,corners)
+    scale = float(numpy.abs(X).max()) + 1.0 if len(en) > 0 else 1.0
+    if len(en) > 0 and float(numpy.abs(model-P[:,:,:nd]).max()) > tol*scale:
+        raise ValueError("H(div) on cubes needs parallelogram or parallelepiped elements (affine maps); "
+                         "a general multilinear element is not supported yet")
+    return J,c
+
+class HdivOnCube(LocalFunctionSpace):
+    """
+    RT0 on the reference square or cube [-1,1]^nd: vector valued, one function per face with a constant normal
+    component on it. See :class:`proteus.HdivSpaces.HdivCubeSpace`.
+    """
+    def __init__(self,nd=3,family='rt0'):
+        from . import HdivSpaces
+        self.referenceElement = ReferenceCube(nd)
+        self.space = HdivSpaces.HdivCubeSpace(nd,family)
+        LocalFunctionSpace.__init__(self,self.space.dim,self.referenceElement)
+        self.family = family
+        self.order = self.space.order
+        self.vectorValued = True
+        self.basis = [(lambda xi,i=i: self.tabulate([xi]).values[0,i].copy()) for i in self.range_dim]
+        self.basisDivergence = [(lambda xi,i=i: float(self.tabulate([xi]).grads[0,i])) for i in self.range_dim]
+        self.basisHessians = []
+    def tabulate(self,points):
+        """Reference values (nQ,dim,nd) at points (nQ,>=nd); ``.grads`` holds the divergences (nQ,dim)."""
+        nd = self.referenceElement.dim
+        return self.space.tabulate(numpy.asarray(points,dtype='d').reshape(len(points),-1)[:,:nd])
+
+class CubeFaceDOFMap(FaceDOFMap):
+    """
+    DOF map of RT0 on quadrilateral and hexahedral meshes (:class:`HdivOnCube`): one dof per face, the flux
+    through it along the face's *global* normal. Same rules and numbering as :class:`FaceDOFMap`; the sign
+    of a face for an element compares the global normal (the face's vertices sorted by global number: the edge
+    turned clockwise in 2D, the cross product of the two edges from the smallest vertex in 3D) with the
+    element's outward normal. The elements must be parallelograms / parallelepipeds.
+    """
+    def updateAfterParallelPartitioning(self,globalMesh):
+        from . import HdivSpaces
+        I = cmeshTools.INDEX_DTYPE
+        mesh = globalMesh.subdomainMesh
+        space = self.localFunctionSpace.space
+        nd = self.nd
+        elementNodes = numpy.asarray(mesh.elementNodesArray)
+        nE = elementNodes.shape[0]
+        X = numpy.asarray(mesh.nodeArray)
+        nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
+        nF = mesh.nElementBoundaries_global
+        nFaceVertices = 2 if nd == 2 else 4
+        faceDOF,cellDOF = self._layout(globalMesh,1,0)
+        faceNodes = numpy.asarray(mesh.elementBoundaryNodesArray).reshape(nF,-1)[:,:nFaceVertices]
+        J,centre = cubeElementJacobians(X,elementNodes,nd) if nE > 0 else (numpy.zeros((0,nd,nd)),numpy.zeros((0,3)))
+        outwardNormals = HdivSpaces.cube_area_normals(J) if nE > 0 else numpy.zeros((0,2*nd,nd))
+        nFacesPerElement = 2*nd
+        self.l2g = numpy.zeros((nE,space.dim),I)
+        self.sign = numpy.ones((nE,space.dim),'d')
+        self.elementFaces = numpy.zeros((nE,nFacesPerElement),I)
+        self.elementFaceSign = numpy.ones((nE,nFacesPerElement),'d')
+        self.faceAreaNormals = numpy.zeros((nF,3),'d')
+        self.elementDofFaceCentroids = numpy.zeros((nE,space.dim,3),'d')
+        self.dofInteriorIndex = -numpy.ones((self.nDOF,),'i8')
+        rows = numpy.arange(nE)
+        normalDefect = 0.0
+        for f in range(nFacesPerElement):
+            local = elementNodes[:,list(space.faces[f])]
+            fe = SimplexEntityDOFMap._matchRows(faceNodes,local,mesh.nNodes_global)
+            self.elementFaces[:,f] = fe
+            order = numpy.argsort(nodeNumbering[local],axis=1,kind='stable')
+            P = X[local[rows[:,None],order]]                       #(nE,m,3), by global vertex number
+            direction = numpy.zeros((nE,3),'d')
+            if nd == 2:
+                t = P[:,1]-P[:,0]
+                direction[:,0] = t[:,1]; direction[:,1] = -t[:,0]
+            else:
+                direction = numpy.cross(P[:,1]-P[:,0],P[:,2]-P[:,0])
+            outward = numpy.sign(numpy.einsum('ec,ec->e',direction[:,:nd],outwardNormals[:,f,:]))
+            assert nE == 0 or (outward != 0.0).all(), "CubeFaceDOFMap: a degenerate face"
+            s = outward if self.orient else numpy.ones(nE)
+            self.elementFaceSign[:,f] = s
+            globalNormal = numpy.zeros((nE,3),'d')
+            globalNormal[:,:nd] = outward[:,None]*outwardNormals[:,f,:]
+            self.faceAreaNormals[fe] = globalNormal
+            normalDefect = max(normalDefect,float(numpy.abs(self.faceAreaNormals[fe]-globalNormal).max()) if nE > 0 else 0.0)
+            self.l2g[:,f] = faceDOF(fe)
+            self.sign[:,f] = s
+            self.elementDofFaceCentroids[:,f,:] = X[local].mean(axis=1)
+        #dof points: the face centres (images of the reference centres under x = c + J xi)
+        self.elementDofPoints = numpy.zeros((nE,space.dim,3),'d')
+        self.elementDofPoints[:,:,:nd] = centre[:,None,:nd] + numpy.einsum('eIi,fi->efI',J,space.dof_points)
+        self.elementOutwardNormals = outwardNormals
+        self.dofPoints = numpy.zeros((self.nDOF,3),'d')
+        self.dofPoints[self.l2g] = self.elementDofPoints
+        self.lagrangeNodesArray = self.dofPoints
+        self.dofFaceCentroids = numpy.zeros((self.nDOF,3),'d')
+        self.dofFaceCentroids[self.l2g] = self.elementDofFaceCentroids
+        pointDefect = float(numpy.abs(self.dofPoints[self.l2g]-self.elementDofPoints).max()) if nE > 0 else 0.0
+        self.conformityDefect = max(pointDefect,normalDefect)
+        scale = float(numpy.abs(X).max()) + 1.0 if nE > 0 else 1.0
+        if self.orient and self.conformityDefect > 1.0e-9*scale:
+            raise RuntimeError("CubeFaceDOFMap: elements disagree on the point of a shared dof or on a face normal by %g" % (self.conformityDefect,))
+        self.max_dof_neighbors = 2*nFacesPerElement-1
+        assert self.nDOF == 0 or self.l2g.max() < self.nDOF
+
+class Hdiv_AffineOnCube(Hdiv_AffineOnSimplex):
+    """
+    RT0 on a quadrilateral or hexahedral mesh whose elements are parallelograms / parallelepipeds (rectangular
+    grids are): piecewise ``(a + b x, c + e y[, f + g z])``, one flux unknown per face along the face's global
+    normal (:class:`CubeFaceDOFMap`), normal component continuous across faces. Same interface as
+    :class:`Hdiv_AffineOnSimplex` (``evaluate``, ``divergence``, ``elementFluxes``, ``interpolate`` ...);
+    ``family`` is ``'rt0'``.
+    """
+    def __new__(cls,mesh=None,nd=3,family='rt0'):
+        return super(Hdiv_AffineOnSimplex,cls).__new__(cls)
+    def __init__(self,mesh,nd=3,family='rt0'):
+        self.family = family
+        localFunctionSpace = HdivOnCube(nd,family)
+        self.order = localFunctionSpace.order
+        ParametricFiniteElementSpace.__init__(self,
+                                              ReferenceFiniteElement(localFunctionSpace,
+                                                                     HdivInterpolationConditions(localFunctionSpace)),
+                                              AffineMaps(mesh,
+                                                         localFunctionSpace.referenceElement,
+                                                         LinearOnCubeWithNodalBasis(nd)),
+                                              CubeFaceDOFMap(mesh,localFunctionSpace,nd))
+    def elementJacobians(self):
+        """J (nE,nd,nd), J[eN,I,i] = d x_I / d xi_i with xi in [-1,1]^nd."""
+        return cubeElementJacobians(self.mesh.nodeArray,self.mesh.elementNodesArray,self.nSpace_global)[0]
+
 #-- the space interface table (C0 round 12): see ParametricFiniteElementSpace ---------------------------------
 def _declareSpaceInterface():
     """(continuity, family, order) of every space class; order None where the instance sets it."""
@@ -9979,9 +10134,11 @@ def _declareSpaceInterface():
         C0_AffineP1BubbleOnSimplexWithNodalBasis: ('C0','p1-bubble',1),
         C0_AffineP1P0BubbleOnSimplexWithNodalBasis: ('C0','p1p0-bubble',1),
         Hdiv_AffineOnSimplex: ('Hdiv',None,None),
+        Hdiv_AffineOnCube: ('Hdiv','rt0',0),
     }
     cubes = (C0_LinearOnCubeWithNodalBasis,C0_AffineLinearOnCubeWithNodalBasis,C0_LagrangeOnCubeWithNodalBasis,
-             C0_AffineLagrangeOnCubeWithNodalBasis,C0_BernsteinOnCube,C0_AffineBernsteinOnCube,C0_AffinePolynomialOnCube)
+             C0_AffineLagrangeOnCubeWithNodalBasis,C0_BernsteinOnCube,C0_AffineBernsteinOnCube,C0_AffinePolynomialOnCube,
+             Hdiv_AffineOnCube)
     for cls in cubes:
         cls.cell = 'cube'
     for cls,(continuity,family,order) in table.items():

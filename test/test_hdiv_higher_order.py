@@ -235,3 +235,69 @@ def test_argument_checks():
     for bad in (dict(d=1, family="bdm2"), dict(d=1, family="rt1"), dict(d=2, family="rt2"), dict(d=4, family="bdm2")):
         with pytest.raises(ValueError):
             H.HdivSpace(**bad)
+
+
+# ---- RT0 on the reference square and cube ------------------------------------------------------------------
+CUBE = [2, 3]
+
+
+@pytest.mark.parametrize("d", CUBE)
+def test_cube_rt0_is_dual_to_its_face_fluxes_and_has_the_right_traces(d):
+    s = H.HdivCubeSpace(d)
+    assert s.dim == 2 * d and [len(x) for x in s.face_dofs] == [1] * (2 * d)
+    A = np.array([s.dofs_from_values(s.tabulate(s.dof_points).values[:, j, :]) for j in range(s.dim)])
+    assert np.abs(A - np.eye(s.dim)).max() < 1.0e-15
+    N = H.cube_reference_area_normals(d)
+    assert np.abs(np.linalg.norm(N, axis=1) - 2.0 ** (d - 1)).max() < 1.0e-15      # |face| of [-1,1]^d
+    assert np.abs(N.sum(axis=0)).max() < 1.0e-15
+    rs = np.random.RandomState(40)
+    from proteus.CubeSpaces import FACE_PLANE
+    for f, (axis, side) in enumerate(FACE_PLANE[d]):
+        x = rs.uniform(-1, 1, (6, d))
+        x[:, axis] = 1.0 if side else -1.0
+        flux = np.einsum("d,qnd->qn", N[f], s.tabulate(x).values)
+        want = np.zeros(s.dim)
+        want[f] = 1.0
+        assert np.abs(flux - want).max() < 1.0e-14           # flux density 1 through its own face, 0 through the others
+    # each component is linear in its own variable and constant in the others; divergence 2^-d
+    x = rs.uniform(-1, 1, (5, d))
+    t = s.tabulate(x)
+    assert np.abs(t.grads - 2.0 ** (-d)).max() < 1.0e-15
+    h = 1.0e-6
+    for i in range(d):
+        e = np.zeros(d)
+        e[i] = h
+        dv = (s.tabulate(x + e).values - s.tabulate(x - e).values) / (2 * h)
+        for comp in range(d):
+            if comp != i:
+                assert np.abs(dv[:, :, comp]).max() < 1.0e-9      # d v_comp / d x_i = 0 for comp != i
+
+
+@pytest.mark.parametrize("d", CUBE)
+@pytest.mark.parametrize("orientation", [1, -1])
+def test_cube_rt0_piola_preserves_the_fluxes(d, orientation):
+    s = H.HdivCubeSpace(d)
+    rs = np.random.RandomState(41 + d)
+    while True:
+        J = np.eye(d) + 0.4 * rs.standard_normal((d, d))
+        if abs(np.linalg.det(J)) > 0.3:
+            break
+    if np.sign(np.linalg.det(J)) != orientation:
+        J[:, 0] *= -1.0
+    N = H.cube_area_normals(J)
+    assert np.abs(N.sum(axis=0)).max() < 1.0e-13
+    phys = s.piola(J, s.tabulate(s.dof_points).values)
+    A = np.array([s.dofs_from_values(phys[:, j, :], N) for j in range(s.dim)])
+    assert np.abs(A - np.eye(s.dim)).max() < 1.0e-12
+
+
+def test_cube_rt0_arguments_and_the_affine_check():
+    from proteus import FemTools
+    for bad in (dict(d=1), dict(d=2, family="bdm1"), dict(d=4)):
+        with pytest.raises(ValueError):
+            H.HdivCubeSpace(**bad)
+    X = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
+    FemTools.cubeElementJacobians(X, np.array([[0, 1, 2, 3]]), 2)             # a square: fine
+    X[2] = [1.4, 1.0, 0.0]                                                    # a trapezoid: not a parallelogram
+    with pytest.raises(ValueError):
+        FemTools.cubeElementJacobians(X, np.array([[0, 1, 2, 3]]), 2)

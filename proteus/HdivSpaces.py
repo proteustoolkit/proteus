@@ -349,3 +349,95 @@ class HdivSpace(object):
         J = np.asarray(J, dtype=float)
         det = np.abs(np.linalg.det(J))
         return np.einsum("...Ii,qni->...qnI", J, reference_values) / det[..., None, None, None]
+
+
+# --------------------------------------------------------------------------------------------------------------
+# RT0 on the reference square and cube [-1, 1]^d (d = 2, 3): the lowest-order Raviart-Thomas space of
+# quadrilaterals and hexahedra, Q_{1,0} x Q_{0,1} (x Q_{0,0,1}): the a-th component is linear in x_a and constant
+# in the others. One dof per face.
+# --------------------------------------------------------------------------------------------------------------
+def cube_reference_area_normals(d):
+    """Nhat_f = |Fhat_f| nhat_f for the faces of [-1,1]^d in the order of ``CubeSpaces.FACE_PLANE``: (2d, d)."""
+    from .CubeSpaces import FACE_PLANE
+    N = np.zeros((2 * d, d))
+    for f, (axis, side) in enumerate(FACE_PLANE[d]):
+        N[f, axis] = (1.0 if side == 1 else -1.0) * 2.0 ** (d - 1)
+    return N
+
+
+class HdivCubeSpace(object):
+    """RT0 on the reference square (d = 2) or cube (d = 3) [-1,1]^d.
+
+    The face f lies in the plane x[axis] = -1 or +1 (``CubeSpaces.FACE_PLANE``), n_f = +-e_axis and |Fhat| =
+    2^(d-1). With s = +-1 the side of the face, the basis function of face f is::
+
+        phi_f(x) = s (1 + s x_axis) / 2 / 2^(d-1) e_axis
+
+    Its normal component is 1/|Fhat| on face f and 0 on every other face; the divergence is 2^-d, so |K|
+    div phi_f = 1 = the flux. The dof is the flux density at the face centre times the face area,
+    ``sigma_f(v) = N_f . v(centre of f)`` with N_f the area-weighted outward normal, which for v in the space is
+    the flux of v through f. Attributes as :class:`HdivSpace` (``dim`` = 2d, ``dof_face`` = arange, no interior
+    dofs, ``dof_points`` the face centres, ``constant_divergence``, ``divergence``).
+    """
+
+    family = "rt0"
+    kind = "rt"
+    order = 0
+    degree = 0
+    n_interior_dofs = 0
+    interior_dofs = []
+    constant_divergence = True
+
+    def __init__(self, d, family="rt0"):
+        from .CubeSpaces import CORNERS, FACE_PLANE, FACES
+        if d not in (2, 3) or family != "rt0":
+            raise ValueError("RT0 on cubes is implemented for d = 2 or 3 and family 'rt0'")
+        self.d = d
+        self.dim = 2 * d
+        self.n_face_dofs = self.dim
+        self.vertices = 2.0 * np.array(CORNERS[d], dtype=float) - 1.0
+        self.faces = FACES[d]
+        self._plane = FACE_PLANE[d]
+        self.dof_face = np.arange(self.dim)
+        self.dof_vertex = -np.ones(self.dim, dtype=int)
+        self.face_dofs = [[f] for f in range(self.dim)]
+        self.dof_alpha = np.ones((self.dim, 1), dtype=int)
+        self.dof_den = 1
+        self.face_lattice = np.ones((1, 1), dtype=int)
+        self.face_lattice_den = 1
+        self.face_flux_weights = np.ones(1)
+        self.dof_points = np.array([self.vertices[list(self.faces[f])].mean(axis=0) for f in range(self.dim)])
+        self.face_centroids = self.dof_points
+        self.divergence = np.full(self.dim, 2.0 ** (-d))
+
+    def tabulate(self, points, generic=False):
+        """Reference basis values (nQ, dim, d); ``.grads`` holds the divergences (nQ, dim)."""
+        d = self.d
+        x = np.asarray(points, dtype=float).reshape(-1, d)
+        vals = np.zeros((x.shape[0], self.dim, d))
+        for f, (axis, side) in enumerate(self._plane):
+            s = 1.0 if side == 1 else -1.0
+            vals[:, f, axis] = s * (1.0 + s * x[:, axis]) / 2.0 / 2.0 ** (d - 1)
+        return Tabulation(vals, np.tile(self.divergence, (x.shape[0], 1)), None)
+
+    def dofs_from_values(self, values, area_normal=None, interior=None):
+        """sigma_f(v) = N_f . v(centre of f) from the values (.., 2d, d) at the dof points and the area-weighted
+        outward normals (.., 2d, d) (the reference ones by default)."""
+        N = cube_reference_area_normals(self.d) if area_normal is None else np.asarray(area_normal)
+        return np.einsum("...id,...id->...i", N, np.asarray(values, dtype=float))
+
+    def piola(self, J, reference_values):
+        """Physical basis values (.., nQ, dim, d) = J phihat / |det J| for the Jacobian J (.., d, d) of x(xi)."""
+        J = np.asarray(J, dtype=float)
+        det = np.abs(np.linalg.det(J))
+        return np.einsum("...Ii,qni->...qnI", J, reference_values) / det[..., None, None, None]
+
+
+def cube_area_normals(J):
+    """Area-weighted outward face normals (.., 2d, d) of the parallelepipeds x = c + J xi, xi in [-1,1]^d:
+    N_f = |det J| J^{-T} Nhat_f."""
+    J = np.asarray(J, dtype=float)
+    d = J.shape[-1]
+    det = np.abs(np.linalg.det(J))
+    Jinv = np.linalg.inv(J)
+    return det[..., None, None] * np.einsum("...iI,fi->...fI", Jinv, cube_reference_area_normals(d))

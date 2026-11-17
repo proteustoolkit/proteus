@@ -1,18 +1,25 @@
 """
-The H(div) spaces RT0 and BDM1 as FemTools spaces (`HdivOnSimplex`, `FaceDOFMap`, `Hdiv_AffineOnSimplex`):
-normal continuity, sign and ordering rules, serial and 2 ranks (C8 round 5).
+The H(div) spaces RT0, BDM1 (C8 round 5), RT1 and BDM2 (C8 round 7) as FemTools spaces (`HdivOnSimplex`,
+`FaceDOFMap`, `Hdiv_AffineOnSimplex`) and RT0 on quadrilaterals and hexahedra (`HdivOnCube`, `CubeFaceDOFMap`,
+`Hdiv_AffineOnCube`, round 7; the meshes are sheared grids, so the elements are parallelograms and
+parallelepipeds; the scrambling is a random symmetry of the cube per element): normal continuity, sign and
+ordering rules, serial and 2 ranks.
 
 A dof is a flux density through a face along the face's global normal. Two elements, and two ranks, must
 choose the same normal and, for BDM1, the same order of the nd dofs of the face; the map takes both from the
 face's vertices sorted by *global* vertex number. `hdiv_dofmap_mpi.py` checks on each rank's subdomain (ghost
-elements included), for both families on intervals, triangles and tetrahedra, with the local vertex orders
+elements included), for every family on intervals, triangles, tetrahedra, quadrilaterals and hexahedra, with the local vertex orders
 as generated and scrambled independently on each rank:
 
 * for generic dof values the normal component is continuous across every face (round-off) while the
   tangential component jumps (the space is H(div), not H1);
 * without the sign and ordering rule the normal component jumps (negative control);
 * a field of the space is interpolated exactly, with its divergence, and the element fluxes add up to
-  |K| div v.
+  the integral of div v over the element.
+
+An interior dof (RT1, BDM2) belongs to one element and is defined in that element's reference frame, so the
+tables compare it between serial and 2 ranks only for the vertex order the partitioner gives (equal), not for the
+scrambled order.
 
 This file adds what needs all ranks together: the global dof count, the owned blocks tiling the global range,
 ranks that share a dof agreeing on its point, its face and its VALUE (so on the direction of the normal), the
@@ -73,7 +80,7 @@ def _case(r):
 
 
 def _families(shape):
-    return FAMILIES[:2] if shape == "edge" else FAMILIES
+    return FAMILIES[:1] if shape in ("quad", "hex") else FAMILIES[:2] if shape == "edge" else FAMILIES
 
 
 def _check_rank_results(results, shape):
@@ -92,7 +99,7 @@ def _check_rank_results(results, shape):
         assert r["negative_signs"] > 0, tag
         assert r["field_dof_defect"] < 1.0e-13 and r["field_error"] < 1.0e-12, tag
         if not r["scrambled"]:
-            assert r["space_class"] == "Hdiv_AffineOnSimplex_" + r["family"], tag
+            assert r["space_class"] == ("Hdiv_AffineOnCube" if shape in ("quad", "hex") else "Hdiv_AffineOnSimplex_" + r["family"]), tag
             assert r["space_nDOF"] == r["nDOF"] == r["function_dofs"], tag
             assert r["all_known"] and r["same_as_bare_map"], tag
             assert r["interpolation_defect"] < 1.0e-13 and r["interpolation_error"] < 1.0e-12, tag
@@ -127,7 +134,7 @@ def _sorted(x, v):
     return x[order], v[order]
 
 
-@pytest.mark.parametrize("shape", ["edge", "tri", "tet"])
+@pytest.mark.parametrize("shape", ["edge", "tri", "tet", "quad", "hex"])
 def test_serial_and_interpolation_orders(tmp_path, shape):
     results, rates = _run(1, tmp_path, shape, rates=True)
     _check_rank_results(results, shape)
@@ -145,7 +152,8 @@ def test_serial_and_interpolation_orders(tmp_path, shape):
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
-@pytest.mark.parametrize("shape,part", [("edge", "node"), ("tri", "node"), ("tri", "element"), ("tet", "node"), ("tet", "element")])
+@pytest.mark.parametrize("shape,part", [("edge", "node"), ("tri", "node"), ("tri", "element"), ("tet", "node"), ("tet", "element"),
+                                        ("quad", "node"), ("quad", "element"), ("hex", "node"), ("hex", "element")])
 def test_two_ranks_are_conforming_and_span_the_serial_space(tmp_path, shape, part):
     (tmp_path / "1").mkdir()
     (tmp_path / "2").mkdir()
