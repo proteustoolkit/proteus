@@ -121,7 +121,7 @@ def init(options=None, options_file=None):
     return Comm.init()
 
 
-def start(log="proteus.log", log_level=1):
+def start(log="proteus.log", log_level=1, abort_program=None):
     """Start Proteus once for a caller that has no command line; return the Comm.
 
     If nothing has started Proteus, :func:`init` it with no PETSc options
@@ -129,6 +129,11 @@ def start(log="proteus.log", log_level=1):
     ``Profiling.procID`` if it is unset. Then open ``log`` in the working directory at
     ``log_level`` unless a log is already open, or ``log`` is None. This is
     what importing :mod:`proteus.iproteus` did, without its shared ``opts``.
+
+    A script that runs under ``mpiexec`` directly, not through ``parun`` or
+    ``pro``, has no :func:`abort_on_uncaught_exception` unless it asks:
+    ``abort_program="name"`` installs it (see there), so an exception on one
+    rank ends the job instead of leaving the other ranks in a collective.
     """
     from proteus import Comm, Profiling
     comm = Comm.comm
@@ -139,6 +144,8 @@ def start(log="proteus.log", log_level=1):
         Profiling.procID = comm.rank()
     if log is not None and Profiling.logFile is None:
         Profiling.openLog(log, log_level)
+    if abort_program is not None:
+        abort_on_uncaught_exception(abort_program)
     return comm
 
 

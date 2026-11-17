@@ -223,3 +223,15 @@ def test_drain_before_abort_flushes_and_waits(monkeypatch):
     runtime.drain_before_abort()
     assert len(flushed) == 2
     assert time.time() - t0 >= runtime.ABORT_DRAIN_SECONDS * 0.9
+
+
+def test_start_installs_the_hook_only_when_asked(monkeypatch):
+    from proteus import Comm, Profiling, runtime
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(Comm, "comm", _FakeComm(0, 2))
+    monkeypatch.setattr(Profiling, "procID", 0)
+    before = sys.excepthook
+    runtime.start(log=None)
+    assert sys.excepthook is before
+    runtime.start(log=None, abort_program="script")
+    assert sys.excepthook is not before
