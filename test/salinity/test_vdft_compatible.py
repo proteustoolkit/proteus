@@ -346,6 +346,53 @@ def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
     assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
 
 
+def test_first_step_old_time_mass_is_at_the_coupled_density(levee_deck, monkeypatch):
+    """The flow model's history is stored at initialization, at rho_f, before the transport model has set
+    the density rho_f (1 + eps c0); preStep copies that density in at the first step. The old-time mass
+    m_last has to follow it: with c0 = 0.5, eps = 0.025 the stale one differs from m(u^0) by 1.25 %, and
+    (m(u) - m_last)/dt, at the dt = 2.7e-14 the transport's CFL gives, is 1e11-1e13 where the head cannot
+    change the mass: Newton's first step goes to |u| ~ 1e14, the iterates grow by 2 per iteration to 1e189
+    and the linear solve of the diverged step makes the all-NaN Jacobian of the nightly. Stops at the first
+    step's preStep, so it needs no time stepping."""
+    from proteus.richards import Richards
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+
+    class Seen(Exception):
+        pass
+
+    seen = {}
+    preStep = Richards.Coefficients.preStep
+
+    def checked_preStep(self, t, firstStep=False):
+        out = preStep(self, t, firstStep)
+        if firstStep:
+            flow = self.model
+            ti = flow.timeIntegration
+            seen['rho'] = (flow.q['rho'].min(), flow.q['rho'].max(), self.rho)
+            seen['dof'] = flow.u[0].dof.copy()
+            scratch = np.zeros_like(flow.u[0].dof)
+            flow.getResidual(flow.u_dof_old.copy(), scratch)
+            seen['mismatch'] = np.abs(ti.m_tmp[0] - ti.m_last[0]).max()
+            seen['mass'] = np.abs(ti.m_tmp[0]).max()
+            # the first residual is the flux terms only: the storage term has nothing to remove
+            seen['r'] = np.abs(scratch).max()
+            raise Seen
+        return out
+
+    monkeypatch.setattr(Richards.Coefficients, 'preStep', checked_preStep)
+    with pytest.raises(Seen):
+        _run(so, [rp, tp], [rn, tn], 'vdft_levee_first_step_mass')
+    lo, hi, rho_f = seen['rho']
+    assert hi > 1.01 * rho_f and lo > 1.01 * rho_f      # the coupled density is in: 1 + 0.025 * 0.5
+    assert seen['mismatch'] < 1.0e-12 * seen['mass'], seen
+    assert seen['r'] < 1.0e3, seen                       # 6e5 to 5e7 per unit dt = 1e-8 before, 1e11-1e13 at 2.7e-14
+
+
 def test_the_conservative_boundary_flux_is_opt_in():
     """BC_CONS changes the boundary velocity a coupled transport sees, so existing decks keep the pointwise trace
     unless they ask for it."""
