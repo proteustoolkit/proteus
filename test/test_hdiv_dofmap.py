@@ -33,7 +33,11 @@ _spec = importlib.util.spec_from_file_location("launch_output", os.path.join(HER
 launch_output = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "hdiv_dofmap_mpi.py")
-FAMILIES = ("rt0", "bdm1")
+FAMILIES = ("rt0", "bdm1", "rt1", "bdm2")
+# L2 and divergence rates of the interpolant and of the L2 projection (the face dofs are point values, so the
+# divergence of the RT1 interpolant converges at the rate of the trace interpolation, 1, not at the best-approximation
+# rate 2; BDM2 and RT0/BDM1 reach theirs)
+RATES = {"rt0": (1, 1, 1, 0), "bdm1": (2, 1, 2, 0), "rt1": (2, 1, 2, 1), "bdm2": (3, 2, 3, 2)}   # L2, div, proj L2, proj div (0 = not checked)
 
 
 def _mpiexec():
@@ -68,6 +72,10 @@ def _case(r):
     return (r["family"], r["scrambled"])
 
 
+def _families(shape):
+    return FAMILIES[:2] if shape == "edge" else FAMILIES
+
+
 def _check_rank_results(results, shape):
     """What every rank must satisfy on its own subdomain."""
     for r in results:
@@ -97,7 +105,7 @@ def _global_table(cwd, shape, case, ranks):
     tables = [np.load(os.path.join(str(cwd), "%s_%s_%d_r%d.npz" % (shape, family, int(scrambled), r)))
               for r in range(ranks)]
     n = int(max(t["s2g"].max() for t in tables)) + 1
-    x = np.full((n, 6), np.nan)
+    x = np.full((n, 7), np.nan)
     v = np.full((n,), np.nan)
     owned = 0
     for t in tables:
@@ -123,13 +131,17 @@ def _sorted(x, v):
 def test_serial_and_interpolation_orders(tmp_path, shape):
     results, rates = _run(1, tmp_path, shape, rates=True)
     _check_rank_results(results, shape)
-    assert sorted({_case(r) for r in results}) == [(f, s) for f in sorted(FAMILIES) for s in (False, True)]
-    assert sorted(r["family"] for r in rates) == sorted(FAMILIES)
+    assert sorted({_case(r) for r in results}) == [(f, s) for f in sorted(_families(shape)) for s in (False, True)]
+    assert sorted(r["family"] for r in rates) == sorted(_families(shape))
     for r in rates:
-        # in 1D RT0 and BDM1 are both the continuous piecewise linears
-        expected = 2 if (r["family"] == "bdm1" or shape == "edge") else 1
-        assert abs(r["L2_rate"] - expected) < 0.1, r
-        assert abs(r["div_rate"] - 1.0) < 0.1, r
+        l2, dv, pl2, pdv = RATES[r["family"]]
+        if shape == "edge":    # in 1D RT0 and BDM1 are both the continuous piecewise linears
+            l2, dv, pl2 = 2, 1, 2
+        assert abs(r["L2_rate"] - l2) < 0.15, r
+        assert abs(r["div_rate"] - dv) < 0.15, r
+        assert abs(r["proj_L2_rate"] - pl2) < 0.15, r
+        if pdv:
+            assert abs(r["proj_div_rate"] - pdv) < 0.15, r
 
 
 @pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
@@ -155,11 +167,11 @@ def test_two_ranks_are_conforming_and_span_the_serial_space(tmp_path, shape, par
         assert len(offsets) == 1 and list(offsets)[0][-1] == list(nAll)[0]
         xs, vs = _sorted(*_global_table(tmp_path / "1", shape, case, 1))
         xp, vp = _sorted(*_global_table(tmp_path / "2", shape, case, 2))
-        assert xs.shape == xp.shape == (list(nAll)[0], 6)
+        assert xs.shape == xp.shape == (list(nAll)[0], 7)
         # the same dofs (point and face), and the same values: the numbering differs between serial and
         # parallel, the space and the direction of every normal do not
         assert np.abs(xs - xp).max() < 1.0e-12, case
         assert np.abs(vs - vp).max() < 1.0e-12, case
-        # one dof per (point, face)
+        # one dof per (point, face, interior index)
         d = np.diff(xs, axis=0)
         assert np.abs(d).max(axis=1).min() > 1.0e-6, case

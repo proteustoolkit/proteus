@@ -2,8 +2,8 @@
 """Checks of the H(div) face dof map and space (RT0, BDM1) on one rank's subdomain; run by
 test_hdiv_dofmap.py, serially and under mpiexec.
 
-Environment: SHAPE (edge|tri|tet), PART_TYPE (node|element), NLAYERS, OUT (directory for the per-rank
-tables), RATES (1: also the interpolation errors on this mesh and on the mesh with twice the intervals,
+Environment: SHAPE (edge|tri|tet), PART_TYPE (node|element), NLAYERS, FAMILIES (comma list, default all those
+defined for the shape), OUT (directory for the per-rank tables), RATES (1: also the interpolation errors on this mesh and on the mesh with twice the intervals,
 serial only). Prints one line ``RESULT {json}`` per rank and case.
 
 Per case (family, local vertex orders as generated or scrambled per rank):
@@ -12,8 +12,9 @@ Per case (family, local vertex orders as generated or scrambled per rank):
 * H(div): for generic dof values the jump of the normal component across every face with two elements in
   the subdomain (ghost elements included) is round-off, while the tangential component does jump; negative
   control without the sign and ordering rule;
-* a field of the space (a + b x for RT0, a linear field for BDM1) is interpolated exactly and its divergence
-  is exact, through the space class; element fluxes add up to |K| div v;
+* a field of the space (a + b x for RT0, a linear field for BDM1, a + B x + (c.x) x for RT1, a quadratic field
+  for BDM2) is interpolated exactly and its divergence is exact, through the space class; element fluxes add
+  up to the integral of div v over the element;
 * the dofs of that interpolant, with the points that identify each dof, are written for the cross-rank and
   serial-vs-parallel comparison: equal values mean every rank chose the same normal for every face.
 """
@@ -33,6 +34,8 @@ layers = int(os.environ.get("NLAYERS", "1"))
 out = os.environ.get("OUT", ".")
 rank = comm.rank()
 nd = {"edge": 1, "tri": 2, "tet": 3}[shape]
+ALL_FAMILIES = ("rt0", "bdm1") if nd == 1 else ("rt0", "bdm1", "rt1", "bdm2")
+FAMILIES = [f for f in os.environ.get("FAMILIES", ",".join(ALL_FAMILIES)).split(",") if f in ALL_FAMILIES]
 
 
 def make_mesh(refine=1):
@@ -57,17 +60,33 @@ A0 = np.array([0.3, -0.8, 0.5])[:nd]
 B0 = np.array([[0.7, -0.2, 0.4], [0.3, -0.9, 0.1], [-0.5, 0.6, 0.2]])[:nd, :nd]
 
 
+# fixed coefficients of the test fields
+C0 = np.array([0.4, -0.7, 0.3])[:nd]
+S0 = np.array([[[0.5, 0.2, -0.3], [0.2, -0.4, 0.1], [-0.3, 0.1, 0.6]],
+               [[-0.2, 0.3, 0.4], [0.3, 0.7, -0.5], [0.4, -0.5, 0.1]],
+               [[0.1, -0.6, 0.2], [-0.6, 0.3, 0.5], [0.2, 0.5, -0.4]]])[:nd, :nd, :nd]
+
+
 def in_space(family):
-    """A field of the space and its divergence."""
+    """A field of the space and its divergence, both as functions of x (.., 3)."""
     if family == "rt0":
-        return (lambda x: A0 + 0.6 * x[..., :nd]), 0.6 * nd
-    return (lambda x: A0 + x[..., :nd] @ B0.T), float(np.trace(B0))
+        return (lambda x: A0 + 0.6 * x[..., :nd]), (lambda x: 0.6 * nd + 0 * x[..., 0])
+    if family == "bdm1":
+        return (lambda x: A0 + x[..., :nd] @ B0.T), (lambda x: float(np.trace(B0)) + 0 * x[..., 0])
+    if family == "rt1":      # a + B x + (c.x) x
+        return ((lambda x: A0 + x[..., :nd] @ B0.T + (x[..., :nd] @ C0)[..., None] * x[..., :nd]),
+                (lambda x: float(np.trace(B0)) + (nd + 1) * (x[..., :nd] @ C0)))
+    # bdm2: a + B x + the quadratic (x^T S_i x)_i
+    quad = lambda x: np.einsum("...j,ijk,...k->...i", x[..., :nd], S0, x[..., :nd])
+    return ((lambda x: A0 + x[..., :nd] @ B0.T + quad(x)),
+            (lambda x: float(np.trace(B0)) + 2.0 * np.einsum("ijk,...k,ij->...", S0, x[..., :nd], np.eye(nd))))
 
 
 def generic(dm):
     """Dof values that depend only on the dof's point and face, so every rank assigns the same number."""
     x, c = dm.dofPoints, dm.dofFaceCentroids
-    return np.cos(3.0 * x[:, 0] + 1.0 + 2.0 * c[:, 1]) + 0.7 * np.sin(1.7 * c[:, 2] - x[:, 1] + 0.4 * c[:, 0])
+    return (np.cos(3.0 * x[:, 0] + 1.0 + 2.0 * c[:, 1]) + 0.7 * np.sin(1.7 * c[:, 2] - x[:, 1] + 0.4 * c[:, 0])
+            + 0.3 * (dm.dofInteriorIndex + 1.0) * np.cos(2.0 * c[:, 0] + c[:, 1]))
 
 
 def jacobians():
@@ -84,6 +103,28 @@ def evaluate(dm, dof, elements, x):
     ref = np.array([space.tabulate(xi[k:k + 1]).values[0] for k in range(len(xi))])   # (n, dim, nd)
     phys = np.einsum("nIi,nki->nkI", J, ref) / np.abs(np.linalg.det(J))[:, None, None]
     return np.einsum("nkI,nk->nI", phys, dm.sign[elements] * dof[dm.l2g[elements]])
+
+
+def field_dofs(dm, field):
+    """Dof vector of the interpolant of ``field`` computed here, element by element and independently of
+    ``Hdiv_AffineOnSimplex.interpolate``: face nodes: (area normal . value) times the sign; interior dofs: the
+    reference-frame moments of |det J| J^{-1} field at the interior rule's points."""
+    space = dm.localFunctionSpace.space
+    en = np.asarray(sub.elementNodesArray)
+    J = jacobians()
+    nf = space.n_face_dofs
+    normals = dm.elementOutwardNormals[:, space.dof_face[:nf], :]
+    local = np.zeros(dm.l2g.shape)
+    local[:, :nf] = dm.sign[:, :nf] * np.einsum("eid,eid->ei", normals, field(dm.elementDofPoints[:, :nf, :])[..., :nd])
+    if space.n_interior_dofs:
+        xi, w = space.interior_points
+        xq = X[en[:, 0]][:, None, :nd] + np.einsum("eIi,qi->eqI", J, xi)
+        xq3 = np.concatenate([xq, np.zeros(xq.shape[:2] + (3 - nd,))], axis=-1)
+        fhat = np.abs(np.linalg.det(J))[:, None, None] * np.linalg.solve(J[:, None], field(xq3)[..., None])[..., 0]
+        local[:, nf:] = space.dofs_from_values(np.zeros((en.shape[0], space.dim, nd)), interior=fhat)[:, nf:]
+    dof = np.zeros(dm.nDOF)
+    dof[dm.l2g] = local
+    return dof, float(np.abs(dof[dm.l2g] - local).max())
 
 
 def face_jumps(dm, dof):
@@ -113,12 +154,14 @@ def run_case(family, scrambled):
     res = dict(rank=rank, shape=shape, family=family, scrambled=scrambled, nDOF=int(dm.nDOF),
                nOwned=int(dm.nDOF_subdomain_owned), nAll=int(dm.nDOF_all_processes), defect=dm.conformityDefect,
                offsets=[int(o) for o in dm.dof_offsets_subdomain_owned])
-    res["nAll_expected"] = int(dpf * mesh.nElementBoundaries_global)
+    res["nAll_expected"] = int(dpf * mesh.nElementBoundaries_global + lfs.space.n_interior_dofs * mesh.nElements_global)
+    res["dim"] = int(lfs.space.dim)
     s2g = np.asarray(dm.subdomain2global)
     res["s2g_injective"] = bool(len(np.unique(s2g)) == len(s2g) and s2g.min() >= 0 and s2g.max() < dm.nDOF_all_processes)
     off = dm.dof_offsets_subdomain_owned
     res["owned_first"] = bool((s2g[:dm.nDOF_subdomain_owned] == off[rank] + np.arange(dm.nDOF_subdomain_owned)).all()
                               and dm.nDOF_subdomain_owned == off[rank + 1] - off[rank])
+    res["interior_dofs_per_element"] = int(lfs.space.n_interior_dofs)
     res["ghosts_not_owned"] = bool(((s2g[dm.nDOF_subdomain_owned:] < off[rank]) | (s2g[dm.nDOF_subdomain_owned:] >= off[rank + 1])).all())
     res["l2g_dtype_ok"] = bool(dm.l2g.dtype == FemTools.cmeshTools.INDEX_DTYPE and s2g.dtype == FemTools.cmeshTools.INDEX_DTYPE)
     res["unused_dofs"] = int(dm.nDOF - len(np.unique(dm.l2g)))
@@ -136,26 +179,24 @@ def run_case(family, scrambled):
     res["element_faces_local_order_differs_from_global"] = differs
     # a field of the space: its dofs, computed element by element, agree; saved for the cross-rank comparison
     field, div = in_space(family)
-    values = field(dm.elementDofPoints)
-    normals = dm.elementOutwardNormals[:, lfs.space.dof_face, :]
-    local = dm.sign * np.einsum("eid,eid->ei", normals, values)
-    dof = np.zeros(dm.nDOF)
-    dof[dm.l2g] = local
-    res["field_dof_defect"] = float(np.abs(dof[dm.l2g] - local).max())
+    dof, res["field_dof_defect"] = field_dofs(dm, field)
     xq = np.einsum("v,evc->ec", np.full(nd + 1, 1.0 / (nd + 1)), X[en])
     res["field_error"] = float(np.abs(evaluate(dm, dof, np.arange(en.shape[0]), xq) - field(xq)).max())
     if not scrambled:  # AffineMaps wants the generated vertex order
         space = FemTools.Hdiv_AffineOnSimplex(sub, nd, family)
-        d2, defect, known = space.dofsFromElementValues(field(space.dofMap.elementDofPoints))
+        d2, defect, known = space.interpolate(field, returnDefect=True)
         xi = np.random.RandomState(4).dirichlet(np.ones(nd + 1), size=6)[:, 1:]
         xs = np.einsum("qv,evc->eqc", np.column_stack([1.0 - xi.sum(axis=1), xi]), X[en])
         res["space_class"] = type(space).__name__
         res["space_nDOF"] = int(space.dim)
         res["interpolation_defect"] = defect
         res["interpolation_error"] = float(np.abs(space.evaluate(d2, xi) - field(xs)).max())
-        res["divergence_error"] = float(np.abs(space.divergence(d2) - div).max())
+        res["divergence_error"] = float(np.abs(space.divergence(d2, xi) - div(xs)).max())
+        xiq, wq = space.referenceFiniteElement.localFunctionSpace.space.interior_points
+        xq3 = np.einsum("qv,evc->eqc", np.column_stack([1.0 - xiq.sum(axis=1), xiq]), X[en])
         volume = np.abs(np.linalg.det(space.elementJacobians())) / {1: 1.0, 2: 2.0, 3: 6.0}[nd]
-        res["flux_balance"] = float(np.abs(space.elementFluxes(d2).sum(axis=1) - volume * space.divergence(d2)).max())
+        integral = volume * np.einsum("q,eq->e", wq, space.divergence(d2, xiq))
+        res["flux_balance"] = float(np.abs(space.elementFluxes(d2).sum(axis=1) - integral).max())
         res["all_known"] = bool(known.all())
         res["same_as_bare_map"] = bool(np.array_equal(space.dofMap.l2g, dm.l2g) and np.abs(d2 - dof).max() < 1.0e-13)
         u = FemTools.FiniteElementFunction(space, name="v")
@@ -163,8 +204,11 @@ def run_case(family, scrambled):
     tag = "%s_%s_%d_r%d" % (shape, family, int(scrambled), rank)
     used = np.zeros(dm.nDOF, dtype=bool)
     used[np.unique(dm.l2g)] = True
-    np.savez(os.path.join(out, tag + ".npz"), s2g=s2g[used], x=np.hstack([dm.dofPoints, dm.dofFaceCentroids])[used],
-             dof=dof[used], nOwned=dm.nDOF_subdomain_owned)
+    saved = dof.copy()
+    if scrambled:       # an interior dof is tied to its element's vertex order, which this scrambling changes per rank
+        saved[dm.dofInteriorIndex >= 0] = 0.0
+    key = np.hstack([dm.dofPoints, dm.dofFaceCentroids, np.maximum(dm.dofInteriorIndex, 0)[:, None] + 0.0])
+    np.savez(os.path.join(out, tag + ".npz"), s2g=s2g[used], x=key[used], dof=saved[used], nOwned=dm.nDOF_subdomain_owned)
     print("RESULT " + json.dumps(res), flush=True)
 
 
@@ -178,30 +222,64 @@ def interpolation_errors(family, m):
                          - (k * np.sin(k * x[..., i] + 0.3 * i) * np.sin(k * x[..., (i + 1) % nd] - 0.2) if nd == 1 else 0.0)
                          for i in range(nd))
     dof = space.interpolate(f)
-    quad = Quadrature.SimplexGaussQuadrature(nd, 6)
+    quad = Quadrature.SimplexGaussQuadrature(nd, 10)
     xi = np.array([q[:nd] for q in quad.points])
     w = np.array(quad.weights)
     Xs, en = np.asarray(s.nodeArray), np.asarray(s.elementNodesArray)
     xq = np.einsum("qv,evc->eqc", np.column_stack([1.0 - xi.sum(axis=1), xi]), Xs[en])
     detJ = np.abs(np.linalg.det(space.elementJacobians()))
     e2 = np.einsum("q,e,eqd->", w, detJ, (space.evaluate(dof, xi) - f(xq)) ** 2)
-    d2 = np.einsum("q,e,eq->", w, detJ, (space.divergence(dof)[:, None] - divf(xq)) ** 2)
+    d2 = np.einsum("q,e,eq->", w, detJ, (space.divergence(dof, xi) - divf(xq)) ** 2)
     return float(e2 ** 0.5), float(d2 ** 0.5)
 
 
-for family in ("rt0", "bdm1"):
+def projection_errors(family, m):
+    """L2 projection of the same field onto the space (serial): errors of the projection and of its divergence."""
+    import scipy.sparse as sparse
+    import scipy.sparse.linalg as splinalg
+    s = m.subdomainMesh
+    space = FemTools.Hdiv_AffineOnSimplex(s, nd, family)
+    k = 2.0
+    f = lambda x: np.stack([np.sin(k * x[..., i] + 0.3 * i) * np.cos(k * x[..., (i + 1) % nd] - 0.2) for i in range(nd)], axis=-1)
+    divf = lambda x: sum(k * np.cos(k * x[..., i] + 0.3 * i) * np.cos(k * x[..., (i + 1) % nd] - 0.2)
+                         - (k * np.sin(k * x[..., i] + 0.3 * i) * np.sin(k * x[..., (i + 1) % nd] - 0.2) if nd == 1 else 0.0)
+                         for i in range(nd))
+    quad = Quadrature.SimplexGaussQuadrature(nd, 10)
+    xi = np.array([q[:nd] for q in quad.points])
+    w = np.array(quad.weights)
+    Xs, en = np.asarray(s.nodeArray), np.asarray(s.elementNodesArray)
+    xq = np.einsum("qv,evc->eqc", np.column_stack([1.0 - xi.sum(axis=1), xi]), Xs[en])
+    detJ = np.abs(np.linalg.det(space.elementJacobians()))
+    phi = space.getVectorBasisValues(xi)                          # (nE, nQ, dim, nd)
+    Me = np.einsum("q,e,eqid,eqjd->eij", w, detJ, phi, phi)
+    be = np.einsum("q,e,eqid,eqd->ei", w, detJ, phi, f(xq))
+    l2g = space.dofMap.l2g
+    n = space.dofMap.nDOF
+    M = sparse.coo_matrix((Me.ravel(), (np.repeat(l2g, l2g.shape[1], axis=1).ravel(), np.tile(l2g, (1, l2g.shape[1])).ravel())), shape=(n, n)).tocsc()
+    b = np.zeros(n)
+    np.add.at(b, l2g, be)
+    dof = splinalg.spsolve(M, b)
+    e2 = np.einsum("q,e,eqd->", w, detJ, (space.evaluate(dof, xi) - f(xq)) ** 2)
+    d2 = np.einsum("q,e,eq->", w, detJ, (space.divergence(dof, xi) - divf(xq)) ** 2)
+    return float(e2 ** 0.5), float(d2 ** 0.5)
+
+
+for family in FAMILIES:
     run_case(family, False)
 if os.environ.get("RATES") == "1" and comm.size() == 1:
     fine = make_mesh(2)
-    for family in ("rt0", "bdm1"):
+    for family in FAMILIES:
         c, f = interpolation_errors(family, mesh), interpolation_errors(family, fine)
+        pc, pf = projection_errors(family, mesh), projection_errors(family, fine)
         print("RATES " + json.dumps(dict(shape=shape, family=family, L2=[c[0], f[0]], div=[c[1], f[1]],
-                                         L2_rate=float(np.log2(c[0] / f[0])), div_rate=float(np.log2(c[1] / f[1])))), flush=True)
+                                         L2_rate=float(np.log2(c[0] / f[0])), div_rate=float(np.log2(c[1] / f[1])),
+                                         proj_L2=[pc[0], pf[0]], proj_div=[pc[1], pf[1]],
+                                         proj_L2_rate=float(np.log2(pc[0] / pf[0])), proj_div_rate=float(np.log2(pc[1] / pf[1])))), flush=True)
 # scramble the local vertex order of every element (each rank its own way, so a ghost element is listed
 # differently on the two ranks that hold it); the dof map looks faces up by their vertices
 rs = np.random.RandomState(100 + rank)
 en = sub.elementNodesArray
 for eN in range(en.shape[0]):
     en[eN, :] = np.asarray(en[eN])[rs.permutation(nd + 1)]
-for family in ("rt0", "bdm1"):
+for family in FAMILIES:
     run_case(family, True)

@@ -45,7 +45,7 @@ def test_against_the_oracle(d, family):
     assert np.abs(H.reference_area_normals(d) - T(d, family, "area_normal")).max() < 1.0e-15
     t = s.tabulate(T(d, family, "x"))
     assert np.abs(t.values[:, perm] - T(d, family, "val")).max() < 1.0e-13
-    assert np.abs(t.grads[perm] - T(d, family, "div")).max() < 1.0e-13
+    assert np.abs(t.grads[:, perm] - T(d, family, "div")).max() < 1.0e-13
     face_x, face_flux = T(d, family, "face_x"), T(d, family, "face_flux")
     N = H.reference_area_normals(d)
     for f in range(d + 1):
@@ -100,7 +100,7 @@ def test_bdm1_contains_rt0_and_both_reproduce_their_spaces(d):
         dofs = s.dofs_from_values(field(s.dof_points))
         t = s.tabulate(x)
         assert np.abs(np.einsum("i,qid->qd", dofs, t.values) - field(x)).max() < 1.0e-13
-        assert abs(dofs @ t.grads - div) < 1.0e-13
+        assert np.abs(t.grads @ dofs - div).max() < 1.0e-13
     # RT0 does not contain a general linear field: the interpolant differs
     dofs = rt.dofs_from_values(linear(rt.dof_points))
     if d > 1:
@@ -151,6 +151,6 @@ def test_piola_map_preserves_the_dofs(d, family, orientation):
 
 
 def test_arguments_are_checked():
-    for bad in (dict(d=4), dict(d=2, family="rt1")):
+    for bad in (dict(d=4), dict(d=2, family="rt2"), dict(d=1, family="rt1")):
         with pytest.raises(ValueError):
             H.HdivSpace(**bad)

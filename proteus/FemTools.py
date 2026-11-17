@@ -9615,8 +9615,8 @@ if __name__ == '__main__':
 # ----------------------------------------------------------------------------------------------
 class HdivOnSimplex(LocalFunctionSpace):
     """
-    The lowest-order Raviart-Thomas space (``family='rt0'``) or the Brezzi-Douglas-Marini space of degree 1
-    (``family='bdm1'``) on the unit nd-simplex: vector-valued basis functions whose normal component on
+    The Raviart-Thomas spaces RT0 (``family='rt0'``) and RT1 (``'rt1'``) or the Brezzi-Douglas-Marini spaces
+    of degree 1 (``'bdm1'``) and 2 (``'bdm2'``) on the unit nd-simplex: vector-valued basis functions whose normal component on
     each face is single valued across elements. See :mod:`proteus.HdivSpaces` for the bases, the degrees of
     freedom (normal flux densities at points of the faces) and the Piola map.
 
@@ -9633,10 +9633,10 @@ class HdivOnSimplex(LocalFunctionSpace):
         self.order = self.space.order
         self.vectorValued = True
         self.basis = [(lambda xi,i=i: self.tabulate([xi]).values[0,i].copy()) for i in self.range_dim]
-        self.basisDivergence = [(lambda xi,i=i: float(self.space.divergence[i])) for i in self.range_dim]
+        self.basisDivergence = [(lambda xi,i=i: float(self.tabulate([xi]).grads[0,i])) for i in self.range_dim]
         self.basisHessians = []
     def tabulate(self,points):
-        """Reference values (nQ,dim,nd) at points (nQ,>=nd); ``.grads`` holds the divergences (dim,)."""
+        """Reference values (nQ,dim,nd) at points (nQ,>=nd); ``.grads`` holds the divergences (nQ,dim)."""
         nd = self.referenceElement.dim
         return self.space.tabulate(numpy.asarray(points,dtype='d').reshape(len(points),-1)[:,:nd])
 
@@ -9701,20 +9701,45 @@ class FaceDOFMap(DOFMap):
         nE = elementNodes.shape[0]
         X = numpy.asarray(mesh.nodeArray)
         nodeNumbering = numpy.asarray(globalMesh.nodeNumbering_subdomain2global)
-        off = numpy.asarray(globalMesh.elementBoundaryOffsets_subdomain_owned,dtype='i8')
-        num = numpy.asarray(globalMesh.elementBoundaryNumbering_subdomain2global,dtype='i8')
+        faceOff = numpy.asarray(globalMesh.elementBoundaryOffsets_subdomain_owned,dtype='i8')
+        faceNum = numpy.asarray(globalMesh.elementBoundaryNumbering_subdomain2global,dtype='i8')
+        cellOff = numpy.asarray(globalMesh.elementOffsets_subdomain_owned,dtype='i8')
+        cellNum = numpy.asarray(globalMesh.elementNumbering_subdomain2global,dtype='i8')
         nF = mesh.nElementBoundaries_global
-        nOwned = int(off[rank+1]-off[rank])
-        assert nF >= nOwned and len(num) >= nF
-        assert (num[:nOwned] == off[rank] + numpy.arange(nOwned)).all(), "FaceDOFMap: owned faces are not numbered contiguously"
-        dpf = len(space.face_dofs[0])
-        self.nDOF = dpf*nF
+        nOwnedF = int(faceOff[rank+1]-faceOff[rank])
+        nOwnedC = int(cellOff[rank+1]-cellOff[rank])
+        assert nF >= nOwnedF and len(faceNum) >= nF
+        assert (faceNum[:nOwnedF] == faceOff[rank] + numpy.arange(nOwnedF)).all(), "FaceDOFMap: owned faces are not numbered contiguously"
+        dpf = len(space.face_dofs[0])          #face dofs per face
+        dpc = space.n_interior_dofs            #interior dofs per element
+        nf = space.n_face_dofs
+        if dpc > 0:
+            assert nE >= nOwnedC and len(cellNum) >= nE
+            assert (cellNum[:nOwnedC] == cellOff[rank] + numpy.arange(nOwnedC)).all(), "FaceDOFMap: owned elements are not numbered contiguously"
+        #layout of a rank's block and of the subdomain dofs: [owned face dofs | owned element dofs | ghost face dofs | ghost element dofs]
+        self.nDOF = dpf*nF + dpc*nE
         self.range_nDOF = range(self.nDOF)
         self.nDOF_subdomain = self.nDOF
-        self.nDOF_subdomain_owned = dpf*nOwned
-        self.dof_offsets_subdomain_owned = (dpf*off).astype(I)
-        self.nDOF_all_processes = int(dpf*off[-1])
-        self.subdomain2global = (dpf*num[:nF,None] + numpy.arange(dpf)[None,:]).reshape(-1).astype(I)
+        self.nDOF_subdomain_owned = dpf*nOwnedF + dpc*nOwnedC
+        ghostFace = self.nDOF_subdomain_owned
+        ghostCell = ghostFace + dpf*(nF-nOwnedF)
+        def faceDOF(e):
+            return numpy.where(e < nOwnedF,dpf*e,ghostFace+dpf*(e-nOwnedF))
+        def cellDOF(e):
+            return numpy.where(e < nOwnedC,dpf*nOwnedF+dpc*e,ghostCell+dpc*(e-nOwnedC))
+        dofOffsets = dpf*faceOff + dpc*cellOff
+        self.dof_offsets_subdomain_owned = dofOffsets.astype(I)
+        self.nDOF_all_processes = int(dofOffsets[-1])
+        self.subdomain2global = numpy.zeros((self.nDOF,),I)
+        owner = numpy.searchsorted(faceOff,faceNum[:nF],side='right') - 1
+        firstFace = dofOffsets[owner] + dpf*(faceNum[:nF]-faceOff[owner])
+        for m in range(dpf):
+            self.subdomain2global[faceDOF(numpy.arange(nF))+m] = firstFace + m
+        if dpc > 0:
+            owner = numpy.searchsorted(cellOff,cellNum[:nE],side='right') - 1
+            firstCell = dofOffsets[owner] + dpf*(faceOff[owner+1]-faceOff[owner]) + dpc*(cellNum[:nE]-cellOff[owner])
+            for m in range(dpc):
+                self.subdomain2global[cellDOF(numpy.arange(nE))+m] = firstCell + m
         faceNodes = numpy.asarray(mesh.elementBoundaryNodesArray).reshape(nF,-1)[:,:max(nd,1)]
         #outward area-weighted normals of every element
         J = (X[elementNodes[:,1:]] - X[elementNodes[:,:1]])[:,:,:nd].transpose(0,2,1)
@@ -9724,8 +9749,17 @@ class FaceDOFMap(DOFMap):
         self.elementFaces = numpy.zeros((nE,nd+1),I)
         self.elementFaceSign = numpy.ones((nE,nd+1),'d')
         self.faceAreaNormals = numpy.zeros((nF,3),'d')
+        self.elementDofFaceCentroids = numpy.zeros((nE,space.dim,3),'d')
+        #index of an interior dof within its element's interior dofs (-1 on a face dof)
+        self.dofInteriorIndex = -numpy.ones((self.nDOF,),'i8')
         rows = numpy.arange(nE)
         normalDefect = 0.0
+        #the nodes of a face's lattice, coded so that a permuted multi-index can be looked up
+        den = space.face_lattice_den
+        lattice = numpy.asarray(space.face_lattice)
+        powers = (den+1)**numpy.arange(lattice.shape[1])
+        codes = lattice@powers
+        codeOrder = numpy.argsort(codes)
         for f in range(nd+1):
             verts = list(space.faces[f])
             local = elementNodes[:,verts]
@@ -9749,31 +9783,40 @@ class FaceDOFMap(DOFMap):
             globalNormal[:,:nd] = outward[:,None]*outwardNormals[:,f,:]
             self.faceAreaNormals[fe] = globalNormal
             normalDefect = max(normalDefect,float(numpy.abs(self.faceAreaNormals[fe]-globalNormal).max()) if nE > 0 else 0.0)
-            rankInFace = numpy.argsort(order,axis=1)              #rankInFace[:,k]: place of verts[k] by global number
-            for i in space.face_dofs[f]:
-                a = space.dof_vertex[i]
-                if a < 0:
-                    index = 0
+            faceCentroid = X[local].mean(axis=1)
+            first = faceDOF(fe)
+            for k,i in enumerate(space.face_dofs[f]):
+                if self.orient and dpf > 1:
+                    #the node's multi-index in the face's global frame: vertices sorted by global number
+                    alpha = space.dof_alpha[i]
+                    beta = alpha[order]                                #(nE,nd): beta[:,r] = alpha at the r-th vertex
+                    index = codeOrder[numpy.searchsorted(codes[codeOrder],beta@powers)]
                 else:
-                    k = verts.index(a)
-                    index = rankInFace[:,k] if self.orient else k
-                self.l2g[:,i] = dpf*fe + index
+                    index = k
+                self.l2g[:,i] = first + index
                 self.sign[:,i] = s
+                self.elementDofFaceCentroids[:,i,:] = faceCentroid
+        for i in space.interior_dofs:
+            self.l2g[:,i] = cellDOF(rows.astype('i8')) + (i-nf)
+            self.dofInteriorIndex[self.l2g[:,i]] = i-nf
         #dof points and the conformity check
         barycentric = numpy.column_stack([1.0-space.dof_points.sum(axis=1),space.dof_points])
         self.elementDofPoints = numpy.einsum('iv,evc->eic',barycentric,X[elementNodes])
+        if dpc > 0:
+            self.elementDofFaceCentroids[:,nf:,:] = X[elementNodes].mean(axis=1)[:,None,:]
         self.elementOutwardNormals = outwardNormals
         self.dofPoints = numpy.zeros((self.nDOF,3),'d')
         self.dofPoints[self.l2g] = self.elementDofPoints
         self.lagrangeNodesArray = self.dofPoints
-        self.dofFaceCentroids = numpy.repeat(X[faceNodes].mean(axis=1),dpf,axis=0)
+        self.dofFaceCentroids = numpy.zeros((self.nDOF,3),'d')
+        self.dofFaceCentroids[self.l2g] = self.elementDofFaceCentroids
         pointDefect = float(numpy.abs(self.dofPoints[self.l2g]-self.elementDofPoints).max()) if nE > 0 else 0.0
         self.conformityDefect = max(pointDefect,normalDefect)
         scale = float(numpy.abs(X).max()) + 1.0 if nE > 0 else 1.0
         if self.orient and self.conformityDefect > 1.0e-9*scale:
             raise RuntimeError("FaceDOFMap: elements disagree on the point of a shared dof or on a face normal by %g" % (self.conformityDefect,))
-        #a face dof couples to the dofs of the faces of its two elements
-        self.max_dof_neighbors = dpf*(2*(nd+1)-1)
+        #a face dof couples to the dofs of the faces and the interiors of its two elements
+        self.max_dof_neighbors = dpf*(2*(nd+1)-1) + 2*dpc
         assert self.nDOF == 0 or self.l2g.max() < self.nDOF
 
 class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
@@ -9822,22 +9865,34 @@ class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
         lfs = self.referenceFiniteElement.localFunctionSpace
         values = lfs.space.piola(self.elementJacobians(),lfs.tabulate(xiArray).values)
         return values*self.dofMap.sign[:,None,:,None]
-    def getBasisDivergences(self):
-        """Divergence (nE,dim) of every basis function (constant on the element)."""
+    def getBasisDivergences(self,xiArray=None):
+        """Divergence of every basis function: (nE,dim) when it is constant on the element (RT0, BDM1), or
+        (nE,nQ,dim) at reference points xiArray (nQ,>=nd)."""
         lfs = self.referenceFiniteElement.localFunctionSpace
         detJ = numpy.abs(numpy.linalg.det(self.elementJacobians()))
-        return self.dofMap.sign*lfs.space.divergence[None,:]/detJ[:,None]
+        sign = self.dofMap.sign
+        if xiArray is None:
+            if not lfs.space.constant_divergence:
+                raise ValueError("the divergence of %s is not constant on an element: pass reference points" % (lfs.family,))
+            return sign*lfs.space.divergence[None,:]/detJ[:,None]
+        div = lfs.tabulate(xiArray).grads                  #(nQ,dim)
+        return sign[:,None,:]*div[None,:,:]/detJ[:,None,None]
     def evaluate(self,dof,xiArray):
         """The vector field (nE,nQ,nd) with dofs ``dof`` at reference points xiArray (nQ,>=nd) of every element."""
         return numpy.einsum('eqid,ei->eqd',self.getVectorBasisValues(xiArray),numpy.asarray(dof)[self.dofMap.l2g])
-    def divergence(self,dof):
-        """The divergence (nE,) of the field with dofs ``dof`` (constant on each element)."""
-        return numpy.einsum('ei,ei->e',self.getBasisDivergences(),numpy.asarray(dof)[self.dofMap.l2g])
+    def divergence(self,dof,xiArray=None):
+        """The divergence of the field with dofs ``dof``: (nE,) if it is constant on each element (RT0, BDM1),
+        or (nE,nQ) at reference points xiArray."""
+        coef = numpy.asarray(dof)[self.dofMap.l2g]
+        if xiArray is None:
+            return numpy.einsum('ei,ei->e',self.getBasisDivergences(),coef)
+        return numpy.einsum('eqi,ei->eq',self.getBasisDivergences(xiArray),coef)
     def elementFluxes(self,dof):
         """The outward flux (nE,nd+1) of the field through each face of every element."""
         lfs = self.referenceFiniteElement.localFunctionSpace
         local = self.dofMap.sign*numpy.asarray(dof)[self.dofMap.l2g]
-        return numpy.array([local[:,dofs].mean(axis=1) for dofs in lfs.space.face_dofs]).T
+        w = lfs.space.face_flux_weights
+        return numpy.array([local[:,dofs]@w for dofs in lfs.space.face_dofs]).T
     def dofsFromElementValues(self,values,elements=None):
         """
         The dofs of the field whose values at the dof points of every element (``dofMap.elementDofPoints``,
@@ -9848,12 +9903,20 @@ class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
         elements, the largest difference between a contribution and that mean, and the mask of the dofs that
         got a contribution. ``elements`` restricts the contributing elements (e.g. the owned ones, when the
         values on ghost elements are not to be trusted).
+
+        Only for the spaces whose dofs are all values at points (RT0, BDM1): RT1 and BDM2 have interior moments,
+        which need the field itself: :meth:`interpolate`.
         """
         dm = self.dofMap
         lfs = self.referenceFiniteElement.localFunctionSpace
+        if lfs.space.n_interior_dofs > 0:
+            raise NotImplementedError("%s has interior dofs: use interpolate(f)" % (lfs.family,))
         values = numpy.asarray(values,dtype='d')
         normals = dm.elementOutwardNormals[:,lfs.space.dof_face,:]
         local = dm.sign*numpy.einsum('eid,eid->ei',normals,values)
+        return self._gatherDOFs(local,elements)
+    def _gatherDOFs(self,local,elements=None):
+        dm = self.dofMap
         if elements is None:
             elements = numpy.arange(local.shape[0])
         total = numpy.zeros((dm.nDOF,),'d')
@@ -9864,9 +9927,33 @@ class Hdiv_AffineOnSimplex(ParametricFiniteElementSpace):
         dof = numpy.where(known,total/numpy.maximum(count,1.0),0.0)
         defect = float(numpy.abs(local[elements]-dof[dm.l2g[elements]]).max()) if len(elements) > 0 else 0.0
         return dof,defect,known
-    def interpolate(self,f):
-        """The dofs of the interpolant of the vector field f(x), x (..,3) -> (..,nd), sampled at the dof points."""
-        return self.dofsFromElementValues(f(self.dofMap.elementDofPoints))[0]
+    def interpolate(self,f,elements=None,returnDefect=False):
+        """
+        The dofs of the interpolant of the vector field f(x), x (..,3) -> (..,nd): the normal flux densities
+        at the face nodes, and for RT1 and BDM2 the interior moments (against the reference test fields, of the
+        field pulled back by the inverse Piola map, evaluated by a degree-8 rule). The interpolant is exact on the
+        space and, with a single-valued normal component of f, every element gives the same value for a shared dof.
+        """
+        dm = self.dofMap
+        space = self.referenceFiniteElement.localFunctionSpace.space
+        nd = self.nSpace_global
+        normals = dm.elementOutwardNormals
+        local = numpy.zeros(dm.l2g.shape,'d')
+        nf = space.n_face_dofs
+        values = numpy.asarray(f(dm.elementDofPoints),dtype='d')
+        local[:,:nf] = dm.sign[:,:nf]*numpy.einsum('eid,eid->ei',normals[:,space.dof_face[:nf],:],values[:,:nf,:nd])
+        if space.n_interior_dofs > 0:
+            xiq,_ = space.interior_points
+            J = self.elementJacobians()
+            X = numpy.asarray(self.mesh.nodeArray)
+            en = numpy.asarray(self.mesh.elementNodesArray)
+            xq = X[en[:,0]][:,None,:]
+            xq = xq + numpy.einsum('eIi,qi->eqI',numpy.concatenate([J,numpy.zeros((J.shape[0],3-nd,nd))],axis=1),xiq)
+            fq = numpy.asarray(f(xq),dtype='d')[...,:nd]
+            fhat = numpy.abs(numpy.linalg.det(J))[:,None,None]*numpy.linalg.solve(J[:,None,:,:],fq[...,None])[...,0]
+            local[:,nf:] = space.dofs_from_values(numpy.zeros((local.shape[0],space.dim,nd)),interior=fhat)[:,nf:]
+        dof,defect,known = self._gatherDOFs(local,elements)
+        return (dof,defect,known) if returnDefect else dof
 
 
 #-- the space interface table (C0 round 12): see ParametricFiniteElementSpace ---------------------------------
