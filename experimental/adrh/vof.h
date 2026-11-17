@@ -21,11 +21,29 @@
 // leaves it.
 #pragma once
 #include <cmath>
+#include <type_traits>
 #include "portable.h"
 #include "spaces.h"
 
 namespace adrh
 {
+  // Which optional inputs a coefficient functor declares (static constexpr bool members; absent = false).
+  //   usesPoint          evaluate also takes the point's physical coordinates x[3] (a coefficient that is a function of x)
+#define ADRH_FUNCTOR_FLAG(name)                                                              \
+  template <class C, class = void> struct Flag_##name : std::false_type {};                  \
+  template <class C> struct Flag_##name<C, std::void_t<decltype(C::name)>> : std::bool_constant<C::name> {};
+  ADRH_FUNCTOR_FLAG(usesPoint)
+#undef ADRH_FUNCTOR_FLAG
+  // A generated functor exists only for the dimensions its spec was read in: the others are the primary template with
+  // available = false. A hand-written functor has no such member and is available.
+  template <class C, class = void> struct Available : std::true_type {};
+  template <class C> struct Available<C, std::void_t<decltype(C::available)>> : std::bool_constant<C::available> {};
+
+  // The face kernel a functor's boundary words select (generator: from the boundary kind and the form of the equation; the
+  // hand-written functors state theirs): Upwind = scalarUpwindFace (a conservative flux f, strong Dirichlet on inflow),
+  // InflowPenalty = scalarInflowPenaltyFace (a Hamiltonian without flux: penalize inflow towards the boundary state).
+  enum class FaceKind : int { Upwind = 0, InflowPenalty = 1 };
+
   // What a scalar coefficient functor returns at a point: mass m(u), an advective flux f(u) (weak form -f . grad w) and a
   // Hamiltonian H(u, grad u) (weak form H w), with their derivatives. A functor declares which of f and H it has (hasF, hasH);
   // the kernel compiles only those terms, so VOF (f only) and NCLS (H only) cost what they did as separate kernels.
@@ -37,6 +55,15 @@ namespace adrh
     double m, dm, f[nS], df[nS], H, dH[nS], r, nuExtra;
   };
 
+  // The call of a functor's evaluate: with the point's coordinates when it declares usesPoint.
+  template <class Coefficients, int nS>
+  ADRH_FN ADRH_FORCE_INLINE void evaluateScalar(const Coefficients &C, const double *fld, double u, const double *gu, const double *x,
+                                               ScalarTerms<nS> &T)
+  {
+    if constexpr (Flag_usesPoint<Coefficients>::value) C.evaluate(fld, u, gu, x, T);
+    else C.evaluate(fld, u, gu, T);
+  }
+
   // VOF's coefficients (mprans/VOF.h evaluateCoefficients), in the form a generator emits: fields = (v_0..v_{nS-1}, porosity).
   template <int nS_>
   struct VOFCoefficients
@@ -44,6 +71,7 @@ namespace adrh
     static constexpr int nSpace = nS_, nFields = nS_ + 1;
     static constexpr bool hasF = true, hasH = false, hasR = false;
     static constexpr int tauForm = 0;
+    static constexpr FaceKind face = FaceKind::Upwind;
     ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, const double *, ScalarTerms<nS_> &T) const
     {
       const double porosity = fld[nS_];
@@ -94,7 +122,7 @@ namespace adrh
         u += ue[b] * w[b];
         for (int I = 0; I < nS; ++I) gu[I] += ue[b] * gw[b][I];
       }
-      C.evaluate(fields + q * nF, u, gu, T);
+      evaluateScalar<Coefficients, nS>(C, fields + q * nF, u, gu, G.x, T);
       const double m_t = P.alpha * T.m + beta[q], dm_t = P.alpha * T.dm;
       // the characteristic velocity of the strong residual, its adjoint and tau: df + dH (only the terms the functor has)
       double a[nS];
@@ -216,7 +244,7 @@ namespace adrh
       const double dS = qwf[q] * vn;
       double u = 0.0;
       for (int b = 0; b < nD; ++b) u += ue[b] * w[b];
-      C.evaluate(fields + q * nF, u, nullptr, T);
+      evaluateScalar<Coefficients, nS>(C, fields + q * nF, u, nullptr, G.x, T);
       double flow = 0.0;
       for (int I = 0; I < nS; ++I) flow += nrm[I] * T.df[I];
       double F, dF;

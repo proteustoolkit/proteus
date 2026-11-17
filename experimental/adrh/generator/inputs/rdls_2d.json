@@ -1,6 +1,7 @@
 {
  "kernel": "RDLS",
  "dim": 2,
+ "subproblem": "rdls",
  "adr": {
   "dim": 2,
   "components": [
@@ -29,14 +30,44 @@
    }
   ]
  },
- "fields": [
-  "φs"
- ],
+ "reads": {
+  "φs": {
+   "at": "current_step",
+   "via": "ncls",
+   "of": "φ",
+   "components": [
+    "φs"
+   ]
+  }
+ },
  "stabilization": {
   "method": "SUPG",
   "tau": "metric",
+  "lagged": false,
   "shock_capturing": {
-   "lagged": true
+   "factor": 0.9,
+   "lagged": false
   }
- }
+ },
+ "regularized": {
+  "sign": {
+   "by": "smoothed_sign",
+   "width": "0.75*h"
+  }
+ },
+ "unknowns": {
+  "φ": [
+   "φ"
+  ]
+ },
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [
+  "h"
+ ],
+ "boundary_conditions": []
 }

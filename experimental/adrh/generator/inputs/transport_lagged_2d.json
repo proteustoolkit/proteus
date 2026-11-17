@@ -1,0 +1,109 @@
+{
+ "kernel": "TransportLagged",
+ "dim": 2,
+ "subproblem": "ncls",
+ "adr": {
+  "dim": 2,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "mass": {
+     "m": "φ",
+     "dm": {
+      "φ": "1"
+     },
+     "depends_on": {
+      "φ": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "φ*(φ**2 + 1)*v_0",
+      "φ*(φ**2 + 1)*v_1"
+     ],
+     "df": {
+      "φ": [
+       "2*φ**2*v_0 + (φ**2 + 1)*v_0",
+       "2*φ**2*v_1 + (φ**2 + 1)*v_1"
+      ]
+     },
+     "depends_on": {
+      "φ": "nonlinear"
+     }
+    }
+   }
+  ]
+ },
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1"
+   ]
+  }
+ },
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "lagged": false,
+  "shock_capturing": null
+ },
+ "lagged_coefficients": {
+  "κ": "previous_iterate"
+ },
+ "coefficients": {
+  "κ": {
+   "code": "φ**2 + 1",
+   "depends_on": {
+    "φ": "nonlinear"
+   },
+   "d": {
+    "φ": "2*φ"
+   },
+   "inline": "φ**2 + 1",
+   "lagged": "previous_iterate"
+  }
+ },
+ "named": {
+  "order": [
+   "κ"
+  ],
+  "dim": 2,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "mass": {
+     "m": "φ"
+    },
+    "advection": {
+     "f": [
+      "φ*v_0*κ",
+      "φ*v_1*κ"
+     ]
+    }
+   }
+  ]
+ },
+ "unknowns": {
+  "φ": [
+   "φ"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": []
+}

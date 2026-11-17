@@ -1,6 +1,7 @@
 {
  "kernel": "NCLS",
  "dim": 2,
+ "subproblem": "ncls",
  "adr": {
   "dim": 2,
   "components": [
@@ -33,15 +34,39 @@
    }
   ]
  },
- "fields": [
-  "v_0",
-  "v_1"
- ],
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1"
+   ]
+  }
+ },
  "stabilization": {
   "method": "SUPG",
   "tau": "metric",
+  "lagged": false,
   "shock_capturing": {
+   "factor": 0.5,
+   "beta": 1.5,
+   "reference": 1.0,
    "lagged": true
   }
- }
+ },
+ "unknowns": {
+  "φ": [
+   "φ"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": []
 }

@@ -40,6 +40,11 @@ def assemble(d, u_dof):
     xn = nodes[l2g]
     ue = u_dof[l2g]
     fields = np.concatenate([d['velocity'][..., :nS], d['q_porosity'][..., None]], axis=-1)
+    # a generated functor reads what the spec states: the dam break's VOF has no porosity (this deck's is 1 everywhere), so only
+    # the velocity; the hand-written one also takes the porosity
+    nFields = adrh.functor_info('vof', nS)['nFields'] if hasattr(adrh, 'functor_info') else nS + 1
+    assert nFields == nS or float(d['q_porosity'].min()) == 1.0 == float(d['q_porosity'].max())
+    fields = np.ascontiguousarray(fields[..., :nFields])
     # static mesh: proteus's history term is beta * dV_last / dV with dV_last the same dV
     R, J, numDiff, cfl = adrh.vof_supg(nS, xn, ue, d['x_ref'][:, :nS], d['dV_ref'], fields, d['q_m_betaBDF'],
                                       d['q_numDiff_u_last'], d['elementDiameter'], float(d['alphaBDF']),
@@ -50,7 +55,8 @@ def assemble(d, u_dof):
     k_f = d['elementBoundaryLocalElementBoundariesArray'][ebN, 0]
     # the face points in the element's reference coordinates: for P1 the trace basis values are barycentric coordinates
     xi = np.ascontiguousarray(d['u_trial_trace_ref'][:, :, 1:])
-    ffields = np.concatenate([d['ebqe_velocity_ext'][..., :nS], d['ebqe_porosity_ext'][..., None]], axis=-1)
+    ffields = np.ascontiguousarray(
+        np.concatenate([d['ebqe_velocity_ext'][..., :nS], d['ebqe_porosity_ext'][..., None]], axis=-1)[..., :nFields])
     Rf, Jf, flux, uUp = adrh.vof_faces(nS, xn[eN_f], ue[eN_f], k_f, xi, d['dS_ref'], ffields, d['isDOFBoundary_u'],
                                        d['ebqe_bc_u_ext'], d['isFluxBoundary_u'], d['ebqe_bc_flux_u_ext'])
     r = np.zeros(nN)

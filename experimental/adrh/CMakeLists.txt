@@ -51,6 +51,10 @@ endfunction()
 
 adrh_module(adrh_proto module.cpp)
 target_compile_features(adrh_proto PRIVATE cxx_std_17)
+# the same module with the VOF and NCLS functors generated from ymf's dam break specs (generated.h; generator/regenerate.sh)
+adrh_module(adrh_gen module.cpp)
+target_compile_features(adrh_gen PRIVATE cxx_std_17)
+target_compile_definitions(adrh_gen PRIVATE ADRH_GENERATED)
 
 set(tests_kokkos OFF)
 if(Kokkos_FOUND)
@@ -95,6 +99,11 @@ endforeach()
 adrh_test(proto_vof_test adrh_proto vof_test.py)
 # NCLS against proteus's NCLS kernel on the same case (ncls_damBreak_he0.05.npz, vof_capture.py model=ncls)
 adrh_test(proto_ncls_test adrh_proto ncls_test.py)
+# the same two against proteus's kernels with the functors generated from the spec (a generated functor reads what the spec states:
+# no porosity for the dam break's VOF); and the generated against the hand-written functors, serial and (mpiexec) partitioned
+adrh_test(gen_vof_test adrh_gen vof_test.py)
+adrh_test(gen_ncls_test adrh_gen ncls_test.py)
+adrh_test(proto_generator_test adrh_proto generator_test.py)
 # RDLS against proteus's RDLS kernel on the same case (rdls_damBreak_he0.05.npz, vof_capture.py model=rdls)
 adrh_test(proto_rdls_test adrh_proto rdls_test.py)
 # MCorr against proteus's MCorr kernel on the same case, on the generic element kernel (mcorr_damBreak_he0.05.npz, vof_capture.py model=mcorr)
