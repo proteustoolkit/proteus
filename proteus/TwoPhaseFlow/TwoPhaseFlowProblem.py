@@ -19,7 +19,11 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
                  initialConditions=None,
                  # BOUNDARY CONDITIONS #
                  boundaryConditions=None,
+                 **old_keywords
                  ):
+        if old_keywords:
+            raise TypeError("TwoPhaseFlowProblem got unexpected keyword argument(s) %s. %s"
+                            % (sorted(old_keywords), Parameters.MIGRATION_HINT_1X))
 
         self.domain=domain
         self.mesh = mesh
@@ -247,7 +251,11 @@ class OutputStepping:
     """
     OutputStepping handles how often the solution is outputted.
     """
-    def __init__(self):
+    def __init__(self, **old_keywords):
+        if old_keywords:
+            raise TypeError("OutputStepping got unexpected keyword argument(s) %s: set the attributes of "
+                            "problem.outputStepping instead (final_time, dt_init, dt_output, nDTout, "
+                            "dt_fixed). %s" % (sorted(old_keywords), Parameters.MIGRATION_HINT_1X))
         self.final_time=None 
         self.dt_init=0.001
         self.dt_output=None
