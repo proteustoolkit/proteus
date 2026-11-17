@@ -21,6 +21,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -121,3 +122,21 @@ def test_two_ranks_give_the_serial_solution(tmp_path, nd, p, nn, part, layers):
     assert parallel["ranks"] == 2 and parallel["nDOF"] == serial["nDOF"] and parallel["nElements"] == serial["nElements"]
     for norm in ("L2", "H1", "Linf"):
         assert abs(parallel[norm] - serial[norm]) < 1.0e-8 * serial[norm], (norm, serial[norm], parallel[norm])
+
+
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+def test_more_ranks_than_cells_stops_at_once_instead_of_hanging(tmp_path):
+    """NN=2 is one cell per direction: on 2 ranks one rank has no element. Before the guard that rank died in
+    Transport.initializeJacobian (nNonzerosInJacobian > 0) and the other waited for it past 300 s."""
+    cwd = tmp_path / "toofewcells"
+    cwd.mkdir()
+    env = dict(os.environ, OMP_NUM_THREADS="1", ND="3", P="3", NN="2", PART_TYPE="element", NLAYERS="1")
+    env.setdefault("FI_PROVIDER", "tcp")
+    env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
+    env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env["PETSC_OPTIONS"] = "-mat_partitioning_type current"
+    proc = subprocess.run([MPIEXEC, "-n", "2", sys.executable, HELPER], cwd=cwd, env=env, capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode != 0
+    assert "every rank needs a cell" in proc.stdout + proc.stderr

@@ -42,6 +42,15 @@ part = {"element": MeshTools.MeshParallelPartitioningTypes.element,
         "node": MeshTools.MeshParallelPartitioningTypes.node}[os.environ.get("PART_TYPE", "node")]
 layers = int(os.environ.get("NLAYERS", "1"))
 
+if (nn - 1) ** nd < comm.size():
+    # NN-1 cells per direction: fewer cells than ranks leaves a rank with no element, no dof and an empty Jacobian
+    # (Transport.initializeJacobian asserts nNonzerosInJacobian > 0 on that rank only; the other ranks then wait
+    # for it in a collective and the run hangs). Say so on every rank and stop together.
+    if comm.rank() == 0:
+        print("cube_mms_mpi: NN=%d gives %d cells for %d ranks; every rank needs a cell" % (nn, (nn - 1) ** nd, comm.size()),
+              flush=True)
+    raise SystemExit(3)
+
 K = 1.5 * np.pi   # sin(K (x + 0.2)) is neither zero nor linear on the boundary
 S = 0.2
 C = np.array([1.0, -0.7, 0.4])[:nd]
