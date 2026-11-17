@@ -134,6 +134,9 @@ class RKEV(TimeIntegration.SSP):
     ... more to come ...
     """
 
+    # TADR.h floors the carried mass in the edge-flux CFL at this value (fmax(M_low, 1.0e-14))
+    MASS_FLOOR = 1.0e-14
+
     def __init__(self, transport, timeOrder=1, runCFL=0.1, integrateInterpolationPoints=False):
         TimeIntegration.SSP.__init__(self,
                                      transport,
@@ -184,6 +187,22 @@ class RKEV(TimeIntegration.SSP):
         """
         self.tLast = t0
         self.choose_dt()
+        t = self.transport
+        if getattr(t, '_use_edge_flux', 0) and globalMax(float(np.max(t.M_low))) <= 0.0:
+            # The initial state of an edge-flux run carries no mass yet (the flow model hands M over in
+            # Coefficients.preStep), so the CFL above divides by TADR.h's floor on M_low, 1e-14, and says
+            # nothing about the step (2.7e-14 on the levee deck: no Newton solve of the flow can take it).
+            # The CFL is (sum_gamma + B)/(ML M), so the CFL of the real mass M is the floored one times
+            # 1e-14/M: with the smallest fluid mass of the flow model's initial state (a bound for every
+            # dof), dt <= dt_floored M_min/1e-14. The step is that or the interval to the first output
+            # time, whichever is shorter; choose_dt proposes the later steps from the carried mass.
+            q_m = getattr(getattr(t.coefficients, 'vModel', None), 'q', {}).get(('m', 0))
+            M_min = Comm.globalMin(float(np.min(q_m))) if q_m is not None else 0.0
+            if M_min > self.MASS_FLOOR:
+                self.dt = min(tOut - t0, self.dt*M_min/self.MASS_FLOOR)
+                self.t = t0 + self.dt
+                self.substeps = [self.t for i in range(self.nStages)]
+                return
         self.t = t0 + self.dt
 
     def setCoefficients(self):
