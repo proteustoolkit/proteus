@@ -97,6 +97,12 @@ CASES = {
                                 "final_time=0.03 dt_output=0.01 he={he} genMesh=False", "dambreak_short_stored.ymf",
                                 "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
                                 "mcorr MCorr", "velocity_t4"),
+    # the gauges damBreak.py attaches (level-set height along lines on CLSVOF, pressure at points on Pres), as `gauges:`
+    "damBreak_projection_gauges": ("TwoPhaseFlow", "damBreak.py", "--TwoPhaseFlow",
+                                   "final_time=0.03 dt_output=0.01 he=0.08 genMesh=True",
+                                   "dambreak_short_projection_gauges.ymf",
+                                   "clsvof_projection -- split, dispatched to clsvof CLSVOF, flow RANS3PF, pressureInc "
+                                   "PresInc, pressure Pres, pressureInit PresInit", "velocity_t4"),
     # the 3-D tank: Tank3D, TetGen at h = 0.4 (volume h^3/6), gravity along -z, the top open; the deck's iterative defaults
     "damBreakLevelSet3D": ("TwoPhaseFlow", "damBreakLevelSet3D.py", "--TwoPhaseFlow",
                            "final_time=0.03 dt_output=0.01 he=0.4", "dambreak3d_short.ymf",
@@ -187,6 +193,12 @@ def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     found = _arrays(spec / archive, archive[:-3])
     assert sorted(found) == sorted(expected)
     assert float(numpy.abs(found[moving]).max()) > 0.1          # the water moved
+    if case.endswith("_gauges"):
+        # the gauge files, written by the same Gauges objects: equal as text, and not empty
+        for gauge_file in ("height1.csv", "height2.csv", "pressure.csv"):
+            theirs, ours = (deck / gauge_file).read_text(), (spec / gauge_file).read_text()
+            assert theirs.count("\n") > 3, gauge_file
+            assert ours == theirs, gauge_file
     different = [key for key in expected if not numpy.array_equal(found[key], expected[key])]
     assert not different, "%d of %d datasets differ: %s" % (len(different), len(expected), different[:10])
 
@@ -308,3 +320,34 @@ def test_a_3d_face_in_two_regions_or_none_is_refused():
     split = _split_of("dambreak3d_short.ymf", "level_set_five", split_the_wall)
     with pytest.raises(RealizeError, match="side z- of the tank is in no boundary region"):
         tank_sides(split)
+
+
+def test_gauges_are_built_for_the_model_that_solves_their_fields_and_refused_otherwise():
+    from proteus.DispatchRun import RealizeError, gauge_objects
+    owners = {"clsvof": ({"unknowns": {"φ": ["φ"]}}, [("φ", "clsvof")]),
+              "flow": ({"unknowns": {"v": ["v_0", "v_1"]}}, [("v_0", "u"), ("v_1", "v")])}
+
+    def doc(*gauges):
+        return {"model": {"gauges": list(gauges)}}
+    point = {"name": "p", "kind": "point", "fields": ["v"], "points": [[1.0, 2.0]], "file": "p.csv"}
+    built = gauge_objects(doc(point), owners)
+    (gauge,) = built["flow"]
+    assert gauge.fileName == "p.csv" and sorted(gauge.fields) == ["u", "v"]
+    assert list(gauge.points) == [(1.0, 2.0, 0.0)]            # padded to three coordinates
+    with pytest.raises(RealizeError, match="boundary_integral kind is not run through dispatch"):
+        gauge_objects(doc({"name": "f", "kind": "boundary_integral", "tags": ["a"], "quantities": ["force"]}), owners)
+    with pytest.raises(RealizeError, match="no sub-problem solves T"):
+        gauge_objects(doc(dict(point, fields=["T"])), owners)
+    with pytest.raises(RealizeError, match="one gauge is one file on one model"):
+        gauge_objects(doc(dict(point, fields=["v", "φ"])), owners)
+
+
+def test_a_shallow_water_gauge_samples_the_depth(tmp_path):
+    """A point gauge on h goes on SWFlow's n module and writes its file: the dam's depth (1.8 m) at its centre at
+    t = 0, with a row per step."""
+    ran = _run([sys.executable, "-m", "proteus.cli", "run", os.path.join(HERE, "circular_dam_gauges.ymf"),
+                "--outdir", str(tmp_path), "--cells", "9"], tmp_path, 1)
+    assert ran.returncode == 0, ran.stdout[-3000:] + ran.stderr[-3000:]
+    rows = (tmp_path / "depth.csv").read_text().splitlines()
+    assert "h [       10        10         0]" in rows[0] and len(rows) > 10
+    assert abs(float(rows[1].split(",")[1]) - 1.8) < 1e-12

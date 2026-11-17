@@ -537,10 +537,9 @@ def _set(obj, path, value):
     setattr(obj, attribute, value)
 
 
-def _initial_conditions(param, model, sub, split, dim, he, entry):
-    """The model's initial data, per Proteus variable: the model unknowns' (ymf's split ``initial``), a
-    sub-problem's own initial condition, or zero for a correction the sub-problem introduces."""
-    variables = list(param.p.coefficients.variableNames)
+def model_components(model, sub):
+    """The sub-problem's unknown components in the order of the model's Proteus variables (the cell's slots:
+    pressure first, then velocity, for the flow models)."""
     components = []
     unknowns = sub.get("unknowns") or {}
     for slot in model.components:
@@ -552,6 +551,15 @@ def _initial_conditions(param, model, sub, split, dim, he, entry):
             components += unknowns[scalar[0]] if scalar else []
         else:
             components += [c for comps in unknowns.values() for c in comps]
+    return components
+
+
+def _initial_conditions(param, model, sub, split, dim, he, entry):
+    """The model's initial data, per Proteus variable: the model unknowns' (ymf's split ``initial``), a
+    sub-problem's own initial condition, or zero for a correction the sub-problem introduces."""
+    variables = list(param.p.coefficients.variableNames)
+    unknowns = sub.get("unknowns") or {}
+    components = model_components(model, sub)
     if not unknowns and model.role in table.SCHEME_AUXILIARY_ROLES:
         # the projection scheme's pressure increment and its spin-up are the scheme's own variables: the spec has
         # no unknown for them, and the decks start them at zero
@@ -592,6 +600,94 @@ def _regularized_initial(spec_sub, sub, split, dim, he, entry, model):
     function = resolve(table.REGULARIZED_FUNCTIONS[by])
     return (_Regularized(function, factor * he, _field(split["initial"][m.group(1)], dim)),
             "%s(%r h, %s0)" % (by, factor, m.group(1)))
+
+
+def _padded(point):
+    point = [float(v) for v in point]
+    if len(point) > 3:
+        raise RealizeError("a gauge point has at most three coordinates: %s" % (point,))
+    return tuple(point + [0.0] * (3 - len(point)))
+
+
+def gauge_objects(doc, owners):
+    """{sub-problem: [Gauges auxiliary variables]} for the spec's ``model.gauges`` (point, line and line_integral kinds),
+    each built as a deck builds its own (PointGauges, LineGauges, LineIntegralGauges) and attached to the model that
+    solves the fields it samples. ``owners`` is {sub-problem name: (sub-problem plain data, [(component, Proteus
+    variable name), ...])}. A field is an unknown of the sub-problem (a vector's gauge samples every component), or one
+    of its components. Refused: a gauge of the boundary-integral kind (forces and moments are the flow model's kernel
+    sums, which the gauge only reads: not wired), fields of two sub-problems in one gauge (it is one file), a field no
+    sub-problem solves."""
+    from proteus import Gauges
+    out = {}
+    for index, gauge in enumerate(doc["model"].get("gauges") or []):
+        name = gauge.get("name") or "gauge%d" % index
+        kind = gauge["kind"]
+        if kind not in ("point", "line", "line_integral"):
+            raise RealizeError("gauge %s: the %s kind is not run through dispatch yet (the force and moment sums are "
+                               "the flow kernels', read by a boundary-integral gauge); point, line and line_integral "
+                               "gauges are" % (name, kind))
+        chosen = {}
+        for field in gauge["fields"]:
+            hits = [(sub, [v for c, v in pairs if c in (sub_data.get("unknowns") or {}).get(field, [field])])
+                    for sub, (sub_data, pairs) in owners.items()
+                    if field in (sub_data.get("unknowns") or {}) or field in [c for c, _ in pairs]]
+            if not hits:
+                raise RealizeError("gauge %s: no sub-problem solves %s (they solve %s)" % (name, field, ", ".join(
+                    sorted(u for _, (d, _) in owners.items() for u in (d.get("unknowns") or {})))))
+            sub, variables = hits[0]
+            chosen.setdefault(sub, []).extend(variables)
+        if len(chosen) != 1:
+            raise RealizeError("gauge %s samples fields of %s: one gauge is one file on one model; split it by "
+                               "sub-problem" % (name, " and ".join(sorted(chosen))))
+        (sub, variables), = chosen.items()
+        common = {"sampleRate": float(gauge.get("sample_rate") or 0.0),
+                  "fileName": gauge.get("file") or "%s.csv" % name}
+        if kind == "point":
+            if not gauge.get("points"):
+                raise RealizeError("gauge %s: a point gauge needs points" % name)
+            item = Gauges.PointGauges(gauges=((tuple(variables), tuple(_padded(p) for p in gauge["points"])),),
+                                      **common)
+        else:
+            if not gauge.get("lines"):
+                raise RealizeError("gauge %s: a %s gauge needs lines" % (name, kind))
+            lines = tuple(tuple(_padded(p) for p in line) for line in gauge["lines"])
+            make = Gauges.LineGauges if kind == "line" else Gauges.LineIntegralGauges
+            item = make(gauges=((tuple(variables), lines),), **common)
+        _bind_by_position(item, [v for _, v in owners[sub][1]], name)
+        out.setdefault(sub, []).append(item)
+    return out
+
+
+def _bind_by_position(item, declared, name):
+    """The names a gauge samples are the model's variables, which a level model may rename (CLSVOF's coefficients say
+    ``clsvof``, its level model ``phi``, and Gauges reads the level model's). ``declared`` are the names of the
+    coefficients; when the model is attached the gauge's field names are translated, position by position, to the
+    names the level model has."""
+    original = item.attachModel
+
+    def attach(model, ar):
+        actual = list(model.levelModelList[-1].coefficients.variableNames)
+        if actual != declared:
+            if len(actual) != len(declared):
+                raise RealizeError("gauge %s: the model has %d variables %s, the dispatch declared %s"
+                                   % (name, len(actual), actual, declared))
+            mapping = dict(zip(declared, actual))
+            item.fields = [mapping.get(f, f) for f in item.fields]
+            for point in item.points.values():
+                point["fields"] = {mapping.get(f, f) for f in point["fields"]}
+            item.lines = [(mapping.get(f, f), line) for f, line in item.lines]
+        return original(model, ar)
+    item.attachModel = attach
+
+
+def _gauge_owners(model_list, subs, variables_of):
+    """The ``owners`` of :func:`gauge_objects`: each model's sub-problem and its (component, variable) pairs."""
+    owners = {}
+    for model in model_list:
+        sub = subs[model.subproblem]
+        variables = variables_of(model)
+        owners[model.subproblem] = (sub, list(zip(model_components(model, sub), variables)))
+    return owners
 
 
 def two_phase(doc, found, split, realization, name, outdir, ranks=1):
@@ -651,6 +747,12 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
                 param.timeDiscretization = table.TWO_PHASE_TIME_DISCRETIZATION[value]
         record["initial"][model.subproblem] = _initial_conditions(param, model, subs[model.subproblem], split, dim,
                                                                   he, entry)
+    gauges = gauge_objects(doc, _gauge_owners(
+        found, subs, lambda m: list(physics.modelDict[m.subproblem].p.coefficients.variableNames)))
+    for sub_name, items in gauges.items():
+        physics.modelDict[sub_name].auxiliaryVariables = items
+    if gauges:
+        record["system"]["gauges"] = {s: [g.fileName for g in items] for s, items in gauges.items()}
     problem.initializeAll()
     petsc_options, unused = _check_petsc_options(found, split, entry, ranks)
     prefixes = {}
@@ -909,6 +1011,10 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     n = defaults.load_numerics(models["n"], path=path)
     p.name = models["p"]
     check_built(found, [(model, p, n)], dim)
+    gauges = gauge_objects(doc, _gauge_owners(found, {model.subproblem: sub},
+                                              lambda m: list(p.coefficients.variableNames)))
+    if gauges:
+        n.auxiliaryVariables = gauges[model.subproblem]
     petsc_options, unused = _check_petsc_options(found, split, entry, ranks)
     _apply_petsc_options(petsc_options, {model.subproblem: n.linear_solver_options_prefix or ""})
     so = defaults.System_base()
@@ -929,6 +1035,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
                   "linear_solver": "%s (%s)" % (solves, how),
                   **{k: (v if isinstance(v, float) else "f(x, y)") for k, v in physical.items()
                      if k in ("gravity", "mannings", "porosity", "drag_alpha", "drag_beta")}}}
+    if gauges:
+        record["system"]["gauges"] = {s: [g.fileName for g in items] for s, items in gauges.items()}
     if petsc_options:
         record["system"]["petsc_options"] = {m: dict(o) for m, o in petsc_options.items()}
     if unused:
