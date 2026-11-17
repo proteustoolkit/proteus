@@ -130,7 +130,7 @@ def test_dg_interior_penalty_converges_at_the_optimal_rate(run, p):
 
 @pytest.mark.parametrize("p,factor", [(4, 10.0), (5, 5.0)])
 def test_dg_penalty_floor_holds_the_error_where_a_small_constant_loses_it(run, p, factor):
-    """With the exterior classes' constant 10 the SIPG error at degree 4, 5 is 42x, 8.7x that of a large penalty (1000)
+    """With the exterior classes' constant 10 the SIPG error at degree 4, 5 is 36x, 7.8x that of a large penalty (1000)
     on the coarse mesh (h = 1/8); the floor 2.5 p**2 of NumericalFlux.penaltyOrderFactor brings it to the large-penalty value."""
     floor = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9)
     off = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9, SCALING=0)
