@@ -193,17 +193,7 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
         so.measureSpeedOfCode = False
         # archiving time
         outputStepping = self.outputStepping
-        tnList=[0.,outputStepping['dt_init']]+[float(k)*outputStepping['final_time']/float(outputStepping['nDTout']) for k in range(1,outputStepping['nDTout']+1)]
-        if len(tnList) > 2 and tnList[1] == tnList[2]:
-            del tnList[1]
-        if outputStepping['dt_output'] is None:
-            if outputStepping['dt_fixed'] > 0:
-                if outputStepping['dt_init'] < outputStepping['dt_fixed']:
-                    tnList = [0., outputStepping['dt_init'], outputStepping['dt_fixed'], outputStepping['final_time']]
-                else:
-                    tnList = [0., outputStepping['dt_fixed'], outputStepping['final_time']]
-            else:
-                tnList = [0., outputStepping['dt_init'], outputStepping['final_time']]
+        tnList = outputStepping.buildTnList()
         so.tnList = tnList
         so.archiveFlag = ArchiveFlags.EVERY_USER_STEP
         if outputStepping.archiveAllSteps is True:
@@ -227,13 +217,41 @@ class OutputStepping:
         return self.__dict__[key]
 
     def setOutputStepping(self):
-        assert not (self.dt_output is None and nDTout is None), "Provide dt_output or nDTout"
-        # COMPUTE dt_init #
-        self.dt_init = min(self.dt_output, self.dt_init)
+        assert not (self.dt_output is None and self.nDTout is None), "Provide dt_output or nDTout"
         if self.nDTout is None:
-            self.nDTout = int(round(self.final_time/self.dt_output))
+            nDTout = int(round(self.final_time/self.dt_output))
+            if nDTout < 1:
+                # final_time < dt_output/2 used to give nDTout = 0: tnList was
+                # [0, dt_init] and the run stopped after its first step, at
+                # t = dt_init, reporting normal completion
+                logEvent("OutputStepping: final_time=%g is less than half of "
+                         "dt_output=%g; writing one output, at final_time"
+                         % (self.final_time, self.dt_output), level=0)
+                nDTout = 1
+            self.nDTout = nDTout
         else:
             self.dt_output = float(self.final_time)/float(self.nDTout)
+        # COMPUTE dt_init #
+        self.dt_init = min(self.dt_output, self.dt_init, self.final_time)
+
+    def buildTnList(self):
+        """
+        The output times of the run: 0, dt_init, then nDTout equal intervals
+        ending at final_time.
+        """
+        tnList = [0., self['dt_init']] + [float(k)*self['final_time']/float(self['nDTout'])
+                                          for k in range(1, self['nDTout']+1)]
+        if len(tnList) > 2 and tnList[1] == tnList[2]:
+            del tnList[1]
+        if self['dt_output'] is None:
+            if self['dt_fixed'] > 0:
+                if self['dt_init'] < self['dt_fixed']:
+                    tnList = [0., self['dt_init'], self['dt_fixed'], self['final_time']]
+                else:
+                    tnList = [0., self['dt_fixed'], self['final_time']]
+            else:
+                tnList = [0., self['dt_init'], self['final_time']]
+        return tnList
 #
 
 class FESpace:
