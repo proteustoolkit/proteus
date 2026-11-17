@@ -154,7 +154,8 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
         #model organization
         self.SystemPhysics.attachModels()
         self.Parameters.model_list=self.SystemPhysics.modelDict.values()
-        
+        self.warnUnattachedAuxiliaryVariables()
+
         self.checkProblem()
         # initial conditions
         self.assert_initialConditions()
@@ -164,6 +165,23 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
         # parameters
         self.Parameters.initializeParameters()
         self.initializeSO()
+
+    def warnUnattachedAuxiliaryVariables(self):
+        """
+        Warn about auxiliary variables (gauges, rigid bodies, relaxation zones,
+        wall functions) that SpatialTools collected in domain.auxiliaryVariables
+        and that no model received. Nothing passes them on: the deck has to
+        append them to the model's auxiliaryVariables, and a deck that does
+        not still runs, without its gauge files, zones or body.
+        """
+        missing = unattachedAuxiliaryVariables(getattr(self.domain, 'auxiliaryVariables', None),
+                                               self.Parameters.model_list)
+        for key, avs in missing.items():
+            logEvent("WARNING: domain.auxiliaryVariables['%s'] holds %d object(s) (%s) that no model "
+                     "received, so they do nothing. Append them to the model, e.g. "
+                     "m['%s'].auxiliaryVariables += domain.auxiliaryVariables['%s']"
+                     % (key, len(avs), ', '.join(type(a).__name__ for a in avs),
+                        _AUXVAR_MODEL_HINT.get(key, '<model>'), key), level=0)
 
     def initializeSO(self):
         so = self.so
@@ -199,6 +217,31 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
         if outputStepping.archiveAllSteps is True:
             so.archiveFlag = ArchiveFlags.EVERY_SEQUENCE_STEP
         so.systemStepExact = outputStepping.systemStepExact
+
+# the model name (SystemPhysics.modelDict key) that usually takes each key of domain.auxiliaryVariables
+_AUXVAR_MODEL_HINT = {'twp': 'flow', 'thp': 'flow', 'vof': 'vof', 'ls': 'ncls', 'redist': 'rdls',
+                      'ls_consrv': 'mcorr', 'kappa': 'kappa', 'dissipation': 'dissipation',
+                      'moveMesh': 'moveMeshElastic', 'vos': 'vos'}
+
+
+def unattachedAuxiliaryVariables(domain_auxvars, model_list):
+    """
+    The entries of domain.auxiliaryVariables (a dict of lists, as filled by
+    proteus.mprans.SpatialTools.assembleDomain) that none of the models in
+    model_list has in its auxiliaryVariables, as {key: [objects]}.
+    """
+    if not isinstance(domain_auxvars, dict):
+        return {}
+    attached = set(id(av) for model in model_list for av in model.auxiliaryVariables)
+    missing = {}
+    for key, avs in domain_auxvars.items():
+        if key == 'SWFlow':  # the shallow water models take these, not this problem
+            continue
+        lost = [av for av in avs if id(av) not in attached]
+        if lost:
+            missing[key] = lost
+    return missing
+
 
 class OutputStepping:
     """

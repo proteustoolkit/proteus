@@ -49,3 +49,22 @@ def test_neither_dt_output_nor_nDTout_asserts():
     o.final_time = 1.0
     with pytest.raises(AssertionError, match="dt_output or nDTout"):
         o.setOutputStepping()
+
+
+def test_unattached_auxiliary_variables_are_reported():
+    """Gauges attached to a shape with attachPointGauges only land in
+    domain.auxiliaryVariables; a deck that does not append them to a model
+    still runs and writes no gauge file (air-water-vv 2d/benchmarks/wavesloshing).
+    """
+    from types import SimpleNamespace
+    from proteus.TwoPhaseFlow.TwoPhaseFlowProblem import unattachedAuxiliaryVariables
+    g1, g2, zone = object(), object(), object()
+    domain_aux = {'twp': [g1, zone], 'ls': [g2], 'vof': [], 'SWFlow': [object()]}
+    flow = SimpleNamespace(auxiliaryVariables=[g1])
+    ncls = SimpleNamespace(auxiliaryVariables=[])
+    assert unattachedAuxiliaryVariables(domain_aux, [flow, ncls]) == {'twp': [zone], 'ls': [g2]}
+    ncls.auxiliaryVariables += domain_aux['ls']
+    flow.auxiliaryVariables += domain_aux['twp']
+    assert unattachedAuxiliaryVariables(domain_aux, [flow, ncls]) == {}
+    # a domain that did not use SpatialTools has no such dict
+    assert unattachedAuxiliaryVariables(None, [flow]) == {}
