@@ -166,7 +166,7 @@ def _serial_lu(found, entry, ranks):
     rank (useSuperlu), SWFlow on one rank."""
     if found.family == "two_phase_level_set":
         return _linear_solver(entry, ranks)[0] == "direct" and ranks == 1
-    return found.family == "shallow_water" and ranks == 1
+    return found.family in SHALLOW_WATER_FAMILIES and ranks == 1
 
 
 def _unused_petsc_options(found, options, why):
@@ -343,6 +343,9 @@ def _surface_tension(doc, spec, found):
                                % (name, sigma, ", ".join(m.module.rsplit(".", 1)[1] for m in flow)))
     return sigma
 
+
+#: the families SWFlow's decks solve: the hydrostatic model and the dispersive one by hyperbolic relaxation
+SHALLOW_WATER_FAMILIES = ("shallow_water", "dispersive_shallow_water")
 
 #: SpatialTools.Tank2D's boundary flags: the flags a stored mesh of a tank carries (the sides of a box mesh)
 TANK2D_FLAGS = {"y-": 1, "x+": 2, "y+": 3, "x-": 4}
@@ -659,6 +662,33 @@ def two_phase(doc, found, split, realization, name, outdir, ranks=1):
 # Shallow water: SWFlowProblem
 # ---------------------------------------------------------------------------------------------------------------
 
+class _AuxiliaryInitial(object):
+    """The initial value of a relaxation auxiliary: ymf's expression of the depth's initial value (``h^2``, ``0``),
+    called as SWFlow calls an initial condition, ``uOfXT(X, t)``."""
+
+    def __init__(self, text, depth_name, depth, dim):
+        import sympy
+        from sympy.parsing.sympy_parser import (convert_xor, implicit_multiplication, parse_expr,
+                                                standard_transformations)
+        symbols = {name: sympy.Symbol(name) for name in (depth_name, "x", "y", "z", "t")}
+        try:
+            expression = parse_expr(text, local_dict=symbols, transformations=standard_transformations + (
+                convert_xor, implicit_multiplication))
+        except (sympy.SympifyError, SyntaxError, TypeError, NameError) as exc:
+            raise RealizeError("an auxiliary's initial value %r is not an expression of %s, x, y, t: %s"
+                               % (text, depth_name, exc)) from None
+        extra = sorted(str(s) for s in expression.free_symbols - set(symbols.values()))
+        if extra:
+            raise RealizeError("an auxiliary's initial value %r reads %s: only the depth %s, x, y, t"
+                               % (text, ", ".join(extra), depth_name))
+        self.function = sympy.lambdify([symbols[depth_name], symbols["x"], symbols["y"], symbols["t"]], expression,
+                                       "numpy")
+        self.depth = depth
+
+    def uOfXT(self, X, t):
+        return float(self.function(self.depth.uOfXT(X, t), X[0], X[1], t))
+
+
 class _OfPoint(object):
     """A coefficient of the coordinates as SWFlow calls it, ``f(X)`` with ``X[0]``, ``X[1]`` the coordinates (of
     one point, or arrays of them), as its decks write ``bathymetry_function(X)``."""
@@ -734,7 +764,7 @@ def precheck(doc, found, split, ranks=None):
         tank_sides(split)
         _two_phase_values(doc, split["dim"], found)
         _linear_solver(_entry(doc, found.discretization), ranks)
-    elif found.family == "shallow_water":
+    elif found.family in SHALLOW_WATER_FAMILIES:
         _box(split)
         shallow_water_boundary(split)
         for role in list(table.SHALLOW_WATER_COEFFICIENT_ROLES) + [table.SHALLOW_WATER_BED_ROLE]:
@@ -814,6 +844,19 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     components = unknowns[depth[0]] + unknowns[discharge[0]]
     variables = ["water_height", "x_mom", "y_mom"]
     initial = {v: _field(split["initial"][c], dim) for v, c in zip(variables, components)}
+    auxiliary_record = {}
+    if found.family == "dispersive_shallow_water":
+        # the relaxation's auxiliaries (h eta, h w, h beta) start from the spec's initial values: their defaults are
+        # the roles' (h^2, 0, 0), a function of the depth's initial value
+        dispersion = sub.get("dispersion") or {}
+        by_role = {a["role"]: a for a in dispersion.get("auxiliaries") or []}
+        for role, variable in table.SHALLOW_WATER_AUXILIARIES:
+            if role not in by_role:
+                raise RealizeError("%s: the dispersive family needs an auxiliary unknown with role %s"
+                                   % (model.subproblem, role))
+            variables.append(variable)
+            auxiliary_record[variable] = "%s = %s" % (by_role[role]["name"], by_role[role]["initial"])
+            initial[variable] = _AuxiliaryInitial(by_role[role]["initial"], depth[0], initial["water_height"], dim)
     physical = dict(SWF.default_physical_parameters)
     for role, key in table.SHALLOW_WATER_COEFFICIENT_ROLES.items():
         physical[key] = _shallow_water_value(doc, _by_role(doc, role), dim)
@@ -856,7 +899,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("the system step controller is %s, the dispatch says %s"
                            % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
     record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"]},
-              "initial": dict(zip(variables, components)),
+              "initial": {**dict(zip(variables, components)), **auxiliary_record},
               "system": {"final_time": final_time, "outputs": outputs, "mesh": ("stored %s, h = %g" % (stored, he) if stored is not None else
                        "structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (
                   domain.MeshOptions.triangleOptions,)),

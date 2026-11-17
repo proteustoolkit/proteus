@@ -97,6 +97,10 @@ CASES = {
                                 "final_time=0.03 dt_output=0.01 he={he} genMesh=False", "dambreak_short_stored.ymf",
                                 "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
                                 "mcorr MCorr", "velocity_t4"),
+    # the dispersive model (sw_model 1, GN_SW2DCV: h, hu, hv and the auxiliaries h eta, h w, h beta) on the same basin
+    "circular_dam_dispersive": ("SWFlow", "circular_damBreak.py", "--SWEs",
+                                "sw_model=1 final_time=2.0 dt_output=0.4", "circular_dam_dispersive_short.ymf",
+                                "relaxed_convex_limited -- split, dispatched to gn GN_SW2DCV", "h_u_t6"),
     # the dam3Bumps spec on the mesh of the deck's own run (dam3bumps.node, .ele ... in the deck's directory): read with
     # genMesh off, it must give the run of the mesh it was made by
     "dam3Bumps_stored": ("SWFlow", "dam3Bumps.py", "--SWEs",
@@ -233,3 +237,16 @@ def test_a_stored_mesh_in_another_format_is_refused(tmp_path):
     _, split = _stored_split(tmp_path, other)
     with pytest.raises(RealizeError, match="stored triangle/tetgen mesh"):
         tank_sides(split)
+
+
+def test_a_relaxation_auxiliary_starts_from_the_depth_it_is_an_expression_of():
+    from proteus.DispatchRun import RealizeError, _AuxiliaryInitial
+
+    class Depth(object):
+        def uOfXT(self, X, t):
+            return 1.5 + X[0]
+    assert _AuxiliaryInitial("h^2", "h", Depth(), 2).uOfXT((0.5, 0.0), 0.0) == 4.0
+    assert _AuxiliaryInitial("0", "h", Depth(), 2).uOfXT((0.5, 0.0), 0.0) == 0.0
+    assert _AuxiliaryInitial("h x", "h", Depth(), 2).uOfXT((0.5, 0.0), 0.0) == 1.0
+    with pytest.raises(RealizeError, match="reads u"):
+        _AuxiliaryInitial("u^2", "h", Depth(), 2)
