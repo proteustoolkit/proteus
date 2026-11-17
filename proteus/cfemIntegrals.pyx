@@ -1541,6 +1541,14 @@ cdef extern from "femIntegrals.h":
                                                    double* w_dV,
                                                    double* elementSpatialResidual,
                                                    double* mt)
+     void caccumulateExteriorElementPressureIntegrals "accumulateExteriorElementPressureIntegrals"(proteus_index_t nExteriorElementBoundaries_global,
+                                                                                                    int nQuadraturePoints_elementBoundary,
+                                                                                                    int* elementBoundaryMaterialTypes,
+                                                                                                    proteus_index_t* exteriorElementBoundaries,
+                                                                                                    double* p,
+                                                                                                    double* dS,
+                                                                                                    double* P,
+                                                                                                    double* boundaryMeasure)
      double cscalarDomainIntegral "scalarDomainIntegral"(proteus_index_t nElements_global,
                                                          int nQuadraturePoints_element,
                                                          double* dV,
@@ -5493,6 +5501,24 @@ def estimate_mt_lowmem(np.ndarray v,
                         <double*> w_dV.data,
                         <double*> elementSpatialResidual.data,
                         <double*> mt.data)
+def accumulateExteriorElementPressureIntegrals(np.ndarray elementBoundaryMaterialTypes,
+                                               np.ndarray exteriorElementBoundaries,
+                                               np.ndarray p,
+                                               np.ndarray dS,
+                                               np.ndarray P,
+                                               np.ndarray boundaryMeasure):
+    """Accumulate the integral of p and the measure of the exterior element boundaries, by boundary flag
+    (the wrapper AuxiliaryVariables.BoundaryPressure calls; it was lost when the module became Cython)."""
+    assert elementBoundaryMaterialTypes.itemsize == sizeof(int)
+    assert exteriorElementBoundaries.itemsize == sizeof(proteus_index_t)
+    caccumulateExteriorElementPressureIntegrals(exteriorElementBoundaries.shape[0],
+                                                p.shape[1],
+                                                <int*> elementBoundaryMaterialTypes.data,
+                                                <proteus_index_t*> exteriorElementBoundaries.data,
+                                                <double*> p.data,
+                                                <double*> dS.data,
+                                                <double*> P.data,
+                                                <double*> boundaryMeasure.data)
 def scalarDomainIntegral(np.ndarray dV,
                          np.ndarray nValueArray,
                          proteus_index_t nElements_global):

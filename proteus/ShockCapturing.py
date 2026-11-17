@@ -5,6 +5,7 @@ A class hierarchy for shock capturing diffusion methods
    :parts: 1
 """
 import numpy
+from .SubgridError import _c_char_flag
 from . import cshockCapturing
 class DelayedLagState(object):
     """state()/set_state() for a shock capturing that starts unlagged
@@ -166,7 +167,8 @@ class ScalarAdvection_SC(ShockCapturing_base):
 
 class HamiltonJacobi_SC(ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFlag='1',shockCapturingFactor=0.5,lag=True):
-        self.shockCapturingFlag=shockCapturingFlag=shockCapturingFlag
+        #the cshockCapturing HJ kernels take a C char; Python 3 must pass its code (as SubgridError does)
+        self.shockCapturingFlag=_c_char_flag(shockCapturingFlag)
         ShockCapturing_base.__init__(self,coefficients,nd,shockCapturingFactor,lag)
     def calculateNumericalDiffusion(self,q):
         for ci in range(self.nc):
@@ -179,7 +181,8 @@ class HamiltonJacobi_SC(ShockCapturing_base):
                                                           self.numDiff[ci])
 class HamiltonJacobiJaffre_SC(ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFlag='1',shockCapturingFactor=0.5,lag=True,betaPower=0.1):
-        self.shockCapturingFlag=shockCapturingFlag=shockCapturingFlag
+        #the cshockCapturing HJ kernels take a C char; Python 3 must pass its code (as SubgridError does)
+        self.shockCapturingFlag=_c_char_flag(shockCapturingFlag)
         self.beta=betaPower
         ShockCapturing_base.__init__(self,coefficients,nd,shockCapturingFactor,lag)
     def calculateNumericalDiffusion(self,q):
@@ -192,7 +195,8 @@ class HamiltonJacobiJaffre_SC(ShockCapturing_base):
                                                               self.numDiff[ci])
 class JaffreGradU_SC(ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFlag='1',shockCapturingFactor=0.5,lag=True,betaPower=0.1):
-        self.shockCapturingFlag=shockCapturingFlag=shockCapturingFlag
+        #the cshockCapturing HJ kernels take a C char; Python 3 must pass its code (as SubgridError does)
+        self.shockCapturingFlag=_c_char_flag(shockCapturingFlag)
         self.beta=betaPower
         ShockCapturing_base.__init__(self,coefficients,nd,shockCapturingFactor,lag)
     def calculateNumericalDiffusion(self,q):

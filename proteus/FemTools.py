@@ -7974,9 +7974,12 @@ class FluxBoundaryConditions(object):
                             self.diffusiveFluxBoundaryConditionsDictDict[ck][(ebNE,k)] = g
                 except TypeError:
                     logEvent("""WARNING FluxBoundaryCondition should take arguments (x,flag) now trying without flag""")
-                    g = getAdvectiveFluxBoundaryConditions(x[ebNE,k])
-                    if g:
-                        self.advectiveFluxBoundaryConditionsDict[(ebNE,k)] = g
+                    #as above, a model may have no advective flux conditions (the old-signature getter
+                    #that sent us here can be a diffusive one)
+                    if getAdvectiveFluxBoundaryConditions is not None:
+                        g = getAdvectiveFluxBoundaryConditions(x[ebNE,k])
+                        if g:
+                            self.advectiveFluxBoundaryConditionsDict[(ebNE,k)] = g
                     for ck in list(getDiffusiveFluxBoundaryConditions.keys()):
                         g = getDiffusiveFluxBoundaryConditions[ck](x[ebNE,k])
                         if g:

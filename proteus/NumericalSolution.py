@@ -453,8 +453,13 @@ class NS_base(object):  # (HasTraits):
         logEvent(Profiling.memory("NumericalSolution memory",className='NumericalSolution',memSaved=memBase))
         if so.tnList is None:
             logEvent("Building tnList from model = "+pList[0].name+" nDTout = "+repr(nList[0].nDTout))
-            self.tnList=[float(n)*nList[0].T/float(nList[0].nDTout)
-                         for n in range(nList[0].nDTout+1)]
+            nDTout = nList[0].nDTout
+            if nDTout is None:
+                #no output intervals given: the end time only
+                logEvent("nDTout is None: using one output interval, [0, T]")
+                nDTout = 1
+            self.tnList=[float(n)*nList[0].T/float(nDTout)
+                         for n in range(nDTout+1)]
         else:
             logEvent("Using tnList from so = "+so.name)
             self.tnList = so.tnList
@@ -482,7 +487,11 @@ class NS_base(object):  # (HasTraits):
             ## \todo pass in options = (p,n) instead of using monster ctor signature
             tolList=[]
             linTolList=[]
-            for l in range(n.nLevels):
+            #the model has the levels of the mesh hierarchy it is built on: with useOneMesh that is the
+            #first model's, whatever this model's n.nLevels says (a model with more levels in its n
+            #file indexed past the end of its levelModelList)
+            nLevels = len(mlMesh.meshList)
+            for l in range(nLevels):
                 #if mlMesh.meshList[l].hasGeometricInfo != True:
                 #    mlMesh.meshList[l].computeGeometricInfo()
 
@@ -525,7 +534,7 @@ class NS_base(object):  # (HasTraits):
                 printSmootherInfo=n.printLinearSmootherInfo,
                 prolongList = model.meshTransfers.prolongList,
                 restrictList = model.meshTransfers.restrictList,
-                connectivityListList = [model.levelModelList[l].sparsityInfo for l in range(n.nLevels)],
+                connectivityListList = [model.levelModelList[l].sparsityInfo for l in range(len(model.levelModelList))],
                 relativeToleranceList = linTolList,
                 absoluteTolerance = n.l_atol_res,
                 solverMaxIts = n.linearSolverMaxIts,
@@ -572,7 +581,7 @@ class NS_base(object):  # (HasTraits):
                 prolongList = model.meshTransfers.prolongList,
                 restrictList = model.meshTransfers.restrictList,
                 restrictionRowSumList = model.meshTransfers.restrictSumList,
-                connectionListList=[model.levelModelList[l].sparsityInfo for l in range(n.nLevels)],
+                connectionListList=[model.levelModelList[l].sparsityInfo for l in range(len(model.levelModelList))],
                 linearSolverList=multilevelLinearSolver.solverList,
                 linearDirectSolverFlag=directSolverFlag,
                 solverFullNewtonFlag=n.fullNewtonFlag,
@@ -1699,6 +1708,11 @@ class NS_base(object):  # (HasTraits):
         for m, t in zip(self.modelList, getattr(self, "_systemStepModelTimes", ())):
             if t is not None:
                 m.stepController.t_model_last = t
+        # the step the controller cut to for this retry (choose_dt_system ran before this restore): the time
+        # integrators' restored state carries the failed attempt's step (FLCBDF's h with it), and every retry
+        # repeated the step that had failed
+        for m in self.modelList:
+            m.stepController.set_dt_allLevels()
         self.endSystemStep(accepted=False)
         logEvent("restored the models to the start of the system step for the retry", level=3)
 

@@ -39,6 +39,12 @@ class SO_base(object):
         self.updateAfterModelStep=True
         self.stepExactEps = 1.0e-12
         self.stepFailures = 0
+        #retries of a failed sequence; the subclasses that choose the step from
+        #some of the models (FLCBDF, adaptive) take it from those models, and
+        #without such a model this default keeps retrySequence_modelStepFailure
+        #from failing on a missing attribute
+        self.maxFailures = max([getattr(getattr(model,'stepController',None),'maxSolverFailures',1)
+                                for model in self.modelList] or [1])
         self.stepSchedule = None
         #self.atol_iso=1.e-8 #tjp added for iterative SO routine tolerance
     def state(self):

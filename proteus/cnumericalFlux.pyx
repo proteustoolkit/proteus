@@ -5970,7 +5970,7 @@ def calculateExteriorNumericalAdvectiveFlux_average(np.ndarray exteriorElementBo
                                                      np.ndarray df,
                                                      np.ndarray flux,
                                                      np.ndarray dflux):
-    if f.dim > 3:
+    if f.ndim > 3:
         ccalculateExteriorNumericalAdvectiveFlux_average(exteriorElementBoundaries.shape[0],
                                                     f.shape[1],
                                                     f.shape[2],
@@ -6048,7 +6048,7 @@ def updateExteriorNumericalAdvectiveFluxJacobian_free(np.ndarray exteriorElement
                                                        np.ndarray dflux_left,
                                                        np.ndarray v,
                                                        np.ndarray fluxJacobian):
-    if v.dim == 4:
+    if v.ndim == 4:
         cupdateExteriorNumericalAdvectiveFluxJacobian_free(exteriorElementBoundaries.shape[0],
                                                         v.shape[1],
                                                         v.shape[2],
@@ -6060,7 +6060,7 @@ def updateExteriorNumericalAdvectiveFluxJacobian_free(np.ndarray exteriorElement
                                                        <double*> dflux_left.data,
                                                        <double*> v.data,
                                                        <double*> fluxJacobian.data)
-    elif v.dim == 3:
+    elif v.ndim == 3:
         cupdateGlobalExteriorNumericalAdvectiveFluxJacobian_free(exteriorElementBoundaries.shape[0],
                                                         v.shape[1],
                                                         v.shape[2],

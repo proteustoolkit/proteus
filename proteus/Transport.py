@@ -321,6 +321,10 @@ class OneLevelTransport(NonlinearEquation):
         self.nFreeDOF_global  = [dc.nFreeDOF_global for dc in list(self.dirichletConditions.values())]
         self.nVDOF_element    = sum(self.nDOF_trial_element)
         self.nFreeVDOF_global = sum(self.nFreeDOF_global)
+        #coefficients whose sparse diffusion layout depends on the space
+        #dimension (not known when they are built) set it up now
+        if self.sd and hasattr(coefficients,'initializeSparseDiffusion'):
+            coefficients.initializeSparseDiffusion(self.nSpace_global)
         #cek make full diffusion default if not in sdInfo
         if self.sd:
             for ci,ckDict in coefficients.diffusion.items():
@@ -3183,10 +3187,23 @@ class OneLevelTransport(NonlinearEquation):
                     self.u[cj].getGradientValuesTrace(self.ebq[('grad(v)',cj)],
                                                  self.ebq[('grad(u)',cj)])
 
+    #the stabilized (subgrid error) versions of coefficient derivatives the strong residual reads
+    _SGE_KEYS = ('dH', 'da', 'df', 'dm', 'dmt', 'dphi', 'grad(phi)')
+
+    def _aliasMissingSubgridErrorCoefficients(self,cq):
+        """Alias X_sge to X for each coefficient the strong residual reads but no subgrid error
+        object set up (shock capturing alone, or a subgrid error for another term), as a
+        subgrid error that does not lag does."""
+        for key in [k for k in list(cq.keys()) if isinstance(k,tuple) and k[0] in self._SGE_KEYS]:
+            sgeKey = (key[0]+'_sge',)+key[1:]
+            if sgeKey not in cq:
+                cq[sgeKey] = cq[key]
+
     def calculateStrongResidualAndAdjoint(self,cq):
         """
         break off computation of strong residual and adjoint so that we can do this at different quadrature locations?
         """
+        self._aliasMissingSubgridErrorCoefficients(cq)
         if (self.stabilization or self.shockCapturing):
             for ci in range(self.nc):
                 cq[('pdeResidual',ci)].fill(0.0)
@@ -4111,17 +4128,18 @@ class OneLevelTransport(NonlinearEquation):
                                                                   self.ebq['sqrt(det(g))'],
                                                                   self.ebq[('w',ci)],
                                                                   self.ebq[('w*dS_'+I,ci)])
-                    #for w*dS_a
+                    #for w*dS_a: ('w*dS_a',ck,ci) is component ci's test function weighted for its
+                    #diffusion term in ck, whose weights are (I,ci,ck) (as for grad(w)*dV_a)
                     for ck in range(self.nc):
-                        if (I,ci,ck) in self.ebq:
+                        if ('w*dS_'+I,ck,ci) in self.ebq:
                             cfemIntegrals.calculateWeightedShapeTrace(self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                       self.ebq['sqrt(det(g))'],
                                                                       self.ebq[('w',ci)],
-                                                                      self.ebq[('w*dS_'+I,ci,ck)])
+                                                                      self.ebq[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebq and len(self.elementBoundaryIntegralKeys) > 0:
                     for ck in range(self.nc):
                         try:
-                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ci,ck)]
+                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:
@@ -4287,20 +4305,20 @@ class OneLevelTransport(NonlinearEquation):
                                                                                 self.ebqe[('w',ci)],
                                                                                 self.ebqe[('w*dS_'+I,ci)])
 
-                    #for w*dS_a
+                    #for w*dS_a (see the element boundary loop: test component last)
                     for ck in range(self.nc):
-                        if ('w*dS_'+I,ci,ck) in self.ebqe:
+                        if ('w*dS_'+I,ck,ci) in self.ebqe:
                             cfemIntegrals.calculateWeightedShapeGlobalExteriorTrace(self.mesh.exteriorElementBoundariesArray,
                                                                                     self.mesh.elementBoundaryElementsArray,
                                                                                     self.mesh.elementBoundaryLocalElementBoundariesArray,
                                                                                     self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                                     self.ebqe['sqrt(det(g))'],
                                                                                     self.ebqe[('w',ci)],
-                                                                                    self.ebqe[('w*dS_'+I,ci,ck)])
+                                                                                    self.ebqe[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebqe:
                     for ck in range(self.nc):
                         try:
-                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ci,ck)]
+                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:

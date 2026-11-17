@@ -540,6 +540,8 @@ class ConservationHistoryMC(AV_base):
         self.massErrorLSFile = open(self.filename+"massErrorLS",'w')
         self.fluxFile = open(self.filename+"flux",'w')
         self.timeFile = open(self.filename+"time",'w')
+        #NumericalSolution keeps what attachModel returns
+        return self
     def calculate(self):
         if self.comm.isMaster():
             c = self.model.levelModelList[-1].coefficients
@@ -564,6 +566,8 @@ class ConservationHistoryLS(AV_base):
         self.massErrorFile = open(self.filename+"massErrorLS",'w')
         self.fluxFile = open(self.filename+"flux",'w')
         self.timeFile = open(self.filename+"time",'w')
+        #NumericalSolution keeps what attachModel returns
+        return self
     def calculate(self):
         if self.comm.isMaster():
             c = self.model.levelModelList[-1].coefficients
