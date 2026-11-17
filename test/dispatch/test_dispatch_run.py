@@ -97,6 +97,11 @@ CASES = {
                                 "final_time=0.03 dt_output=0.01 he={he} genMesh=False", "dambreak_short_stored.ymf",
                                 "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
                                 "mcorr MCorr", "velocity_t4"),
+    # the 3-D tank: Tank3D, TetGen at h = 0.4 (volume h^3/6), gravity along -z, the top open; the deck's iterative defaults
+    "damBreakLevelSet3D": ("TwoPhaseFlow", "damBreakLevelSet3D.py", "--TwoPhaseFlow",
+                           "final_time=0.03 dt_output=0.01 he=0.4", "dambreak3d_short.ymf",
+                           "level_set_five -- split, dispatched to flow RANS2P, vof VOF, ncls NCLS, rdls RDLS, "
+                           "mcorr MCorr", "velocity_t4"),
     # the dispersive model (sw_model 1, GN_SW2DCV: h, hu, hv and the auxiliaries h eta, h w, h beta) on the same basin
     "circular_dam_dispersive": ("SWFlow", "circular_damBreak.py", "--SWEs",
                                 "sw_model=1 final_time=2.0 dt_output=0.4", "circular_dam_dispersive_short.ymf",
@@ -263,3 +268,43 @@ def test_cells_per_axis_reach_the_solver_that_takes_them_and_are_refused_by_the_
     assert one_count(49, "d") == 49 and one_count({"x": 8, "y": 8}, "d") == 8
     with pytest.raises(ValueError, match="unequal per axis"):
         one_count({"x": 80, "y": 40}, "adr_box")
+
+
+def _split_of(name, entry, mutate=None):
+    from ymf.closure import load, plain
+    from ymf.symbolic.split import split_problem
+    doc, _, _ = load(os.path.join(HERE, name))
+    doc = plain(doc)
+    if mutate:
+        mutate(doc)
+    return split_problem(doc, entry)
+
+
+def test_a_3d_tank_sets_one_setter_per_face():
+    from proteus.DispatchRun import _tank, tank_sides
+
+    class Comm(object):
+        def isMaster(self):
+            return False
+
+        def barrier(self):
+            pass
+    split = _split_of("dambreak3d_short.ymf", "level_set_five")
+    sides = tank_sides(split)
+    assert {s: v[1] for s, v in sides.items()} == {"x-": "setFreeSlip", "x+": "setFreeSlip", "y-": "setFreeSlip",
+                                                    "y+": "setFreeSlip", "z-": "setFreeSlip", "z+": "setAtmosphere"}
+    assert {s: v[0] for s, v in sides.items()} == {"x-": "walls", "x+": "walls", "y-": "walls", "y+": "walls",
+                                                    "z-": "walls", "z+": "top"}
+    domain, _ = _tank(split, 0.4, "x", "/tmp", Comm())
+    assert domain.nd == 3 and domain.MeshOptions.triangleOptions == "VApq1.35q12feena1.066667e-02"
+
+
+def test_a_3d_face_in_two_regions_or_none_is_refused():
+    from proteus.DispatchRun import RealizeError, tank_sides
+
+    def split_the_wall(doc):
+        # y = 1 now belongs to a region of its own that is not a whole face of the sets: z = 0 loses its region
+        doc["model"]["strong_form"]["boundary_regions"][0]["where"] = "x = 0 or x = 3.22 or y = 0 or y = 1"
+    split = _split_of("dambreak3d_short.ymf", "level_set_five", split_the_wall)
+    with pytest.raises(RealizeError, match="side z- of the tank is in no boundary region"):
+        tank_sides(split)

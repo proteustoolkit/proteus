@@ -349,6 +349,8 @@ SHALLOW_WATER_FAMILIES = ("shallow_water", "dispersive_shallow_water")
 
 #: SpatialTools.Tank2D's boundary flags: the flags a stored mesh of a tank carries (the sides of a box mesh)
 TANK2D_FLAGS = {"y-": 1, "x+": 2, "y+": 3, "x-": 4}
+#: and Tank3D's
+TANK3D_FLAGS = {"z-": 1, "x-": 2, "y+": 3, "x+": 4, "y-": 5, "z+": 6}
 
 
 def _stored(split):
@@ -400,26 +402,45 @@ def _box(split):
     _stored(split)
     domain_data = split["domain"]
     lower, upper = [float(v) for v in domain_data["lower"]], [float(v) for v in domain_data["upper"]]
-    if len(lower) != 2:
-        raise RealizeError("the realizer builds 2-D boxes so far; this domain is %d-D" % len(lower))
+    if len(lower) not in (2, 3):
+        raise RealizeError("the realizer builds 2-D and 3-D boxes; this domain is %d-D" % len(lower))
+    if len(lower) == 3 and _stored(split) is not None:
+        raise RealizeError("a stored mesh is read for a 2-D tank so far (the flags of Tank2D); this domain is 3-D")
     return lower, upper
 
 
 def tank_sides(split):
-    """{side: (region, BC_RANS setter, its arguments, a note on what it does not impose)} for the four sides of a
-    SpatialTools Tank2D of the domain's box, from the closed conditions of every sub-problem (one region per side, one setter per region's
-    conditions); refused (:class:`RealizeError`) otherwise. Data only: nothing is built."""
+    """{side: (region, BC_RANS setter, its arguments, a note on what it does not impose)} for the sides of a
+    SpatialTools Tank2D or Tank3D of the domain's box, from the closed conditions of every sub-problem (one region per
+    side, one setter per region's conditions); refused (:class:`RealizeError`) otherwise. Data only: nothing is
+    built."""
+    import itertools
     lower, upper = _box(split)
     size = [u - l for u, l in zip(upper, lower)]
-    dim = 2
+    dim = len(lower)
     tol = 1e-8 * max(size)
     conditions = [c for sub in split["subproblems"] for c in sub.get("boundary_conditions") or []]
     # each side's points that tell which region it is in: its midpoint and quarter points (the corners belong to
     # two sides, so they are not asked)
-    sides = {"x-": lambda s: (lower[0], lower[1] + s * size[1]), "x+": lambda s: (upper[0], lower[1] + s * size[1]),
-             "y-": lambda s: (lower[0] + s * size[0], lower[1]), "y+": lambda s: (lower[0] + s * size[0], upper[1])}
+    names = "xyz"[:dim]
+
+    def face(axis, end):
+        value = upper[axis] if end == "+" else lower[axis]
+        others = [a for a in range(dim) if a != axis]
+
+        def points():
+            for fractions in itertools.product((0.25, 0.5, 0.75), repeat=dim - 1):
+                point = [0.0] * dim
+                point[axis] = value
+                for a, f in zip(others, fractions):
+                    point[a] = lower[a] + f * size[a]
+                yield tuple(point)
+        return points
+    sides = {"%s%s" % (names[axis], end): face(axis, end) for axis in range(dim) for end in "-+"}
+    sides = {side: sides[side] for side in (("x-", "x+", "y-", "y+") if dim == 2 else
+                                            ("x-", "x+", "y-", "y+", "z-", "z+"))}
     stored = _stored(split) is not None
-    flag_of = TANK2D_FLAGS
+    flag_of = TANK2D_FLAGS if dim == 2 else TANK3D_FLAGS
     regions = {}
     for c in conditions:
         regions.setdefault(c["region"], {"where": _where(c, dim, tol), "flags": c.get("flags"), "conditions": []})
@@ -434,7 +455,7 @@ def tank_sides(split):
         if data["flags"] is not None:
             hit = flag_of[side] in {int(f) for f in data["flags"]}
             return hit, False
-        hits = [data["where"](point(s)) for s in (0.25, 0.5, 0.75)]
+        hits = [data["where"](x) for x in point()]
         return all(hits), any(hits) and not all(hits)
 
     out = {}
@@ -464,17 +485,18 @@ def tank_sides(split):
 
 
 def _tank(split, he, name, outdir, comm):
-    """The SpatialTools tank of the domain's box, its sides' BC_RANS set by :func:`tank_sides`, meshed by triangle
-    at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint)."""
+    """The SpatialTools tank of the domain's box (Tank2D meshed by triangle, Tank3D by TetGen), its sides' BC_RANS set by
+    :func:`tank_sides`, at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint), or its stored mesh."""
     from proteus import Domain
     from proteus.mprans import SpatialTools as st
     from proteus.ADRProblem import mesh_constraint
     sides = tank_sides(split)
     lower, upper = _box(split)
     size = [u - l for u, l in zip(upper, lower)]
-    domain = Domain.PlanarStraightLineGraphDomain()
+    dim = len(lower)
+    domain = Domain.PlanarStraightLineGraphDomain() if dim == 2 else Domain.PiecewiseLinearComplexDomain()
     coords = None if all(v == 0.0 for v in lower) else [(u + l) / 2.0 for u, l in zip(upper, lower)]
-    tank = st.Tank2D(domain, tuple(size), coords)
+    tank = (st.Tank2D if dim == 2 else st.Tank3D)(domain, tuple(size), coords)
     record = {}
     for side, (region, setter, kwargs, note) in sides.items():
         getattr(tank.BC[side], setter)(**kwargs)
@@ -482,8 +504,9 @@ def _tank(split, he, name, outdir, comm):
                         **({"note": note} if note else {})}
     st.assembleDomain(domain)
     domain.MeshOptions.he = he
-    domain.MeshOptions.triangleOptions = mesh_constraint(he, 2)
-    domain.MeshOptions.triangleFlag = 0
+    domain.MeshOptions.triangleOptions = mesh_constraint(he, dim)
+    if dim == 2:
+        domain.MeshOptions.triangleFlag = 0
     stored = _stored(split)
     if stored is not None:
         # a stored mesh, read as the decks read theirs with genMesh=False; its flags are the tank's (tank_sides
