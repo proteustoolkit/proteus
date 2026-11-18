@@ -1,0 +1,12 @@
+# circular_dam_dispersive.ymf for two seconds (5 outputs, as circular_dam.ymf): the dispersive model on SWFlow's structured
+# mesh. test_dispatch_run.py runs it from the spec and from circular_damBreak.py (sw_model = 1) and compares bitwise.
+extends: circular_dam_dispersive.ymf
+
+model:
+  strong_form:
+    domain: "Ω = [0, 20] × [0, 20],  t ∈ (0, 2]"
+
+solution_paths:
+  discretizations:
+    - name: relaxed_convex_limited
+      discretization: {outputs: 5}
