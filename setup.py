@@ -334,6 +334,17 @@ print("proteus build: PUMI partitioners (%s): %s" % (
 # (or references into fixed-size element arrays) and compile-time element
 # shape. Keep -O2 the default; do not tune the legacy passes for flags.
 
+# Line tracing for the coverage leg only (PROTEUS_CYTHON_LINETRACE=1 in the environment of the build). BoundaryConditions,
+# mprans.BoundaryConditions and WaveTools are compiled by Cython from .py files, so coverage.py never sees their lines
+# execute and reports them at 0%. Built with linetrace and CYTHON_TRACE, and measured with the Cython.Coverage plugin
+# (pyproject.toml's coverage config is unchanged; the CI coverage leg adds the plugin), their lines count. Slower at run
+# time, so every other build -- and every other leg of CI -- leaves it off.
+if os.environ.get('PROTEUS_CYTHON_LINETRACE', '') not in ('', '0'):
+    PROTEUS_LINETRACE = dict(define_macros=[('CYTHON_TRACE', '1')],
+                             cython_directives={'linetrace': True})
+else:
+    PROTEUS_LINETRACE = {}
+
 EXTENSIONS_TO_BUILD = [
     Extension("MeshAdaptPUMI.MeshAdapt",
               sources = ['proteus/MeshAdaptPUMI/MeshAdapt.pyx', 'proteus/MeshAdaptPUMI/cMeshAdaptPUMI.cpp',
@@ -532,13 +543,15 @@ EXTENSIONS_TO_BUILD = [
               depends=['proteus/BoundaryConditions.pxd'],
               language='c++',
               extra_compile_args=PROTEUS_OPT+['-std=c++14'],
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("mprans.BoundaryConditions",
               sources=['proteus/mprans/BoundaryConditions.py'],
               depends=['proteus/mprans/BoundaryConditions.pxd'],
               language='c++',
               extra_compile_args=PROTEUS_OPT+['-std=c++14'],
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("mprans.MeshSmoothing",
               sources=['proteus/mprans/MeshSmoothing.pyx'],
               language='c++',
@@ -579,7 +592,8 @@ EXTENSIONS_TO_BUILD = [
               depends=['proteus/WaveTools.h'],
               language='c++',
               extra_compile_args=PROTEUS_OPT,
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("fenton.Fenton",
               sources=['proteus/fenton/Fenton.pyx',
                        'proteus/fenton/Solve.cpp',
