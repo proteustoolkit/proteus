@@ -369,3 +369,43 @@ def test_l2_projection_of_a_sparse_layout_tensor_averages_each_entry():
     L2projectEvaluate(2, dV, r)
     assert numpy.allclose(r[0, 0], [4.0, 5.0, 6.0, 7.0]) and numpy.allclose(r[0, 1], r[0, 0])
     assert numpy.all(buf[8:] == -7.0)
+
+
+def _twophase_stokes_q(shape, nd=2, mass=True):
+    q = {('u', i): numpy.zeros(shape) for i in range(nd + 1)}
+    q[('grad(u)', 0)] = numpy.zeros(shape + (nd,))
+    for ci in range(1, nd + 1):
+        if mass:
+            q[('m', ci)] = numpy.zeros(shape)
+            q[('dm', ci, ci)] = numpy.zeros(shape)
+        q[('a', ci, ci)] = numpy.zeros(shape + (nd * nd,))
+        q[('r', ci)] = numpy.zeros(shape)
+        q[('H', ci)] = numpy.zeros(shape)
+        q[('dH', ci, 0)] = numpy.zeros(shape + (nd,))
+    q[('f', 0)] = numpy.zeros(shape + (nd,))
+    for cj in range(1, nd + 1):
+        q[('df', 0, cj)] = numpy.zeros(shape + (nd,))
+    return q
+
+
+def test_steady_two_phase_stokes_evaluates_without_mass_terms():
+    # steady=True leaves out the mass terms; evaluate read c[('m',1)]: KeyError
+    c = TransportCoefficients.TwophaseStokes_LS_SO(g=[0.0, -9.8], nd=2, steady=True)
+    c.eps = 0.1
+    shape = (2, 3)
+    c.q_phi = numpy.ones(shape)
+    c.ebqe_phi = numpy.ones((4, 2))
+    q = _twophase_stokes_q(shape, mass=False)
+    c.evaluate(0.0, q)
+    assert numpy.all(q[('a', 1, 1)][..., 0] > 0.0)   # the kernel ran
+
+
+def test_two_phase_stokes_without_level_set_values_at_its_points_raises():
+    # a level set on another quadrature (or with mass lumping) gave the kernel None or a short array: SIGSEGV
+    c = TransportCoefficients.TwophaseStokes_LS_SO(g=[0.0, -9.8], nd=2)
+    c.eps = 0.1
+    c.q_phi = numpy.ones((2, 7))
+    c.ebqe_phi = numpy.ones((4, 2))
+    c.ebq_phi = None
+    with pytest.raises(RuntimeError, match="quadrature"):
+        c.evaluate(0.0, _twophase_stokes_q((2, 4)))

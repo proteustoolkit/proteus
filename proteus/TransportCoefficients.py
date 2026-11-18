@@ -3208,12 +3208,26 @@ class TwophaseStokes_LS_SO(TC_base):
         if self.levelSetModelIndex is None:
             self.ebqe_phi = numpy.ones(cebqe[('u',0)].shape,'d')
     def evaluate(self,t,c):
+        #steady=True leaves out the mass terms; the kernels still write them: scratch arrays then
+        m = {}; dm = {}
+        for ci in range(1,self.nd+1):
+            if ('m',ci) in c:
+                m[ci] = c[('m',ci)]; dm[ci] = c[('dm',ci,ci)]
+            else:
+                m[ci] = numpy.zeros_like(c[('u',ci)]); dm[ci] = numpy.zeros_like(c[('u',ci)])
         if c[('u',0)].shape == self.q_phi.shape:
             phi = self.q_phi
         elif c[('u',0)].shape == self.ebqe_phi.shape:
             phi = self.ebqe_phi
         else:
             phi = self.ebq_phi
+        if phi is None or phi.shape != c[('u',0)].shape:
+            #the kernel would read past phi (SIGSEGV)
+            raise RuntimeError("TwophaseStokes_LS_SO: no level set values at these points (shape %s): the level set "
+                               "model must use the flow model's quadrature (and no mass lumping, which adds nodal points), and keep "
+                               "element boundary values "
+                               "(needEBQ = True in the so module) if the flow model evaluates there"
+                               % (c[('u',0)].shape,))
         if self.nd==2:
             TwophaseStokes_LS_SO_2D_Evaluate(self.eps,
                                              self.rho_0,
@@ -3226,10 +3240,10 @@ class TwophaseStokes_LS_SO(TC_base):
                                              c[('grad(u)',0)],
                                              c[('u',1)],
                                              c[('u',2)],
-                                             c[('m',1)],
-                                             c[('dm',1,1)],
-                                             c[('m',2)],
-                                             c[('dm',2,2)],
+                                             m[1],
+                                             dm[1],
+                                             m[2],
+                                             dm[2],
                                              c[('f',0)],
                                              c[('df',0,1)],
                                              c[('df',0,2)],
@@ -3255,12 +3269,12 @@ class TwophaseStokes_LS_SO(TC_base):
                                              c[('u',1)],
                                              c[('u',2)],
                                              c[('u',3)],
-                                             c[('m',1)],
-                                             c[('dm',1,1)],
-                                             c[('m',2)],
-                                             c[('dm',2,2)],
-                                             c[('m',3)],
-                                             c[('dm',3,3)],
+                                             m[1],
+                                             dm[1],
+                                             m[2],
+                                             dm[2],
+                                             m[3],
+                                             dm[3],
                                              c[('f',0)],
                                              c[('df',0,1)],
                                              c[('df',0,2)],
