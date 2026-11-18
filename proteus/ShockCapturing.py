@@ -315,19 +315,12 @@ class NavierStokes_SC(ResGradQuad_SC):
         self.nSteps=0
     def calculateNumericalDiffusion(self,q):
         for ci in range(1,self.nc):
-            if numpy.isnan(q[('pdeResidual',ci)]).any():
-                import pdb
-                print("NaN's in res")
-                pdb.set_trace()
             cshockCapturing.calculateNumericalDiffusionResGradQuad(self.shockCapturingFactor,
                                                                    self.mesh.elementDiametersArray,
                                                                    q[('pdeResidual',ci)],
                                                                    q[('grad(u)',ci)],
                                                                    self.numDiff[ci])
-            if numpy.isnan(self.numDiff[ci]).any():
-                import pdb
-                print("NaN's in numDiff")
-                pdb.set_trace()
+            #a nan residual fails the solve and the step is retried (a debugger stop here ended batch runs)
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
         self.numDiff={}
@@ -362,19 +355,12 @@ class NavierStokes_SC_opt(ResGradQuad_SC):
         self.nSteps=0
     def calculateNumericalDiffusion(self,q):
         for ci in range(1,self.nc):
-            if numpy.isnan(q[('pdeResidual',ci)]).any():
-                import pdb
-                print("NaN's in res")
-                pdb.set_trace()
             cshockCapturing.calculateNumericalDiffusionResGradQuad(self.shockCapturingFactor,
                                                                    self.mesh.elementDiametersArray,
                                                                    q[('pdeResidual',ci)],
                                                                    q[('grad(u)',ci)],
                                                                    self.numDiff[ci])
-            if numpy.isnan(self.numDiff[ci]).any():
-                import pdb
-                print("NaN's in numDiff")
-                pdb.set_trace()
+            #a nan residual fails the solve and the step is retried (a debugger stop here ended batch runs)
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
         self.numDiff={}

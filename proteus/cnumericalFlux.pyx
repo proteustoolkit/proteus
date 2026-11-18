@@ -6468,7 +6468,7 @@ def calculateExteriorLesaintRaviartNumericalFlux(int speedEvalFlag,
                                                 np.ndarray flux,
                                                 np.ndarray dflux):
     if dH.ndim > 3:
-        ccalculateExteriorLesaintRaviartNumericalFlux( elementBoundaryElements.shape[0],
+        ccalculateExteriorLesaintRaviartNumericalFlux( exteriorElementBoundaries.shape[0],
                            dH.shape[1],
                            dH.shape[2],
                            dH.shape[3],
@@ -6488,7 +6488,7 @@ def calculateExteriorLesaintRaviartNumericalFlux(int speedEvalFlag,
                           <double*> flux.data,
                           <double*> dflux.data)
     else:
-        ccalculateGlobalExteriorLesaintRaviartNumericalFlux( elementBoundaryElements.shape[0],
+        ccalculateGlobalExteriorLesaintRaviartNumericalFlux( exteriorElementBoundaries.shape[0],
                            dH.shape[1],
                            dH.shape[2],
                            speedEvalFlag,

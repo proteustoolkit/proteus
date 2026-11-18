@@ -159,7 +159,11 @@ def test_parun_rejects_an_old_sso_file_with_a_message(tmp_path):
     import shutil
     import subprocess
     import sys
-    parun = shutil.which("parun")
+    import os
+    # the repository's script (an installed copy is made at install time and can be older)
+    parun = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "parun")
+    if not os.path.exists(parun):
+        parun = shutil.which("parun")
     if parun is None:
         pytest.skip("parun is not on PATH")
     sso = tmp_path / "x.sso"
@@ -238,3 +242,130 @@ def test_conservation_history_attach_model_returns_itself(name, tmp_path, monkey
     monkeypatch.setattr(Profiling, "logDir", str(tmp_path))
     av = getattr(AuxiliaryVariables, name)("square")
     assert av.attachModel(object(), None) is av
+
+
+def test_conservation_history_writes_what_the_history_gained(tmp_path, monkeypatch):
+    # calculate_init runs before attachModels starts the coefficients' history: nothing to write
+    # then (AttributeError before); the first call after it writes the initial entry too
+    from proteus import AuxiliaryVariables, Profiling
+    monkeypatch.setattr(Profiling, "logDir", str(tmp_path))
+    coefficients = type("C", (), {})()
+    model = type("M", (), {"levelModelList": [type("L", (), {"coefficients": coefficients})()]})()
+    av = AuxiliaryVariables.ConservationHistoryLS("h").attachModel(model, None)
+    av.calculate_init()
+    for name in ("lsGlobalMassArray", "lsGlobalMassErrorArray", "fluxArray", "timeArray"):
+        setattr(coefficients, name, [0.0, 1.0])
+    av.calculate()
+    coefficients.timeArray.append(2.0)
+    for name in ("lsGlobalMassArray", "lsGlobalMassErrorArray", "fluxArray"):
+        getattr(coefficients, name).append(3.0)
+    av.calculate()
+    times = [float(x) for x in open(str(tmp_path / "htime")).read().split()]
+    assert times == [0.0, 1.0, 2.0]
+
+
+def test_two_phase_ns_on_element_boundaries_without_level_set_values_raises():
+    # the kernel was handed None for phi (SIGSEGV): the so module must ask for needEBQ
+    c = TransportCoefficients.TwophaseNavierStokes_ST_LS_SO(nd=3, g=[0.0, 0.0, -9.8], LS_model=1)
+    c.q_phi = numpy.zeros((2, 3))
+    c.ebqe_phi = numpy.zeros((4, 2))
+    c.ebq_phi = c.ebq_n = c.ebq_kappa = None
+    with pytest.raises(RuntimeError, match="needEBQ"):
+        c.evaluate(0.0, {('u', 0): numpy.zeros((2, 3, 3))})
+
+
+def test_level_set_conservation_counts_no_flux_for_vof_coefficients_without_one():
+    c = TransportCoefficients.LevelSetConservation(nd=2)
+    c.vofModel = type("M", (), {"coefficients": object()})()   # CLevelSetCoefficients keeps no fluxIntegral
+    assert c._vofFluxIntegral() == 0.0
+    c.vofModel.coefficients = type("V", (), {"fluxIntegral": 2.5})()
+    assert c._vofFluxIntegral() == 2.5
+
+
+def test_exterior_lesaint_raviart_flux_writes_only_the_exterior_boundaries():
+    # the wrapper took the number of all element boundaries for the exterior ones: heap corruption
+    from proteus import cnumericalFlux, cmeshTools
+    nEB, nExt, nq, nd = 5, 2, 1, 1
+    exterior = numpy.array([0, 4], cmeshTools.INDEX_DTYPE)
+    ebElements = numpy.zeros((nEB, 2), cmeshTools.INDEX_DTYPE)
+    ebLocal = numpy.zeros((nEB, 2), 'i')
+    isDOF = numpy.zeros((nExt, nq), 'i')
+    inflow = numpy.zeros((nExt, nq), 'i')
+    n = numpy.ones((nExt, nq, nd))
+    bc_u, bc_H, u, H = (numpy.zeros((nExt, nq)) for _ in range(4))
+    bc_dH, dH = numpy.zeros((nExt, nq, nd)), numpy.ones((nExt, nq, nd))
+    buf = numpy.full(nEB * nq, -7.0)
+    flux = buf[:nExt * nq].reshape(nExt, nq)
+    dbuf = numpy.full(nEB * nq, -7.0)
+    dflux = dbuf[:nExt * nq].reshape(nExt, nq)
+    cnumericalFlux.calculateExteriorLesaintRaviartNumericalFlux(0, exterior, ebElements, ebLocal, isDOF, inflow, n,
+                                                               bc_u, bc_H, bc_dH, u, H, dH, flux, dflux)
+    assert numpy.all(buf[nExt * nq:] == -7.0) and numpy.all(dbuf[nExt * nq:] == -7.0)
+
+
+def test_fixed_step_controller_without_a_fixed_step_steps_to_the_output_time():
+    # Sequential_FixedStep (SO_base) took dt_system_fixed, None by default: TypeError float + None
+    from proteus import SplitOperator
+
+    class _Controller(object):
+        def set_dt_allLevels(self):
+            pass
+
+        def setSubsteps(self, tList):
+            self.substeps = tList
+    so = SplitOperator.SO_base.__new__(SplitOperator.SO_base)
+    so.dt_system_fixed = None
+    so.stepSchedule = None
+    so.system = type("S", (), {"name": "s"})()
+    so.modelList = [type("M", (), {"stepController": _Controller()})()]
+    so.initialize_dt_system(0.0, 0.5)
+    assert so.dt_system == 0.5 and so.t_system == 0.5
+
+
+def test_two_phase_ns_ls_so_calls_its_kernel():
+    # evaluate called self.TwophaseNavierStokes_LS_SO_2D_Evaluate, a module function: AttributeError
+    c = TransportCoefficients.TwophaseNavierStokes_LS_SO(nd=2, g=[0.0, -9.8], LS_model=None)
+    c.eps = 0.1
+    shape = (2, 3)
+    c.initializeElementQuadrature(0.0, {('u', 0): numpy.zeros(shape)})
+    q = {('u', i): numpy.zeros(shape) for i in range(3)}
+    q[('grad(u)', 0)] = numpy.zeros(shape + (2,))
+    for k in [('m', 1), ('dm', 1, 1), ('m', 2), ('dm', 2, 2), ('r', 1), ('r', 2), ('H', 1), ('H', 2)]:
+        q[k] = numpy.zeros(shape)
+    for k in [('f', 0), ('df', 0, 1), ('df', 0, 2), ('f', 1), ('df', 1, 1), ('df', 1, 2), ('f', 2), ('df', 2, 1),
+              ('df', 2, 2), ('dH', 1, 0), ('dH', 2, 0)]:
+        q[k] = numpy.zeros(shape + (2,))
+    q[('a', 1, 1)] = numpy.zeros(shape + (2, 2))
+    q[('a', 2, 2)] = numpy.zeros(shape + (2, 2))
+    c.evaluate(0.0, q)
+    assert numpy.all(q[('dm', 1, 1)] > 0.0)   # the kernel ran and wrote the mass derivative
+
+
+def test_poly_file_comments_may_follow_a_value(tmp_path):
+    # triangle reads '#' anywhere on a line as a comment; the reader took '0#enforce' for a flag
+    from proteus import Domain
+    (tmp_path / "c.poly").write_text("# a square\n4 2 0 1\n1 0 0 1#corner\n2 1 0 1\n3 1 1 1\n4 0 1 0#enforce\n"
+                                     "4 1\n1 1 2 1 #bottom\n2 2 3 1\n3 3 4 1\n4 4 1 1\n0 #holes\n0 #regions\n")
+    d = Domain.PlanarStraightLineGraphDomain(fileprefix=str(tmp_path / "c"), name="c")
+    assert d.vertexFlags == [1, 1, 1, 0] and len(d.segments) == 4
+
+
+def test_volume_averaged_ns_boundary_porosity_without_solution_values_on_ebq_global():
+    c = TransportCoefficients.VolumeAveragedNavierStokesFullDevStress()
+    cebq = {('u', 0): numpy.zeros((3, 3, 2)), 'x': numpy.zeros((3, 3, 2, 3))}
+    cebq_global = {'x': numpy.zeros((5, 2, 3))}   # no ('u',0) there now: KeyError
+    c.initializeElementBoundaryQuadrature(0.0, cebq, cebq_global)
+    assert c.ebq_global_porosity.shape == (5, 2) and numpy.all(c.ebq_global_porosity == 1.0)
+
+
+def test_l2_projection_of_a_sparse_layout_tensor_averages_each_entry():
+    # rank 2 read [element, point, nd, nd] and took the entry count for nd: heap corruption
+    from proteus.ctransportCoefficients import L2projectEvaluate
+    dV = numpy.array([[1.0, 3.0]])
+    buf = numpy.full(2 * 4 + 5, -7.0)
+    r = buf[:8].reshape(1, 2, 4)
+    r[0, 0] = [1.0, 2.0, 3.0, 4.0]
+    r[0, 1] = [5.0, 6.0, 7.0, 8.0]
+    L2projectEvaluate(2, dV, r)
+    assert numpy.allclose(r[0, 0], [4.0, 5.0, 6.0, 7.0]) and numpy.allclose(r[0, 1], r[0, 0])
+    assert numpy.all(buf[8:] == -7.0)

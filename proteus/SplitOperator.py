@@ -140,6 +140,10 @@ class SO_base(object):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
+        if self.dt_system_fixed is None:
+            #no dt_system_fixed in the so module: one system step per output interval, as
+            #before the fixed step became an so option (None + float: TypeError)
+            self.dt_system_fixed = tOut - t0
         self.dt_system = self.scheduled_dt(self.dt_system_fixed)
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]

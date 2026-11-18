@@ -8115,7 +8115,12 @@ def L2projectEvaluate(int rank,
     elif rank == 1:
         l2projectVector(r.shape[0],r.shape[1],r.shape[2],dV,r)
     elif rank == 2:
-        l2project2Tensor(r.shape[0],r.shape[1],r.shape[2],dV,r)
+        if r.ndim == 3:
+            #a sparse layout ([element, point, entries]): the element average of each stored entry
+            #(l2project2Tensor reads [element, point, nd, nd], and took the entry count for nd)
+            l2projectVector(r.shape[0],r.shape[1],r.shape[2],dV,r)
+        else:
+            l2project2Tensor(r.shape[0],r.shape[1],r.shape[2],dV,r)
     else:
         assert 0
 def conservativeHeadRichardsJLeverettEvaluate(np.ndarray materialTypes,
