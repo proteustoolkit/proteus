@@ -409,3 +409,48 @@ def test_two_phase_stokes_without_level_set_values_at_its_points_raises():
     c.ebq_phi = None
     with pytest.raises(RuntimeError, match="quadrature"):
         c.evaluate(0.0, _twophase_stokes_q((2, 4)))
+
+
+def test_moving_domain_wrappers_lost_in_the_move_to_cython():
+    # a moving-mesh model (threep_cylinder_md_2d) stopped at each of these: AttributeError
+    from proteus import cfemIntegrals, cmeshTools
+    # copy the mesh velocity on an interior boundary from its left element to its right one
+    xt = numpy.zeros((2, 2, 1, 3))
+    xt[0, 0, 0] = [1.0, 2.0, 3.0]
+    cfemIntegrals.copyLeftElementBoundaryInfo_movingDomain(numpy.array([[0, 1]], cmeshTools.INDEX_DTYPE),
+                                                           numpy.array([[0, 1]], 'i'),
+                                                           numpy.array([], cmeshTools.INDEX_DTYPE),
+                                                           numpy.array([0], cmeshTools.INDEX_DTYPE), xt)
+    assert list(xt[1, 1, 0]) == [1.0, 2.0, 3.0]
+    # df -= dm xt
+    x = numpy.zeros((1, 2, 3))
+    x[..., 0], x[..., 1] = 1.0, 2.0
+    df = numpy.zeros((1, 2, 2))
+    cfemIntegrals.update_df_movingDomain(x, numpy.full((1, 2), 3.0), df)
+    assert numpy.allclose(df, [[[-3.0, -6.0], [-3.0, -6.0]]])
+
+
+def test_moving_domain_boundary_maps_match_the_fixed_ones_when_the_mesh_is_still():
+    from proteus import cfemIntegrals, cmeshTools
+    nodes = numpy.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    l2g = numpy.array([[0, 1, 2]], cmeshTools.INDEX_DTYPE)
+    nq = 2
+    grad_psi = numpy.zeros((3, nq, 3, 2))
+    grad_psi[:, :, 0] = [-1.0, -1.0]
+    grad_psi[:, :, 1] = [1.0, 0.0]
+    grad_psi[:, :, 2] = [0.0, 1.0]
+    normals = numpy.array([[0.70710678, 0.70710678], [-1.0, 0.0], [0.0, -1.0]])
+    jacobians = numpy.array([[[-1.0], [1.0]], [[0.0], [-1.0]], [[1.0], [0.0]]])
+
+    def maps(moving):
+        out = [numpy.zeros((1, 3, nq, 2, 2)), numpy.zeros((1, 3, nq, 1, 1)), numpy.zeros((1, 3, nq)),
+               numpy.zeros((1, 3, nq, 2))]
+        if moving:
+            cfemIntegrals.parametricMaps_getJacobianValuesTrace_movingDomain(numpy.zeros((1, 3, nq, 3)), grad_psi,
+                                                                             normals, jacobians, l2g, nodes, *out)
+        else:
+            cfemIntegrals.parametricMaps_getJacobianValuesTrace(grad_psi, normals, jacobians, l2g, nodes, *out)
+        return out
+    for a, b in zip(maps(True), maps(False)):
+        assert numpy.allclose(a, b)
+    assert numpy.all(maps(True)[2] > 0.0)

@@ -340,6 +340,20 @@ cdef extern from "femIntegrals.h":
                                                                                              double *metricTensorArray,
                                                                                              double *metricTensorDeterminantSqrtArray,
                                                                                              double *unitNormalArray)
+     void cparametricMaps_getJacobianValuesTrace2D_movingDomain "parametricMaps_getJacobianValuesTrace2D_movingDomain"(proteus_index_t nElements_global,
+                                                                                             int nElementBoundaries_element,
+                                                                                             int nQuadraturePoints_element,
+                                                                                             int nDOF_element,
+                                                                                             double *xtArray,
+                                                                                             double *grad_psi,
+                                                                                             double *boundaryNormals,
+                                                                                             double *boundaryJacobians,
+                                                                                             proteus_index_t *l2g,
+                                                                                             double *nodeArray,
+                                                                                             double *jacobianInverseArray,
+                                                                                             double *metricTensorArray,
+                                                                                             double *metricTensorDeterminantSqrtArray,
+                                                                                             double *unitNormalArray)
      void cparametricMaps_getJacobianValuesTrace1D "parametricMaps_getJacobianValuesTrace1D"(proteus_index_t nElements_global,
                                                                                              int nElementBoundaries_element,
                                                                                              int nQuadraturePoints_element,
@@ -2179,6 +2193,15 @@ cdef extern from "femIntegrals.h":
 									                                                                                   double* grad_w,
 									                                                                                   double* dS,
 									                                                                                   double* jac)
+     void ccopyLeftElementBoundaryInfo_movingDomain "copyLeftElementBoundaryInfo_movingDomain"(int nElementBoundaries_element,
+                                                                                         int nElementBoundaryQuadraturePoints_elementBoundary,
+                                                                                         proteus_index_t nExteriorElementBoundaries_global,
+                                                                                         proteus_index_t nInteriorElementBoundaries_global,
+                                                                                         proteus_index_t *elementBoundaryElementsArray,
+                                                                                         int *elementBoundaryLocalElementBoundariesArray,
+                                                                                         proteus_index_t *exteriorElementBoundariesArray,
+                                                                                         proteus_index_t *interiorElementBoundariesArray,
+                                                                                         double *xt)
      void cupdate_f_movingDomain_q "update_f_movingDomain_q"(proteus_index_t nElements_global,
 			                                     int nQuadraturePoints_element,
 			                                     int nSpace,
@@ -2977,6 +3000,41 @@ def parametricMaps_getJacobianValuesTrace(np.ndarray grad_psi,
                                                  <double*>unitNormalArray.data)
     else:
         print("error in getJacobianValuesTrace...jacobianInverse not sized properly")
+def parametricMaps_getJacobianValuesTrace_movingDomain(np.ndarray xtArray,
+                                                       np.ndarray grad_psi,
+                                                       np.ndarray boundaryNormals,
+                                                       np.ndarray boundaryJacobians,
+                                                       np.ndarray l2g,
+                                                       np.ndarray nodeArray,
+                                                       np.ndarray jacobianInverseArray,
+                                                       np.ndarray metricTensorArray,
+                                                       np.ndarray metricTensorDeterminantSqrtArray,
+                                                       np.ndarray unitNormalArray):
+    """The element boundary maps of a moving mesh (FemTools getJacobianValuesTrace_movingDomain).
+
+    The wrapper was lost in the move to Cython; the C kernel was not. As before, 2d uses the
+    moving-domain kernel (it takes the mesh velocity xt) and 1d/3d the fixed-domain ones.
+    """
+    cdef int nd = jacobianInverseArray.shape[3]
+    if nd == 2:
+        cparametricMaps_getJacobianValuesTrace2D_movingDomain(jacobianInverseArray.shape[0],
+                                                              jacobianInverseArray.shape[1],
+                                                              jacobianInverseArray.shape[2],
+                                                              l2g.shape[1],
+                                                              <double*>xtArray.data,
+                                                              <double*>grad_psi.data,
+                                                              <double*>boundaryNormals.data,
+                                                              <double*>boundaryJacobians.data,
+                                                              <proteus_index_t*>l2g.data,
+                                                              <double*>nodeArray.data,
+                                                              <double*>jacobianInverseArray.data,
+                                                              <double*>metricTensorArray.data,
+                                                              <double*>metricTensorDeterminantSqrtArray.data,
+                                                              <double*>unitNormalArray.data)
+    else:
+        parametricMaps_getJacobianValuesTrace(grad_psi, boundaryNormals, boundaryJacobians, l2g, nodeArray,
+                                              jacobianInverseArray, metricTensorArray,
+                                              metricTensorDeterminantSqrtArray, unitNormalArray)
 def updateMass_weak(np.ndarray mt,
                     np.ndarray w_dV,
                     np.ndarray weak_residual):
@@ -6614,6 +6672,26 @@ def update_f_movingDomain(np.ndarray xt,
 			           <double*> xt.data,
 			           <double*> m.data,
 			           <double*> f.data)
+def update_df_movingDomain(np.ndarray xt,
+                           np.ndarray dm,
+                           np.ndarray df):
+    """df -= dm*xt: the update_f kernels with dm for m (lost in the move to Cython, as was the next one)."""
+    update_f_movingDomain(xt, dm, df)
+def copyLeftElementBoundaryInfo_movingDomain(np.ndarray elementBoundaryElementsArray,
+                                             np.ndarray elementBoundaryLocalElementBoundariesArray,
+                                             np.ndarray exteriorElementBoundariesArray,
+                                             np.ndarray interiorElementBoundariesArray,
+                                             np.ndarray xt):
+    """Copy the mesh velocity on interior element boundaries from the left element to the right one."""
+    ccopyLeftElementBoundaryInfo_movingDomain(xt.shape[1],
+                                              xt.shape[2],
+                                              exteriorElementBoundariesArray.shape[0],
+                                              interiorElementBoundariesArray.shape[0],
+                                              <proteus_index_t*> elementBoundaryElementsArray.data,
+                                              <int*> elementBoundaryLocalElementBoundariesArray.data,
+                                              <proteus_index_t*> exteriorElementBoundariesArray.data,
+                                              <proteus_index_t*> interiorElementBoundariesArray.data,
+                                              <double*> xt.data)
 def update_f_movingDomain_constantMass(np.ndarray xt,
 				       np.ndarray f):
     if f.ndim == 3:
