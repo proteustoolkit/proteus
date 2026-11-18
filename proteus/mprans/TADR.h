@@ -609,6 +609,7 @@ inline
       proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
       proteus::pyarray<double>& ebqe_velocity_ext = args.array<double>("ebqe_velocity_ext");
       proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
+      proteus::pyarray<int>& isStrongBoundary_u = args.array<int>("isStrongBoundary_u");
       proteus::pyarray<double>& ebqe_bc_u_ext = args.array<double>("ebqe_bc_u_ext");
       proteus::pyarray<int>& isFluxBoundary_u = args.array<int>("isFluxBoundary_u");
       proteus::pyarray<double>& ebqe_bc_flux_u_ext = args.array<double>("ebqe_bc_flux_u_ext");
@@ -1576,6 +1577,8 @@ inline
                 ebNE_kb_nSpace = ebNE_kb*nSpace;
               int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                 ebN_local_kb_nSpace = ebN_local_kb*nSpace;
+              // per-face kind (C12): strong on this face if the whole model is, or if the face declared itself strong
+              const int forceStrong_face = (forceStrongConditions == 1 || isStrongBoundary_u.data()[ebNE_kb] == 1) ? 1 : 0;
               double u_ext=0.0,
                 grad_u_ext[nSpace],
                 m_ext=0.0,
@@ -1760,7 +1763,7 @@ inline
               //
               exteriorNumericalAdvectiveFlux(isDOFBoundary_u.data()[ebNE_kb],
                                              isFluxBoundary_u.data()[ebNE_kb],
-                                             forceStrongConditions,
+                                             forceStrong_face,
                                              normal,
                                              ebqe_bc_flux_u_ext.data()[ebNE_kb],
                                              f_ext,
@@ -1882,7 +1885,7 @@ inline
               const bool outflow_upwind =
                 STABILIZATION_TYPE == STABILIZATION::ImplicitEV && !USE_EDGE_FLUX &&
                 boundary_flow_w >= 0.0 &&
-                ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
+                ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrong_face == 0) ||
                  (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
               // Record the flux the residual applies.  On an upwinded outflow face
               // sum_i c_i F^f w_i = c_h F^f at each quadrature point, so c_h F^f is
@@ -2066,7 +2069,7 @@ inline
                       // which the edge loop multiplies by w_j.
                       exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],
                                                            isFluxBoundary_u.data()[ebNE_kb],
-                                                           forceStrongConditions,
+                                                           forceStrong_face,
                                                            normal,
                                                            v_w_ext,
                                                            dflux_u_u_ext);
@@ -2081,7 +2084,7 @@ inline
                           double advJacobian_ext = 0.0, diffJacobian_ext = 0.0;
                           exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],
                                                                    isFluxBoundary_u.data()[ebNE_kb],
-                                                                   forceStrongConditions,
+                                                                   forceStrong_face,
                                                                    normal,
                                                                    v_w_ext,
                                                                    advJacobian_ext);
@@ -3086,6 +3089,7 @@ inline
       proteus::pyarray<int>& elementBoundaryLocalElementBoundariesArray = args.array<int>("elementBoundaryLocalElementBoundariesArray");
       proteus::pyarray<double>& ebqe_velocity_ext = args.array<double>("ebqe_velocity_ext");
       proteus::pyarray<int>& isDOFBoundary_u = args.array<int>("isDOFBoundary_u");
+      proteus::pyarray<int>& isStrongBoundary_u = args.array<int>("isStrongBoundary_u");
       proteus::pyarray<double>& ebqe_bc_u_ext = args.array<double>("ebqe_bc_u_ext");
       proteus::pyarray<int>& isFluxBoundary_u = args.array<int>("isFluxBoundary_u");
       proteus::pyarray<double>& ebqe_bc_flux_u_ext = args.array<double>("ebqe_bc_flux_u_ext");
@@ -3256,6 +3260,8 @@ inline
                     ebNE_kb_nSpace = ebNE_kb*nSpace;
                   int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                     ebN_local_kb_nSpace = ebN_local_kb*nSpace;
+                  // per-face kind (C12): strong on this face if the whole model is, or if the face declared itself strong
+                  const int forceStrong_face = (forceStrongConditions == 1 || isStrongBoundary_u.data()[ebNE_kb] == 1) ? 1 : 0;
                   double u_ext=0.0, grad_u_ext[nSpace], m_ext=0.0, dm_ext=0.0,
                     f_ext[nSpace], df_ext[nSpace], a_ext[nnz], da_ext[nnz],
                     bc_a_ext[nnz], bc_da_ext[nnz], difffluxjacobian_ext=0.0,
@@ -3312,7 +3318,7 @@ inline
                   for (int I=0;I<nSpace;I++)
                     flow_w_j += normal[I]*v_w_ext_j[I];
                   const bool outflow_upwind_j = flow_w_j >= 0.0 &&
-                    ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrongConditions == 0) ||
+                    ((isDOFBoundary_u.data()[ebNE_kb] == 1 && forceStrong_face == 0) ||
                      (isDOFBoundary_u.data()[ebNE_kb] != 1 && isFluxBoundary_u.data()[ebNE_kb] != 1));
                   double rho_trace_j = 0.0;
                   if (outflow_upwind_j && !USE_EDGE_FLUX)
@@ -3350,7 +3356,7 @@ inline
                               fluxJacobian_u_u[i][j] += flow_w_j*rho_trace_j*u_test_dS[i];
                           }
                         else
-                          exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrongConditions,normal,v_w_ext_j,advJacobian_ext);
+                          exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isFluxBoundary_u.data()[ebNE_kb],forceStrong_face,normal,v_w_ext_j,advJacobian_ext);
                         exteriorNumericalDiffusiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],isDiffusiveFluxBoundary_u.data()[ebNE_kb],a_rowptr.data(),a_colind.data(),normal,a_w_ext_j,zero_da_ext_j,grad_u_ext,&u_grad_trial_trace[j*nSpace],u_trial_trace_ref.data()[ebN_local_kb_j],ebqe_penalty_ext.data()[ebNE_kb],diffJacobian_ext);
                         difffluxjacobian_ext = (advJacobian_ext*u_trial_trace_ref.data()[ebN_local_kb_j] + diffJacobian_ext)*dwdu_ext_j;
                         fluxJacobian_u_u[i][j] += difffluxjacobian_ext*u_test_dS[i];
@@ -3619,6 +3625,8 @@ inline
                     ebNE_kb_nSpace = ebNE_kb*nSpace;
                   int ebN_local_kb = ebN_local*nQuadraturePoints_elementBoundary+kb,
                     ebN_local_kb_nSpace = ebN_local_kb*nSpace;
+                  // per-face kind (C12): strong on this face if the whole model is, or if the face declared itself strong
+                  const int forceStrong_face = (forceStrongConditions == 1 || isStrongBoundary_u.data()[ebNE_kb] == 1) ? 1 : 0;
                   double u_ext=0.0,
                     grad_u_ext[nSpace],
                     m_ext=0.0,
@@ -3781,7 +3789,7 @@ inline
                         double advJacobian_ext = 0.0, diffJacobian_ext = 0.0;
                         exteriorNumericalAdvectiveFluxDerivative(isDOFBoundary_u.data()[ebNE_kb],
                                                                  isFluxBoundary_u.data()[ebNE_kb],
-                                                                 forceStrongConditions,
+                                                                 forceStrong_face,
                                                                  normal,
                                                                  df_ext,
                                                                  advJacobian_ext);
