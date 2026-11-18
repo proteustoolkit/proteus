@@ -14,11 +14,6 @@ on:
     branches: [main, 1.9.x]
   pull_request:
   workflow_dispatch:
-    inputs:
-      ymf_ref:
-        description: "Test against ymf at this branch, tag or commit of proteustoolkit/ymf (e.g. main). Empty = the PyPI release the environment files pin."
-        required: false
-        default: ""
 
 # Why: the standard macOS runners are the bottleneck. Measured over the last ~80 runs, Linux jobs start at once
 # (median wait 0 min) and macOS jobs wait a median of 7-9 h (p90 17-21 h) for a runner, then run for 20-90 min; a
@@ -166,13 +161,16 @@ jobs:
       # branch had renamed, run started 11 hours before cekees/ymf#2 merged), and ymf
       # 0.3.0 at @main broke main's test/dispatch for half a day on 2026-11-17/18.
       #
-      # To test against ymf on purpose (before a release, or to see whether a proteus
-      # change needs one), run this workflow by hand with the ymf_ref input, e.g. main.
-      - name: Install ymf from git (workflow_dispatch input ymf_ref only)
-        if: github.event_name == 'workflow_dispatch' && inputs.ymf_ref != ''
+      # To test against ymf on purpose (before a release, or to see whether a proteus change needs one), set the
+      # Actions variable YMF_REF of the repository (Settings > Secrets and variables > Actions > Variables) to a
+      # branch, tag or commit of proteustoolkit/ymf, e.g. main, and re-run; unset it afterwards. Every leg of every
+      # run then installs that ymf over the PyPI one. (A variable rather than a workflow_dispatch input: pushes and
+      # pull requests have no inputs, and the fork's dev overlay already edits that block.)
+      - name: Install ymf from git (only when the Actions variable YMF_REF is set)
+        if: vars.YMF_REF != ''
         shell: bash -l {0}
         env:
-          YMF_REF: ${{ inputs.ymf_ref }}
+          YMF_REF: ${{ vars.YMF_REF }}
         run: |
           pip install --no-deps --force-reinstall "ymf @ git+https://github.com/proteustoolkit/ymf.git@${YMF_REF}"
 

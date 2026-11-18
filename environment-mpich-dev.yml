@@ -100,8 +100,8 @@ dependencies:
   # with pip, at a floor (not a moving git branch): ymf 0.3.0 at @main broke
   # main's test/dispatch for half a day on 2026-11-17/18 and every run that
   # started in that window failed for a reason outside the commit under test.
-  # To test against ymf's main on purpose, run sdist.yml by hand with the
-  # ymf_ref input (a branch, tag or commit), or pip install it over this one.
+  # To test against ymf's main on purpose, set the Actions variable YMF_REF
+  # (a branch, tag or commit; see sdist.yml), or pip install it over this one.
   # Replace this pip entry with a plain "- ymf >=0.3.1" conda dependency
   # once the feedstock lands. ymf-import-gmsh is not on PyPI: it stays at git.
   #
