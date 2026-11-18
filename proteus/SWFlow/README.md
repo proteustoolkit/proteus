@@ -12,6 +12,15 @@ hyperbolic system and are an O(h) approximation to the traditional Green-Naghdi 
 <!-- The different tests demonstrate the respective models abilities to handle wet/dry states, reciprocate "real world" problems (see malpasset, colorado_river),
 propagate solitary waves, etc. -->
 
+## Running a case from a ymf spec
+
+A `.ymf` spec runs through `pro run SPEC.ymf` (proteus.Dispatch maps its sub-problems onto SW2DCV or GN_SW2DCV and
+proteus.DispatchRun builds an `SWFlowProblem` with these p and n modules). Nothing here is deprecated yet: the decks are
+the oracle the specs are compared with, bitwise, in `test/dispatch`. The cases a spec equals today: `circular_damBreak.py`
+(`sw_model` 0 and 1, structured mesh), `dam3Bumps.py` (structured with `mesh.cells` per axis, unstructured, a stored mesh,
+open boundaries). Decks that impose a state on part of the boundary, wave generation, `atan` in the bed, or a hot start
+still need a ymf word the spec does not have, and keep running as decks.
+
 ## Getting Started
 
 These instructions will help you run and create new SWFlow tests on your local machine.
