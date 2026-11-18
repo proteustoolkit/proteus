@@ -33,3 +33,15 @@ def test_triangle_that_leaves_no_files_raises_naming_the_file(tmp_path, monkeypa
     d.writePoly(name)
     with pytest.raises(RuntimeError, match=r"did not leave .*sq\.1\.ele"):
         MeshTools.writeMeshFiles(d, MeshTools.getMeshOptions(d))
+
+
+def test_writePoly_numpy_integers_are_plain(tmp_path):
+    d, name = _square(tmp_path, np.int32)
+    d.writePoly(name)
+    assert "np." not in (tmp_path / "sq.poly").read_text()
+    v = [[0., 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    facets = [[[np.int32(i) for i in f]] for f in ((0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5),
+                                                    (2, 3, 7, 6), (3, 0, 4, 7))]
+    cube = Domain.PiecewiseLinearComplexDomain(vertices=v, facets=facets, name=str(tmp_path / "cube"))
+    cube.writePoly(str(tmp_path / "cube"))
+    assert "np." not in (tmp_path / "cube.poly").read_text()

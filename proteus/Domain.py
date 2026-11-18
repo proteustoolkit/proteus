@@ -976,9 +976,9 @@ property float z
                     pf.write("\n")
             #write the segments
             for sN,s in enumerate(self.segments):
-                pf.write(repr(len(s)))
+                pf.write('%d' % (len(s)))
                 for vN in s:
-                    pf.write(" "+repr(vN))
+                    pf.write(" "+'%d' % vN)
                 if hasSegmentFlags:
                     pf.write(" %d\n" % (self.segmentFlags[fN],))
                 else:
@@ -1278,9 +1278,9 @@ class PiecewiseLinearComplexDomain(D_base):
                 else:
                     pf.write('%d %d\n' % (len(f), nFacetHoles))
                 for segmentList in f:
-                    pf.write(repr(len(segmentList))+" ")
+                    pf.write('%d' % (len(segmentList))+" ")
                     for vN in segmentList:
-                        pf.write(repr(vN+1)+" ")
+                        pf.write('%d' % (vN+1)+" ")
                     pf.write('\n')
                 if self.facetHoles:
                     for hN, h in enumerate(self.facetHoles[fN]):
@@ -1352,9 +1352,9 @@ property float z
             #write the facets
             for fN,f in enumerate(self.facets):
                 for segmentList in f:
-                    pf.write(repr(len(segmentList)))
+                    pf.write('%d' % (len(segmentList)))
                     for vN in segmentList:
-                        pf.write(" "+repr(vN))
+                        pf.write(" "+'%d' % vN)
                     if hasFacetFlags:
                         pf.write(" %d\n" % (self.facetFlags[fN],))
                     else:
