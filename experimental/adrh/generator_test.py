@@ -15,8 +15,7 @@ role `porosity`, here a function of x inlined by the spec, so the hand-written k
    largest value and the share of entries that are bitwise equal; the faces, same comparison.
 4. Partition independence: each rank assembles its share of the elements with the generated functor; the sum over ranks agrees
    with the serial hand-written assembly.
-5. What the generator refuses: stabilizations and boundary kinds the template cannot take, and the spec's MCorr (no stabilization
-   stated: Galerkin; slice 3) and flow (three equations).
+5. What the generator refuses: stabilizations and boundary kinds the template cannot take, and the spec's flow (three equations).
 6. One run-time comparison: the element kernels on the fixture tiled to ~73 000 elements, minimum of 7 repeats.
 """
 import copy
@@ -44,6 +43,7 @@ OK = True
 ALPHA, SC_C, SC_UREF, SC_BETA, DROP = 2.5, 0.5, 1.0, 1.5, 0.0     # what dambreak_formulation.ymf states of VOF and NCLS (alpha: the integrator's)
 GENERATED = ['vof_2d', 'ncls_2d', 'porous_vof_2d', 'porous_vof_3d', 'porous_ncls_2d', 'porous_ncls_3d', 'transport_2d',
              'transport_lagged_2d', 'transport_step_2d', 'reacdiff_2d', 'rdls_nosc_2d']
+GENERATED = ['vof_2d', 'ncls_2d', 'rdls_2d', 'mcorr_2d'] + GENERATED[2:6] + ['porous_mcorr_2d', 'porous_mcorr_3d', 'porous_rdls_3d'] + GENERATED[6:]
 
 
 def say(*a):
@@ -299,6 +299,156 @@ def slots():
     check('the d(dH)/d(grad u) slot makes the Jacobian exact (< 1e-6), and the frozen one is not (> 1e-3)', on < 1e-6 and off > 1e-3)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# slice 3: RDLS and MCorr
+
+RDLS_SC, RDLS_EPS, RDLS_WDF = 0.9, 0.75, 10.0      # what dambreak_formulation.ymf states of RDLS (factor, eps = 0.75 h); the pin's factor is the engine's
+
+
+def rdls_case(d, rng):
+    """A random RDLS state on a case dict (xn, u, qp, qw, hq, h): the level set phi at the points (|phi| ~ h), the frozen phi."""
+    nE, nQ = d['hq'].shape
+    d['phi'] = rng.normal(size=(nE, nQ)) * d['hq']
+    return d
+
+
+def rdls_hand(d, bg):
+    """The hand-written RDLS with the interface pin switched off (the frozen level set is far from zero) and background diffusion bg."""
+    nE, nQ = d['hq'].shape
+    f3 = np.ascontiguousarray(np.stack([d['phi'], d['hq'], np.broadcast_to(d['h'][:, None], (nE, nQ))], axis=-1))
+    far = np.full(d['u'].shape, 1e9)
+    return hand.rdls_supg(d['nd'], d['xn'], d['u'], far, d['qp'], d['qw'], f3, d['h'], RDLS_SC, RDLS_EPS, bg, RDLS_WDF)[:4]
+
+
+def rdls_gen(d):
+    nE, nQ = d['hq'].shape
+    f2 = np.ascontiguousarray(np.stack([d['phi'], d['hq']], axis=-1))
+    z = np.zeros((nE, nQ))
+    return gen.generated_supg('rdls' if d['nd'] == 2 else 'porous_rdls', d['nd'], d['xn'], d['u'], d['qp'], d['qw'], f2, z, z, d['h'], 0.0, False)[:4]
+
+
+def mcorr_hand(d, por):
+    nE, nQ = d['hq'].shape
+    he = np.broadcast_to(d['h'][:, None], (nE, nQ))
+    f6 = np.ascontiguousarray(np.stack([d['phi'], d['Hv'], por, d['hq'], he, np.ones((nE, nQ))], axis=-1))
+    return hand.mcorr(d['nd'], d['xn'], d['u'], d['qp'], d['qw'], f6, 1.0, 1.5, 1.5, 10.0)[:2]
+
+
+def mcorr_gen(name, d):
+    f3 = np.ascontiguousarray(np.stack([d['phi'], d['Hv'], d['hq']], axis=-1))
+    return gen.generated_galerkin(name, d['nd'], d['xn'], d['u'], d['qp'], d['qw'], f3)
+
+
+def slice3(f_rdls, f_mcorr, rng):
+    say('  RDLS (spec: S = sign smoothed at 0.75 h, H = S |grad u|, r = -S, SUPG metric tau without a time term, sc 0.9 not lagged)')
+    if f_rdls is not None:
+        l2g, psi = f_rdls['mesh_l2g'], f_rdls['u_trial_ref']
+        nE, nD = l2g.shape
+        h_phi = np.zeros((nE, psi.shape[0]))
+        for j in range(nD):
+            h_phi += f_rdls['nodeDiametersArray'][l2g][:, j][:, None] * psi[None, :, j]
+        d = dict(nd=nD - 1, xn=f_rdls['mesh_dof'][l2g], u=f_rdls['phi_dof'][l2g] * 0 + f_rdls['u_dof'][l2g] if 'u_dof' in f_rdls else f_rdls['phi_dof'][l2g],
+                 qp=np.ascontiguousarray(psi[:, 1:]), qw=f_rdls['dV_ref'], h=f_rdls['elementDiameter'], hq=h_phi, phi=f_rdls['phi_ls'])
+        compare("RDLS, proteus's fixture (%d elements), no background diffusion" % nE, rdls_gen(d), rdls_hand(d, 0.0), 1e-9)
+        gap = max(np.abs(a - b).max() / np.abs(b).max() for a, b in zip(rdls_gen(d)[:2], rdls_hand(d, float(f_rdls['backgroundDiffusionFactor']))[:2]))
+        say('  %-70s %.2e' % ('  (with proteus\'s background diffusion %.2f the spec does not state: R, J differ by)' % float(f_rdls['backgroundDiffusionFactor']), gap))
+    for nd in (2, 3):
+        d = rdls_case(per_point_h(random_case(rng, nd), rng), rng)
+        compare('RDLS, random state, %dD, %d elements' % (nd, d['xn'].shape[0]), rdls_gen(d), rdls_hand(d, 0.0), 1e-9)
+    say('  MCorr (spec: reaction theta (H_eps(phi + u) - chi) with eps = 1.5 h, diffusion 10 h, no stabilization: Galerkin)')
+    if f_mcorr is not None:
+        l2g, psi = f_mcorr['mesh_l2g'], f_mcorr['u_trial_ref']
+        nE, nD = l2g.shape
+        h_phi = np.zeros((nE, psi.shape[0]))
+        for j in range(nD):
+            h_phi += f_mcorr['nodeDiametersArray'][l2g][:, j][:, None] * psi[None, :, j]
+        assert f_mcorr['q_porosity'].min() == 1.0 == f_mcorr['q_porosity'].max() and f_mcorr['phi_solid'].min() > 0
+        for label, u in (('the iterate proteus ran', f_mcorr['u_dof']), ('proteus\'s next iterate', f_mcorr['u_next'])):
+            d = dict(nd=nD - 1, xn=f_mcorr['mesh_dof'][l2g], u=u[l2g], qp=np.ascontiguousarray(f_mcorr['x_ref'][:, :nD - 1]),
+                     qw=f_mcorr['dV_ref'], h=f_mcorr['elementDiameter'], hq=h_phi, phi=f_mcorr['q_phi'], Hv=f_mcorr['q_H'])
+            compare('MCorr, proteus\'s fixture (%d elements) at %s' % (nE, label), mcorr_gen('mcorr', d), mcorr_hand(d, np.ones(h_phi.shape)), 1e-12)
+        # against proteus's own assembled residual and Jacobian
+        import scipy.sparse as sp
+        d['u'] = f_mcorr['u_dof'][l2g]
+        R, J = mcorr_gen('mcorr', d)
+        nN = f_mcorr['mesh_dof'].shape[0]
+        r = np.zeros(nN)
+        np.add.at(r, l2g, R)
+        Jg = sp.csr_matrix((J.ravel(), (np.repeat(l2g, nD, axis=1).ravel(), np.tile(l2g, nD).ravel())), shape=(nN, nN))
+        Jp = sp.csr_matrix((f_mcorr['out_globalJacobian'], f_mcorr['csrColumnOffsets_DofLoops'], f_mcorr['csrRowIndeces_DofLoops']), shape=(nN, nN))
+        er = np.abs(r - f_mcorr['out_globalResidual']).max() / np.abs(f_mcorr['out_globalResidual']).max()
+        ej = abs(Jg - Jp).max() / abs(Jp).max()
+        say('  %-70s %.2e  Jacobian %.2e' % ('MCorr generated vs proteus MCorr kernel: global residual', er, ej))
+        check('generated MCorr reproduces proteus (< 1e-12)', er < 1e-12 and ej < 1e-12)
+    for nd in (2, 3):
+        d = rdls_case(per_point_h(random_case(rng, nd), rng), rng)
+        d['Hv'] = rng.uniform(0.0, 1.0, d['hq'].shape)
+        x = points(d)
+        compare('MCorr (no porosity), random state, %dD, %d elements' % (nd, d['xn'].shape[0]), mcorr_gen('mcorr', d),
+                mcorr_hand(d, np.ones(d['hq'].shape)), 1e-12) if nd == 2 else None
+        compare('MCorr with the spec\'s porosity theta(x, h), random, %dD' % nd, mcorr_gen('porous_mcorr', d),
+                mcorr_hand(d, theta(x[..., 0], x[..., 1], d['hq'])), 1e-12)
+
+
+def partitioned_pair(label, d, hand_fn, gen_fn):
+    """Element-partitioned assembly with the generated functor, summed over ranks, against the serial hand-written one
+    (R, J of every element from hand_fn(d) / gen_fn(d))."""
+    nE = d['xn'].shape[0]
+    mine = np.arange(nE)[RANK::SIZE] if os.environ.get('PART', 'contiguous') == 'cyclic' else np.array_split(np.arange(nE), SIZE)[RANK]
+    keys = {tuple(p): i for i, p in enumerate(map(tuple, np.unique(d['xn'].reshape(-1, 3), axis=0)))}
+    l2g = np.array([[keys[tuple(p)] for p in e] for e in d['xn']])
+    nN = len(keys)
+
+    def assemble(fn, sel):
+        sub = {k: (v[sel] if isinstance(v, np.ndarray) and v.ndim and v.shape[0] == nE else v) for k, v in d.items()}
+        R, J = fn(sub)[:2]
+        r, Jg = np.zeros(nN), np.zeros((nN, nN))
+        for e, g in enumerate(l2g[sel]):
+            np.add.at(r, g, R[e])
+            Jg[np.ix_(g, g)] += J[e]
+        return r, Jg
+    r_s, J_s = assemble(hand_fn, np.arange(nE))
+    r_p, J_p = assemble(gen_fn, mine)
+    if comm:
+        r_p, J_p = comm.allreduce(r_p), comm.allreduce(J_p)
+    err = max(np.abs(r_p - r_s).max() / np.abs(r_s).max(), np.abs(J_p - J_s).max() / np.abs(J_s).max())
+    tol = 1e-9 if label.startswith('rdls') else 1e-12
+    say('  %-70s %.2e  %s' % ('%s generated on %d rank(s) vs serial hand-written' % (label, SIZE), err, 'ok' if err < tol else 'FAIL'))
+    global OK
+    OK &= err < tol
+
+
+def slice3_partitioned(rng):
+    for nd in (2, 3):
+        d = rdls_case(per_point_h(random_case(rng, nd, n=4), rng), rng)
+        d['Hv'] = rng.uniform(0.0, 1.0, d['hq'].shape)
+        x = points(d)
+        partitioned_pair('rdls %dD' % nd, d, lambda s: rdls_hand(s, 0.0), rdls_gen)
+        partitioned_pair('porous mcorr %dD' % nd, d, lambda s, x=x: mcorr_hand(s, theta(*[points(s)[..., 0], points(s)[..., 1]], s['hq'])),
+                         lambda s: mcorr_gen('porous_mcorr', s))
+
+
+def timing3(rng):
+    """RDLS and MCorr element kernels, hand-written against generated, on a random 2D case tiled to ~100 000 elements."""
+    d = rdls_case(per_point_h(random_case(rng, 2), rng), rng)
+    d['Hv'] = rng.uniform(0.0, 1.0, d['hq'].shape)
+    reps = 90
+    big = {k: (np.concatenate([v] * reps) if isinstance(v, np.ndarray) and v.ndim and v.shape[0] == d['xn'].shape[0] else v) for k, v in d.items()}
+    one = np.ones(big['hq'].shape)
+    for label, hf, gf in (('RDLS', lambda: rdls_hand(big, 0.0), lambda: rdls_gen(big)),
+                          ('MCorr', lambda: mcorr_hand(big, one), lambda: mcorr_gen('mcorr', big))):
+        best = {}
+        for k, fn in (('hand-written', hf), ('generated', gf)):
+            ts = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                fn()
+                ts.append(time.perf_counter() - t0)
+            best[k] = min(ts)
+        say('  %-6s %d elements: hand-written %.4f s, generated %.4f s (generated / hand-written = %.3f)'
+            % (label, big['xn'].shape[0], best['hand-written'], best['generated'], best['generated'] / best['hand-written']))
+
+
 def timing(d, name, layout, kernel):
     reps = 100
     big = {k: (np.concatenate([v] * reps) if isinstance(v, np.ndarray) and v.ndim and v.shape[0] == d['xn'].shape[0] else v)
@@ -368,7 +518,7 @@ def refusals():
     refused('strong Dirichlet on the whole boundary', lambda s: s['boundary_conditions'][0].pop('only'), ['whole boundary'])
     refused('an unknown field', lambda s: s.update(reads={}), ['the name v_0 is not'])
     # the other sub-problems of the same spec, as they are
-    for n, words in {'mcorr': ['no stabilization is stated'], 'flow': ['one equation, not 3']}.items():
+    for n, words in {'flow': ['one equation, not 3']}.items():
         p = subprocess.run([sys.executable, os.path.join(HERE, 'generator', 'generate.py'), os.devnull,
                             os.path.join(INPUTS, '%s_2d.json' % n)], capture_output=True, text=True)
         check('%s (the spec\'s own sub-problem) is refused, naming: %s' % (n, ', '.join(words)), p.returncode == 1 and all(w in p.stderr for w in words))
@@ -395,11 +545,14 @@ def main(argv):
     lagged()
     say('3c. slots: h per point, dr, diffusion, d(dH)/d(grad u)')
     slots()
+    say('3d. RDLS and MCorr from their sub-problems')
+    slice3(dict(np.load(os.path.join(HERE, 'rdls_damBreak_he0.05.npz'))), dict(np.load(os.path.join(HERE, 'mcorr_damBreak_he0.05.npz'))), rng)
     say('4. partition independence (%d rank(s))' % SIZE)
     for nd in (2, 3):
         r = per_point_h(random_case(rng, nd, n=4), rng)
         partitioned(r, 'porous_vof', 'h', 'vof')
         partitioned(r, 'porous_ncls', 'v', 'ncls')
+    slice3_partitioned(rng)
     if RANK == 0:
         say('5. refusals')
         refusals()
@@ -409,6 +562,7 @@ def main(argv):
         per_point_h(d, rng)
         timing(d, 'vof', 'v', 'vof')
         timing(d, 'ncls', 'v', 'ncls')
+        timing3(rng)
     OK_all = comm.allreduce(int(OK), op=MPI.MIN) if comm else int(OK)
     say('PASS' if OK_all else 'FAIL')
     return 0 if OK_all else 1

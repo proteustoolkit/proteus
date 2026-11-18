@@ -44,19 +44,67 @@ def _attr(node):
     return node.attr if isinstance(node, ast.Attribute) else None
 
 
+class _CSE:
+    """Common subexpressions of one functor's expressions: a function call (sqrt, sin, a select, ...) that occurs more than once in
+    the code strings of one evaluate is computed once into a temporary. ymf prints every slot as an independent string (RDLS's
+    smoothed sign appears in H, dH x2 and r, the norm of grad u six times); the compiler does not merge libm calls. The value of
+    each is the same expression evaluated once, so the result does not change."""
+
+    def __init__(self, texts):
+        self.count, self.names, self.decls = {}, {}, []
+        for text in texts:
+            self._count(ast.parse(text, mode="eval").body)
+
+    def _count(self, n):
+        # a call inside a select's branches is not hoisted: the branch is taken at some points only (RDLS's sin is evaluated only
+        # inside the smoothing band), so the select itself is the unit
+        if self.heavy(n):
+            key = ast.dump(n)
+            self.count[key] = self.count.get(key, 0) + 1
+            if _attr(n.func) == "select":
+                return
+        for c in ast.iter_child_nodes(n):
+            self._count(c)
+
+    @staticmethod
+    def heavy(n):
+        return isinstance(n, ast.Call) and _attr(n.func) in set(_FUNCS) | {"select"}
+
+    def hoist(self, n):
+        return self.heavy(n) and self.count.get(ast.dump(n), 0) > 1
+
+
 class _Translator:
     """numpy source (the strings ymf.symbolic.adr.to_code prints) -> a C++ expression with the same association order."""
 
-    def __init__(self, names, where):
-        self.names, self.where = names, where
+    def __init__(self, names, where, cse=None):
+        self.names, self.where, self.cse = names, where, cse
+        self.in_select = 0
 
     def __call__(self, text):
         return self.visit(ast.parse(text, mode="eval").body)
 
+    def visit(self, n):
+        is_select = isinstance(n, ast.Call) and _attr(n.func) == "select"
+        if self.cse is not None and not self.in_select and self.cse.hoist(n):
+            key = ast.dump(n)
+            if key not in self.cse.names:
+                self.in_select += is_select
+                expr = self.visit_(n)
+                self.in_select -= is_select
+                self.cse.names[key] = "t_%d" % len(self.cse.decls)
+                self.cse.decls.append("const double %s = %s;" % (self.cse.names[key], expr))
+            return self.cse.names[key]
+        self.in_select += is_select
+        try:
+            return self.visit_(n)
+        finally:
+            self.in_select -= is_select
+
     def fail(self, what):
         raise GeneratorError("%s: %s" % (self.where, what))
 
-    def visit(self, n):
+    def visit_(self, n):
         if isinstance(n, ast.Constant):
             if isinstance(n.value, bool) or not isinstance(n.value, (int, float)):
                 self.fail("constant %r" % (n.value,))
@@ -188,14 +236,33 @@ class _Inputs:
         return layout
 
 
-def _code(inputs, problems):
-    def tr(text, what, names=None):
+def _code(inputs, problems, cse=None):
+    def tr(text, what, names=None, plain=False):
         try:
-            return _Translator(names or inputs.names, what)(text)
+            return _Translator(names or inputs.names, what, None if plain else cse)(text)
         except GeneratorError as exc:
             problems.append(str(exc))
             return "0.0"
     return tr
+
+
+def _collect(entry):
+    """Every code string of an ADR equation's slots (m, dm, f, df, H, dH, r, dr, a, da)."""
+    out = []
+
+    def walk(v, key=None):
+        if isinstance(v, str):
+            if key not in ("component",):
+                out.append(v)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                if k not in ("depends_on", "rowptr", "colind"):
+                    walk(x, k)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x, key)
+    walk(entry)
+    return out
 
 
 def _isotropic(diff, dim, unknown, problems, where):
@@ -294,9 +361,6 @@ def _specialization_supg(spec):
     kernel = spec["kernel"]
     where = "%s (%dD)" % (kernel, dim)
     problems = []
-    if not spec.get("stabilization"):
-        raise GeneratorError("%s: no stabilization is stated, so the problem is Galerkin: the generic Terms functor (engine.h) is "
-                             "not generated yet; the SUPG template needs a stated stabilization" % where)
     if len(adr["equations"]) != 1:
         raise GeneratorError("%s: the scalar template takes one equation, not %d (a vector problem needs the n-component Terms "
                              "path, which has no SUPG/VMS/shock-capturing template)" % (where, len(adr["equations"])))
@@ -310,7 +374,8 @@ def _specialization_supg(spec):
             if when == "previous_step":
                 inputs.step_fields.append(name)
     layout = inputs.finish()
-    tr = _code(inputs, problems)
+    cse = None if lagged else _CSE(_collect(entry))
+    tr = _code(inputs, problems, cse)
     sc, defaulted = _stabilization(spec["stabilization"], problems)
     face = _face_kind(entry, spec.get("boundary_conditions"), problems, where)
     lines, has = [], {"F": False, "H": False, "R": False, "DR": False, "A": False, "DDH": False}
@@ -339,7 +404,7 @@ def _specialization_supg(spec):
             has["H"] = True
             lines.append("T.H = %s;" % tr(h["H"], "H"))
             dH = [tr(h["dH"][unknown][k], "dH[%d]" % k) for k in range(dim)]
-            dh_exprs = dH
+            dh_exprs = [tr(h["dH"][unknown][k], "dH[%d]" % k, plain=True) for k in range(dim)]    # over Dual: no temporaries
             lines += ["T.dH[%d] = %s;" % (k, e) for k, e in enumerate(dH)]
             if h["depends_on"].get(unknown) == "nonlinear":
                 has["DDH"] = True
@@ -362,9 +427,94 @@ def _specialization_supg(spec):
     # the tau form follows the equation: a time term gives the metric tau with dm_t, none gives the steady form (proteus's
     # useMetrics = 1 tau of VOF/NCLS and of RDLS)
     tau_form = 0 if "mass" in entry else 1
+    if cse is not None:
+        lines = cse.decls + lines
     return dict(kernel=kernel, dim=dim, flavor="supg", has=has, tau=tau_form, lines=lines, dh=dh_exprs, sc=sc, defaulted=defaulted,
                 face=face, layout=layout, uses_x=any("X[" in l for l in lines), uses_u=any(re.search(r"\bu\b", l) for l in lines),
                 ddh=has["DDH"])
+
+
+def _specialization_terms(spec):
+    """No stabilization is stated: the problem is Galerkin and its functor is the engine.h form (Terms, one component, the point's
+    inputs bound by bindElement/bindPoint): every slot of the ADR form, with the diffusion tensor in full."""
+    dim, adr = spec["dim"], spec["adr"]
+    kernel = spec["kernel"]
+    where = "%s (%dD)" % (kernel, dim)
+    problems = []
+    if len(adr["equations"]) != 1:
+        raise GeneratorError("%s: the generated Galerkin functor takes one component, not %d" % (where, len(adr["equations"])))
+    if spec.get("lagged_coefficients"):
+        problems.append("lagged_coefficients on a Galerkin problem: only the SUPG template's functor reads them")
+    entry = adr["equations"][0]
+    unknown = entry["component"]
+    inputs = _Inputs(spec)
+    inputs.finish()
+    names = {k: v.replace("gu[", "gu[0][") if v.startswith("gu[") else ("u[0]" if v == "u" else v) for k, v in inputs.names.items()}
+    cse = _CSE(_collect(entry))
+    tr = _code(inputs, problems, cse)
+    t = lambda text, what: tr(text, what, names)
+    lines, has = [], {"mass": False, "advection": False, "diffusion": False, "hamiltonian": False, "reaction": False}
+    da_nz = False
+    if "mass" in entry:
+        has["mass"] = True
+        lines += ["T.m[0] = %s;" % t(entry["mass"]["m"], "mass"), "T.dm[0][0] = %s;" % t(entry["mass"]["dm"].get(unknown, "0"), "dm")]
+    if "advection" in entry:
+        has["advection"] = True
+        a = entry["advection"]
+        for k in range(dim):
+            lines.append("T.f[0][%d] = %s;" % (k, t(a["f"][k], "f[%d]" % k)))
+            lines.append("T.df[0][0][%d] = %s;" % (k, t(a["df"][unknown][k], "df[%d]" % k) if a["df"].get(unknown) else "0.0"))
+    if "hamiltonian" in entry:
+        has["hamiltonian"] = True
+        h = entry["hamiltonian"]
+        lines.append("T.H[0] = %s;" % t(h["H"], "H"))
+        for k in range(dim):
+            lines.append("T.dH[0][0][%d] = %s;" % (k, t(h["dH"][unknown][k], "dH[%d]" % k)))
+    if "reaction" in entry:
+        has["reaction"] = True
+        r = entry["reaction"]
+        lines.append("T.r[0] = %s;" % t(r["r"], "r"))
+        lines.append("T.dr[0][0] = %s;" % (t(r["dr"][unknown], "dr") if r.get("dr", {}).get(unknown) else "0.0"))
+    if "diffusion" in entry:
+        has["diffusion"] = True
+        if list(entry["diffusion"]) != [unknown]:
+            problems.append("a diffusion potential other than the unknown")
+        else:
+            ent = entry["diffusion"][unknown]
+            lines += ["T.phi[0] = u[0];", "T.dphi[0][0] = 1.0;"]
+            da = (ent.get("da") or {}).get(unknown)
+            for i in range(dim):
+                for k in range(ent["rowptr"][i], ent["rowptr"][i + 1]):
+                    j = ent["colind"][k]
+                    lines.append("T.a[0][0][%d][%d] = %s;" % (i, j, t(ent["a"][k], "a[%d][%d]" % (i, j))))
+                    if da:
+                        da_nz = True
+                        lines.append("T.da[0][0][0][%d][%d] = %s;" % (i, j, t(da[k], "da[%d][%d]" % (i, j))))
+    if problems:
+        raise GeneratorError("%s cannot be generated:\n  - %s" % (where, "\n  - ".join(problems)))
+    lines = cse.decls + lines
+    return dict(kernel=kernel, dim=dim, flavor="terms", has=has, lines=lines, layout=inputs.layout, da_nz=da_nz)
+
+
+def _emit_terms(s):
+    dim, kernel, has = s["dim"], s["kernel"], s["has"]
+    flags = ", ".join("has_%s = %s" % (k, str(v).lower()) for k, v in has.items())
+    nf = len(s["layout"])
+    return ["  template <>", "  struct %sCoefficients<%d> : DenseMasks" % (kernel, dim), "  {",
+            "    // per-point inputs fld[]: %s" % (", ".join(s["layout"]) or "none"),
+            "    static constexpr int nc = 1, nSpace = %d, nFields = %d;" % (dim, nf),
+            "    static constexpr bool %s;" % flags,
+            "    static constexpr bool da_nz(int, int, int) { return %s; }" % str(s["da_nz"]).lower(),
+            "    const double *fields = nullptr;   // the whole mesh's point inputs (nE, nQ, nFields)",
+            "    int nQ = 0;",
+            "    const double *fq = nullptr;       // this point's inputs, set by bindElement + bindPoint",
+            "    ADRH_FN %sCoefficients bindElement(int eN) const" % kernel,
+            "    { %sCoefficients c = *this; c.fq = fields + (long)eN * nQ * nFields; return c; }" % kernel,
+            "    ADRH_FN %sCoefficients bindPoint(int q) const" % kernel,
+            "    { %sCoefficients c = *this; c.fq = fq + (long)q * nFields; return c; }" % kernel,
+            "    ADRH_FN void evaluate(double, const double X[3], const double u[1], const double gu[1][%d], Terms<1, %d> &T) const" % (dim, dim),
+            "    {", "      const double *fld = fq;", "      (void)fld; (void)X; (void)u; (void)gu;"] + \
+           ["      " + l for l in s["lines"]] + ["    }", "  };", ""]
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -406,17 +556,19 @@ def _emit_supg(s):
     sig = "const double *fld, double u, const double *gu, %sScalarTerms<%d> &T" % ("const double *X, " if s["uses_x"] else "", dim)
     out += ["    ADRH_FN ADRH_FORCE_INLINE void evaluate(%s) const" % sig, "    {", "      (void)fld; (void)u; (void)gu;"]
     body = list(s["lines"])
-    if s["ddh"]:
-        # the Hamiltonian's derivative slot and its derivative with respect to grad u come from the same expressions
-        body = [l for l in body if not l.startswith("T.dH[")]
-        body += ["dHExpressions<double>(fld, %s, u, gu, T.dH);" % xarg, "{",
-                 "  Dual<%d> g[%d], dh[%d];" % (dim, dim, dim),
-                 "  for (int K = 0; K < %d; ++K) g[K] = Dual<%d>::seed(gu[K], K);" % (dim, dim),
-                 "  dHExpressions<Dual<%d>>(fld, %s, Dual<%d>(u), g, dh);" % (dim, xarg, dim),
-                 "  for (int I = 0; I < %d; ++I)" % dim,
-                 "    for (int K = 0; K < %d; ++K) T.ddH[I][K] = dh[I].d[K];" % dim, "}"]
     out += ["      " + l for l in body]
-    out += ["    }", "  };", ""]
+    out += ["    }"]
+    if s["ddh"]:
+        # d(dH)/d(grad u): only the exact Jacobian needs it, so the kernel asks for it (exactJacobian) and nothing else pays
+        out += ["    ADRH_FN ADRH_FORCE_INLINE void evaluateDDH(const double *fld, double u, const double *gu, %sScalarTerms<%d> &T) const"
+                % ("const double *X, " if s["uses_x"] else "", dim), "    {",
+                "      Dual<%d> g[%d], dh[%d];" % (dim, dim, dim),
+                "      for (int K = 0; K < %d; ++K) g[K] = Dual<%d>::seed(gu[K], K);" % (dim, dim),
+                "      dHExpressions<Dual<%d>>(fld, %s, Dual<%d>(u), g, dh);" % (dim, xarg, dim),
+                "      for (int I = 0; I < %d; ++I)" % dim,
+                "        for (int K = 0; K < %d; ++K) T.ddH[I][K] = dh[I].d[K];" % dim,
+                "    }"]
+    out += ["  };", ""]
     return out
 
 
@@ -426,13 +578,13 @@ def emit(specs):
         by.setdefault(s["kernel"], []).append(s)
     out = ["// GENERATED by experimental/adrh/generator/generate.py from ymf's plain-data sub-problem records; do not edit.",
            "// Inputs: " + ", ".join("%s %dD" % (s["kernel"], s["dim"]) for s in specs),
-           "#pragma once", '#include <cmath>', '#include "portable.h"', '#include "dual.h"', '#include "vof.h"', "",
+           "#pragma once", '#include <cmath>', '#include "portable.h"', '#include "dual.h"', '#include "vof.h"', '#include "masked.h"', "",
            "namespace adrh", "{", "namespace generated", "{"]
     for kernel, group in by.items():
         out.append("  template <int nS_>\n  struct %sCoefficients { static constexpr bool available = false; };" % kernel)
         for spec in group:
-            s = _specialization_supg(spec)
-            body = _emit_supg(s)
+            s = _specialization_supg(spec) if spec.get("stabilization") else _specialization_terms(spec)
+            body = _emit_supg(s) if s["flavor"] == "supg" else _emit_terms(s)
             body[2] = body[2]       # struct line kept
             # `available` marks a dimension the spec stated
             body.insert(4, "    static constexpr bool available = true;")

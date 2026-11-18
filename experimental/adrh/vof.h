@@ -33,7 +33,8 @@ namespace adrh
   //   hasDR              dr = dr/du: the reaction depends on u (the Jacobian gets dr w_j w_i, the strong residual dr w_j)
   //   hasA               isotropic diffusion ad (and dad = d ad/du), weak form ad grad u . grad w (Galerkin: it does not enter
   //                      tau or the strong residual, which is exact for P1)
-  //   hasDDH             ddH[I][K] = d dH_I / d grad u_K: with SUPGParameters::exactJacobian the Jacobian of the subgrid term
+  //   hasDDH             ddH[I][K] = d dH_I / d grad u_K, from the functor's evaluateDDH, which the kernel calls only with
+  //                      SUPGParameters::exactJacobian: the Jacobian of the subgrid term
   //                      follows the dependence of a = dH on grad u (RDLS's S |grad u|); without it, proteus's Jacobian
   //   usesPoint          evaluate also takes the point's physical coordinates x[3] (a coefficient that is a function of x)
 #define ADRH_FUNCTOR_FLAG(name)                                                              \
@@ -136,6 +137,12 @@ namespace adrh
         for (int I = 0; I < nS; ++I) gu[I] += ue[b] * gw[b][I];
       }
       evaluateScalar<Coefficients, nS>(C, fields + q * nF, u, gu, G.x, T);
+      if constexpr (Flag_hasDDH<Coefficients>::value)
+        if (P.exactJacobian)
+        {
+          if constexpr (Flag_usesPoint<Coefficients>::value) C.evaluateDDH(fields + q * nF, u, gu, G.x, T);
+          else C.evaluateDDH(fields + q * nF, u, gu, T);
+        }
       const double m_t = P.alpha * T.m + beta[q], dm_t = P.alpha * T.dm;
       // the characteristic velocity of the strong residual, its adjoint and tau: df + dH (only the terms the functor has)
       double a[nS];

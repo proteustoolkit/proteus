@@ -30,6 +30,11 @@ template <int nS> using TransportStepFunctor = adrh::generated::TransportStepCoe
 // Hamiltonian nonlinear in grad u: d(dH)/d(grad u) by dual numbers)
 template <int nS> using ReacdiffFunctor = adrh::generated::ReacdiffCoefficients<nS>;
 template <int nS> using RdlsNoscFunctor = adrh::generated::RdlsNoscCoefficients<nS>;
+// slice 3: RDLS (SUPG template) and MCorr (the Galerkin form of engine.h) from their sub-problems of the spec
+template <int nS> using RDLSFunctor = adrh::generated::RDLSCoefficients<nS>;
+template <int nS> using MCORRFunctor = adrh::generated::MCORRCoefficients<nS>;
+template <int nS> using PorousMCORRFunctor = adrh::generated::PorousMCORRCoefficients<nS>;
+template <int nS> using PorousRDLSFunctor = adrh::generated::PorousRDLSCoefficients<nS>;
 #else
 #define ADRH_MODULE_NAME adrh_proto
 template <int nS> using VOFFunctor = adrh::VOFCoefficients<nS>;
@@ -100,6 +105,9 @@ py::object dispatchSpace(int nd, const std::string &space, F &&f)
   throw std::invalid_argument("no space '" + space + "' in " + std::to_string(nd) + "D (p1, p2, q1; nd 1 to 3, q1 only 2 or 3)");
 }
 
+// A generated functor of the Galerkin form (engine.h's Terms: no stabilization stated) derives from DenseMasks; the SUPG ones do not.
+template <class C> constexpr bool kGalerkin = std::is_base_of_v<adrh::DenseMasks, C>;
+
 // The scalar SUPG element loop for a functor C (vof.h): R (nE, nD), J (nE, nD, nD), numDiff and cfl (nE, nQ), and with withCut
 // NCLS's sign-change flag per element. A functor the spec did not state for this dimension is refused.
 template <class C, class S>
@@ -107,9 +115,9 @@ py::tuple supgElements(Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr 
                        bool withCut)
 {
   constexpr int nS = S::nS, nD = S::nDOF;
-  if constexpr (!adrh::Available<C>::value)
+  if constexpr (!adrh::Available<C>::value || kGalerkin<C>)
   {
-    throw std::invalid_argument("the generated functor was not read from the spec in " + std::to_string(nS) + "D");
+    throw std::invalid_argument("no generated SUPG functor of this name in " + std::to_string(nS) + "D");
     return py::tuple();
   }
   else
@@ -144,9 +152,9 @@ py::tuple scalarFaces(Arr xn, Arr u, IArrTop faceLocal, Arr xi, Arr qwf, Arr fie
                       const double *gflux, const double *rd)
 {
   constexpr int nS = S::nS, nD = S::nDOF;
-  if constexpr (!adrh::Available<C>::value)
+  if constexpr (!adrh::Available<C>::value || kGalerkin<C>)
   {
-    throw std::invalid_argument("the generated functor was not read from the spec in " + std::to_string(nS) + "D");
+    throw std::invalid_argument("no generated SUPG functor of this name in " + std::to_string(nS) + "D");
     return py::tuple();
   }
   else
@@ -200,6 +208,10 @@ py::object withGenerated(const std::string &kernel, F &&f)
   if (kernel == "transport_step") return f(TransportStepFunctor<nS>{});
   if (kernel == "reacdiff") return f(ReacdiffFunctor<nS>{});
   if (kernel == "rdls_nosc") return f(RdlsNoscFunctor<nS>{});
+  if (kernel == "rdls") return f(RDLSFunctor<nS>{});
+  if (kernel == "mcorr") return f(MCORRFunctor<nS>{});
+  if (kernel == "porous_rdls") return f(PorousRDLSFunctor<nS>{});
+  if (kernel == "porous_mcorr") return f(PorousMCORRFunctor<nS>{});
   throw std::invalid_argument("no generated kernel " + kernel);
 }
 #endif
@@ -836,10 +848,16 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
       return withGenerated<decltype(spaceTag)::nS>(kernel, [&](auto functor) -> py::object {
         using C = decltype(functor);
         if constexpr (!adrh::Available<C>::value) throw std::invalid_argument("not generated in this dimension");
+        else if constexpr (kGalerkin<C>)
+        {
+          py::dict d;
+          d["nFields"] = C::nFields; d["galerkin"] = true; d["hasDiffusion"] = C::has_diffusion; d["hasReaction"] = C::has_reaction;
+          return d;
+        }
         else
         {
           py::dict d;
-          d["nFields"] = C::nFields; d["tauForm"] = C::tauForm; d["face"] = (int)C::face;
+          d["nFields"] = C::nFields; d["galerkin"] = false; d["tauForm"] = C::tauForm; d["face"] = (int)C::face;
           d["hasF"] = C::hasF; d["hasH"] = C::hasH; d["hasR"] = C::hasR; d["usesPoint"] = adrh::Flag_usesPoint<C>::value;
           d["scFactor"] = C::scFactor; d["scBeta"] = C::scBeta; d["scReference"] = C::scReference; d["scLagged"] = C::scLagged;
           return d;
@@ -854,8 +872,36 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
       using S = decltype(spaceTag);
       return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
         using C = decltype(functor);
-        if constexpr (!adrh::Available<C>::value) throw std::invalid_argument("not generated in this dimension");
+        if constexpr (!adrh::Available<C>::value || kGalerkin<C>) throw std::invalid_argument("no generated SUPG functor of this name in this dimension");
         else return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, C::supgParameters(alpha, exactJacobian), true);
+        return py::tuple();
+      });
+    });
+  });
+  // The Galerkin functors (engine.h's generic element kernel, steady): R (nE, nD), J (nE, nD, nD) for per-point inputs
+  // fields (nE, nQ, nFields) as the spec's reads and mesh symbols order them.
+  m.def("generated_galerkin", [](const std::string &kernel, int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
+        using C = decltype(functor);
+        constexpr int nD = S::nDOF;
+        if constexpr (!adrh::Available<C>::value || !kGalerkin<C>) throw std::invalid_argument("no generated Galerkin functor of this name in this dimension");
+        else
+        {
+          const int nE = xn.shape(0), nQ = qw.shape(0);
+          if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != C::nFields)
+            throw std::invalid_argument("fields must be (nE, nQ, " + std::to_string(C::nFields) + ") for this functor");
+          C coef;
+          coef.fields = fields.data(); coef.nQ = nQ;
+          py::array_t<double> R({nE, nD}), J({nE, nD, nD});
+          {
+            py::gil_scoped_release release;
+            adrh::elementKernelSpace<C, S>(coef, nE, nQ, xn.data(), u.data(), nullptr, qp.data(), qw.data(), 0.0, 0.0,
+                                           R.mutable_data(), J.mutable_data());
+          }
+          return py::make_tuple(R, J);
+        }
         return py::tuple();
       });
     });
