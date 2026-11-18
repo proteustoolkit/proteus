@@ -69,7 +69,7 @@ def _run(ranks, cwd, shape, part="node", layers=1, rates=False):
     env.update(SHAPE=shape, PART_TYPE=part, NLAYERS=str(layers), OUT=str(cwd), RATES="1" if rates else "0")
     argv = [sys.executable, HELPER] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, HELPER]
     out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
-    results = [json.loads(line[len("RESULT "):]) for line in out.stdout.splitlines() if line.startswith("RESULT ")]
+    results = [json.load(open(os.path.join(cwd, f))) for f in sorted(os.listdir(cwd)) if f.startswith("result_")]
     rate_rows = [json.loads(line[len("RATES "):]) for line in out.stdout.splitlines() if line.startswith("RATES ")]
     assert results, out.stdout[-2000:] + out.stderr[-2000:]
     return results, rate_rows

@@ -3,7 +3,7 @@
 test_cube_dofmap.py, serially and under mpiexec.
 
 Environment: SHAPE (quad|hex), PART_TYPE (node|element), NLAYERS, PMAX, OUT (directory for the per-rank
-coordinate files). Prints one line ``RESULT {json}`` per rank and case.
+coordinate files). Writes ``result_<tag>.json`` per rank and case to OUT.
 
 Per case (degree p, nodes, local vertex orders as generated or scrambled per rank by a random symmetry of
 the square or cube per element):
@@ -187,7 +187,9 @@ def run_case(p, nodes, scrambled):
     used[np.unique(dm.l2g)] = True      # leaves out the dofs of an edge record that is not an edge (they have no point)
     np.savez(os.path.join(out, tag + ".npz"), s2g=s2g[used], x=dm.lagrangeNodesArray[used],
              nOwned=dm.nDOF_subdomain_owned, usedOwned=int(used[:dm.nDOF_subdomain_owned].sum()))
-    print("RESULT " + json.dumps(res), flush=True)
+    # one file per rank and case: the ranks share stdout, and lines from two of them can interleave
+    with open(os.path.join(out, "result_" + tag + ".json"), "w") as fh:
+        json.dump(res, fh)
 
 
 cases = [(p, n) for p in range(1, pmax + 1) for n in ("gll", "equispaced")]

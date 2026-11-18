@@ -3,7 +3,7 @@
 serially and under mpiexec.
 
 Environment: SHAPE (edge|tri|tet), PART_TYPE (node|element), NLAYERS, PMAX, OUT (directory for the per-rank
-coordinate files). Prints one line ``RESULT {json}`` per rank and case.
+coordinate files). Writes ``result_<tag>.json`` per rank and case to OUT.
 
 Per case (degree p, family, nodes, local vertex orders as generated or scrambled per rank):
 * the dof map builds (its own check: every element assigns the same point to a shared dof);
@@ -168,7 +168,9 @@ def run_case(p, family, nodes, scrambled):
             res["equals_existing_map"] = bool(same)
     tag = "%s_p%d_%s_%s_%d_r%d" % (shape, p, family, nodes, int(scrambled), rank)
     np.savez(os.path.join(out, tag + ".npz"), s2g=s2g, x=dm.lagrangeNodesArray, nOwned=dm.nDOF_subdomain_owned)
-    print("RESULT " + json.dumps(res), flush=True)
+    # one file per rank and case: the ranks share stdout, and lines from two of them can interleave
+    with open(os.path.join(out, "result_" + tag + ".json"), "w") as fh:
+        json.dump(res, fh)
 
 
 cases = [(p, f, n) for p in range(1, pmax + 1) for (f, n) in (("lagrange", "gll"), ("lagrange", "equispaced"), ("bernstein", "gll"))]
