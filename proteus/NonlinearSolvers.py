@@ -190,6 +190,31 @@ class NonlinearSolver(object):
         except AttributeError:
             logEvent("ERROR!: F.owned local is not initialised in Transport.MultilevelTranspot.initialize. Make sure that useSuperlu option is set to False")
 
+    #: an iterate or residual that grew by more than this factor, or is not finite, ends the solve as failed
+    divergenceGrowth = 1.0e30
+
+    def iterateDiverged(self,u,r,u0max,par_u=None):
+        """Whether Newton has left the representable range: a non-finite iterate or residual, or a
+        solution or residual norm more than divergenceGrowth times what the solve started with.
+
+        A solve in that state cannot recover (the doubling of a diverging iteration reached 1e189 in
+        13 failed Richards steps, then the linear solve overflowed and the next Jacobian was all NaN),
+        so Newton stops it and the step controller retries with a smaller dt. Only reads u and r: a
+        solve that stays in range is untouched. Collective with par_u (every rank gets the same answer).
+        """
+        umax = numpy.max(numpy.abs(u)) if numpy.size(u) else 0.0
+        rnorm = self.norm(r)
+        bad = bool(not (numpy.isfinite(umax) and numpy.isfinite(rnorm))
+                   or umax > self.divergenceGrowth*max(1.0,u0max)
+                   or rnorm > self.divergenceGrowth*max(1.0,self.norm_r0))
+        if par_u is not None:
+            from . import Comm
+            bad = Comm.get().globalMax(1.0 if bad else 0.0) > 0.0
+        if bad:
+            logEvent("   Newton it %d: iterate or residual diverged (max|u| = %g, norm(r) = %g, norm(r0) = %g): solve failed"
+                     % (self.its-1,umax,rnorm,self.norm_r0),level=1)
+        return bad
+
     def fullNewtonOff(self):
         self.fullNewton=False
 
@@ -667,6 +692,7 @@ class Newton(NonlinearSolver):
         self.norm_du_hist = []
         self.gammaK_max=0.0
         self.linearSolverFailed = False
+        u0max = numpy.max(numpy.abs(u)) if numpy.size(u) else 0.0
         while (not self.converged(r) and
                not self.failed()):
             logEvent("  NumericalAnalytics NewtonIteration: %d, NewtonNorm: %12.5e"
@@ -793,6 +819,9 @@ class Newton(NonlinearSolver):
                                                                                self.rtol_r))
                     if ls_its > 0:
                         logEvent("Linesearches = %i" % ls_its,level=3)
+            if not linear and self.iterateDiverged(u,r,u0max,par_u):
+                # reported as a failed solve (failed() reads this flag, and the next iteration is skipped)
+                self.linearSolverFailed = True
         else:
             if self.linearSolver.computeEigenvalues:
                 try:
