@@ -143,6 +143,26 @@ def now():
 # --- one output ----------------------------------------------------------------
 
 
+def cells_along_x(cells):
+    """The cells along the first axis, for a row of the convergence table, and a single count for the solver that
+    takes one (``cells: {x: 80, y: 40}`` is a box of unequal sides, which only the deck machinery meshes per axis)."""
+    from ymf.discretizations import cells_per_axis
+    return cells_per_axis(cells)[0] if isinstance(cells, dict) else int(cells)
+
+
+def one_count(cells, where):
+    """One count for every axis, as ADRProblem's box takes; a map of unequal counts is refused by name."""
+    from ymf.discretizations import cells_per_axis
+    if not isinstance(cells, dict):
+        return int(cells)
+    counts = cells_per_axis(cells)
+    if len(set(counts)) != 1:
+        raise ValueError("%s: cells %s are unequal per axis; this solver meshes a box with one count for every "
+                         "axis (a split discretization on SWFlow's structured mesh takes one per axis)"
+                         % (where, ", ".join("%s %d" % (a, c) for a, c in zip("xyz", counts))))
+    return counts[0]
+
+
 def run_arguments(doc, problem, name, realization):
     """ADRProblem.run's arguments for one discretization on one realization."""
     from ymf import closure
@@ -152,7 +172,7 @@ def run_arguments(doc, problem, name, realization):
     solver = entry.get("solver") or {}
     return {"spaces": {c: tuple(s) for c, s in spaces.items()},
             # a box by cells per side, any other region by h (element size)
-            "cells": int(realization["cells"]) if "cells" in realization else None,
+            "cells": one_count(realization["cells"], name) if "cells" in realization else None,
             "h": float(realization["h"]) if "h" in realization else None,
             "time": time_stepping(entry, problem),
             "stabilization": stabilization_of(doc, entry),
@@ -337,7 +357,7 @@ def report(problem, rows):
             size = 1.0 / refinements
             row = "  %5d  " % int(realization.get("levels", 1))
         else:
-            finest = int(realization["cells"]) * refinements
+            finest = cells_along_x(realization["cells"]) * refinements
             size = 1.0 / finest
             row = "  %5d  " % finest
         errors = output["verification"]["l2_errors"]

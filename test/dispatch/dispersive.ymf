@@ -1,0 +1,28 @@
+# The dispersive (Serre-Green-Naghdi) shallow-water model, the family C5's
+# dispatcher maps onto proteus's GN_SW2DCV (C42 round 5): the shallow_water.ymf
+# model with the non-hydrostatic pressure Pd added to the hydrostatic one, and
+# the topography-dispersion force Qd along the bed gradient. Both are
+# coefficients the *closure* supplies: how they are computed is the
+# discretization's (ymf.dispersion, `dispersion: {closure: hyperbolic_relaxation}`
+# in proteus_numerics's sibling dispersive_numerics.ymf), so the model's
+# equations are the same whichever closure solves them. The grouping follows
+# GN_SW2DCV.h's source terms: the pressure 0.5 g h² + p̃ wherever the
+# hydrostatic one stood, and (0.5 R2 − 0.25 R3) ∇Z as the bed force.
+extends: shallow_water.ymf
+ymf_state: abstract
+remove:
+  - "model.physical_model.assumptions[hydrostatic]"
+  - "model.physical_model.assumptions[nondispersive]"
+
+model:
+  physical_model:
+    assumptions: [depth_averaged, dispersive]
+  strong_form:
+    equation_formulation: "Serre-Green-Naghdi equations (depth averaged, non-hydrostatic), conservative variables, porous medium"
+    equations:
+      - name: momentum
+        for: q
+        equation: "∂(θ q)/∂t + ∇·(θ q⊗q/h) + ∇(θ (g h²/2 + Pd)) − (g h²/2 + Pd)∇θ + θ g h ∇Z − θ Qd ∇Z + θ τb + Fd = 0  in Ω"
+    coefficients:
+      Pd: {units: m3/s2, role: dispersive_pressure}      # the non-hydrostatic pressure, over the density, integrated over the depth
+      Qd: {units: m2/s2, role: dispersive_bed_force}     # the topography-dispersion force, over the density, per unit ∇Z
