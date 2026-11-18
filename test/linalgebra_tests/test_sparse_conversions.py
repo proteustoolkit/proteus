@@ -3,6 +3,7 @@
 Test module for some linear algebra tools functions.
 """
 from proteus import superluWrappers
+from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus import LinearAlgebraTools
 from petsc4py import PETSc as p4pyPETSc
 import numpy
@@ -15,9 +16,9 @@ def small_superlu():
                            8.,7.,5.,8.,9.,9.,13.,4.,2.,-1.])
     col_idx = numpy.array([0, 4 ,0 ,1 ,5 ,1 ,2 ,3 ,0 ,2 ,
                            3 ,4 ,1 ,3 ,4 ,5  ,1 ,4 , 5 ],
-                          dtype='int32')
+                          dtype=CSR_INDEX_DTYPE)
     row_idx = numpy.array([0, 2, 5, 8, 12, 16, 19],
-                          dtype='int32')
+                          dtype=CSR_INDEX_DTYPE)
     size_n  = len(row_idx)-1
 
     superlu_mat = LinearAlgebraTools.SparseMat(size_n,
