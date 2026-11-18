@@ -1770,6 +1770,25 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 if self.coefficients.force_z:
                     self.q[('force', 2)][eN,k] = self.coefficients.force_z(self.q['x'][eN,k])
 
+    def _warnParticleSurfaceDegree(self):
+        """Once per model: say that the particle's surface weights are one polynomial degree short for a quadratic velocity.
+
+        With ``useExact`` the solid particle's surface weight D is the moment fit of order nP = 3 (``gf_s`` in RANS2P.h):
+        it reproduces int_Gamma N_a N_b for integrands up to degree 3. P1 x P1 (degree 2) and the pressure x velocity
+        blocks of P1/P2 (degree 3) are exact once the element rule is exact to degree 5 and 6; the velocity x velocity
+        block of a P2 velocity (degree 4) is not exact at any quadrature degree: the surface integral carries an error of
+        8e-2 .. 2e-1 of its largest entry (measured on the cut cells of ``test_gf_surface_degree.py``).
+        """
+        if getattr(self, '_warnedParticleSurfaceDegree', False):
+            return
+        self._warnedParticleSurfaceDegree = True
+        c = self.coefficients
+        if getattr(c, 'useExact', False) and getattr(c, 'nParticles', 0) > 0 and self.nDOF_trial_element[1] > self.nSpace_global + 1:
+            logEvent("WARNING RANS2P: useExact with solid particles and a quadratic velocity space: the particle's surface "
+                     "weights (equivalent polynomials of order 3) are not exact for the degree-4 velocity x velocity "
+                     "surface integrals (error 8e-2..2e-1 of the block's largest entry, any quadrature degree); "
+                     "see test/test_gf_surface_degree.py", level=0)
+
     def getResidual(self, u, r):
         """
         Calculate the element residuals and add in to the global residual
@@ -1782,6 +1801,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         """
         assert(np.all(np.isfinite(u)))
         assert(np.all(np.isfinite(r)))
+        self._warnParticleSurfaceDegree()
         # Load the unknowns into the finite element dof
         self.timeIntegration.calculateCoefs()
         self.timeIntegration.calculateU(u)
