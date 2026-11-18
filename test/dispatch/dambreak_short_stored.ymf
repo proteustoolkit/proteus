@@ -1,0 +1,24 @@
+# dambreak_short.ymf on the stored mesh of test/TwoPhaseFlow (meshDambreak, the 109-node triangle mesh of
+# damBreakLevelSet.py he=0.08 that the deck reads with genMesh=False): the domain is the mesh file, its sides are
+# named by the flags the mesh stores (Tank2D's: bottom 1, right 2, top 3, left 4). A mesh that is already made has no
+# h to state (ymf refuses one); the run takes its element size from the mesh (its longest edge).
+# test_dispatch_run.py replaces MESH_PREFIX with the stored mesh's path.
+extends: dambreak_short_unplaced.ymf
+
+model:
+  strong_form:
+    domain:
+      kind: file
+      format: tetgen
+      path: MESH_PREFIX
+      bounds: {lower: [0, 0], upper: [3.22, 1.8]}
+      boundary_tags: {bottom: 1, right: 2, top: 3, left: 4}
+      time: [0, 0.03]
+    boundary_regions:
+      - {name: walls, tags: [bottom, right, left]}
+      - {name: top, tags: [top]}
+
+solution_paths:
+  discretizations:
+    - name: level_set_five
+      mesh: {levels: 1}
