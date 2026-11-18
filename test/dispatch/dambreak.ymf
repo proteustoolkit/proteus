@@ -88,7 +88,7 @@ solution_paths:
           pseudo_time: steady
           writes_back: {φ: replace}
           finite_element: {fields: {family: CG, order: 1}}
-          stabilization: {method: SUPG, shock_capturing: {factor: 0.9, lagged: false}}
+          stabilization: {method: SUPG, tau: metric, lagged: false, shock_capturing: {factor: 0.9, beta: 1.0, lagged: false}}
           proteus: {model: RDLS, epsFact: 0.75}
         - name: mcorr
           enforces: "heaviside(φ) = χh"
