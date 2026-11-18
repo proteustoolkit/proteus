@@ -90,14 +90,39 @@ def _mpiexec():
     return shutil.which('mpiexec') or shutil.which('mpirun')
 
 
+def _helper_env():
+    """The environment of a helper run under mpiexec, with the partitioner pin removed.
+
+    These tests measure what the graph partitioner (ParMETIS, through PETSc) and the level-consistent rule
+    produce. `PETSC_OPTIONS=-mat_partitioning_type current` is how a parallel comparison pins the partition
+    (the workspace CLAUDE.md asks for it): the partitioner then keeps the existing distribution, the ghost layer
+    and the weighted share are those of the pin (0.34 > 0.27; 0.4995 = the unweighted share), and the two tests
+    below fail for a reason that is the pin, not the code.
+    """
+    env = dict(os.environ)
+    options = env.get('PETSC_OPTIONS', '')
+    kept = []
+    tokens = iter(options.split())
+    for token in tokens:
+        if token.lstrip('-') == 'mat_partitioning_type':
+            next(tokens, None)
+        elif not token.lstrip('-').startswith('mat_partitioning_type'):
+            kept.append(token)
+    if kept:
+        env['PETSC_OPTIONS'] = ' '.join(kept)
+    else:
+        env.pop('PETSC_OPTIONS', None)
+    env['PYTHONPATH'] = os.pathsep.join(
+        [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    return env
+
+
 def _balance(kind, nn, levels, n_ranks, how='generated', variant='weighted', rule='lowest', by='node'):
     mpiexec = _mpiexec()
     if mpiexec is None:
         pytest.skip('no MPI launcher available')
     helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'balance_mpi.py')
-    env = dict(os.environ)
-    env['PYTHONPATH'] = os.pathsep.join(
-        [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    env = _helper_env()
     result = subprocess.run([mpiexec, '-n', str(n_ranks), sys.executable, helper, kind, str(nn), str(levels),
                              how, variant, rule] + ([by] if by == 'element' else []), capture_output=True, text=True, env=env, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -193,9 +218,7 @@ def test_node_weights_reach_the_graph_partitioner():
     if mpiexec is None:
         pytest.skip('no MPI launcher available')
     helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weighted_partition_mpi.py')
-    env = dict(os.environ)
-    env['PYTHONPATH'] = os.pathsep.join(
-        [p for p in sys.path if p] + [env.get('PYTHONPATH', '')]).strip(os.pathsep)
+    env = _helper_env()
     result = subprocess.run([mpiexec, '-n', '2', sys.executable, helper, '20'],
                             capture_output=True, text=True, env=env, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
