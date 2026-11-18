@@ -424,24 +424,98 @@ _LINUX_PIP_VENV = (sys.platform.startswith('linux') and sys.prefix != sys.base_p
                    and not os.path.exists(os.path.join(sys.prefix, 'conda-meta')))
 
 
+class _RKEVFirstStepIsTheOutputInterval(TADR.RKEV):
+    """RKEV whose first dt is the interval to the first output time, as TI_base's is. TADR's own is runCFL over the
+    edge-based CFL of the transport's initial state, whose carried mass M_low is still 0 (the flow model has not
+    handed it over), so TADR.h floors Mnew at 1e-14 and the CFL is 1.9e13: dt = 2.66e-14 on this deck, which no
+    Newton solve of the flow can take (see test_first_dt_is_not_set_by_an_uninitialized_mass)."""
+
+    def initialize_dt(self, t0, tOut, q):
+        TADR.RKEV.initialize_dt(self, t0, tOut, q)
+        self.dt = tOut - t0
+        self.t = t0 + self.dt
+        self.substeps = [self.t for i in range(self.nStages)]
+
+
 @pytest.mark.xfail(_LINUX_PIP_VENV, run=False, reason="known: Richards implicit FCT diverges (NaN Jacobian) and "
                    "SuperLU dgstrf segfaults on Linux pip builds (C3 round 9 handoff)")
 def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
     """Richards' implicit FCT sets fctCorrectionApplied but leaves the accepted mass in mLow (its final solve);
     the edge-flux coupling read mAccepted, all zeros, and drained its carried fluid mass every step. c0 = cin =
-    0.5 stays 0.5."""
+    0.5 stays 0.5.
+
+    The run has to take its steps: with the transport's own first dt (2.66e-14) the flow model never accepts the
+    first step (the residual's round-off floor, eps m_i ML_i / dt, is 5e-3 to 0.5 against nl_atol_res 1e-6 at the
+    dt = 2.7e-14 .. 5e-17 the step controller tries) and the run ends at t = 5e-17 with c untouched, which is why
+    this test passed for months. Here the first dt is the deck's output interval, 1e-8; the run must reach t = 10
+    with every Newton solve of the flow converged and the head inside the range of the initial and boundary heads
+    (-12 .. river stage)."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    tn.timeIntegration = _RKEVFirstStepIsTheOutputInterval
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+    failures = []
+    newton_solve = NonlinearSolvers.Newton.solve
+
+    def counting_solve(self, *args, **kwargs):
+        out = newton_solve(self, *args, **kwargs)
+        if type(self.F).__module__.endswith('Richards'):
+            failures.append(bool(self.failedFlag))
+        return out
+
+    NonlinearSolvers.Newton.solve = counting_solve
+    try:
+        ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
+    finally:
+        NonlinearSolvers.Newton.solve = newton_solve
+    flow = ns.modelList[0].levelModelList[-1]
+    transport = ns.modelList[1].levelModelList[-1]
+    assert transport._use_edge_flux == 1
+    assert flow.acceptedMass() is flow.mLow
+    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+    # the flow stepped to the final time (the measured run: 3 output intervals, ~200 Newton solves, none failed)
+    assert flow.timeIntegration.tLast == pytest.approx(so.tnList[-1])
+    assert len(failures) > 20 and not any(failures), (len(failures), sum(failures))
+    head = flow.u[0].dof
+    assert np.all(np.isfinite(head))
+    assert -12.0 - 1.0e-4 <= head.min() and head.max() <= rp.river_stage + 1.0e-4
+
+
+@pytest.mark.xfail(strict=True, reason="TADR's first dt comes from edge_based_cfl at a state with M_low = 0 (Mnew floored "
+                   "at 1e-14, TADR.h): 2.66e-14 on the levee deck; see HANDOFF_2026-11-17_richards-r2.md for the change")
+def test_first_dt_is_not_set_by_an_uninitialized_mass(levee_deck, monkeypatch):
+    """The first system dt, which is the minimum over the models, has to be one the flow model's Newton solve can
+    take: the round-off of the stored mass over dt, eps m_i ML_i / dt, is the floor of ||r||, and nl_atol_res is
+    1e-6, so dt > eps / nl_atol_res = 2e-10 (the deck's first output interval is 1e-8). The transport's RKEV
+    proposes 0.5 / 1.9e13 = 2.66e-14 because its edge-based CFL is formed from M_low = 0. Stops at the first
+    step's preStep, so it needs no time stepping."""
+    from proteus.richards import Richards
     domain, rp, rn, tp, tn, so = levee_deck
     rp.coefficients.FCT = True
     rp.coefficients.FCT_TYPE = 'implicit'
     _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
     _direct_solvers(rn, tn)
     so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
-    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
-    flow = ns.modelList[0].levelModelList[-1]
-    transport = ns.modelList[1].levelModelList[-1]
-    assert transport._use_edge_flux == 1
-    assert flow.acceptedMass() is flow.mLow
-    assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+
+    class Seen(Exception):
+        pass
+
+    seen = {}
+    preStep = Richards.Coefficients.preStep
+
+    def checked_preStep(self, t, firstStep=False):
+        if firstStep:
+            seen['dt'] = self.model.timeIntegration.dt
+            raise Seen
+        return preStep(self, t, firstStep)
+
+    monkeypatch.setattr(Richards.Coefficients, 'preStep', checked_preStep)
+    with pytest.raises(Seen):
+        _run(so, [rp, tp], [rn, tn], 'vdft_levee_first_dt')
+    assert seen['dt'] > np.finfo(float).eps / rn.nl_atol_res, seen
 
 
 def test_first_step_old_time_mass_is_at_the_coupled_density(levee_deck, monkeypatch):
