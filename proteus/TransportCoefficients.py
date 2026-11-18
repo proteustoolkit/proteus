@@ -45,9 +45,12 @@ class _SparseDiffusionInfo(dict):
     Converting on every store keeps that out of each model (C33)."""
     @staticmethod
     def _csr(value):
-        rowptr, colind = value
-        return (numpy.ascontiguousarray(rowptr, dtype=CSR_INDEX_DTYPE),
-                numpy.ascontiguousarray(colind, dtype=CSR_INDEX_DTYPE))
+        try:
+            rowptr, colind = value
+            return (numpy.ascontiguousarray(rowptr, dtype=CSR_INDEX_DTYPE),
+                    numpy.ascontiguousarray(colind, dtype=CSR_INDEX_DTYPE))
+        except (TypeError, ValueError):
+            return value  # not a (rowptr, colind) pair: store as given
     def __init__(self, *args, **kw):
         super().__init__()
         self.update(*args, **kw)
