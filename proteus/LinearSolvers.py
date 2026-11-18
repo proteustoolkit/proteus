@@ -830,60 +830,16 @@ class KSP_petsc4py(LinearSolver):
                                                prefix,
                                                self.preconditionerOptions)
                 self.pc = self.preconditioner.pc
-            if Preconditioner == Jacobi:
-                self.pccontext= Preconditioner(L,
-                                               weight=1.0,
-                                               rtol_r=rtol_r,
-                                               atol_r=atol_r,
-                                               maxIts=1,
-                                               norm = l2Norm,
-                                               convergenceTest='its',
-                                               computeRates=False,
-                                               printInfo=False)
-                self.pc = p4pyPETSc.PC().createPython(self.pccontext)
-            elif Preconditioner == GaussSeidel:
-                self.pccontext= Preconditioner(connectionList,
-                                               L,
-                                               weight=1.0,
-                                               sym=False,
-                                               rtol_r=rtol_r,
-                                               atol_r=atol_r,
-                                               maxIts=1,
-                                               norm = l2Norm,
-                                               convergenceTest='its',
-                                               computeRates=False,
-                                               printInfo=False)
-                self.pc = p4pyPETSc.PC().createPython(self.pccontext)
-            elif Preconditioner == LU:
-                #ARB - parallel matrices from PETSc4py don't work here.
-                self.pccontext = Preconditioner(L)
-                self.pc = p4pyPETSc.PC().createPython(self.pccontext)
-            elif Preconditioner == StarILU:
-                self.pccontext= Preconditioner(connectionList,
-                                               L,
-                                               weight=1.0,
-                                               rtol_r=rtol_r,
-                                               atol_r=atol_r,
-                                               maxIts=1,
-                                               norm = l2Norm,
-                                               convergenceTest='its',
-                                               computeRates=False,
-                                               printInfo=False)
-                self.pc = p4pyPETSc.PC().createPython(self.pccontext)
-            elif Preconditioner == StarBILU:
-                self.pccontext= Preconditioner(connectionList,
-                                               L,
-                                               bs=linearSolverLocalBlockSize,
-                                               weight=1.0,
-                                               rtol_r=rtol_r,
-                                               atol_r=atol_r,
-                                               maxIts=1,
-                                               norm = l2Norm,
-                                               convergenceTest='its',
-                                               computeRates=False,
-                                               printInfo=False)
-                self.pc = p4pyPETSc.PC().createPython(self.pccontext)
-            elif Preconditioner == SimpleNavierStokes3D:
+            if Preconditioner in (Jacobi, GaussSeidel, LU, StarILU, StarBILU):
+                #These proteus solvers do not implement the petsc4py PC python
+                #interface (setUp/apply), so they cannot precondition a KSP; the
+                #branches that tried to build them referred to undefined names
+                #(L, rtol_r, atol_r, connectionList) and could never run.
+                raise ValueError("KSP_petsc4py: linearSmoother=%s cannot be used as a PETSc "
+                                 "preconditioner. Use linearSmoother=None and choose the "
+                                 "preconditioner with the PETSc options (-pc_type ...), or one of "
+                                 "petsc_LU, petsc_ASM, petsc_MG" % (Preconditioner.__name__,))
+            if Preconditioner == SimpleNavierStokes3D:
                 logEvent("NAHeader Preconditioner SimpleNavierStokes" )
                 try:
                     self.preconditioner = SimpleNavierStokes3D(par_L,
@@ -3820,6 +3776,11 @@ def multilevelLinearSolverChooser(linearOperatorList,
                                                   printInfo = printLevelSolverInfo))
         levelLinearSolver = levelLinearSolverList
     else:
+        if levelLinearSolverType is p4pyPETSc:
+            # `from proteus.default_n import *` brings in the petsc4py module as PETSc, and
+            # decks written for the proteus PETSc solver class (now KSP_petsc4py) pass it here
+            raise RuntimeError("Unknown level linear solver: the petsc4py module PETSc was given; "
+                               "the PETSc Krylov solver is KSP_petsc4py")
         raise RuntimeError("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Unknown level linear solver %r" % (levelLinearSolverType,))
     if multilevelLinearSolverType == NI:
         multilevelLinearSolver = NI(solverList = levelLinearSolverList,

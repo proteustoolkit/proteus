@@ -59,6 +59,12 @@ dependencies:
   - superlu_dist =9.2.1
   - triangle =1.6
   - pychrono >=10.0.0
+  # The Open Dynamics Engine and its Python bindings (`import ode`: ode.World,
+  # ode.Body, ode.Mass), for the rigid-body motion of decks that predate
+  # pychrono (the proteus-sandbox moving-cylinder decks). libode carries the
+  # bindings (builds per Python version); pyode is the metapackage that names it.
+  - libode =0.16.6
+  - pyode =0.16.6
   - gmsh =4.12.2
   - matplotlib =3.9.2
   - mpi4py =4.1.2

@@ -44,6 +44,17 @@ extern int      checkGlobalElementBoundaryAndExteriorElementBoundaryArraysSame(p
 extern void     calculateExteriorElementBoundaryStress3D(proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, proteus_index_t *exteriorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *mom_flux_vec_w, double *dS, double *n, double *F);
 extern void     calculateExteriorElementBoundaryStress2D(proteus_index_t nExteriorElementBoundaries_global, int nQuadraturePoints_elementBoundary, int *elementBoundaryMaterialTypes, proteus_index_t *exteriorElementBoundaries, proteus_index_t *elementBoundaryElements, int *elementBoundaryLocalElementBoundaries, double *p, double *mom_flux_vec_u, double *mom_flux_vec_v, double *dS, double *n, double *F);
 
+extern void copyLeftElementBoundaryInfo_movingDomain(
+  int nElementBoundaries_element,
+  int nElementBoundaryQuadraturePoints_elementBoundary,
+  proteus_index_t nExteriorElementBoundaries_global,
+  proteus_index_t nInteriorElementBoundaries_global,
+  proteus_index_t *elementBoundaryElementsArray,
+  int *elementBoundaryLocalElementBoundariesArray,
+  proteus_index_t *exteriorElementBoundariesArray,
+  proteus_index_t *interiorElementBoundariesArray,
+  double *xt
+);
 extern void copyLeftElementBoundaryInfo(
   int nElementBoundaries_element,
   int nElementBoundaryQuadraturePoints_elementBoundary,
@@ -213,6 +224,22 @@ extern void parametricMaps_getJacobianValuesTrace2D(
   int nElementBoundaries_element,
   int nQuadraturePoints_element,
   int nDOF_element,
+  double *grad_psi,
+  double *boundaryNormals,
+  double *boundaryJacobians,
+  proteus_index_t *l2g,
+  double *nodeArray,
+  double *jacobianInverseArray,
+  double *metricTensorArray,
+  double *metricTensorDeterminantSqrtArray,
+  double *unitNormalArray
+);
+extern void parametricMaps_getJacobianValuesTrace2D_movingDomain(
+  proteus_index_t nElements_global,
+  int nElementBoundaries_element,
+  int nQuadraturePoints_element,
+  int nDOF_element,
+  double *xtArray,
   double *grad_psi,
   double *boundaryNormals,
   double *boundaryJacobians,
@@ -1632,6 +1659,14 @@ extern void estimate_mt_lowmem(proteus_index_t nElements_global,
                                double* w_dV,
                                double* elementSpatialResidual,
                                double* mt);
+extern void accumulateExteriorElementPressureIntegrals(proteus_index_t nExteriorElementBoundaries_global,
+                                                       int nQuadraturePoints_elementBoundary,
+                                                       int* elementBoundaryMaterialTypes,
+                                                       proteus_index_t* exteriorElementBoundaries,
+                                                       double* p,
+                                                       double* dS,
+                                                       double* P,
+                                                       double* boundaryMeasure);
 extern double scalarDomainIntegral(proteus_index_t nElements_global,
                                    int nQuadraturePoints_element,
                                    double* dV,

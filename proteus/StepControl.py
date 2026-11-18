@@ -1178,8 +1178,7 @@ class GustafssonFullNewton_dt_controller(SC_base):
         dtout = dt*r
         #mwf debug
         if r >= 1.0:
-            import pdb
-            pdb.set_trace()
+            pass #the assert below reports it
         assert r < 1.0, "Gustaffson solver failure r= %s should have r decrease dt_in= %s alpha=%s alpha_ref=%s nnl=%s nnl_ref=%s r_a=%s, dtout=%s " % (r,dt,alpha,alpha_ref,nnl,nnl_ref,r_a,dtout)
         logEvent("Gustafsson solver failure dt_in= %s alpha=%s alpha_ref=%s nnl=%s nnl_ref=%s r_a=%s, dtout=%s " % (dt,alpha,alpha_ref,nnl,nnl_ref,r_a,dtout),level=1)
         return dtout

@@ -537,9 +537,9 @@ class FLCBDF(TI_base):
 #                     except:
 #                         pass
 #                 assert mwfHackedAyprime, "couldn't find a key for dm,%s " % ci
-            if numpy.isnan(q[('mt',ci)]).any():
-                import pdb
-                pdb.set_trace()
+            #a nan here comes from a diverged Newton iterate: it reaches the residual, the
+            #solver fails, and the step is retried with a smaller dt (a debugger stop here
+            #ended every batch run with bdb.BdbQuit)
         for ci in range(self.nc):
             self.flcbdf[('u',ci)].calculate_yprime(self.transport.u[ci].dof,self.dummy[ci],self.Ddof_Dt[ci],self.dummy[ci])
     def choose_dt(self):
@@ -1385,7 +1385,7 @@ class OuterTheta(TI_base):
     def updateTimeHistory(self,resetFromDOF=False):
         self.tLast = self.t
         self.dtLast = self.dt
-        for ci in self.self.massComponents:
+        for ci in self.massComponents:
             self.q_last[('m',ci)][:] = self.q_tmp[('m',ci)]
         for ci in list(self.transport.coefficients.advection.keys()):
             self.q_last[('f',ci)][:] = self.q_tmp[('f',ci)]
@@ -3051,8 +3051,7 @@ class CockburnNotesLimiter2d_base(UnstructuredLimiter_base):
                     ebN_global = self.mesh.elementBoundariesArray[eN,ebN]
                     eN1= self.alphaNeighbors[eN,ebN,0]; eN2 = self.alphaNeighbors[eN,ebN,1]
                     if eN1 >= self.mesh.nElements_global or eN2 >= self.mesh.nElements_global:
-                        import pdb
-                        pdb.set_trace()
+                        raise RuntimeError("element %d boundary %d: limiter neighbours %d, %d are not elements of this mesh" % (eN,ebN,eN1,eN2))
                     if eN1 >= 0 and eN2 >= 0:
                         xa = self.alphas[eN,ebN,0]*self.mesh.elementBarycentersArray[eN1]+self.alphas[eN,ebN,1]*self.mesh.elementBarycentersArray[eN2] + (1.0-self.alphas[eN,ebN,0]-self.alphas[eN,ebN,1])*self.mesh.elementBarycentersArray[eN]
                         xm = self.mesh.elementBoundaryBarycentersArray[ebN_global,:]

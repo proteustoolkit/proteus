@@ -12,6 +12,12 @@ try:
 except ImportError:
     MeshAdapt = None  # PUMI/scorec not built in this environment
 
+def _polyLine(f):
+    """The next line of a .poly file without its comment: triangle and tetgen read a '#' anywhere
+    on a line as the start of a comment ("0#enforce")."""
+    return f.readline().split('#', 1)[0]
+
+
 class D_base(object):
     """
     The base class for domains
@@ -763,9 +769,9 @@ class PlanarStraightLineGraphDomain(D_base):
         self.polyfile = fileprefix
         self.name=fileprefix
         f = open(fileprefix+".poly",'r')
-        firstLine=f.readline().split()
+        firstLine=_polyLine(f).split()
         while len(firstLine) == 0 or firstLine[0][0] == '#':
-            firstLine = f.readline().split()
+            firstLine = _polyLine(f).split()
         nVertices = int(firstLine[0])
         self.dim = int(firstLine[1])
         assert(self.dim == 2)
@@ -778,9 +784,9 @@ class PlanarStraightLineGraphDomain(D_base):
         if hasVertexFlag:
             self.vertexFlags=[]
         for i in range(nVertices):
-            line = f.readline().split()
+            line = _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             if not self.base:
                 self.base = int(line[0])
             self.vertices.append([float(line[1]),float(line[2])])
@@ -788,9 +794,9 @@ class PlanarStraightLineGraphDomain(D_base):
                 self.vertexAttributes[j].append(float(line[3+j]))
             if hasVertexFlag:
                 self.vertexFlags.append(int(line[3+nVertexAttributes]))
-        segmentLine = f.readline().split()
+        segmentLine = _polyLine(f).split()
         while len(segmentLine) == 0 or segmentLine[0][0] == '#':
-            segmentLine = f.readline().split()
+            segmentLine = _polyLine(f).split()
         nSegments = int(segmentLine[0])
         hasSegmentFlag = bool(int(segmentLine[1]))
         self.segments=[]
@@ -798,33 +804,33 @@ class PlanarStraightLineGraphDomain(D_base):
         if hasSegmentFlag:
             self.segmentFlags=[]
         for i in range(nSegments):
-            line = f.readline().split()
+            line = _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.segments.append([int(line[1])-self.base,int(line[2])-self.base])
             if hasSegmentFlag:
                 self.segmentFlags.append(int(line[3]))
-        holeLine = f.readline().split()
+        holeLine = _polyLine(f).split()
         while len(holeLine) == 0 or holeLine[0][0] == '#':
-            holeLine = f.readline().split()
+            holeLine = _polyLine(f).split()
         nHoles = int(holeLine[0])
         self.holes=[]
         for i in range(nHoles):
-            line =  f.readline().split()
+            line =  _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.holes.append([float(line[0]),float(line[1])])
-        regionLine = f.readline().split()
+        regionLine = _polyLine(f).split()
         while len(regionLine) == 0 or regionLine[0][0] == '#':
-            regionLine = f.readline().split()
+            regionLine = _polyLine(f).split()
         nRegions = int(regionLine[0])
         self.regions=[]
         self.regionFlags=[]
         self.regionConstraints=[]
         for i in range(nRegions):
-            line =  f.readline().split()
+            line =  _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.regions.append([float(line[1]),float(line[2])])
             if len(line) > 3:
                 self.regionFlags.append(int(line[3]))
@@ -1157,9 +1163,9 @@ class PiecewiseLinearComplexDomain(D_base):
         self.polyfile = fileprefix
         self.name = fileprefix
         f = open(self.polyfile+".poly",'r')
-        firstLine = f.readline().split()
+        firstLine = _polyLine(f).split()
         while len(firstLine) == 0 or firstLine[0][0] == '#':
-            firstLine = f.readline().split()
+            firstLine = _polyLine(f).split()
         nVertices = int(firstLine[0])
         self.dim = int(firstLine[1])
         assert(self.dim == 3)
@@ -1172,9 +1178,9 @@ class PiecewiseLinearComplexDomain(D_base):
         if hasVertexFlag:
             self.vertexFlags = []
         for i in range(nVertices):
-            line = f.readline().split()
+            line = _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             if not self.base:
                 self.base = int(line[0])
             self.vertices.append([float(line[1]),float(line[2]),float(line[3])])
@@ -1182,9 +1188,9 @@ class PiecewiseLinearComplexDomain(D_base):
                 self.vertexAttributes[j].append(float(line[4+j]))
             if hasVertexFlag:
                 self.vertexFlags.append(int(line[4+nVertexAttributes]))
-        facetLine = f.readline().split()
+        facetLine = _polyLine(f).split()
         while len(facetLine) == 0 or facetLine[0][0] == '#':
-            facetLine = f.readline().split()
+            facetLine = _polyLine(f).split()
         nFacets = int(facetLine[0])
         hasFacetFlag = bool(int(facetLine[1]))
         self.facets = []
@@ -1193,9 +1199,9 @@ class PiecewiseLinearComplexDomain(D_base):
         if hasFacetFlag:
             self.facetFlags = []
         for i in range(nFacets):
-            line = f.readline().split()
+            line = _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.facets.append([])
             self.facetHoles.append([])
             nPolygons = int(line[0])
@@ -1203,39 +1209,39 @@ class PiecewiseLinearComplexDomain(D_base):
             if hasFacetFlag:
                 self.facetFlags.append(int(line[2]))
             for j in range(nPolygons):
-                line = f.readline().split()
+                line = _polyLine(f).split()
                 while len(line) == 0 or line[0][0] == '#':
-                    line = f.readline().split()
+                    line = _polyLine(f).split()
                 nSegments = int(line[0])
                 self.facets[-1].append([int(line[1+k])-self.base for k in range(nSegments)])
             for j in range(nHoles):
-                line = f.readline().split()
+                line = _polyLine(f).split()
                 while len(line) == 0 or line[0][0] == '#':
-                    line = f.readline().split()
+                    line = _polyLine(f).split()
                 self.facetHoles[-1].append([float(line[0]),
                                             float(line[1]),
                                             float(line[2])])
-        holeLine = f.readline().split()
+        holeLine = _polyLine(f).split()
         while len(holeLine) == 0 or holeLine[0][0] == '#':
-            holeLine = f.readline().split()
+            holeLine = _polyLine(f).split()
         nHoles = int(holeLine[0])
         self.holes = []
         for i in range(nHoles):
-            line =  f.readline().split()
+            line =  _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.holes.append([float(line[0]),float(line[1])])
-        regionLine = f.readline().split()
+        regionLine = _polyLine(f).split()
         while len(regionLine) == 0 or regionLine[0][0] == '#':
-            regionLine = f.readline().split()
+            regionLine = _polyLine(f).split()
         nRegions = int(regionLine[0])
         self.regions = []
         self.regionFlags = []
         self.regionConstraints = []
         for i in range(nRegions):
-            line =  f.readline().split()
+            line =  _polyLine(f).split()
             while len(line) == 0 or line[0][0] == '#':
-                line = f.readline().split()
+                line = _polyLine(f).split()
             self.regions.append([float(line[1]),float(line[2]),float(line[3])])
             if len(line) > 4:
                 self.regionFlags.append(int(line[4]))

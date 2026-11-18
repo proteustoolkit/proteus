@@ -546,8 +546,7 @@ class ConservativeHeadRichardsMualemVanGenuchten(TC_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
 #         #mwf debug
 #         if c[('u',0)].shape == self.q_shape:
@@ -1436,8 +1435,7 @@ class TwophaseDarcy_fc(TwophaseDarcyFlow_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 #
 
 class FullyCoupledMualemVanGenuchten(TwophaseDarcy_fc):
@@ -1844,8 +1842,7 @@ class TwophaseDarcy_fc_pp(TwophaseDarcyFlow_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 #
 class FullyCoupledPressurePressureMualemVanGenuchten(TwophaseDarcy_fc_pp):
     """Formulation using phase continuity equations, pressure-pressure
@@ -2456,8 +2453,7 @@ class TwophaseDarcy_incompressible_split_pressure(TwophaseDarcy_split_pressure_b
         if (numpy.isnan(c[('a',0,0)]).any() or
             numpy.isnan(c[('f',0)]).any() or
             numpy.isnan(c[('u',0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
         #mwf debug
         #import pdb
         #pdb.set_trace()
@@ -2638,7 +2634,11 @@ class TwophaseDarcy_incompressible_split_saturation(TwophaseDarcy_split_saturati
         #mwf debug
         #import pdb
         #pdb.set_trace()
+        #the kernel takes the density laws and the water pressure head too (as the slightly
+        #compressible version is called); they were missing, and the call raised TypeError
         self.twophaseDarcy_incompressible_split_sd_saturation_het_matType(self.psk_types[self.psk_model],
+                                                                          self.density_types[self.density_w_model],
+                                                                          self.density_types[self.density_n_model],
                                                                           self.sdInfo[(0,0)][0],
                                                                           self.sdInfo[(0,0)][1],
                                                                           materialTypes,
@@ -2655,6 +2655,7 @@ class TwophaseDarcy_incompressible_split_saturation(TwophaseDarcy_split_saturati
                                                                           self.rwork_density_n,
                                                                           self.g[:self.nd],
                                                                           q_t,
+                                                                          psiw,
                                                                           c[('u',0)],
                                                                           c[('m',0)],
                                                                           c[('dm',0,0)],
@@ -2699,8 +2700,7 @@ class TwophaseDarcy_incompressible_split_saturation(TwophaseDarcy_split_saturati
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
 
 class TwophaseDarcy_compressible_split_pressure(TwophaseDarcy_split_pressure_base):
@@ -2969,8 +2969,7 @@ class TwophaseDarcy_compressible_split_pressure(TwophaseDarcy_split_pressure_bas
             numpy.isnan(c[('a',0,0)]).any() or
             numpy.isnan(c[('f',0)]).any() or
             numpy.isnan(c[('u',0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
         #mwf debug
         #import pdb
         #pdb.set_trace()
@@ -3252,8 +3251,7 @@ class TwophaseDarcy_compressible_split_saturation(TwophaseDarcy_split_saturation
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
 ###########
 class TwophaseDarcy_split_pp_pressure_base(TwophaseDarcyFlow_base):
@@ -3656,8 +3654,6 @@ class TwophaseDarcy_incompressible_split_pp_pressure(TwophaseDarcy_split_pp_pres
             vol_frac_n = self.ebq[('vol_frac',1)]
         assert self.rwork_psk is not None
         #mwf debug
-        import pdb
-        pdb.set_trace()
 
         self.twophaseDarcy_incompressible_split_sd_pressure_het_matType(self.psk_types[self.psk_model],
                                                                         self.sdInfo[(0,0)][0],
@@ -3688,8 +3684,7 @@ class TwophaseDarcy_incompressible_split_pp_pressure(TwophaseDarcy_split_pp_pres
         if (numpy.isnan(c[('a',0,0)]).any() or
             numpy.isnan(c[('f',0)]).any() or
             numpy.isnan(c[('u',0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
         #mwf debug
         #import pdb
         #pdb.set_trace()
