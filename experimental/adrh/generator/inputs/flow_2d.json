@@ -1,6 +1,7 @@
 {
  "kernel": "FLOW",
  "dim": 2,
+ "subproblem": "flow",
  "adr": {
   "dim": 2,
   "components": [
@@ -181,15 +182,232 @@
    }
   ]
  },
- "fields": [
-  "φ",
-  "χh"
- ],
+ "reads": {
+  "φ": {
+   "at": "previous_step",
+   "components": [
+    "φ"
+   ]
+  },
+  "χ": {
+   "at": "previous_step",
+   "via": "vof",
+   "carried_by": "χh",
+   "components": [
+    "χh"
+   ]
+  }
+ },
  "stabilization": {
-  "method": "SUPG",
+  "method": "ASGS",
   "tau": "metric",
+  "lagged": true,
   "shock_capturing": {
+   "factor": 0.5,
    "lagged": true
   }
- }
+ },
+ "coefficient_roles": {
+  "phase_indicator": "χ",
+  "density": "ρ",
+  "dynamic_viscosity": "μ",
+  "gravity": "g"
+ },
+ "coefficients": {
+  "χ": {
+   "code": "χh",
+   "depends_on": {},
+   "reads": [
+    "χh"
+   ],
+   "d": {},
+   "inline": "χh"
+  },
+  "ρ": {
+   "code": "998.2 - 996.995*χh",
+   "depends_on": {},
+   "reads": [
+    "χh"
+   ],
+   "d": {},
+   "inline": "998.2 - 996.995*χ",
+   "uses": [
+    "χ"
+   ]
+  },
+  "μ": {
+   "code": "0.0010021928000000001 - 0.0009841178000000001*χh",
+   "depends_on": {},
+   "reads": [
+    "χh"
+   ],
+   "d": {},
+   "inline": "0.0010021928000000001 - 0.0009841178000000001*χ",
+   "uses": [
+    "χ"
+   ]
+  }
+ },
+ "named": {
+  "order": [
+   "χ",
+   "ρ",
+   "μ"
+  ],
+  "dim": 2,
+  "components": [
+   "v_0",
+   "v_1",
+   "p"
+  ],
+  "equations": [
+   {
+    "component": "v_0",
+    "mass": {
+     "m": "v_0*ρ"
+    },
+    "advection": {
+     "f": [
+      "p + v_0**2*ρ",
+      "v_0*v_1*ρ"
+     ]
+    },
+    "diffusion": {
+     "v_0": {
+      "rowptr": [
+       0,
+       1,
+       2
+      ],
+      "colind": [
+       0,
+       1
+      ],
+      "a": [
+       "2*μ",
+       "μ"
+      ]
+     },
+     "v_1": {
+      "rowptr": [
+       0,
+       0,
+       1
+      ],
+      "colind": [
+       0
+      ],
+      "a": [
+       "μ"
+      ]
+     }
+    }
+   },
+   {
+    "component": "v_1",
+    "mass": {
+     "m": "v_1*ρ"
+    },
+    "advection": {
+     "f": [
+      "v_0*v_1*ρ",
+      "p + v_1**2*ρ"
+     ]
+    },
+    "reaction": {
+     "r": "9.8*ρ"
+    },
+    "diffusion": {
+     "v_0": {
+      "rowptr": [
+       0,
+       1,
+       1
+      ],
+      "colind": [
+       1
+      ],
+      "a": [
+       "μ"
+      ]
+     },
+     "v_1": {
+      "rowptr": [
+       0,
+       1,
+       2
+      ],
+      "colind": [
+       0,
+       1
+      ],
+      "a": [
+       "μ",
+       "2*μ"
+      ]
+     }
+    }
+   },
+   {
+    "component": "p",
+    "advection": {
+     "f": [
+      "v_0",
+      "v_1"
+     ]
+    }
+   }
+  ]
+ },
+ "unknowns": {
+  "v": [
+   "v_0",
+   "v_1"
+  ],
+  "p": [
+   "p"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "velocity": {
+   "family": "CG",
+   "order": 1
+  },
+  "pressure": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": [
+  {
+   "type": "dirichlet",
+   "variable": "v",
+   "region": "walls",
+   "kind": "weak",
+   "form": "symmetric",
+   "component": "normal"
+  },
+  {
+   "type": "neumann",
+   "variable": "v",
+   "region": "walls",
+   "kind": "none",
+   "component": "tangential"
+  },
+  {
+   "type": "dirichlet",
+   "variable": "p",
+   "region": "top",
+   "kind": "weak",
+   "form": "symmetric"
+  },
+  {
+   "type": "neumann",
+   "variable": "v",
+   "region": "top",
+   "kind": "none"
+  }
+ ]
 }

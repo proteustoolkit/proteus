@@ -1,0 +1,97 @@
+{
+ "kernel": "PorousVOF",
+ "dim": 3,
+ "subproblem": "vof",
+ "adr": {
+  "dim": 3,
+  "components": [
+   "χh"
+  ],
+  "equations": [
+   {
+    "component": "χh",
+    "mass": {
+     "m": "χh*(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)",
+     "dm": {
+      "χh": "-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1"
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "χh*(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_0",
+      "χh*(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_1",
+      "χh*(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_2"
+     ],
+     "df": {
+      "χh": [
+       "(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_0",
+       "(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_1",
+       "(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*v_2"
+      ]
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    }
+   }
+  ]
+ },
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1",
+    "v_2"
+   ]
+  }
+ },
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "lagged": false,
+  "shock_capturing": {
+   "factor": 0.5,
+   "beta": 1.5,
+   "reference": 1.0,
+   "lagged": true
+  }
+ },
+ "coefficient_roles": {
+  "porosity": "θ"
+ },
+ "regularized": {
+  "heaviside": {
+   "by": "smoothed_heaviside",
+   "width": "1.5*h"
+  }
+ },
+ "unknowns": {
+  "χh": [
+   "χh"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [
+  "h"
+ ],
+ "boundary_conditions": [
+  {
+   "type": "dirichlet",
+   "variable": "χ",
+   "region": "top",
+   "only": "inflow",
+   "kind": "strong"
+  }
+ ]
+}

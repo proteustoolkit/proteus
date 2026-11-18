@@ -1,6 +1,7 @@
 {
  "kernel": "MCORR",
  "dim": 2,
+ "subproblem": "mcorr",
  "adr": {
   "dim": 2,
   "components": [
@@ -40,15 +41,41 @@
    }
   ]
  },
- "fields": [
-  "φ",
-  "χh"
- ],
- "stabilization": {
-  "method": "SUPG",
-  "tau": "metric",
-  "shock_capturing": {
-   "lagged": true
+ "reads": {
+  "φ": {
+   "at": "current_step",
+   "via": "rdls",
+   "components": [
+    "φ"
+   ]
+  },
+  "χh": {
+   "at": "current_step",
+   "via": "vof",
+   "components": [
+    "χh"
+   ]
   }
- }
+ },
+ "regularized": {
+  "heaviside": {
+   "by": "smoothed_heaviside",
+   "width": "1.5*h"
+  }
+ },
+ "unknowns": {
+  "φc": [
+   "φc"
+  ]
+ },
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [
+  "h"
+ ],
+ "boundary_conditions": []
 }

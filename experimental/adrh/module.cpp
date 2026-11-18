@@ -11,13 +11,30 @@
 #include "rdls.h"
 #include "mcorr.h"
 #include "rans2p.h"
-// Generator spike: with -DADRH_GENERATED the VOF and NCLS functors are the ones generator/generate.py emitted from ymf's
-// plain-data ADR form (generated.h), and the module is adrh_gen; without it, the hand-written vof.h/ncls.h ones, adrh_proto.
+// With -DADRH_GENERATED the VOF and NCLS functors are the ones generator/generate.py emitted from the porous dam break's spec
+// (generated.h, ymf's sub-problems `vof` and `ncls`), and the module is adrh_gen; without it, the hand-written vof.h/ncls.h
+// ones, adrh_proto. A generated functor exists for the dimensions the spec was read in (`available`).
 #ifdef ADRH_GENERATED
 #include "generated.h"
 #define ADRH_MODULE_NAME adrh_gen
 template <int nS> using VOFFunctor = adrh::generated::VOFCoefficients<nS>;
 template <int nS> using NCLSFunctor = adrh::generated::NCLSCoefficients<nS>;
+template <int nS> using PorousVOFFunctor = adrh::generated::PorousVOFCoefficients<nS>;
+template <int nS> using PorousNCLSFunctor = adrh::generated::PorousNCLSCoefficients<nS>;
+// constructed problems (generator/make_inputs.py): a state coefficient kappa(u) in the flux, free, lagged to the previous iterate,
+// and lagged to the previous step (kappa a per-point input)
+template <int nS> using TransportFunctor = adrh::generated::TransportCoefficients<nS>;
+template <int nS> using TransportLaggedFunctor = adrh::generated::TransportLaggedCoefficients<nS>;
+template <int nS> using TransportStepFunctor = adrh::generated::TransportStepCoefficients<nS>;
+// slice 2 slots: a reaction and a diffusion that depend on u (constructed), and the spec's RDLS without shock capturing (a
+// Hamiltonian nonlinear in grad u: d(dH)/d(grad u) by dual numbers)
+template <int nS> using ReacdiffFunctor = adrh::generated::ReacdiffCoefficients<nS>;
+template <int nS> using RdlsNoscFunctor = adrh::generated::RdlsNoscCoefficients<nS>;
+// slice 3: RDLS (SUPG template) and MCorr (the Galerkin form of engine.h) from their sub-problems of the spec
+template <int nS> using RDLSFunctor = adrh::generated::RDLSCoefficients<nS>;
+template <int nS> using MCORRFunctor = adrh::generated::MCORRCoefficients<nS>;
+template <int nS> using PorousMCORRFunctor = adrh::generated::PorousMCORRCoefficients<nS>;
+template <int nS> using PorousRDLSFunctor = adrh::generated::PorousRDLSCoefficients<nS>;
 #else
 #define ADRH_MODULE_NAME adrh_proto
 template <int nS> using VOFFunctor = adrh::VOFCoefficients<nS>;
@@ -29,6 +46,7 @@ template <int nS> using NCLSFunctor = adrh::NCLSCoefficients<nS>;
 
 namespace py = pybind11;
 using Arr = py::array_t<double, py::array::c_style | py::array::forcecast>;
+using IArrTop = py::array_t<int, py::array::c_style | py::array::forcecast>;
 
 template <class C, int nS>
 py::tuple run(const C &coef, Arr xn, Arr u, py::object uold, Arr qp, Arr qw, double t, double dt)
@@ -74,7 +92,7 @@ py::tuple runMasked(const C &coef, Arr xn, Arr u, py::object uold, Arr qp, Arr q
 
 // Lagrange spaces by name and dimension; f gets a default-constructed space as a type tag and returns a py::tuple.
 template <class F>
-py::tuple dispatchSpace(int nd, const std::string &space, F &&f)
+py::object dispatchSpace(int nd, const std::string &space, F &&f)
 {
   if (nd == 1 && space == "p1") return f(adrh::P1Simplex<1>{});
   if (nd == 1 && space == "p2") return f(adrh::P2Simplex<1>{});
@@ -86,6 +104,117 @@ py::tuple dispatchSpace(int nd, const std::string &space, F &&f)
   if (nd == 3 && space == "q1") return f(adrh::Q1Cube<3>{});
   throw std::invalid_argument("no space '" + space + "' in " + std::to_string(nd) + "D (p1, p2, q1; nd 1 to 3, q1 only 2 or 3)");
 }
+
+// A generated functor of the Galerkin form (engine.h's Terms: no stabilization stated) derives from DenseMasks; the SUPG ones do not.
+template <class C> constexpr bool kGalerkin = std::is_base_of_v<adrh::DenseMasks, C>;
+
+// The scalar SUPG element loop for a functor C (vof.h): R (nE, nD), J (nE, nD, nD), numDiff and cfl (nE, nQ), and with withCut
+// NCLS's sign-change flag per element. A functor the spec did not state for this dimension is refused.
+template <class C, class S>
+py::tuple supgElements(Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr numDiffLast, Arr h, const adrh::SUPGParameters &P,
+                       bool withCut)
+{
+  constexpr int nS = S::nS, nD = S::nDOF;
+  if constexpr (!adrh::Available<C>::value || kGalerkin<C>)
+  {
+    throw std::invalid_argument("no generated SUPG functor of this name in " + std::to_string(nS) + "D");
+    return py::tuple();
+  }
+  else
+  {
+    const int nE = xn.shape(0), nQ = qw.shape(0);
+    if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != C::nFields)
+      throw std::invalid_argument("fields must be (nE, nQ, " + std::to_string(C::nFields) + ") for this functor");
+    py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
+    py::array_t<int> cut(nE);
+    double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
+    int *cutp = cut.mutable_data();
+    const double *X = xn.data(), *U = u.data(), *F = fields.data(), *B = beta.data(), *NL = numDiffLast.data(), *H = h.data();
+    {
+      py::gil_scoped_release release;
+      for (int eN = 0; eN < nE; ++eN)
+      {
+        adrh::scalarSUPGElement<C, S>(C(), P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), F + eN * nQ * C::nFields,
+                                      B + eN * nQ, NL + eN * nQ, H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
+        cutp[eN] = withCut && adrh::signChangeElement<nD>(U + eN * nD) ? 1 : 0;
+      }
+    }
+    if (withCut) return py::make_tuple(R, J, nd_, cfl, cut);
+    return py::make_tuple(R, J, nd_, cfl);
+  }
+}
+
+// The exterior faces of a scalar SUPG functor C: the face kernel is the one the functor's `face` selects (vof.h FaceKind), which
+// a generated functor takes from the spec's boundary words and the form of its equation. Upwind returns R, J, flux, uUp (nF, nQf);
+// InflowPenalty R, J, the trace u and its normalized gradient (nF, nQf, nS); None the same two outputs with R = J = 0.
+template <class C, class S>
+py::tuple scalarFaces(Arr xn, Arr u, IArrTop faceLocal, Arr xi, Arr qwf, Arr fields, IArrTop isDirichlet, Arr g, const int *isFlux,
+                      const double *gflux, const double *rd)
+{
+  constexpr int nS = S::nS, nD = S::nDOF;
+  if constexpr (!adrh::Available<C>::value || kGalerkin<C>)
+  {
+    throw std::invalid_argument("no generated SUPG functor of this name in " + std::to_string(nS) + "D");
+    return py::tuple();
+  }
+  else
+  {
+    const int nF = xn.shape(0), nQf = qwf.shape(0);
+    py::array_t<double> R({nF, nD}), J({nF, nD, nD});
+    double *Rp = R.mutable_data(), *Jp = J.mutable_data();
+    for (int i = 0; i < nF * nD; ++i) Rp[i] = 0.0;
+    for (int i = 0; i < nF * nD * nD; ++i) Jp[i] = 0.0;
+    const int *fl = faceLocal.data();
+    if constexpr (C::face == adrh::FaceKind::Upwind)
+    {
+      py::array_t<double> flux({nF, nQf}), uUp({nF, nQf});
+      for (int f = 0; f < nF; ++f)
+        adrh::scalarUpwindFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS, qwf.data(),
+                                     fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf, g.data() + f * nQf,
+                                     isFlux + f * nQf, gflux + f * nQf, Rp + f * nD, Jp + f * nD * nD,
+                                     flux.mutable_data() + f * nQf, uUp.mutable_data() + f * nQf);
+      return py::make_tuple(R, J, flux, uUp);
+    }
+    else
+    {
+      py::array_t<double> uT({nF, nQf}), gN({nF, nQf, nS});
+      for (int f = 0; f < nF; ++f)
+      {
+        if constexpr (C::face == adrh::FaceKind::InflowPenalty)
+          adrh::scalarInflowPenaltyFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS,
+                                              qwf.data(), fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf,
+                                              g.data() + f * nQf, rd + f * nQf, Rp + f * nD, Jp + f * nD * nD,
+                                              uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
+        else
+          adrh::rdlsTraceFace<S>(xn.data() + f * nD * 3, u.data() + f * nD, nQf, xi.data() + fl[f] * nQf * nS,
+                                 uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
+      }
+      return py::make_tuple(R, J, uT, gN);
+    }
+  }
+}
+
+#ifdef ADRH_GENERATED
+// f(functor) for the generated functor called `kernel`, in nS dimensions.
+template <int nS, class F>
+py::object withGenerated(const std::string &kernel, F &&f)
+{
+  if (kernel == "vof") return f(VOFFunctor<nS>{});
+  if (kernel == "ncls") return f(NCLSFunctor<nS>{});
+  if (kernel == "porous_vof") return f(PorousVOFFunctor<nS>{});
+  if (kernel == "porous_ncls") return f(PorousNCLSFunctor<nS>{});
+  if (kernel == "transport") return f(TransportFunctor<nS>{});
+  if (kernel == "transport_lagged") return f(TransportLaggedFunctor<nS>{});
+  if (kernel == "transport_step") return f(TransportStepFunctor<nS>{});
+  if (kernel == "reacdiff") return f(ReacdiffFunctor<nS>{});
+  if (kernel == "rdls_nosc") return f(RdlsNoscFunctor<nS>{});
+  if (kernel == "rdls") return f(RDLSFunctor<nS>{});
+  if (kernel == "mcorr") return f(MCORRFunctor<nS>{});
+  if (kernel == "porous_rdls") return f(PorousRDLSFunctor<nS>{});
+  if (kernel == "porous_mcorr") return f(PorousMCORRFunctor<nS>{});
+  throw std::invalid_argument("no generated kernel " + kernel);
+}
+#endif
 
 PYBIND11_MODULE(ADRH_MODULE_NAME, m)
 {
@@ -456,20 +585,9 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
                        double alpha, double sc_c, double sc_uref, double sc_beta, double sc_drop_time) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
-      constexpr int nS = S::nS, nD = S::nDOF;
-      using C = VOFFunctor<nS>;
-      const int nE = xn.shape(0), nQ = qw.shape(0);
+      using C = VOFFunctor<S::nS>;
       const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
-      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
-      double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
-      const double *X = xn.data(), *U = u.data(), *F = fields.data(), *B = beta.data(), *NL = numDiffLast.data(), *H = h.data();
-      {
-        py::gil_scoped_release release;
-        for (int eN = 0; eN < nE; ++eN)
-          adrh::scalarSUPGElement<C, S>(C(), P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), F + eN * nQ * C::nFields,
-                                        B + eN * nQ, NL + eN * nQ, H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
-      }
-      return py::make_tuple(R, J, nd_, cfl);
+      return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, P, false);
     });
   });
   // exterior faces: per face f the element-local xn (nF, nD, 3), u (nF, nD), the local face number faceLocal (nF); xi (nD, nQf, nS)
@@ -479,20 +597,7 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
                         IArrV isFlux, Arr gflux) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
-      constexpr int nS = S::nS, nD = S::nDOF;
-      using C = VOFFunctor<nS>;
-      const int nF = xn.shape(0), nQf = qwf.shape(0);
-      py::array_t<double> R({nF, nD}), J({nF, nD, nD}), flux({nF, nQf}), uUp({nF, nQf});
-      double *Rp = R.mutable_data(), *Jp = J.mutable_data();
-      for (int i = 0; i < nF * nD; ++i) Rp[i] = 0.0;
-      for (int i = 0; i < nF * nD * nD; ++i) Jp[i] = 0.0;
-      const int *fl = faceLocal.data();
-      for (int f = 0; f < nF; ++f)
-        adrh::scalarUpwindFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS, qwf.data(),
-                                     fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf, g.data() + f * nQf,
-                                     isFlux.data() + f * nQf, gflux.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
-                                     flux.mutable_data() + f * nQf, uUp.mutable_data() + f * nQf);
-      return py::make_tuple(R, J, flux, uUp);
+      return scalarFaces<VOFFunctor<S::nS>, S>(xn, u, faceLocal, xi, qwf, fields, isDirichlet, g, isFlux.data(), gflux.data(), nullptr);
     });
   });
 
@@ -502,25 +607,9 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
                         double alpha, double sc_c, double sc_uref, double sc_beta, double sc_drop_time) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
-      constexpr int nS = S::nS, nD = S::nDOF;
-      using C = NCLSFunctor<nS>;
-      const int nE = xn.shape(0), nQ = qw.shape(0);
+      using C = NCLSFunctor<S::nS>;
       const adrh::SUPGParameters P{alpha, sc_c, sc_uref, sc_beta, sc_drop_time, 4.0};
-      py::array_t<double> R({nE, nD}), J({nE, nD, nD}), nd_({nE, nQ}), cfl({nE, nQ});
-      py::array_t<int> cut(nE);
-      double *Rp = R.mutable_data(), *Jp = J.mutable_data(), *np = nd_.mutable_data(), *cp = cfl.mutable_data();
-      int *cutp = cut.mutable_data();
-      const double *X = xn.data(), *U = u.data(), *F = fields.data(), *B = beta.data(), *NL = numDiffLast.data(), *H = h.data();
-      {
-        py::gil_scoped_release release;
-        for (int eN = 0; eN < nE; ++eN)
-        {
-          adrh::scalarSUPGElement<C, S>(C(), P, X + eN * nD * 3, U + eN * nD, nQ, qp.data(), qw.data(), F + eN * nQ * C::nFields,
-                                        B + eN * nQ, NL + eN * nQ, H[eN], Rp + eN * nD, Jp + eN * nD * nD, np + eN * nQ, cp + eN * nQ);
-          cutp[eN] = adrh::signChangeElement<nD>(U + eN * nD) ? 1 : 0;
-        }
-      }
-      return py::make_tuple(R, J, nd_, cfl, cut);
+      return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, P, true);
     });
   });
   // NCLS exterior faces: as vof_faces, with rd (nF, nQf) the redistanced trace in place of the flux condition. Returns R, J,
@@ -528,20 +617,7 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
   m.def("ncls_faces", [](int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi, Arr qwf, Arr fields, IArrV isDirichlet, Arr g, Arr rd) {
     return dispatchSpace(nd, "p1", [&](auto spaceTag) {
       using S = decltype(spaceTag);
-      constexpr int nS = S::nS, nD = S::nDOF;
-      using C = NCLSFunctor<nS>;
-      const int nF = xn.shape(0), nQf = qwf.shape(0);
-      py::array_t<double> R({nF, nD}), J({nF, nD, nD}), uT({nF, nQf}), gN({nF, nQf, nS});
-      double *Rp = R.mutable_data(), *Jp = J.mutable_data();
-      for (int i = 0; i < nF * nD; ++i) Rp[i] = 0.0;
-      for (int i = 0; i < nF * nD * nD; ++i) Jp[i] = 0.0;
-      const int *fl = faceLocal.data();
-      for (int f = 0; f < nF; ++f)
-        adrh::scalarInflowPenaltyFace<C, S>(C(), xn.data() + f * nD * 3, u.data() + f * nD, fl[f], nQf, xi.data() + fl[f] * nQf * nS,
-                                            qwf.data(), fields.data() + f * nQf * C::nFields, isDirichlet.data() + f * nQf,
-                                            g.data() + f * nQf, rd.data() + f * nQf, Rp + f * nD, Jp + f * nD * nD,
-                                            uT.mutable_data() + f * nQf, gN.mutable_data() + f * nQf * nS);
-      return py::make_tuple(R, J, uT, gN);
+      return scalarFaces<NCLSFunctor<S::nS>, S>(xn, u, faceLocal, xi, qwf, fields, isDirichlet, g, nullptr, nullptr, rd.data());
     });
   });
 
@@ -760,6 +836,87 @@ PYBIND11_MODULE(ADRH_MODULE_NAME, m)
 
   // MCorr.py's masking after assembly (mcorr.h step 4), in place: r *= activeR, the CSR rows of inactive DOFs become identity
   // rows, and the DOFs with activeDOF != 1 are zeroed.
+
+#ifdef ADRH_GENERATED
+  // The generated functors by name (the sub-problem of the spec the generator read): each of these calls takes `kernel` and the
+  // spec's dimension nd. functor_info: what the spec states, as the engine reads it (the stabilization constants, the face kernel,
+  // the per-point inputs). *_supg_spec: the element loop with the stabilization the spec states (no sc_* arguments; alpha is the
+  // time integrator's; exactJacobian differentiates the subgrid term through a nonlinear Hamiltonian where the functor has the
+  // slot). generated_faces: the face kernel the functor selects.
+  m.def("functor_info", [](const std::string &kernel, int nd) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      return withGenerated<decltype(spaceTag)::nS>(kernel, [&](auto functor) -> py::object {
+        using C = decltype(functor);
+        if constexpr (!adrh::Available<C>::value) throw std::invalid_argument("not generated in this dimension");
+        else if constexpr (kGalerkin<C>)
+        {
+          py::dict d;
+          d["nFields"] = C::nFields; d["galerkin"] = true; d["hasDiffusion"] = C::has_diffusion; d["hasReaction"] = C::has_reaction;
+          return d;
+        }
+        else
+        {
+          py::dict d;
+          d["nFields"] = C::nFields; d["galerkin"] = false; d["tauForm"] = C::tauForm; d["face"] = (int)C::face;
+          d["hasF"] = C::hasF; d["hasH"] = C::hasH; d["hasR"] = C::hasR; d["usesPoint"] = adrh::Flag_usesPoint<C>::value;
+          d["scFactor"] = C::scFactor; d["scBeta"] = C::scBeta; d["scReference"] = C::scReference; d["scLagged"] = C::scLagged;
+          return d;
+        }
+        return py::none();
+      });
+    });
+  });
+  m.def("generated_supg", [](const std::string &kernel, int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields, Arr beta, Arr numDiffLast,
+                             Arr h, double alpha, bool exactJacobian) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
+        using C = decltype(functor);
+        if constexpr (!adrh::Available<C>::value || kGalerkin<C>) throw std::invalid_argument("no generated SUPG functor of this name in this dimension");
+        else return supgElements<C, S>(xn, u, qp, qw, fields, beta, numDiffLast, h, C::supgParameters(alpha, exactJacobian), true);
+        return py::tuple();
+      });
+    });
+  });
+  // The Galerkin functors (engine.h's generic element kernel, steady): R (nE, nD), J (nE, nD, nD) for per-point inputs
+  // fields (nE, nQ, nFields) as the spec's reads and mesh symbols order them.
+  m.def("generated_galerkin", [](const std::string &kernel, int nd, Arr xn, Arr u, Arr qp, Arr qw, Arr fields) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
+        using C = decltype(functor);
+        constexpr int nD = S::nDOF;
+        if constexpr (!adrh::Available<C>::value || !kGalerkin<C>) throw std::invalid_argument("no generated Galerkin functor of this name in this dimension");
+        else
+        {
+          const int nE = xn.shape(0), nQ = qw.shape(0);
+          if (fields.ndim() != 3 || fields.shape(0) != nE || fields.shape(1) != nQ || fields.shape(2) != C::nFields)
+            throw std::invalid_argument("fields must be (nE, nQ, " + std::to_string(C::nFields) + ") for this functor");
+          C coef;
+          coef.fields = fields.data(); coef.nQ = nQ;
+          py::array_t<double> R({nE, nD}), J({nE, nD, nD});
+          {
+            py::gil_scoped_release release;
+            adrh::elementKernelSpace<C, S>(coef, nE, nQ, xn.data(), u.data(), nullptr, qp.data(), qw.data(), 0.0, 0.0,
+                                           R.mutable_data(), J.mutable_data());
+          }
+          return py::make_tuple(R, J);
+        }
+        return py::tuple();
+      });
+    });
+  });
+  m.def("generated_faces", [](const std::string &kernel, int nd, Arr xn, Arr u, IArrV faceLocal, Arr xi, Arr qwf, Arr fields,
+                              IArrV isDirichlet, Arr g, IArrV isFlux, Arr gflux, Arr rd) {
+    return dispatchSpace(nd, "p1", [&](auto spaceTag) {
+      using S = decltype(spaceTag);
+      return withGenerated<S::nS>(kernel, [&](auto functor) -> py::tuple {
+        using C = decltype(functor);
+        return scalarFaces<C, S>(xn, u, faceLocal, xi, qwf, fields, isDirichlet, g, isFlux.data(), gflux.data(), rd.data());
+      });
+    });
+  });
+#endif
   m.def("replace_inactive_rows", [](py::array_t<int, py::array::c_style> rowptr, py::array_t<int, py::array::c_style> colind,
                                     py::array_t<double, py::array::c_style> vals, py::array_t<double, py::array::c_style> r,
                                     Arr activeR, py::array_t<double, py::array::c_style> u_dof, Arr activeDOF) {
