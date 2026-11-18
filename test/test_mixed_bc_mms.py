@@ -12,7 +12,9 @@ derivative vanishes. The exact solution is the data of every strong and weak wal
 * serial = 2 and 3 ranks, node and element partitions;
 * a face declared 'none' under the ``noFlow`` component of StrongDirichlet takes the upwinded outflow on that face only: the same
   run as the component's ``outFlow`` flag with the face undeclared (the old way), and the wall (nothing declared) is 100x worse;
-* a face declared 'weak' under a class that has no weak term is refused, not ignored.
+* a face declared 'weak' under a class that has no weak term is refused, not ignored;
+* TADR (its kernel reads the kind per face): a boundary layer with the left wall strong and the right weak equals the all-weak
+  run, with the left weak and the right strong the all-strong run (the legacy ``forceStrongConditions``), serial = 2 ranks.
 """
 import importlib.util
 import json
@@ -42,7 +44,7 @@ MPIEXEC = _mpiexec()
 MIXED = "left=strong,bottom=weak,top=weak,right=none"
 
 
-def _run(tmp_path_factory, ranks=1, **case):
+def _run(tmp_path_factory, ranks=1, script="mixed_bc_mms_mpi.py", **case):
     cwd = tmp_path_factory.mktemp("_".join("%s%s" % (k, str(v).replace("=", "").replace(",", "")) for k, v in sorted(case.items())) + "_r%d" % ranks)
     env = dict(os.environ, OMP_NUM_THREADS="1")
     env.setdefault("FI_PROVIDER", "tcp")
@@ -51,7 +53,7 @@ def _run(tmp_path_factory, ranks=1, **case):
     env["PYTHONPATH"] = os.pathsep.join([p for p in sys.path if p] + [env.get("PYTHONPATH", "")]).strip(os.pathsep)
     env["PETSC_OPTIONS"] = "-mat_partitioning_type current"
     env.update({k: str(v) for k, v in case.items()})
-    script = os.path.join(HERE, "mixed_bc_mms_mpi.py")
+    script = os.path.join(HERE, script)
     argv = [sys.executable, script] if ranks == 1 else [MPIEXEC, "-n", str(ranks), sys.executable, script]
     out = launch_output.run(argv, cwd=cwd, env=env, timeout=1800)
     results = [json.loads(line[len("RESULT "):]) for line in out.stdout.splitlines() if line.startswith("RESULT ")]
@@ -147,3 +149,27 @@ def test_a_kind_in_a_setter_that_was_not_declared_is_refused(tmp_path_factory):
     with pytest.raises(AssertionError) as e:
         _run(tmp_path_factory, P=2, NN=5, KINDS=MIXED, DECLARE=0, UNDECLARED_KINDS=1)
     assert "not declared" in str(e.value)
+
+
+def _tadr(run, ranks=1, **case):
+    return run(ranks=ranks, script="tadr_mixed_bc_mpi.py", **case)
+
+
+def test_tadr_per_face_kinds_match_the_legacy_all_strong_and_all_weak_runs(run):
+    weak_right = _tadr(run, KINDS="left=strong,right=weak,top=none,bottom=none")
+    all_weak = _tadr(run, DECLARE=0, KINDS="left=bare,right=bare")
+    strong_right = _tadr(run, KINDS="left=weak,right=strong,top=none,bottom=none")
+    all_strong = _tadr(run, DECLARE=0, ALL="strong", KINDS="left=bare,right=bare")
+    assert weak_right["rms"] == pytest.approx(all_weak["rms"], rel=1.0e-6)
+    assert strong_right["rms"] == pytest.approx(all_strong["rms"], rel=1.0e-6)
+    assert strong_right["rms"] > 1.2 * weak_right["rms"]          # the right wall's kind matters, and it is read per face
+    assert weak_right["uMin"] > 0.05 and strong_right["uMin"] == 0.0
+    assert weak_right["strongPts"] == weak_right["weakPts"] == 24 and weak_right["forcedDofsOnRank0"] == 9
+    assert weak_right["openPts"] > 0 and weak_right["forceStrongConditions"] is True
+
+
+def test_tadr_two_ranks_give_the_serial_solution(run):
+    case = dict(KINDS="left=strong,right=weak,top=none,bottom=none")
+    s, r = _tadr(run, **case), _tadr(run, ranks=2, **case)
+    assert r["ranks"] == 2
+    assert r["rms"] == pytest.approx(s["rms"], rel=1.0e-9) and r["linf"] == pytest.approx(s["linf"], rel=1.0e-9)
