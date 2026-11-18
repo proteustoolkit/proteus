@@ -339,6 +339,25 @@ class TestShapeRANS(unittest.TestCase):
         self.assertRaises(ValueError,assembleDomainRANS,domain)
 
 
+    def test_zones_accept_numpy_integer_flags(self):
+        """A flag taken from shape.regionFlags is a numpy integer: the zone
+        setters tested isinstance(flags, int) and iterated over it
+        (TypeError: 'numpy.int64' object is not iterable)."""
+        for flag in (np.int32(1), np.int64(1), np.array([1, 2])[0]):
+            domain = create_domain2D()
+            custom = create_custom2D(domain, 'mprans')
+            custom.setAbsorptionZones(flags=flag, epsFact_porous=0.5,
+                                      center=[0.5, 0., 0.], orientation=[1., 0., 0.],
+                                      vert_axis=0, dragAlpha=1., dragBeta=0.,
+                                      porosity=1.)
+            self.assertIn(1, custom.zones)
+            self.assertEqual(custom.zones[1].zone_type, 'absorption')
+            domain = create_domain2D()
+            custom = create_custom2D(domain, 'mprans')
+            custom.setPorousZones(flags=flag, dragAlpha=1., dragBeta=0., porosity=0.4)
+            self.assertIn(1, custom.zones)
+            self.assertEqual(custom.zones[1].zone_type, 'porous')
+
     def test_absorption_zones(self):
         flag = 1
         epsFact_porous = 0.5

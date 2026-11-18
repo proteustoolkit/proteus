@@ -79,6 +79,16 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
         self.last_uy = 0.0
         self.last_uz = 0.0
 
+        # defaults, so that a body that never calls setNumericalScheme,
+        # setSprings or setConstraints still runs: forward Euler, no springs
+        # or dampers, all translations and rotations free
+        self.scheme = 'Forward_Euler'
+        self.springs = False
+        self.Kx = self.Ky = self.Kz = self.Krot = 0.0
+        self.Cx = self.Cy = self.Cz = self.Crot = 0.0
+        self.free_x = np.ones(3)
+        self.free_r = np.ones(3)
+
         # gravity
         if 'RigidBody' not in shape.auxiliaryVariables:
             shape._attachAuxiliaryVariable('RigidBody', self)
@@ -312,6 +322,14 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
 
     # Runge_Kutta
         elif self.scheme == 'Runge_Kutta':
+            # the scheme integrates the rotation about z only
+            if self.nd == 3 and np.any(self.free_r[:2]):
+                raise NotImplementedError(
+                    "RigidBody: the Runge_Kutta scheme integrates the "
+                    "rotation about the z axis only, but free_r=%s frees "
+                    "a rotation about x or y in 3D (it would never move). "
+                    "Use setNumericalScheme('Forward_Euler')."
+                    % (self.free_r,))
             # settings
             Krot = self.Krot
             Crot = self.Crot
@@ -527,8 +545,9 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
             Inertia tensor of the body (3x3 array in 3D, float in 2D)
         Notes
         -----
-        The inertia tensor should not be already scaled with the mass of the
-        shape.
+        The inertia tensor is per unit mass: getInertia multiplies it by the
+        mass of the body (set with setMass), so it must not be already scaled
+        with the mass.
         """
         It = np.array(It)
         if self.nd == 2:
@@ -557,12 +576,12 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
         Notes
         -----
         The inertia is calculated relative to the coordinate system of the
-        shape (self.coords_system). If the shape was not initialised with a
+        shape (self.Shape.coords_system). If the shape was not initialised with a
         position corresponding to its inertia tensor (e.g. shape was already
         rotated when initialised), set the coordinate system accordingly
         before calling this function
         """
-        assert self.It is not None, 'No inertia tensor! (' + self.name + ')'
+        assert self.It is not None, 'No inertia tensor! (' + self.Shape.name + ')'
         if pivot is None:
             pivot = self.barycenter
         # Pivot coords relative to shape centre of mass
@@ -575,7 +594,7 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
             I = self.It * self.mass
         elif self.nd == 3:
             # vector relative to original position of shape:
-            vec = np.dot(vec, np.linalg.inv(self.coords_system))
+            vec = np.dot(vec, np.linalg.inv(self.Shape.coords_system))
             cx, cy, cz = vec
             # getting the tensor for calculaing moment of inertia
             # from arbitrary axis
@@ -672,7 +691,7 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
             self.record_dict['inertia'] = ['inertia', None]
 
         if filename is None:
-            self.record_filename = 'record_' + self.name + '.csv'
+            self.record_filename = 'record_' + self.Shape.name + '.csv'
         else:
             self.record_filename = filename + '.csv'
         self.record_file = os.path.join(Profiling.logDir, self.record_filename)
@@ -898,12 +917,12 @@ class CaissonBody(RigidBody):
         Notes
         -----
         The inertia is calculated relative to the coordinate system of the
-        shape (self.coords_system). If the shape was not initialised with a
+        shape (self.Shape.coords_system). If the shape was not initialised with a
         position corresponding to its inertia tensor (e.g. shape was already
         rotated when initialised), set the coordinate system accordingly
         before calling this function
         """
-        assert self.It is not None, 'No inertia tensor! (' + self.name + ')'
+        assert self.It is not None, 'No inertia tensor! (' + self.Shape.name + ')'
         if pivot is None:
             pivot = self.barycenter
         # Pivot coords relative to shape centre of mass
@@ -921,7 +940,7 @@ class CaissonBody(RigidBody):
             I = self.It * self.mass
         elif self.Shape.Domain.nd == 3:
             # vector relative to original position of shape:
-            vec = np.dot(vec, np.linalg.inv(self.coords_system))
+            vec = np.dot(vec, np.linalg.inv(self.Shape.coords_system))
             cx, cy, cz = vec
             # getting the tensor for calculaing moment of inertia
             # from arbitrary axis
@@ -1358,7 +1377,7 @@ class CaissonBody(RigidBody):
             self.record_dict['uy'] = ['uy', None]
 
         if filename is None:
-            self.record_filename = 'record_' + self.name + '.csv'
+            self.record_filename = 'record_' + self.Shape.name + '.csv'
         else:
             self.record_filename = filename + '.csv'
         self.record_file = os.path.join(Profiling.logDir, self.record_filename)

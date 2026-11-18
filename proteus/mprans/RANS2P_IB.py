@@ -15,6 +15,8 @@ from proteus.Transport import OneLevelTransport
 from . import cArgumentsDict
 
 class Coefficients(proteus.mprans.RANS2P.Coefficients):
+    _epsFact_solid_is_used = True  # the immersed-boundary kernels read it
+
     def __init__(self,
                  epsFact=1.5,
                  sigma=72.8,

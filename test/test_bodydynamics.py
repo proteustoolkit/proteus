@@ -252,7 +252,7 @@ class TestRigidBody(unittest.TestCase):
         c3d.nd = 3
         c3d.mass = mass
         c3d.It = It
-        c3d.coords_system = coords_system
+        # the body reads the coordinate system from its shape
         I = c3d.getInertia(vec=axis)
         npt.assert_almost_equal(I, inertia, decimal=10)
 
@@ -387,6 +387,68 @@ class TestRigidBody(unittest.TestCase):
         posTra2, rot2 = c2d.position, c2d.rotation[:nd,:nd]
         npt.assert_allclose(posTra1, posTra2, atol=1e-10)
         npt.assert_allclose(rot1, rot2, atol=1e-10)
+
+    def _body3D(self, rotate=False):
+        from proteus import Domain
+        from proteus.mprans import SpatialTools as mst
+        from proteus.mprans import BodyDynamics as bd
+        domain3D = Domain.PiecewiseLinearComplexDomain()
+        dim = (0.3, 0.385, 0.4)
+        caisson = mst.Cuboid(domain=domain3D, dim=dim, coords=[0., 0., 0.])
+        if rotate:
+            caisson.rotate(rot=radians(10.), axis=np.array([1., 1., 1.]))
+        body = bd.RigidBody(shape=caisson)
+        mst.assembleDomain(domain3D)
+        Ix, Iy, Iz = [(d**2)/12. for d in dim]
+        # inertia tensor per unit mass
+        body.It = np.array([[Iz + Iy, 0., 0.], [0., Ix + Iz, 0.], [0., 0., Ix + Iy]])
+        body.mass = 50.
+        body.F = np.zeros(3)
+        body.calculate_init()
+        return body
+
+    def testDefaultSchemeSpringsConstraints(self):
+        """A body that never calls setNumericalScheme, setSprings or
+        setConstraints steps in 3D: forward Euler, no springs, all free, and
+        its inertia reads the coordinate system of its shape."""
+        body = self._body3D(rotate=True)
+        self.assertEqual(body.scheme, 'Forward_Euler')
+        self.assertFalse(body.springs)
+        for k in ('Kx', 'Ky', 'Kz', 'Krot', 'Cx', 'Cy', 'Cz', 'Crot'):
+            self.assertEqual(getattr(body, k), 0.)
+        npt.assert_equal(body.free_x, np.ones(3))
+        npt.assert_equal(body.free_r, np.ones(3))
+        # a roll moment moves the body about x (it did not exist before)
+        body.M = np.array([10., 0., 0.])
+        body.step(0.01)
+        self.assertGreater(body.ang_disp[0], 0.)
+        self.assertEqual(body.ang_disp[1], 0.)
+        self.assertEqual(body.ang_disp[2], 0.)
+        npt.assert_equal(body.h, np.zeros(3))
+
+    def testRungeKuttaRefusesFreeRollIn3D(self):
+        """Runge_Kutta integrates the rotation about z only: with a roll or
+        pitch free in 3D it must refuse rather than not move."""
+        body = self._body3D()
+        body.setNumericalScheme('Runge_Kutta')
+        body.setSprings(False, 0., 0., 0., 0., 0., 0.)
+        body.M = np.array([10., 0., 0.])
+        with self.assertRaises(NotImplementedError):
+            body.step(0.01)
+        # with only the rotation about z free it runs, and rotates about z
+        body.setConstraints(free_x=[1, 1, 1], free_r=[0, 0, 1])
+        body.free_r = np.array([0., 0., 1.])
+        body.M = np.array([0., 0., 10.])
+        body.last_ang_vel = np.zeros(3)
+        body.step(0.01)
+        self.assertNotEqual(body.ang_disp[2], 0.)
+        self.assertEqual(body.ang_disp[0], 0.)
+
+    def testRecordFilenameFromShape(self):
+        """setRecordValues without a filename names the file after the shape."""
+        body = self._body3D()
+        body.setRecordValues(pos=True)
+        self.assertEqual(body.record_filename, 'record_' + body.Shape.name + '.csv')
 
 #    def testSetRecordValues(self):
 #        from proteus import Domain  

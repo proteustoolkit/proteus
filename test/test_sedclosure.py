@@ -709,6 +709,38 @@ class TestHsu(unittest.TestCase):
         npt.assert_almost_equal(mint, sedF*beta/(1.-sedF)/rhoFluid, decimal=10)
 
 
+    def testPickleAndDeepcopy(self):
+        """The closure is a parameter holder: it survives pickle and
+        copy.deepcopy (MultilevelTransport.initialize deep-copies every
+        model's coefficients, so a closure that cannot be copied blocks the
+        k-epsilon models of the sediment decks)."""
+        import copy
+        import pickle
+        gl = GlobalVariables()
+        names = ["aDarcy", "betaForch", "grain", "packFraction", "packMargin",
+                 "maxFraction", "frFraction", "sigmaC", "C3e", "C4e", "eR",
+                 "fContact", "mContact", "nContact", "angFriction",
+                 "vos_limiter", "mu_fr_limiter"]
+        uf = np.array([5., 4.], "d")
+        us = np.array([1., 1.], "d")
+        for sed in (gl.sedSt, gl.sedSt_nl):
+            for dup in (copy.deepcopy(sed), pickle.loads(pickle.dumps(sed))):
+                self.assertIsNot(dup, sed)
+                for n in names:
+                    self.assertEqual(getattr(dup, n), getattr(sed, n), n)
+                self.assertEqual(dup.betaCoeff(0.3, 1.2, uf, us, 1e-6),
+                                 sed.betaCoeff(0.3, 1.2, uf, us, 1e-6))
+
+    def testKappaCoefficientsDeepcopy(self):
+        """copy.deepcopy of a Kappa coefficients object that holds the closure."""
+        import copy
+        from proteus.mprans import Kappa
+        gl = GlobalVariables()
+        coef = Kappa.Coefficients(nd=2, closure=gl.sedSt)
+        dup = copy.deepcopy(coef)
+        self.assertEqual(dup.closure.grain, gl.grain)
+        self.assertEqual(dup.closure.angFriction, gl.angFriction)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

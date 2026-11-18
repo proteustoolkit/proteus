@@ -2141,6 +2141,13 @@ class TimeSeries(object):
                  Lgen = np.array([0.,0.,0]),
                  fast = True
                  ):
+        if isinstance(rec_direct, dict) or rec_direct is None or isinstance(cutoffTotal, (dict, str)):
+            # the 1.x call order was (..., g, rec_direct, window_params, ...): cutoffTotal
+            # now comes first, so the arguments are shifted and would be silently misread
+            raise TypeError("TimeSeries: the arguments after g are cutoffTotal, rec_direct, "
+                            "window_params, arrayData, seriesArray, Lgen, fast; got "
+                            "cutoffTotal=%r, rec_direct=%r. Pass rec_direct and window_params "
+                            "by keyword." % (cutoffTotal, rec_direct))
         self.fast = fast
         self.rec_direct = rec_direct
         # Setting the depth
