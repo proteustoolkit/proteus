@@ -454,8 +454,11 @@ jobs:
           COV_ARGS=()
           if [ "${{ matrix.leg.coverage }}" = yes ]; then
             # pyproject.toml's coverage configuration plus the Cython plugin, which counts the lines of the three
-            # line-traced modules (installed above); written here so no other run of coverage needs Cython
-            awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"Cython.Coverage\"]"}' \
+            # line-traced modules (installed above); written here so no other run of coverage needs Cython.
+            # The plugin is .github/coverage/cython_traced.py (Cython.Coverage plus the hook that stops the combine
+            # failing with "Conflicting file tracer name"), so every process the tests start must find it.
+            export PYTHONPATH="$GITHUB_WORKSPACE/.github/coverage${PYTHONPATH:+:$PYTHONPATH}"
+            awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"cython_traced\"]"}' \
               "$GITHUB_WORKSPACE/pyproject.toml" > "$RUNNER_TEMP/coverage-cython.toml"
             grep -q '^plugins = ' "$RUNNER_TEMP/coverage-cython.toml" || { echo "::error::coverage plugin line not added"; exit 1; }
             # an absolute path: each xdist worker runs in test_output/<worker id>
@@ -586,7 +589,8 @@ jobs:
           else
             echo "::warning::no Cython sources from the coverage leg; the three line-traced modules are not reported"
           fi
-          awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"Cython.Coverage\"]"}' pyproject.toml > coverage-cython.toml
+          awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"cython_traced\"]"}' pyproject.toml > coverage-cython.toml
+          export PYTHONPATH="$PWD/.github/coverage${PYTHONPATH:+:$PYTHONPATH}"
           PARTIAL=()
           DATA=()
           for suite in main fsi; do
