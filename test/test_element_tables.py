@@ -92,9 +92,9 @@ def _compile_and_run(tmp_path, source, includes=()):
     src.write_text(source)
     exe = tmp_path / "main"
     cmd = [CXX, "-std=c++17", "-O0", "-Wall", "-Werror", "-I", str(tmp_path)] + ["-I" + i for i in includes] + [str(src), "-o", str(exe)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stderr[-3000:]
-    out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run([str(exe)], capture_output=True, text=True, check=True, timeout=300).stdout
     return out
 
 
