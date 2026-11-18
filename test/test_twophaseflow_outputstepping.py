@@ -73,7 +73,7 @@ def test_unattached_auxiliary_variables_are_reported():
 def test_old_1x_api_fails_with_the_replacement_named():
     """1.x decks (TwoPhaseFlowProblem(ns_model=..., outputStepping=...),
     Parameters.Models, physical.densityA) failed with a bare TypeError or
-    AttributeError and no hint of the 2.0 names."""
+    AttributeError (or nothing at all) and no hint of the 2.0 names."""
     from proteus.TwoPhaseFlow.TwoPhaseFlowProblem import TwoPhaseFlowProblem
     with pytest.raises(TypeError, match="useDefaultModels"):
         TwoPhaseFlowProblem(ns_model=None, ls_model=None, nd=2, cfl=0.9)
@@ -82,9 +82,11 @@ def test_old_1x_api_fails_with_the_replacement_named():
     problem = TwoPhaseFlowProblem()
     with pytest.raises(AttributeError, match="modelDict"):
         problem.Parameters.Models
-    with pytest.raises(AttributeError, match="SystemPhysics.rho_0"):
+    # SystemPhysics and SystemNumerics are not frozen, and test/TwoPhaseFlow/fillingTank.py sets
+    # densityA (ignored; its pinned results rest on that): warn, do not raise
+    with pytest.warns(UserWarning, match="SystemPhysics.rho_0"):
         problem.SystemPhysics.densityA = 998.
-    with pytest.raises(AttributeError, match="SystemNumerics.useSuperlu"):
+    with pytest.warns(UserWarning, match="SystemNumerics.useSuperlu"):
         problem.SystemNumerics.useSuperLu = True
     with pytest.raises(AttributeError, match="SystemNumerics.cfl"):
         problem.cfl = 0.9  # the problem object is frozen

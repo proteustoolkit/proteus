@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from petsc4py import PETSc
 from proteus.Profiling import logEvent
@@ -167,11 +168,20 @@ class FreezableClass(object):
         self.__setattr__(key, val)
 
     def __setattr__(self, key, val):
-        if (self.__frozen or key in OBSOLETE_1X_OPTIONS) and not hasattr(self, key):
+        if not hasattr(self, key):
             moved = RENAMED_1X_OPTIONS.get(key)
-            raise AttributeError("{key} is not an option for class {name}{moved}".format(
-                key=key, name=self.__class__.__name__,
-                moved=(" (the 1.x name; it is now %s)" % moved) if moved else ""))
+            hint = (" (the 1.x name; it is now %s)" % moved) if moved else ""
+            if self.__frozen:
+                raise AttributeError("{key} is not an option for class {name}{hint}".format(
+                    key=key, name=self.__class__.__name__, hint=hint))
+            if key in OBSOLETE_1X_OPTIONS:
+                # not frozen (SystemPhysics, SystemNumerics): the assignment creates an attribute nobody
+                # reads, as it always did (proteus's own test/TwoPhaseFlow/fillingTank.py sets densityA
+                # and its pinned results rest on the value being ignored): say so, keep going
+                msg = ("{key} is not an option for class {name}{hint}: the value is ignored".format(
+                    key=key, name=self.__class__.__name__, hint=hint))
+                logEvent("WARNING: " + msg, level=0)
+                warnings.warn(msg, UserWarning, stacklevel=2)
         object.__setattr__(self, key, val)
 
     def _freeze(self):
