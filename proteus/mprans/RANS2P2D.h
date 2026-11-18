@@ -9,6 +9,7 @@
 #include "MixedModelFactory.h"
 #include "PyEmbeddedFunctions.h"
 #include "equivalent_polynomials.h"
+#include "UnfittedKernels.h"
 #include "ArgumentsDict.h"
 #include "pyarray.h"
 #include "mpi.h"
@@ -3197,7 +3198,6 @@ namespace proteus
         {
           if(isActiveElement[elementBoundaryElementsArray[(*it)*2+0]] && isActiveElement[elementBoundaryElementsArray[(*it)*2+1]])
             {
-              std::map<proteus_index_t,double> DWp_Dn_jump, DW_Dn_jump;
               double gamma_cutfem=ghost_penalty_constant,gamma_cutfem_p=ghost_penalty_constant,h_cutfem=elementBoundaryDiameter.data()[*it];
               proteus_index_t eN_nDOF_v_trial_element  = elementBoundaryElementsArray.data()[(*it)*2+0]*nDOF_v_trial_element;
               //See Massing Schott Wall 2018
@@ -3219,19 +3219,13 @@ namespace proteus
               for (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
                 {
                   double Dp_Dn_jump=0.0, Du_Dn_jump=0.0, Dv_Dn_jump=0.0,dS;
-                  for (int eN_side=0;eN_side < 2; eN_side++)
-                    {
-                      proteus_index_t ebN = *it,
-                        eN  = elementBoundaryElementsArray.data()[ebN*2+eN_side];
-                      for (int i=0;i<nDOF_test_element;i++)
-                        {
-                          DWp_Dn_jump[rp_l2g.data()[eN*nDOF_test_element+i]] = 0.0;
-                        }
-                      for (int i=0;i<nDOF_v_test_element;i++)
-                        {
-                          DW_Dn_jump[rvel_l2g.data()[eN*nDOF_v_test_element+i]] = 0.0;
-                        }
-                    }
+                  // [dW_i/dn] of the test functions of the element on side 0 and of side 1 (the normal of each side is its own,
+                  // so the sum over the sides of grad . n is the jump), then the ghost penalty is unfitted::jumpPenalty
+                  double jv_p[2*nDOF_test_element], jv_v[2*nDOF_v_test_element];
+                  for (int i=0;i<2*nDOF_test_element;i++)
+                    jv_p[i]=0.0;
+                  for (int i=0;i<2*nDOF_v_test_element;i++)
+                    jv_v[i]=0.0;
                   for (int eN_side=0;eN_side < 2; eN_side++)
                     {
                       proteus_index_t ebN = *it,
@@ -3312,27 +3306,37 @@ namespace proteus
                       for (int i=0;i<nDOF_test_element;i++)
                         {
                           for (int I=0;I<nSpace;I++)
-                            DWp_Dn_jump[rp_l2g[eN_nDOF_trial_element+i]] += p_grad_trial_trace[i*nSpace+I]*normal[I];
+                            jv_p[eN_side*nDOF_test_element+i] += p_grad_trial_trace[i*nSpace+I]*normal[I];
                         }
                       for (int i=0;i<nDOF_v_test_element;i++)
                         {
                           for (int I=0;I<nSpace;I++)
-                            DW_Dn_jump[rvel_l2g[eN_nDOF_v_trial_element+i]] += vel_grad_trial_trace[i*nSpace+I]*normal[I];
+                            jv_v[eN_side*nDOF_v_test_element+i] += vel_grad_trial_trace[i*nSpace+I]*normal[I];
                         }
                     }//eN_side
-                  for (std::map<proteus_index_t,double>::iterator W_it=DWp_Dn_jump.begin(); W_it!=DWp_Dn_jump.end(); ++W_it)
+                  double rp_loc[2*nDOF_test_element], ru_loc[2*nDOF_v_test_element], rv_loc[2*nDOF_v_test_element];
+                  for (int i=0;i<2*nDOF_test_element;i++)
+                    rp_loc[i]=0.0;
+                  for (int i=0;i<2*nDOF_v_test_element;i++)
                     {
-                      proteus_index_t i_global = W_it->first;
-                      double DWp_Dn_jump_i = W_it->second;
-                      globalResidual.data()[offset_p+stride_p*i_global]+=gamma_cutfem_p*h_cutfem*Dp_Dn_jump*DWp_Dn_jump_i*dS;
+                      ru_loc[i]=0.0;
+                      rv_loc[i]=0.0;
                     }
-                  for (std::map<proteus_index_t,double>::iterator W_it=DW_Dn_jump.begin(); W_it!=DW_Dn_jump.end(); ++W_it)
+                  unfitted::jumpPenalty<2*nDOF_test_element>(dS, gamma_cutfem_p*h_cutfem, Dp_Dn_jump, jv_p, rp_loc, nullptr);
+                  unfitted::jumpPenalty<2*nDOF_v_test_element>(dS, gamma_cutfem*h_cutfem, Du_Dn_jump, jv_v, ru_loc, nullptr);
+                  unfitted::jumpPenalty<2*nDOF_v_test_element>(dS, gamma_cutfem*h_cutfem, Dv_Dn_jump, jv_v, rv_loc, nullptr);
+                  for (int eN_side=0;eN_side < 2; eN_side++)
                     {
-                      proteus_index_t i_global = W_it->first;
-                      double DW_Dn_jump_i = W_it->second;
-                      globalResidual.data()[offset_u+stride_u*i_global]+=gamma_cutfem*h_cutfem*Du_Dn_jump*DW_Dn_jump_i*dS;
-                      globalResidual.data()[offset_v+stride_v*i_global]+=gamma_cutfem*h_cutfem*Dv_Dn_jump*DW_Dn_jump_i*dS;
-                    }//i
+                      proteus_index_t eN  = elementBoundaryElementsArray.data()[(*it)*2+eN_side];
+                      for (int i=0;i<nDOF_test_element;i++)
+                        globalResidual.data()[offset_p+stride_p*rp_l2g.data()[eN*nDOF_test_element+i]]+=rp_loc[eN_side*nDOF_test_element+i];
+                      for (int i=0;i<nDOF_v_test_element;i++)
+                        {
+                          proteus_index_t i_global = rvel_l2g.data()[eN*nDOF_v_test_element+i];
+                          globalResidual.data()[offset_u+stride_u*i_global]+=ru_loc[eN_side*nDOF_v_test_element+i];
+                          globalResidual.data()[offset_v+stride_v*i_global]+=rv_loc[eN_side*nDOF_v_test_element+i];
+                        }
+                    }
                 }//kb
 	      it++;
             }
@@ -5737,8 +5741,6 @@ namespace proteus
       std::set<proteus_index_t>::iterator it=cutfem_boundaries.begin();
       while(it!=cutfem_boundaries.end())
         {
-          std::map<proteus_index_t,double> DWp_Dn_jump,DW_Dn_jump;
-          std::map<std::pair<proteus_index_t,proteus_index_t>,proteus_csr_index_t> p_p_nz, u_u_nz, v_v_nz;
           double gamma_cutfem=ghost_penalty_constant,gamma_cutfem_p=ghost_penalty_constant,h_cutfem=elementBoundaryDiameter.data()[*it];
           proteus_index_t eN_nDOF_v_trial_element  = elementBoundaryElementsArray.data()[(*it)*2+0]*nDOF_v_trial_element;
           //See Massing Schott Wall 2018
@@ -5760,15 +5762,11 @@ namespace proteus
           for (int kb=0;kb<nQuadraturePoints_elementBoundary;kb++)
             {
               double Dp_Dn_jump=0.0, Du_Dn_jump=0.0, Dv_Dn_jump=0.0,dS;
-              for (int eN_side=0;eN_side < 2; eN_side++)
-                {
-                  proteus_index_t ebN = *it,
-                    eN  = elementBoundaryElementsArray.data()[ebN*2+eN_side];
-                  for (int i=0;i<nDOF_test_element;i++)
-                    DWp_Dn_jump[p_l2g.data()[eN*nDOF_test_element+i]] = 0.0;
-                  for (int i=0;i<nDOF_v_test_element;i++)
-                    DW_Dn_jump[vel_l2g.data()[eN*nDOF_v_test_element+i]] = 0.0;
-                }
+              double jv_p[2*nDOF_test_element], jv_v[2*nDOF_v_test_element];
+              for (int i=0;i<2*nDOF_test_element;i++)
+                jv_p[i]=0.0;
+              for (int i=0;i<2*nDOF_v_test_element;i++)
+                jv_v[i]=0.0;
               for (int eN_side=0;eN_side < 2; eN_side++)
                 {
                   proteus_index_t ebN = *it,
@@ -5835,17 +5833,24 @@ namespace proteus
                   ck_v.gradTrialFromRef(&vel_grad_trial_trace_ref.data()[ebN_local_kb_nSpace*nDOF_v_trial_element],jacInv_int,vel_grad_trial_trace);
                   for (int i=0;i<nDOF_test_element;i++)
                     {
-                      proteus_index_t eN_i = eN*nDOF_test_element + i;
                       for (int I=0;I<nSpace;I++)
-                        DWp_Dn_jump[p_l2g.data()[eN_i]] += p_grad_trial_trace[i*nSpace+I]*normal[I];
+                        jv_p[eN_side*nDOF_test_element+i] += p_grad_trial_trace[i*nSpace+I]*normal[I];
                     }
                   for (int i=0;i<nDOF_v_test_element;i++)
                     {
-                      proteus_index_t eN_i = eN*nDOF_v_test_element + i;
                       for (int I=0;I<nSpace;I++)
-                        DW_Dn_jump[vel_l2g.data()[eN_i]] += vel_grad_trial_trace[i*nSpace+I]*normal[I];
+                        jv_v[eN_side*nDOF_v_test_element+i] += vel_grad_trial_trace[i*nSpace+I]*normal[I];
                     }
                 }//eN_side
+              // the penalty form J_ab = c dS [dW_a/dn][dW_b/dn] over the 2 elements' local dofs, scattered to the
+              // element-boundary pattern entry of each (side, i; side2, j)
+              double J_p[2*nDOF_test_element*2*nDOF_test_element], J_v[2*nDOF_v_test_element*2*nDOF_v_test_element];
+              for (int i=0;i<2*nDOF_test_element*2*nDOF_test_element;i++)
+                J_p[i]=0.0;
+              for (int i=0;i<2*nDOF_v_test_element*2*nDOF_v_test_element;i++)
+                J_v[i]=0.0;
+              unfitted::jumpPenalty<2*nDOF_test_element>(dS, gamma_cutfem_p*h_cutfem, 0.0, jv_p, nullptr, J_p);
+              unfitted::jumpPenalty<2*nDOF_v_test_element>(dS, gamma_cutfem*h_cutfem, 0.0, jv_v, nullptr, J_v);
               for (int eN_side=0;eN_side < 2; eN_side++)
                 {
                   proteus_index_t ebN = *it,
@@ -5854,80 +5859,32 @@ namespace proteus
                     {
                       proteus_index_t eN_i = eN*nDOF_test_element+i;
                       for (int eN_side2=0;eN_side2 < 2; eN_side2++)
-                        {
-                          proteus_index_t eN2  = elementBoundaryElementsArray.data()[ebN*2+eN_side2];
-                          for (int j=0;j<nDOF_test_element;j++)
-                            {
-                              proteus_index_t eN_i_j = eN_i*nDOF_test_element + j;
-                              proteus_index_t eN2_j = eN2*nDOF_test_element + j;
-                              proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element +
-                                eN_side*2*nDOF_test_X_trial_element +
-                                eN_side2*nDOF_test_X_trial_element +
-                                i*nDOF_trial_element +
-                                j;
-                              std::pair<proteus_index_t,proteus_index_t> ij = std::make_pair(p_l2g.data()[eN_i], p_l2g.data()[eN2_j]);
-                              if (p_p_nz.count(ij))
-                                {
-                                  assert(p_p_nz[ij] == csrRowIndeces_p_p.data()[eN_i] + csrColumnOffsets_eb_p_p.data()[ebN_i_j]);
-                                }
-                              else
-                                p_p_nz[ij] =  csrRowIndeces_p_p.data()[eN_i] + csrColumnOffsets_eb_p_p.data()[ebN_i_j];
-                            }
-                        }
+                        for (int j=0;j<nDOF_test_element;j++)
+                          {
+                            proteus_index_t ebN_i_j = ebN*4*nDOF_test_X_trial_element +
+                              eN_side*2*nDOF_test_X_trial_element +
+                              eN_side2*nDOF_test_X_trial_element +
+                              i*nDOF_trial_element +
+                              j;
+                            globalJacobian.data()[csrRowIndeces_p_p.data()[eN_i] + csrColumnOffsets_eb_p_p.data()[ebN_i_j]] += J_p[(eN_side*nDOF_test_element+i)*2*nDOF_test_element+eN_side2*nDOF_test_element+j];
+                          }
                     }
                   for (int i=0;i<nDOF_v_test_element;i++)
                     {
                       proteus_index_t eN_i = eN*nDOF_v_test_element+i;
                       for (int eN_side2=0;eN_side2 < 2; eN_side2++)
-                        {
-                          proteus_index_t eN2  = elementBoundaryElementsArray.data()[ebN*2+eN_side2];
-                          for (int j=0;j<nDOF_v_test_element;j++)
-                            {
-                              proteus_index_t eN_i_j = eN_i*nDOF_v_test_element + j;
-                              proteus_index_t eN2_j = eN2*nDOF_v_test_element + j;
-                              proteus_index_t ebN_i_j = ebN*4*nDOF_v_test_X_v_trial_element +
-                                eN_side*2*nDOF_v_test_X_v_trial_element +
-                                eN_side2*nDOF_v_test_X_v_trial_element +
-                                i*nDOF_v_trial_element +
-                                j;
-                              std::pair<proteus_index_t,proteus_index_t> ij = std::make_pair(vel_l2g.data()[eN_i], vel_l2g.data()[eN2_j]);
-                              if (u_u_nz.count(ij))
-                                {
-                                  assert(u_u_nz[ij] == csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]);
-                                }
-                              else
-                                u_u_nz[ij] =  csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j];
-                              if (v_v_nz.count(ij))
-                                {
-                                  assert(v_v_nz[ij] == csrRowIndeces_v_v.data()[eN_i] + csrColumnOffsets_eb_v_v.data()[ebN_i_j]);
-                                }
-                              else
-                                v_v_nz[ij] =  csrRowIndeces_v_v.data()[eN_i] + csrColumnOffsets_eb_v_v.data()[ebN_i_j];
-                            }
-                        }
+                        for (int j=0;j<nDOF_v_test_element;j++)
+                          {
+                            proteus_index_t ebN_i_j = ebN*4*nDOF_v_test_X_v_trial_element +
+                              eN_side*2*nDOF_v_test_X_v_trial_element +
+                              eN_side2*nDOF_v_test_X_v_trial_element +
+                              i*nDOF_v_trial_element +
+                              j;
+                            globalJacobian.data()[csrRowIndeces_u_u.data()[eN_i] + csrColumnOffsets_eb_u_u.data()[ebN_i_j]] += J_v[(eN_side*nDOF_v_test_element+i)*2*nDOF_v_test_element+eN_side2*nDOF_v_test_element+j];
+                            globalJacobian.data()[csrRowIndeces_v_v.data()[eN_i] + csrColumnOffsets_eb_v_v.data()[ebN_i_j]] += J_v[(eN_side*nDOF_v_test_element+i)*2*nDOF_v_test_element+eN_side2*nDOF_v_test_element+j];
+                          }
                     }
                 }
-              for (std::map<proteus_index_t,double>::iterator Wi_it=DWp_Dn_jump.begin(); Wi_it!=DWp_Dn_jump.end(); ++Wi_it)
-                for (std::map<proteus_index_t,double>::iterator Wj_it=DWp_Dn_jump.begin(); Wj_it!=DWp_Dn_jump.end(); ++Wj_it)
-                  {
-                    proteus_index_t i_global = Wi_it->first,
-                      j_global = Wj_it->first;
-                    double DWp_Dn_jump_i = Wi_it->second,
-                      DWp_Dn_jump_j = Wj_it->second;
-                    std::pair<proteus_index_t,proteus_index_t> ij = std::make_pair(i_global, j_global);
-                    globalJacobian.data()[p_p_nz.at(ij)] += gamma_cutfem_p*h_cutfem*DWp_Dn_jump_j*DWp_Dn_jump_i*dS;
-                  }//i,j
-              for (std::map<proteus_index_t,double>::iterator Wi_it=DW_Dn_jump.begin(); Wi_it!=DW_Dn_jump.end(); ++Wi_it)
-                for (std::map<proteus_index_t,double>::iterator Wj_it=DW_Dn_jump.begin(); Wj_it!=DW_Dn_jump.end(); ++Wj_it)
-                  {
-                    proteus_index_t i_global = Wi_it->first,
-                      j_global = Wj_it->first;
-                    double DW_Dn_jump_i = Wi_it->second,
-                      DW_Dn_jump_j = Wj_it->second;
-                    std::pair<proteus_index_t,proteus_index_t> ij = std::make_pair(i_global, j_global);
-                    globalJacobian.data()[u_u_nz.at(ij)] += gamma_cutfem*h_cutfem*DW_Dn_jump_j*DW_Dn_jump_i*dS;
-                    globalJacobian.data()[v_v_nz.at(ij)] += gamma_cutfem*h_cutfem*DW_Dn_jump_j*DW_Dn_jump_i*dS;
-                  }//i,j
             }//kb
 	  it++;
         }//cutfem element boundaries

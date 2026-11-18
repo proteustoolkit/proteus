@@ -69,7 +69,8 @@ def run(tmp_path_factory):
         if key not in cache:
             helper = "weak_dirichlet_mms_mpi.py" if weak else "simplex_mms_mpi.py"
             if weak:
-                case = dict(case, PENALTY=10)
+                if case.pop("penalty", True) and "PENALTY" not in case:
+                    case = dict(case, PENALTY=10)
             cache[key] = _run(tmp_path_factory, helper, ranks, **case)
         return cache[key]
     return go
@@ -119,6 +120,35 @@ def test_tetrahedra_p3_match_strong_and_need_the_factor(run):
     assert off["L2"] > 10 * strong["L2"], (off, strong)
 
 
+@pytest.mark.parametrize("p", [3, 4])
+def test_dg_interior_penalty_converges_at_the_optimal_rate(run, p):
+    """Discontinuous monomial P3/P4, SIPG interior and boundary faces (the class's own constant, 100)."""
+    coarse, fine = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9, penalty=False), run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=17, penalty=False)
+    assert _rate(coarse["L2"], fine["L2"], coarse["h"], fine["h"]) > p + 1 - 0.3, (coarse, fine)
+    assert _rate(coarse["H1"], fine["H1"], coarse["h"], fine["h"]) > p - 0.3, (coarse, fine)
+
+
+@pytest.mark.parametrize("p,factor", [(4, 10.0), (5, 5.0)])
+def test_dg_penalty_floor_holds_the_error_where_a_small_constant_loses_it(run, p, factor):
+    """With the exterior classes' constant 10 the SIPG error at degree 4, 5 is 36x, 7.8x that of a large penalty (1000)
+    on the coarse mesh (h = 1/8); the floor 2.5 p**2 of NumericalFlux.penaltyOrderFactor brings it to the large-penalty value."""
+    floor = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9)
+    off = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9, SCALING=0)
+    big = run(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9, PENALTY=1000)
+    assert floor["L2"] < 1.2 * big["L2"] and floor["H1"] < 1.2 * big["H1"], (floor, big)
+    assert off["L2"] > factor * big["L2"], (off, big)
+
+
+@pytest.mark.parametrize("p", [3, 4])
+def test_dg_two_ranks_give_the_serial_errors(run, p):
+    """The floor is applied on every rank from the space, so a partitioned run is the serial one (element partition,
+    one layer of overlap, as the discontinuous coupling requires)."""
+    case = dict(DG=1, FLUX="dgsipg", ND=2, P=p, NN=9, PART_TYPE="element", NLAYERS=1)
+    s, r = run(**case), run(ranks=2, **case)
+    assert r["ranks"] == 2
+    assert abs(r["L2"] - s["L2"]) < 1.0e-6 * s["L2"] and abs(r["H1"] - s["H1"]) < 1.0e-6 * s["H1"], (s, r)
+
+
 def test_the_degree_factor():
     from types import SimpleNamespace
     from proteus import Comm
@@ -129,9 +159,9 @@ def test_the_degree_factor():
     mesh.partitionMesh(nLayersOfOverlap=0, parallelPartitioningType=MeshTools.MeshParallelPartitioningTypes.element)
     mesh = mesh.subdomainMesh
 
-    def factor(*spaces, scaling=True):
+    def factor(*spaces, scaling=True, constant=10.0):
         vt = SimpleNamespace(u={i: SimpleNamespace(femSpace=s) for i, s in enumerate(spaces)})
-        nf = SimpleNamespace(vt=vt, penalty_order_scaling=scaling)
+        nf = SimpleNamespace(vt=vt, penalty_order_scaling=scaling, penalty_constant=constant)
         return NumericalFlux.NF_base.penaltyOrderFactor(nf)
     P = lambda p, f="lagrange": FemTools.C0_AffinePolynomialOnSimplex(mesh, 2, p, f)
     assert [factor(P(p)) for p in (1, 2, 3, 4, 5)] == [1.0, 1.0, 9.0, 16.0, 25.0]
@@ -139,4 +169,9 @@ def test_the_degree_factor():
     assert factor(FemTools.C0_AffineLinearOnSimplexWithNodalBasis(mesh, 2), FemTools.C0_AffineQuadraticOnSimplexWithNodalBasis(mesh, 2)) == 1.0
     assert factor(P(2), P(4)) == 16.0            # the largest degree among the unknowns
     assert factor(P(4), scaling=False) == 1.0
-    assert factor(FemTools.DG_AffineP3_OnSimplexWithMonomialBasis(mesh, 2)) == 1.0     # discontinuous: not scaled (yet)
+    # discontinuous spaces: a floor of 2.5 p**2 on the penalty constant, not a factor
+    DG = lambda p: getattr(FemTools, "DG_AffineP%d_OnSimplexWithMonomialBasis" % p)(mesh, 2)
+    assert [factor(DG(p)) for p in (1, 2, 3, 4, 5)] == [1.0, 1.0, 2.25, 4.0, 6.25]      # constant 10
+    assert [factor(DG(p), constant=100.0) for p in (3, 4, 5, 6)] == [1.0, 1.0, 1.0, 1.0]   # the interior classes' constant
+    assert factor(DG(4), scaling=False) == 1.0
+    assert factor(FemTools.DG_AffineQuadraticOnSimplexWithNodalBasis(mesh, 2)) == 1.0

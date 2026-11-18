@@ -414,15 +414,25 @@ class NF_base(object):
         p = 4 (the smallest constant that matches strong is about 10, 20, 40 for p = 2, 3, 4). Degrees 1 and 2 keep the
         constant they always had (so no existing result moves); above 2 the factor is p**2, p the largest degree among
         the continuous (C0 Lagrange, Bernstein) spaces of the unknowns. Discontinuous spaces are left alone: their
-        interior penalty needs the same factor, measured on no case yet (DG P3 and above exist as monomial spaces, whose
-        pinned results would move). Set penalty_order_scaling = False to switch it off.
+        interior penalty needs the same, but the factor is a FLOOR there (C0 round 13): the SIPG penalty of a discontinuous
+        space of degree p must be at least 2.5 p**2/h (measured on the same problem, DG monomial P2-P6, h = 1/8 and 1/16:
+        the smallest constant that holds the optimal rates is about 10, 10-30, 30, 100, 100 for p = 2..6; at h = 1/8 the L2
+        error is 0.41 with constant 3 at p = 2 (1.1e-3 at 10) and 2.0e-4 with constant 10 at p = 4 (5.6e-6 with 1000)), so
+        the penalty is raised to 2.5 p**2 when the flux's constant is below it.
+        The interior classes' own constant (100) is above the floor for every monomial degree (p <= 6): no existing DG
+        result moves. Set penalty_order_scaling = False to switch both off.
         """
         if not self.penalty_order_scaling or getattr(self,'vt',None) is None:      #the strong-condition flux has no penalty
             return 1.0
         degrees = [getattr(u.femSpace,'order',None) for u in self.vt.u.values()
                    if u.femSpace.isSpace('C0',('lagrange','bernstein'))]
         p = max([d for d in degrees if d is not None] or [1])
-        return float(p)**2 if p > 2 else 1.0
+        factor = float(p)**2 if p > 2 else 1.0
+        degrees = [getattr(u.femSpace,'order',None) for u in self.vt.u.values() if u.femSpace.isSpace('DG')]
+        p = max([d for d in degrees if d is not None] or [1])
+        if p > 2 and self.penalty_constant > 0.0:
+            factor = max(factor,2.5*float(p)**2/self.penalty_constant)
+        return factor
     def diffusionDOFBoundary(self,ci):
         """isDOFBoundary[ci] for the diffusive flux: 0 at the periodic face points of a merged seam.
 

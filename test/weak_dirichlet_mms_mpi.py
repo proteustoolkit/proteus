@@ -7,7 +7,9 @@ through NS_base and OneLevelTransport; run by test_weak_dirichlet_mms.py, serial
 with the manufactured solution of simplex_mms_mpi.py (SOLUTION=smooth|poly). The boundary dofs are ordinary
 unknowns (no strong condition). Environment as simplex_mms_mpi.py, plus FLUX (sipg|iipg|nipg), PENALTY (the
 numerical flux's penalty_constant; unset: the class default) and SCALING (0: switch off the degree factor
-NumericalFlux.penaltyOrderFactor puts on the penalty). Rank 0 prints one line ``RESULT {json}``.
+NumericalFlux.penaltyOrderFactor puts on the penalty). DG=1 uses the discontinuous monomial space of degree P with
+interior penalty (FLUX=dgsipg, Advection_DiagonalUpwind_Diffusion_SIPG: interior faces and the weak boundary).
+Rank 0 prints one line ``RESULT {json}``.
 """
 import json
 import os
@@ -105,7 +107,11 @@ p.analyticalSolution = {0: Exact()}
 
 n = defaults.Numerics_base()
 n.timeIntegration = NoIntegration
-n.femSpaces = {0: lambda mesh, nd_: FemTools.C0_AffinePolynomialOnSimplex(mesh, nd_, P, family, nodes)}
+DG = os.environ.get("DG", "0") == "1"
+if DG:
+    n.femSpaces = {0: getattr(FemTools, "DG_AffineP%d_OnSimplexWithMonomialBasis" % P)}
+else:
+    n.femSpaces = {0: lambda mesh, nd_: FemTools.C0_AffinePolynomialOnSimplex(mesh, nd_, P, family, nodes)}
 n.elementQuadrature = Quadrature.SimplexGaussQuadrature(nd, 2 * P + 2)
 n.elementBoundaryQuadrature = Quadrature.SimplexGaussQuadrature(nd - 1, 2 * P + 2)
 n.multilevelNonlinearSolver = n.levelNonlinearSolver = Newton
@@ -115,7 +121,7 @@ n.tolFac = 0.0
 n.nl_atol_res = 1.0e-10
 n.matrix = SparseMatrix
 # the same path serially and in parallel: strong Dirichlet dofs kept in the system, a direct solve
-_base = {"sipg": NumericalFlux.Diffusion_SIPG_exterior, "iipg": NumericalFlux.Diffusion_IIPG_exterior,
+_base = {"dgsipg": NumericalFlux.Advection_DiagonalUpwind_Diffusion_SIPG, "sipg": NumericalFlux.Diffusion_SIPG_exterior, "iipg": NumericalFlux.Diffusion_IIPG_exterior,
          "nipg": NumericalFlux.Diffusion_IIPG_exterior}[os.environ.get("FLUX", "sipg")]
 
 
@@ -160,22 +166,33 @@ l2g = np.asarray(space.dofMap.l2g)
 en = np.asarray(mesh.elementNodesArray)
 X = np.asarray(mesh.nodeArray)
 nOwned = mesh.nElements_owned
-quad = Quadrature.SimplexGaussQuadrature(nd, min(2 * P + 4, 20))
-xi = np.array([q[:nd] for q in quad.points])
-w = np.array(quad.weights)
-tab = space.referenceFiniteElement.localFunctionSpace.tabulate(xi, 1)
-bary = np.column_stack([1.0 - xi.sum(axis=1), xi])
-e = np.arange(nOwned)
-xq = np.einsum("qv,evc->eqc", bary, X[en[e]])
-J = (X[en[e, 1:]] - X[en[e, :1]])[:, :, :nd].transpose(0, 2, 1)        # (e, nd, nd), columns = edge vectors
-detJ = np.abs(np.linalg.det(J))
-Jinv = np.linalg.inv(J)
-uh = np.einsum("qi,ei->eq", tab.values, dof[l2g[e]])
-grad_ref = np.einsum("qid,ei->eqd", tab.grads, dof[l2g[e]])
-grad = np.einsum("eqd,edk->eqk", grad_ref, Jinv)                         # grad_x = J^-T grad_xi
-err2 = float(np.einsum("q,e,eq->", w, detJ, (uh - u_exact(xq)) ** 2))
-gerr2 = float(np.einsum("q,e,eqk->", w, detJ, (grad - grad_u_exact(xq)) ** 2))
-linf = float(np.abs(uh - u_exact(xq)).max()) if nOwned > 0 else 0.0
+if DG:
+    # the monomial basis has no tabulate: the model's own quadrature values (degree 2P + 2, exact for the error integrand
+    # up to the quadrature of the smooth solution)
+    xq = np.asarray(model.q["x"])[:nOwned, :, :nd]
+    dV = np.asarray(model.q["dV"])[:nOwned]
+    uh = np.asarray(model.q[("u", 0)])[:nOwned]
+    grad = np.asarray(model.q[("grad(u)", 0)])[:nOwned, :, :nd]
+    err2 = float(np.sum(dV * (uh - u_exact(xq)) ** 2))
+    gerr2 = float(np.sum(dV[..., None] * (grad - grad_u_exact(xq)) ** 2))
+    linf = float(np.abs(uh - u_exact(xq)).max()) if nOwned > 0 else 0.0
+else:
+    quad = Quadrature.SimplexGaussQuadrature(nd, min(2 * P + 4, 20))
+    xi = np.array([q[:nd] for q in quad.points])
+    w = np.array(quad.weights)
+    tab = space.referenceFiniteElement.localFunctionSpace.tabulate(xi, 1)
+    bary = np.column_stack([1.0 - xi.sum(axis=1), xi])
+    e = np.arange(nOwned)
+    xq = np.einsum("qv,evc->eqc", bary, X[en[e]])
+    J = (X[en[e, 1:]] - X[en[e, :1]])[:, :, :nd].transpose(0, 2, 1)        # (e, nd, nd), columns = edge vectors
+    detJ = np.abs(np.linalg.det(J))
+    Jinv = np.linalg.inv(J)
+    uh = np.einsum("qi,ei->eq", tab.values, dof[l2g[e]])
+    grad_ref = np.einsum("qid,ei->eqd", tab.grads, dof[l2g[e]])
+    grad = np.einsum("eqd,edk->eqk", grad_ref, Jinv)                         # grad_x = J^-T grad_xi
+    err2 = float(np.einsum("q,e,eq->", w, detJ, (uh - u_exact(xq)) ** 2))
+    gerr2 = float(np.einsum("q,e,eqk->", w, detJ, (grad - grad_u_exact(xq)) ** 2))
+    linf = float(np.abs(uh - u_exact(xq)).max()) if nOwned > 0 else 0.0
 from mpi4py import MPI
 mc = comm.comm.tompi4py()
 err2, gerr2 = mc.allreduce(err2, MPI.SUM), mc.allreduce(gerr2, MPI.SUM)
