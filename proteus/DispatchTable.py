@@ -448,6 +448,7 @@ STEP_CONTROL = {
 REALIZERS = {
     "two_phase_level_set": "proteus.DispatchRun.two_phase",
     "shallow_water": "proteus.DispatchRun.shallow_water",
+    "dispersive_shallow_water": "proteus.DispatchRun.shallow_water",
 }
 
 #: TwoPhaseFlow's Parameters class for each module: the deck machinery builds each model's p and n from it
@@ -527,7 +528,14 @@ REGULARIZED_FUNCTIONS = {
 #: parun --SWEs loads them) and its sw_model switch
 SHALLOW_WATER_MODELS = {
     "proteus.mprans.SW2DCV": {"sw_model": 0, "p": "sw_p", "n": "sw_n"},
+    # the dispersive model by hyperbolic relaxation: six unknowns, h, hu, hv and the auxiliaries h eta, h w, h beta
+    "proteus.mprans.GN_SW2DCV": {"sw_model": 1, "p": "GN_sw_p", "n": "GN_sw_n"},
 }
+
+#: the dispersive family's auxiliary unknowns, by the role ymf gives them (ymf.dispersion.AUXILIARY_ROLES), in the
+#: order of GN_SW2DCV's components and with SWFlow's names for their initial and boundary data
+SHALLOW_WATER_AUXILIARIES = [("relaxed_depth", "h_times_eta"), ("relaxed_divergence", "h_times_w"),
+                             ("relaxed_bed_flux", "h_times_beta")]
 
 #: the coefficient role (ymf.vocabulary.COEFFICIENT_ROLES) -> SWFlow's physical_parameters key. The bed
 #: (``bed_elevation``, the model's Z) is SWFlowProblem's bathymetry; the Manning coefficient is n in the friction

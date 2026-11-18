@@ -59,7 +59,7 @@ solution_paths:
           lags: {φ: previous_step, χ: {via: vof, at: previous_step}}
           finite_element: {velocity: {family: CG, order: 1}, pressure: {family: CG, order: 1}}
           time_integration: backward_euler
-          stabilization: {method: ASGS, lag: true, shock_capturing: {factor: 0.5, lag: true}}
+          stabilization: {method: ASGS, tau: metric, lagged: true, shock_capturing: {factor: 0.5, lagged: true}}
           solver: {max_iterations: 100}
           proteus: {model: RANS2P, useVF: 1.0, eb_penalty_constant: 1.0e6}
         - name: vof
@@ -69,14 +69,14 @@ solution_paths:
           lags: {v: {via: flow, at: current_step}}
           finite_element: {fields: {family: CG, order: 1}}
           time_integration: backward_euler
-          stabilization: {method: SUPG, shock_capturing: {factor: 0.5, lag: true, sc_uref: 1.0, sc_beta: 1.5}}
+          stabilization: {method: SUPG, tau: metric, lagged: false, shock_capturing: {factor: 0.5, beta: 1.5, reference: 1.0, lagged: true}}
           proteus: {model: VOF}
         - name: ncls
           solves: [interface]
           lags: {v: {via: flow, at: current_step}}
           finite_element: {fields: {family: CG, order: 1}}
           time_integration: backward_euler
-          stabilization: {method: SUPG, shock_capturing: {factor: 0.5, lag: true, sc_uref: 1.0, sc_beta: 1.5}}
+          stabilization: {method: SUPG, tau: metric, lagged: false, shock_capturing: {factor: 0.5, beta: 1.5, reference: 1.0, lagged: true}}
           proteus: {model: NCLS}
         - name: rdls
           enforces: "norm(∇φ) = 1"
@@ -88,7 +88,7 @@ solution_paths:
           pseudo_time: steady
           writes_back: {φ: replace}
           finite_element: {fields: {family: CG, order: 1}}
-          stabilization: {shock_capturing: {factor: 0.9, lag: false}}
+          stabilization: {method: SUPG, shock_capturing: {factor: 0.9, lagged: false}}
           proteus: {model: RDLS, epsFact: 0.75}
         - name: mcorr
           enforces: "heaviside(φ) = χh"

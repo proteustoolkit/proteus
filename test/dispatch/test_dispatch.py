@@ -213,6 +213,40 @@ def test_ymf_words_dispatch_as_their_older_aliases_did(dambreak):
                                        "pressure_spin_up"]
 
 
+def test_stabilization_is_read_through_ymf_and_its_older_spellings_fold(dambreak):
+    """``lagged``, ``beta``, ``reference``, ``tau`` reach the numerics and coefficients; ``lag``, ``sc_beta``,
+    ``sc_uref`` (what the dispatcher read before) dispatch to the same cells."""
+    spec, older = copy.deepcopy(dambreak), copy.deepcopy(dambreak)
+    for doc, block in ((spec, {"method": "SUPG", "tau": "element_size", "lagged": "true",
+                               "shock_capturing": {"factor": "0.25", "beta": "1.25", "reference": "2.0",
+                                                   "lagged": "false"}}),
+                       (older, {"method": "SUPG", "tau": "element_size", "lag": "true",
+                                "shock_capturing": {"factor": "0.25", "sc_beta": "1.25", "sc_uref": "2.0",
+                                                    "lag": "false"}})):
+        _sub(doc, "level_set_five", "vof")["stabilization"] = block
+    found, again = dispatch(spec, "level_set_five"), dispatch(older, "level_set_five")
+    assert found.as_dict() == again.as_dict()
+    (vof,) = [m for m in found if m.subproblem == "vof"]
+    assert vof.numerics["subgridError.lag"] is True
+    assert vof.numerics["shockCapturing.shockCapturingFactor"] == 0.25 and vof.numerics["shockCapturing.lag"] is False
+    assert vof.coefficients["sc_beta"] == 1.25 and vof.coefficients["sc_uref"] == 2.0
+    assert vof.coefficients["useMetrics"] == 0.0
+
+
+def test_stabilization_without_a_method_or_with_a_key_the_method_does_not_read_is_refused(dambreak):
+    """A block without a method: ymf 0.3.0 refuses it (say the method); ymf 0.3.1 reads it as ``method: none``, which no
+    VOF cell offers (the cell has SUPG). Either way the dispatch is refused, naming the sub-problem."""
+    spec = copy.deepcopy(dambreak)
+    _sub(spec, "level_set_five", "vof")["stabilization"] = {"shock_capturing": {"factor": "0.5"}}
+    with pytest.raises(DispatchError, match=r"method|vof: stabilization none, the cell has SUPG"):
+        dispatch(spec, "level_set_five")
+    # a key the method does not read is refused by ymf in both
+    spec = copy.deepcopy(dambreak)
+    _sub(spec, "level_set_five", "vof")["stabilization"] = {"method": "SUPG", "no_such_key": "1"}
+    with pytest.raises(DispatchError, match="does not read no_such_key"):
+        dispatch(spec, "level_set_five")
+
+
 def test_the_scheme_block_in_ymf_words_and_in_the_older_ones_dispatch_alike(lake):
     """``ssp_rk3`` and ``entropy_viscosity_coefficient`` against ``SSP_RK3`` and ``entropy_viscosity_cE``."""
     def build(time, option):
