@@ -21,7 +21,7 @@ import json
 import os
 
 from proteus import runtime
-comm = runtime.start()
+comm = runtime.start(abort_program="cube_mms_mpi")
 
 import numpy as np
 from petsc4py import PETSc
