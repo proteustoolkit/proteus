@@ -14,6 +14,11 @@ on:
     branches: [main, 1.9.x]
   pull_request:
   workflow_dispatch:
+    inputs:
+      ymf_ref:
+        description: "Test against ymf at this branch, tag or commit of proteustoolkit/ymf (e.g. main). Empty = the PyPI release the environment files pin."
+        required: false
+        default: ""
 
 # Why: the standard macOS runners are the bottleneck. Measured over the last ~80 runs, Linux jobs start at once
 # (median wait 0 min) and macOS jobs wait a median of 7-9 h (p90 17-21 h) for a runner, then run for 20-90 min; a
@@ -153,16 +158,24 @@ jobs:
           environment-file: environment-ci.yml
           activate-environment: proteus-dev
 
-      # ymf comes from "git+https://github.com/proteustoolkit/ymf.git@main" in the
-      # environment file -- a moving branch, resolved at run time, because ymf
-      # is on neither PyPI nor conda-forge. So the same proteus commit passes
-      # or fails depending on when it ran relative to an ymf merge, and the
-      # skew is invisible until it surfaces as a few hundred KeyErrors deep in
-      # the suite. cekees/proteus#46 lost a debugging session to exactly that:
-      # 272 failures, all of them ymf.archive still writing the capitalized
-      # keys this branch had already renamed, because the run started 11 hours
-      # before cekees/ymf#2 merged.
+      # ymf comes from PyPI at the floor the environment files state (ymf >=0.3.1).
+      # It used to come from "git+https://github.com/proteustoolkit/ymf.git@main", a
+      # moving branch resolved at run time, so the same proteus commit passed or
+      # failed depending on when it ran relative to an ymf merge: cekees/proteus#46
+      # lost a debugging session to 272 KeyErrors (ymf.archive still writing keys this
+      # branch had renamed, run started 11 hours before cekees/ymf#2 merged), and ymf
+      # 0.3.0 at @main broke main's test/dispatch for half a day on 2026-11-17/18.
       #
+      # To test against ymf on purpose (before a release, or to see whether a proteus
+      # change needs one), run this workflow by hand with the ymf_ref input, e.g. main.
+      - name: Install ymf from git (workflow_dispatch input ymf_ref only)
+        if: github.event_name == 'workflow_dispatch' && inputs.ymf_ref != ''
+        shell: bash -l {0}
+        env:
+          YMF_REF: ${{ inputs.ymf_ref }}
+        run: |
+          pip install --no-deps --force-reinstall "ymf @ git+https://github.com/proteustoolkit/ymf.git@${YMF_REF}"
+
       # Record what this leg actually resolved, so the next one is a glance
       # rather than a bisect across two repositories. Diagnostics only: every
       # lookup is guarded, and nothing here can fail the build.

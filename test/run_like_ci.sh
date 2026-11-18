@@ -16,8 +16,9 @@
 #     3.26.0, Python 3.10/3.12). Make the environment with
 #        conda env create -n proteus-ci -f environment-openmpi-dev.yml     # or -mpich- on a Mac
 #     and build proteus into it (pip install . , or build_ext --inplace and --inplace here).
-#  2. ymf at proteustoolkit/ymf@main, which is what the environment files install. An older ymf fails hundreds of
-#     archive tests with KeyError/YmfArchiveError. This script prints the ymf commit and the one at main.
+#  2. ymf from PyPI at the floor the environment files state (ymf >=0.3.1). An older ymf fails hundreds of
+#     archive and dispatch tests with KeyError/YmfArchiveError. This script prints the ymf commit (if installed from
+#     git) and the one at main, for testing against main on purpose (pip install it over the PyPI release).
 #  3. The environment's own mpiexec first on PATH (a system or Homebrew MPI launching the env's mpi4py hangs or
 #     aborts); FI_PROVIDER=tcp for conda-forge's MPICH (its libfabric "sockets" provider busy-polls three cores per
 #     process); OMPI_MCA_pml=ob1 for Open MPI; one BLAS/OpenMP thread per process.
