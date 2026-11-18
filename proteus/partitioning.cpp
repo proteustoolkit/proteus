@@ -120,17 +120,27 @@ void writeErrorLine(const std::string& line)
     }
 }
 
-/* The message, then MPI_Abort on comm. */
-[[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
+/* MPI_Abort on comm, after the output has had time to reach the launcher. Every
+   abort in this file goes through here (the message, if any, is already written). */
+[[noreturn]] void abortAfterDrain(const MPI_Comm& comm)
 {
-  writeErrorLine(message);
+  std::cerr.flush();
+  fflush(NULL);
   //MPICH's launcher (hydra) kills its proxies on MPI_Abort and can exit before
   //it has forwarded what the ranks wrote: the whole message was lost on the
   //macOS leg of the scheduled dev run of 2026-11-15 (empty output, nonzero
   //exit). The run is ending: let the pipe drain first.
+  //runtime.drain_before_abort waits the same 0.2 s (ABORT_DRAIN_SECONDS)
   usleep(200000);
   MPI_Abort(comm, 1);
   std::abort();
+}
+
+/* The message, then MPI_Abort on comm. */
+[[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
+{
+  writeErrorLine(message);
+  abortAfterDrain(comm);
 }
 
 /* Every rank computes the owners of all entities from the same global data, so
@@ -159,7 +169,7 @@ bool everyEntityOwned(const std::vector<int>& owner, int size, const char* what)
 void checkEveryEntityOwned(const MPI_Comm& comm, const std::vector<int>& owner, int size, const char* what)
 {
   if (!everyEntityOwned(owner,size,what))
-    MPI_Abort(comm,1);
+    abortAfterDrain(comm);
 }
 
 /* Check prescribed owners and copy them. */
@@ -505,7 +515,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
   timer.mark("node_owners");
   //4.-8. Everything else follows from the owners without communication
   if (partitionNodesLocal(mesh, rank, size, nNodes_overlap, nodeOwner, &timer) != 0)
-    MPI_Abort(PROTEUS_COMM_WORLD,1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   timer.report();
   return 0;
 }
@@ -2386,7 +2396,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
                              nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
                              &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
                              newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
-    MPI_Abort(PROTEUS_COMM_WORLD, 1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   //done with vertex file (and all file reads at this point)
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
 
@@ -2797,7 +2807,11 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done applying partition");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //determine the number of nodes per subdomain in new partitioning
   valarray<int> nNodes_subdomain_new(size);
-  ISPartitioningCount(nodePartitioningIS_new,size,&nNodes_subdomain_new[0]);
+  {
+    std::vector<PetscInt> counts(size); // PETSc's own width (64-bit-index PETSc)
+    ISPartitioningCount(nodePartitioningIS_new,size,counts.data());
+    for (int sdN = 0; sdN < size; sdN++) nNodes_subdomain_new[sdN] = int(counts[sdN]);
+  }
   //need new offsets for subdomain to global numbering
   valarray<proteus_index_t> nodeOffsets_new(size+1);
   nodeOffsets_new[0] = 0;
@@ -3055,7 +3069,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   timer.mark("element_owners");
   //4.-6. Everything else follows from the owners without communication
   if (partitionElementsLocal(mesh, rank, size, nElements_overlap, elementOwner, &timer) != 0)
-    MPI_Abort(PROTEUS_COMM_WORLD,1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   timer.report();
   return 0;
 }

@@ -29,6 +29,28 @@ PYBIND11_MODULE(SedClosure, m)
 	     py::arg("angFriction"),
 	     py::arg("vos_limiter"),
 	     py::arg("mu_fr_limiter"))
+        // The closure is a parameter holder. Pickle (and so copy.deepcopy, which
+        // MultilevelTransport.initialize applies to every model's coefficients)
+        // by its seventeen constructor arguments.
+        .def(py::pickle(
+            [](const cppHsuSedStress2D& s) {
+                return py::make_tuple(s.aDarcy_, s.betaForch_, s.grain_, s.packFraction_,
+                                      s.packMargin_, s.maxFraction_, s.frFraction_,
+                                      s.sigmaC_, s.C3e_, s.C4e_, s.eR_, s.fContact_,
+                                      s.mContact_, s.nContact_, s.angFriction_,
+                                      s.vos_limiter_, s.mu_fr_limiter_);
+            },
+            [](py::tuple t) {
+                if (t.size() != 17)
+                    throw std::runtime_error("Invalid state for HsuSedStress");
+                return cppHsuSedStress2D(
+                    t[0].cast<double>(), t[1].cast<double>(), t[2].cast<double>(),
+                    t[3].cast<double>(), t[4].cast<double>(), t[5].cast<double>(),
+                    t[6].cast<double>(), t[7].cast<double>(), t[8].cast<double>(),
+                    t[9].cast<double>(), t[10].cast<double>(), t[11].cast<double>(),
+                    t[12].cast<double>(), t[13].cast<double>(), t[14].cast<double>(),
+                    t[15].cast<double>(), t[16].cast<double>());
+            }))
         .def_readonly("aDarcy", &cppHsuSedStress2D::aDarcy_)
         .def_readonly("betaForch", &cppHsuSedStress2D::betaForch_)
         .def_readonly("grain", &cppHsuSedStress2D::grain_)

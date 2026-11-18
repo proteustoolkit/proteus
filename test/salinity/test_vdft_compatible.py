@@ -429,19 +429,164 @@ _LINUX_PIP_VENV = (sys.platform.startswith('linux') and sys.prefix != sys.base_p
 def test_levee_edge_flux_with_implicit_flow_fct(levee_deck):
     """Richards' implicit FCT sets fctCorrectionApplied but leaves the accepted mass in mLow (its final solve);
     the edge-flux coupling read mAccepted, all zeros, and drained its carried fluid mass every step. c0 = cin =
-    0.5 stays 0.5."""
+    0.5 stays 0.5.
+
+    The run has to take its steps: with the first dt TADR used to propose (2.66e-14, from a CFL formed at M_low = 0)
+    the flow model never accepts the first step (the residual's round-off floor, eps m_i ML_i / dt, is 5e-3 to 0.5
+    against nl_atol_res 1e-6 at the dt = 2.7e-14 .. 5e-17 the step controller tries) and the run ends at t = 5e-17
+    with c untouched, which is why this test passed for months. The first dt is now the deck's output interval,
+    1e-8 (RKEV.initialize_dt); the run must reach t = 10 with every Newton solve of the flow converged and the head
+    inside the range of the initial and boundary heads (-12 .. river stage)."""
     domain, rp, rn, tp, tn, so = levee_deck
     rp.coefficients.FCT = True
     rp.coefficients.FCT_TYPE = 'implicit'
     _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
     _direct_solvers(rn, tn)
     so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
-    ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
+    failures = []
+    newton_solve = NonlinearSolvers.Newton.solve
+
+    def counting_solve(self, *args, **kwargs):
+        out = newton_solve(self, *args, **kwargs)
+        if type(self.F).__module__.endswith('Richards'):
+            failures.append(bool(self.failedFlag))
+        return out
+
+    NonlinearSolvers.Newton.solve = counting_solve
+    try:
+        ns = _run(so, [rp, tp], [rn, tn], 'vdft_levee_edge_flux_implicit_fct')
+    finally:
+        NonlinearSolvers.Newton.solve = newton_solve
     flow = ns.modelList[0].levelModelList[-1]
     transport = ns.modelList[1].levelModelList[-1]
     assert transport._use_edge_flux == 1
     assert flow.acceptedMass() is flow.mLow
     assert np.abs(transport.u[0].dof - 0.5).max() < 1.0e-10
+    # the flow stepped to the final time (the measured run: 3 output intervals, ~200 Newton solves, none failed)
+    assert flow.timeIntegration.tLast == pytest.approx(so.tnList[-1])
+    assert len(failures) > 20 and not any(failures), (len(failures), sum(failures))
+    head = flow.u[0].dof
+    assert np.all(np.isfinite(head))
+    assert -12.0 - 1.0e-4 <= head.min() and head.max() <= rp.river_stage + 1.0e-4
+
+
+def test_first_dt_is_not_set_by_an_uninitialized_mass(levee_deck, monkeypatch):
+    """The first system dt, which is the minimum over the models, has to be one the flow model's Newton solve can
+    take: the round-off of the stored mass over dt, eps m_i ML_i / dt, is the floor of ||r||, and nl_atol_res is
+    1e-6, so dt > eps / nl_atol_res = 2e-10 (the deck's first output interval is 1e-8). The transport's RKEV
+    used to propose 0.5 / 1.9e13 = 2.66e-14 because its edge-based CFL is formed from M_low = 0 (TADR.h floors it
+    at 1e-14). Stops at the first step's preStep, so it needs no time stepping."""
+    from proteus.richards import Richards
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+
+    class Seen(Exception):
+        pass
+
+    seen = {}
+    preStep = Richards.Coefficients.preStep
+
+    def checked_preStep(self, t, firstStep=False):
+        if firstStep:
+            seen['dt'] = self.model.timeIntegration.dt
+            raise Seen
+        return preStep(self, t, firstStep)
+
+    monkeypatch.setattr(Richards.Coefficients, 'preStep', checked_preStep)
+    with pytest.raises(Seen):
+        _run(so, [rp, tp], [rn, tn], 'vdft_levee_first_dt')
+    assert seen['dt'] > np.finfo(float).eps / rn.nl_atol_res, seen
+
+
+@pytest.mark.parametrize('order', [1, 3])
+def test_first_dt_of_an_explicit_transport_respects_its_cfl(levee_deck, monkeypatch, order):
+    """A long first output interval does not make the explicit transport's first step the interval. The first
+    dt cannot be read from the CFL of the initial state with its carried mass of 0 (the test above), so
+    RKEV.initialize_dt takes min(first interval, floored CFL dt * M_min / 1e-14), M_min the flow model's smallest
+    initial mass: the dispersive CFL of the real mass, 0.19 s here (the flow's fluxes are 0 until it steps, so the
+    advective CFL is not known). With the first interval of 1000 s as the first dt the run does not survive it:
+    c = -2.6e8 .. 9.5e7, 20 failed Newton solves of the flow, dead at t = 1000 (measured, SSP33). Stops at the
+    flow's second step, i.e. after the first system step."""
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, order, c0=0.0, cin=1.0)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e3, 2.0e3, 3.0e3]
+
+    class Seen(Exception):
+        pass
+
+    seen = {'calls': 0}
+    preStep = TADR.Coefficients.preStep
+
+    def second_preStep(self, t, firstStep=False):
+        seen['calls'] += 1
+        if seen['calls'] == 2:
+            seen['dt'] = self.model.timeIntegration.tLast   # the first step's dt
+            seen['c'] = self.model.u[0].dof.copy()
+            raise Seen
+        return preStep(self, t, firstStep)
+
+    monkeypatch.setattr(TADR.Coefficients, 'preStep', second_preStep)
+    with pytest.raises(Seen):
+        _run(so, [rp, tp], [rn, tn], 'vdft_levee_first_dt_long')
+    assert np.finfo(float).eps / rn.nl_atol_res < seen['dt'] < 1.0e3, seen['dt']
+    c = seen['c']
+    # the first step is not bound-preserving: it takes the wetting front's fluxes (c = 4.5 after 0.19 s) that the
+    # CFL of the initial state could not see
+    assert -10.0 <= c.min() and c.max() <= 10.0, (c.min(), c.max(), seen['dt'])
+
+
+def test_first_step_old_time_mass_is_at_the_coupled_density(levee_deck, monkeypatch):
+    """The flow model's history is stored at initialization, at rho_f, before the transport model has set
+    the density rho_f (1 + eps c0); preStep copies that density in at the first step. The old-time mass
+    m_last has to follow it: with c0 = 0.5, eps = 0.025 the stale one differs from m(u^0) by 1.25 %, and
+    (m(u) - m_last)/dt, at the dt = 2.7e-14 the transport's CFL gives, is 1e11-1e13 where the head cannot
+    change the mass: Newton's first step goes to |u| ~ 1e14, the iterates grow by 2 per iteration to 1e189
+    and the linear solve of the diverged step makes the all-NaN Jacobian of the nightly. Stops at the first
+    step's preStep, so it needs no time stepping."""
+    from proteus.richards import Richards
+    domain, rp, rn, tp, tn, so = levee_deck
+    rp.coefficients.FCT = True
+    rp.coefficients.FCT_TYPE = 'implicit'
+    _edge_flux_levee_transport(tp, tn, 4, 1, c0=0.5, cin=0.5)
+    _direct_solvers(rn, tn)
+    so.tnList = [0.0, 1.0e-8, 2.0e-8, 10.0]
+
+    class Seen(Exception):
+        pass
+
+    seen = {}
+    preStep = Richards.Coefficients.preStep
+
+    def checked_preStep(self, t, firstStep=False):
+        out = preStep(self, t, firstStep)
+        if firstStep:
+            flow = self.model
+            ti = flow.timeIntegration
+            seen['rho'] = (flow.q['rho'].min(), flow.q['rho'].max(), self.rho)
+            seen['dof'] = flow.u[0].dof.copy()
+            scratch = np.zeros_like(flow.u[0].dof)
+            flow.getResidual(flow.u_dof_old.copy(), scratch)
+            seen['mismatch'] = np.abs(ti.m_tmp[0] - ti.m_last[0]).max()
+            seen['mass'] = np.abs(ti.m_tmp[0]).max()
+            # the first residual is the flux terms only: the storage term has nothing to remove
+            seen['r'] = np.abs(scratch).max()
+            raise Seen
+        return out
+
+    monkeypatch.setattr(Richards.Coefficients, 'preStep', checked_preStep)
+    with pytest.raises(Seen):
+        _run(so, [rp, tp], [rn, tn], 'vdft_levee_first_step_mass')
+    lo, hi, rho_f = seen['rho']
+    assert hi > 1.01 * rho_f and lo > 1.01 * rho_f      # the coupled density is in: 1 + 0.025 * 0.5
+    assert seen['mismatch'] < 1.0e-12 * seen['mass'], seen
+    assert seen['r'] < 1.0e3, seen                       # 6e5 to 5e7 per unit dt = 1e-8 before, 1e11-1e13 at 2.7e-14
 
 
 def test_the_conservative_boundary_flux_is_opt_in():

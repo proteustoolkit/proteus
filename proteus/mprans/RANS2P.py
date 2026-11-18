@@ -2,6 +2,7 @@
 Optimized  Two-Phase Reynolds Averaged Navier-Stokes
 """
 import math
+import warnings
 import proteus
 from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 import sys
@@ -185,6 +186,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     but in some instances it may produced better preconditioning
     results than the full SGE approach.
     """
+    # RANS2P's kernels do not read epsFact_solid (RANS2P_IB's do)
+    _epsFact_solid_is_used = False
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_2D_Evaluate
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_3D_Evaluate
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd
@@ -407,6 +410,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.eb_adjoint_sigma = eb_adjoint_sigma
         self.eb_penalty_constant = eb_penalty_constant
         self.movingDomain = movingDomain
+        if epsFact_solid is not None and not self._epsFact_solid_is_used:
+            # in 1.x epsFact_solid was the smoothing width of the porous and
+            # relaxation zones, which is epsFact_porous now; the RANS2P kernels
+            # never read it, so an old deck's smoothing was silently dropped
+            # (and its zones got the default width, ones)
+            msg = ("RANS2P.Coefficients(epsFact_solid=...) is ignored by RANS2P. In 1.x it was the "
+                   "smoothing width of the porous and relaxation zones; that is now epsFact_porous "
+                   "(and domain.epsFact_porous). Pass epsFact_porous=%s." % (repr(epsFact_solid),))
+            Profiling.logEvent("WARNING: " + msg, level=0)
+            warnings.warn(msg, UserWarning, stacklevel=2)
         self.epsFact_solid = epsFact_solid
         self.epsFact_porous = epsFact_porous
         self.useConstant_he = useConstant_he
@@ -1770,6 +1783,25 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 if self.coefficients.force_z:
                     self.q[('force', 2)][eN,k] = self.coefficients.force_z(self.q['x'][eN,k])
 
+    def _warnParticleSurfaceDegree(self):
+        """Once per model: say that the particle's surface weights are one polynomial degree short for a quadratic velocity.
+
+        With ``useExact`` the solid particle's surface weight D is the moment fit of order nP = 3 (``gf_s`` in RANS2P.h):
+        it reproduces int_Gamma N_a N_b for integrands up to degree 3. P1 x P1 (degree 2) and the pressure x velocity
+        blocks of P1/P2 (degree 3) are exact once the element rule is exact to degree 5 and 6; the velocity x velocity
+        block of a P2 velocity (degree 4) is not exact at any quadrature degree: the surface integral carries an error of
+        8e-2 .. 2e-1 of its largest entry (measured on the cut cells of ``test_gf_surface_degree.py``).
+        """
+        if getattr(self, '_warnedParticleSurfaceDegree', False):
+            return
+        self._warnedParticleSurfaceDegree = True
+        c = self.coefficients
+        if getattr(c, 'useExact', False) and getattr(c, 'nParticles', 0) > 0 and self.nDOF_trial_element[1] > self.nSpace_global + 1:
+            logEvent("WARNING RANS2P: useExact with solid particles and a quadratic velocity space: the particle's surface "
+                     "weights (equivalent polynomials of order 3) are not exact for the degree-4 velocity x velocity "
+                     "surface integrals (error 8e-2..2e-1 of the block's largest entry, any quadrature degree); "
+                     "see test/test_gf_surface_degree.py", level=0)
+
     def getResidual(self, u, r):
         """
         Calculate the element residuals and add in to the global residual
@@ -1782,6 +1814,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         """
         assert(np.all(np.isfinite(u)))
         assert(np.all(np.isfinite(r)))
+        self._warnParticleSurfaceDegree()
         # Load the unknowns into the finite element dof
         self.timeIntegration.calculateCoefs()
         self.timeIntegration.calculateU(u)

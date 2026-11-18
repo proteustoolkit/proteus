@@ -24,6 +24,7 @@ st.assembleDomain(domain)
 from math import cos, sin, sqrt, atan2, acos, asin
 from itertools import compress
 import csv
+import numbers
 import os
 import numpy as np
 from proteus import AuxiliaryVariables, Archiver, Comm, Profiling, Gauges
@@ -225,8 +226,8 @@ class ShapeRANS(Shape):
         self._attachAuxiliaryVariable('RelaxZones')
         waves = None
         wind_speed = np.array([0., 0., 0.])
-        if isinstance(flags, int):
-            flags = [flags]
+        if isinstance(flags, numbers.Integral):
+            flags = [int(flags)]
             epsFact_porous = [epsFact_porous]
             center = np.array([center])
             orientation = np.array([orientation])
@@ -281,8 +282,8 @@ class ShapeRANS(Shape):
             Relaxation zone coefficient.
         """
         self._attachAuxiliaryVariable('RelaxZones')
-        if isinstance(flags, int):
-            flags = [flags]
+        if isinstance(flags, numbers.Integral):
+            flags = [int(flags)]
             epsFact_porous = [epsFact_porous]
             center = np.array([center])
             orientation = np.array([orientation])
@@ -326,8 +327,8 @@ class ShapeRANS(Shape):
             Porosity
         """
         self._attachAuxiliaryVariable('RelaxZones')
-        if isinstance(flags, int):
-            flags = [flags]
+        if isinstance(flags, numbers.Integral):
+            flags = [int(flags)]
             dragAlpha = [dragAlpha]
             dragBeta = [dragBeta]
             porosity = [porosity]

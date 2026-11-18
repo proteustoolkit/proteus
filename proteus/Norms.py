@@ -207,10 +207,10 @@ def scalarDomainIntegral(dV,nValueArray,nElements=None):
     return globalSum(partialSum)
 
 def scalarHeavisideDomainIntegral(dV,nValueArray,nElements=None):
+    #unlike its neighbours, this kernel takes the counts first
     if nElements is None:
-        partialSum = cfemIntegrals.scalarHeavisideDomainIntegral(dV,nValueArray,nValueArray.shape[0])
-    else:
-        partialSum = cfemIntegrals.scalarHeavisideDomainIntegral(dV,nValueArray,nElements)
+        nElements = nValueArray.shape[0]
+    partialSum = cfemIntegrals.scalarHeavisideDomainIntegral(nElements,dV.shape[1],dV,nValueArray)
     return globalSum(partialSum)
 def scalarSmoothedHeavisideDomainIntegral(epsFact,elementDiameters,dV,nValueArray,nElements=None):
     if nElements is None:

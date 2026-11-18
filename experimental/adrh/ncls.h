@@ -29,6 +29,7 @@ namespace adrh
     static constexpr int nSpace = nS_, nFields = nS_;
     static constexpr bool hasF = false, hasH = true, hasR = false;
     static constexpr int tauForm = 0;
+    static constexpr FaceKind face = FaceKind::InflowPenalty;
     ADRH_FN ADRH_FORCE_INLINE void evaluate(const double *fld, double u, const double *gu, ScalarTerms<nS_> &T) const
     {
       T.m = u;
@@ -67,7 +68,7 @@ namespace adrh
         u += ue[b] * w[b];
         for (int I = 0; I < nS; ++I) gu[I] += ue[b] * G.gw[b][I];
       }
-      C.evaluate(fields + q * nF, u, gu, T);
+      evaluateScalar<Coefficients, nS>(C, fields + q * nF, u, gu, G.x, T);
       double flow = 0.0;
       for (int I = 0; I < nS; ++I) flow += nrm[I] * T.dH[I];
       const double ub = isDirichlet[q] == 1 ? g[q] : rd[q];

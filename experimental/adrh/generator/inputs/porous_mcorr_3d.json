@@ -1,0 +1,87 @@
+{
+ "kernel": "PorousMCORR",
+ "dim": 3,
+ "subproblem": "mcorr",
+ "adr": {
+  "dim": 3,
+  "components": [
+   "φc"
+  ],
+  "equations": [
+   {
+    "component": "φc",
+    "diffusion": {
+     "φc": {
+      "rowptr": [
+       0,
+       1,
+       2,
+       3
+      ],
+      "colind": [
+       0,
+       1,
+       2
+      ],
+      "a": [
+       "10*h",
+       "10*h",
+       "10*h"
+      ],
+      "da": {},
+      "depends_on": {}
+     }
+    },
+    "reaction": {
+     "r": "(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*(numpy.select([numpy.less(1.5*h, φc + φ),numpy.less(1.5*h, -φc - φ),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(φc + φ)/h)/numpy.pi + 1/2 + 0.3333333333333333*(φc + φ)/h], default=numpy.nan) - χh)",
+     "dr": {
+      "φc": "(-0.4*numpy.select([numpy.less(1.5*h, 0.3 - y),numpy.less(1.5*h, y - 0.3),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(0.3 - y)/h)/numpy.pi + 1/2 + 0.3333333333333333*(0.3 - y)/h], default=numpy.nan)*numpy.select([numpy.less(1.5*h, x - 2.2),numpy.less(1.5*h, 2.2 - x),True], [1,0,(1/2)*numpy.sin(0.6666666666666666*numpy.pi*(x - 2.2)/h)/numpy.pi + 1/2 + 0.3333333333333333*(x - 2.2)/h], default=numpy.nan) + 1)*numpy.select([numpy.logical_or.reduce((numpy.less(1.5*h, φc + φ),numpy.less(1.5*h, -φc - φ))),True], [0,0.3333333333333333*numpy.cos(0.6666666666666666*numpy.pi*(φc + φ)/h)/h + 0.3333333333333333/h], default=numpy.nan)"
+     },
+     "depends_on": {
+      "φc": "nonlinear"
+     }
+    }
+   }
+  ]
+ },
+ "reads": {
+  "φ": {
+   "at": "current_step",
+   "via": "rdls",
+   "components": [
+    "φ"
+   ]
+  },
+  "χh": {
+   "at": "current_step",
+   "via": "vof",
+   "components": [
+    "χh"
+   ]
+  }
+ },
+ "coefficient_roles": {
+  "porosity": "θ"
+ },
+ "regularized": {
+  "heaviside": {
+   "by": "smoothed_heaviside",
+   "width": "1.5*h"
+  }
+ },
+ "unknowns": {
+  "φc": [
+   "φc"
+  ]
+ },
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [
+  "h"
+ ],
+ "boundary_conditions": []
+}

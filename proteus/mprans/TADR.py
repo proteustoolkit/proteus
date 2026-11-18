@@ -4,7 +4,7 @@ An optimized Advection-Diffusion-Reaction  transport module
 """
 import numpy as np
 from proteus import cmeshTools
-from proteus import cfemIntegrals, Quadrature, Norms, Comm, TimeIntegration
+from proteus import cfemIntegrals, Quadrature, Norms, Comm, TimeIntegration, BoundaryKinds
 from proteus.NonlinearSolvers import NonlinearEquation
 from proteus.FemTools import (DOFBoundaryConditions,
                               FluxBoundaryConditions,
@@ -134,6 +134,9 @@ class RKEV(TimeIntegration.SSP):
     ... more to come ...
     """
 
+    # TADR.h floors the carried mass in the edge-flux CFL at this value (fmax(M_low, 1.0e-14))
+    MASS_FLOOR = 1.0e-14
+
     def __init__(self, transport, timeOrder=1, runCFL=0.1, integrateInterpolationPoints=False):
         TimeIntegration.SSP.__init__(self,
                                      transport,
@@ -184,6 +187,22 @@ class RKEV(TimeIntegration.SSP):
         """
         self.tLast = t0
         self.choose_dt()
+        t = self.transport
+        if getattr(t, '_use_edge_flux', 0) and globalMax(float(np.max(t.M_low))) <= 0.0:
+            # The initial state of an edge-flux run carries no mass yet (the flow model hands M over in
+            # Coefficients.preStep), so the CFL above divides by TADR.h's floor on M_low, 1e-14, and says
+            # nothing about the step (2.7e-14 on the levee deck: no Newton solve of the flow can take it).
+            # The CFL is (sum_gamma + B)/(ML M), so the CFL of the real mass M is the floored one times
+            # 1e-14/M: with the smallest fluid mass of the flow model's initial state (a bound for every
+            # dof), dt <= dt_floored M_min/1e-14. The step is that or the interval to the first output
+            # time, whichever is shorter; choose_dt proposes the later steps from the carried mass.
+            q_m = getattr(getattr(t.coefficients, 'vModel', None), 'q', {}).get(('m', 0))
+            M_min = Comm.globalMin(float(np.min(q_m))) if q_m is not None else 0.0
+            if M_min > self.MASS_FLOOR:
+                self.dt = min(tOut - t0, self.dt*M_min/self.MASS_FLOOR)
+                self.t = t0 + self.dt
+                self.substeps = [self.t for i in range(self.nStages)]
+                return
         self.t = t0 + self.dt
 
     def setCoefficients(self):
@@ -1034,6 +1053,9 @@ class Coefficients(TC_base):
 
 class LevelModel(OneLevelTransport):
     nCalls = 0
+    #per-face boundary kinds (BoundaryKinds): a face that says 'strong' has the rows of its dofs replaced and no
+    #weak term, a face that says 'none' is open; the kernel reads isStrongBoundary_u per face
+    implementsBoundaryKinds = True
 
     def __init__(self,
                  uDict,
@@ -1536,6 +1558,20 @@ class LevelModel(OneLevelTransport):
             self.compatibleBudget = []
             self.carriedStorage = {}  # M^{n+1} keyed by t^{n+1}
             self._compatStepKey = None
+        # forceStrongConditions of the coefficients (and STABILIZATION_TYPE 6) make EVERY Dirichlet face strong;
+        # the kernel reads that scalar and, per face, isStrongBoundary_u (the faces that declared themselves strong).
+        self.forceStrongAllFaces = bool(self.forceStrongConditions)
+        if BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(0)):
+            if self.forceStrongAllFaces:
+                raise ValueError("TADR: forceStrongConditions (or STABILIZATION_TYPE 'Compatible') makes every Dirichlet face "
+                                 "strong; a setter that declares per-face kinds (BoundaryKinds.declare) says which faces are "
+                                 "strong itself: drop forceStrongConditions")
+            # the faces that say 'strong' have the rows of their dofs replaced (the dofs stay unknowns); a bare
+            # function stays weak, as it always was. Decided by the declaration, not by what this rank holds
+            # (the parallel authority of a shared dof is collective).
+            self.forceStrongConditions = True
+            self.dirichletConditionsForceDOF = DOFBoundaryConditions(self.u[0].femSpace, dofBoundaryConditionsSetterDict[0],
+                                                                     weakDirichletConditions=False, strongFacesOnly=True)
         if self.coefficients.STABILIZATION_TYPE == 5:
             assert getattr(self.timeIntegration, 'isSSP', False) == False, \
                 "If STABILIZATION_TYPE==5 (ImplicitEV), use an implicit (non-SSP) timeIntegration, e.g. BackwardEuler"
@@ -2376,7 +2412,7 @@ class LevelModel(OneLevelTransport):
             tot = self.ebqe[('advectiveFlux', 0)]
             adv = self.ebqe[('advectiveFluxOnly', 0)]
             dif = tot - adv
-            isdb = (self.numericalFlux.isDOFBoundary[0] == 1)
+            isdb = (self.kernelIsDOFBoundary() == 1)
 
             # An exterior face of an overlap element lives in this rank's ebqe
             # arrays AND in its owner's, so a bare allreduce double-counts it.
@@ -2416,6 +2452,28 @@ class LevelModel(OneLevelTransport):
                    int(local[6]), local[7], local[8], local[9]), level=2)
         except Exception as e:
             logEvent("[TADR-BC] probe failed: %r" % (e,), level=2)
+
+    def kernelIsStrongBoundary(self):
+        """isStrongBoundary_u for the kernel: the faces that declared themselves strong (zeros when none did)."""
+        nf = self.numericalFlux
+        strong = getattr(nf, 'isStrongBoundary', None)
+        if strong is None:
+            if getattr(self, '_zeroStrongBoundary', None) is None:
+                self._zeroStrongBoundary = np.zeros(self.ebqe[('u', 0)].shape, 'i')
+            return self._zeroStrongBoundary
+        return strong[0]
+
+    def kernelIsDOFBoundary(self):
+        """isDOFBoundary_u for the kernel: the weak faces AND the strong ones. A strong face has isDOFBoundary 0 in the
+        flux class (it must not get the weak term) but the kernel still imposes its advective inflow datum there
+        (forceStrongConditions per face, see isStrongBoundary_u); a face that declared itself open has neither."""
+        strong = getattr(self.numericalFlux, 'isStrongBoundary', None)
+        if strong is None or not strong[0].any():
+            return self.numericalFlux.isDOFBoundary[0]
+        if getattr(self, '_kernelIsDOFBoundary', None) is None or self._kernelIsDOFBoundary.shape != strong[0].shape:
+            self._kernelIsDOFBoundary = np.zeros(strong[0].shape, 'i')
+        np.maximum(self.numericalFlux.isDOFBoundary[0], strong[0], out=self._kernelIsDOFBoundary)
+        return self._kernelIsDOFBoundary
 
     def getResidual(self, u, r):
         import copy
@@ -2564,7 +2622,8 @@ class LevelModel(OneLevelTransport):
         argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
         argsDict["elementBoundaryLocalElementBoundariesArray"] = self.mesh.elementBoundaryLocalElementBoundariesArray
         argsDict["ebqe_velocity_ext"] = self.coefficients.ebqe_v
-        argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
+        argsDict["isDOFBoundary_u"] = self.kernelIsDOFBoundary()
+        argsDict["isStrongBoundary_u"] = self.kernelIsStrongBoundary()
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u', 0)]
         argsDict["isFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag', 0)]
         argsDict["ebqe_bc_advectiveFlux_u_ext"] = self.ebqe[('advectiveFlux_bc',0)]
@@ -2644,7 +2703,7 @@ class LevelModel(OneLevelTransport):
         argsDict["Sn_dof"] = self.coefficients.Sn_dof
         argsDict["k_d"] = self.coefficients.k_d
         argsDict["c_sat"] = self.coefficients.c_sat
-        argsDict["forceStrongConditions"] = int(self.forceStrongConditions)
+        argsDict["forceStrongConditions"] = int(self.forceStrongAllFaces)
         #argsDict["D"] = self.coefficients.DTypes
         argsDict["isDiffusiveFluxBoundary_u"] = self.ebqe[('diffusiveFlux_bc_flag',0,0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag',0)]
@@ -2922,7 +2981,8 @@ class LevelModel(OneLevelTransport):
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
         argsDict["elementBoundaryLocalElementBoundariesArray"] = self.mesh.elementBoundaryLocalElementBoundariesArray
         argsDict["ebqe_velocity_ext"] = self.coefficients.ebqe_v
-        argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[0]
+        argsDict["isDOFBoundary_u"] = self.kernelIsDOFBoundary()
+        argsDict["isStrongBoundary_u"] = self.kernelIsStrongBoundary()
         argsDict["ebqe_bc_u_ext"] = self.numericalFlux.ebqe[('u', 0)]
         argsDict["isFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag', 0)]
         argsDict["ebqe_bc_flux_u_ext"] = self.ebqe[('advectiveFlux_bc', 0)]
@@ -2969,7 +3029,7 @@ class LevelModel(OneLevelTransport):
         argsDict["USE_EDGE_FLUX"] = self._use_edge_flux
         argsDict["csrRowIndeces_DofLoops"] = self.rowptr
         argsDict["csrColumnOffsets_DofLoops"] = self.colind
-        argsDict["forceStrongConditions"] = int(self.forceStrongConditions)
+        argsDict["forceStrongConditions"] = int(self.forceStrongAllFaces)
         argsDict["ebq_a"] = self.ebqe[('a',0,0)]
         #argsDict["D"] = self.coefficients.DTypes
 

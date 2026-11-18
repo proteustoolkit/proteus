@@ -802,8 +802,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             np.isnan(c[('u',0)]).any() or
             np.isnan(c[('m',0)]).any() or
             np.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
         # ---- Component 1 (S_n) framework bookkeeping fill -----------------
         # The real gas residual is assembled in C++; this fill writes the

@@ -1,0 +1,160 @@
+{
+ "kernel": "Reacdiff",
+ "dim": 2,
+ "subproblem": "ncls",
+ "adr": {
+  "dim": 2,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "mass": {
+     "m": "φ",
+     "dm": {
+      "φ": "1"
+     },
+     "depends_on": {
+      "φ": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "φ*v_0",
+      "φ*v_1"
+     ],
+     "df": {
+      "φ": [
+       "v_0",
+       "v_1"
+      ]
+     },
+     "depends_on": {
+      "φ": "linear"
+     }
+    },
+    "diffusion": {
+     "φ": {
+      "rowptr": [
+       0,
+       1,
+       2
+      ],
+      "colind": [
+       0,
+       1
+      ],
+      "a": [
+       "φ**2 + 1",
+       "φ**2 + 1"
+      ],
+      "da": {
+       "φ": [
+        "2*φ",
+        "2*φ"
+       ]
+      },
+      "depends_on": {
+       "φ": "nonlinear"
+      }
+     }
+    },
+    "reaction": {
+     "r": "φ*(φ**2 + 1)",
+     "dr": {
+      "φ": "3*φ**2 + 1"
+     },
+     "depends_on": {
+      "φ": "nonlinear"
+     }
+    }
+   }
+  ]
+ },
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1"
+   ]
+  }
+ },
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "lagged": false,
+  "shock_capturing": null
+ },
+ "coefficients": {
+  "κ": {
+   "code": "φ**2 + 1",
+   "depends_on": {
+    "φ": "nonlinear"
+   },
+   "d": {
+    "φ": "2*φ"
+   },
+   "inline": "φ**2 + 1"
+  }
+ },
+ "named": {
+  "order": [
+   "κ"
+  ],
+  "dim": 2,
+  "components": [
+   "φ"
+  ],
+  "equations": [
+   {
+    "component": "φ",
+    "mass": {
+     "m": "φ"
+    },
+    "advection": {
+     "f": [
+      "φ*v_0",
+      "φ*v_1"
+     ]
+    },
+    "reaction": {
+     "r": "φ*κ"
+    },
+    "diffusion": {
+     "φ": {
+      "rowptr": [
+       0,
+       1,
+       2
+      ],
+      "colind": [
+       0,
+       1
+      ],
+      "a": [
+       "κ",
+       "κ"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "unknowns": {
+  "φ": [
+   "φ"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": []
+}

@@ -1,51 +1,89 @@
 {
  "kernel": "VOF",
  "dim": 2,
- "fields": [
-  "v_0",
-  "v_1",
-  "ε"
- ],
- "stabilization": {
-  "method": "SUPG",
-  "tau": "metric",
-  "shock_capturing": {
-   "lagged": true
-  }
- },
+ "subproblem": "vof",
  "adr": {
   "dim": 2,
   "components": [
-   "χ"
+   "χh"
   ],
   "equations": [
    {
-    "component": "χ",
+    "component": "χh",
     "mass": {
-     "m": "χ*ε",
+     "m": "χh",
      "dm": {
-      "χ": "ε"
+      "χh": "1"
      },
      "depends_on": {
-      "χ": "linear"
+      "χh": "linear"
      }
     },
     "advection": {
      "f": [
-      "χ*v_0*ε",
-      "χ*v_1*ε"
+      "χh*v_0",
+      "χh*v_1"
      ],
      "df": {
-      "χ": [
-       "v_0*ε",
-       "v_1*ε"
+      "χh": [
+       "v_0",
+       "v_1"
       ]
      },
      "depends_on": {
-      "χ": "linear"
+      "χh": "linear"
      }
     }
    }
   ]
- }
+ },
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1"
+   ]
+  }
+ },
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "lagged": false,
+  "shock_capturing": {
+   "factor": 0.5,
+   "beta": 1.5,
+   "reference": 1.0,
+   "lagged": true
+  }
+ },
+ "regularized": {
+  "heaviside": {
+   "by": "smoothed_heaviside",
+   "width": "1.5*h"
+  }
+ },
+ "unknowns": {
+  "χh": [
+   "χh"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": [
+  {
+   "type": "dirichlet",
+   "variable": "χ",
+   "region": "top",
+   "only": "inflow",
+   "kind": "strong"
+  }
+ ]
 }

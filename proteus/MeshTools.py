@@ -6772,6 +6772,8 @@ class EdgeMesh(Mesh):
         self.nodeDict={}
         self.edgeDict={}
         self.oldToNewNode=[]
+    def meshType(self):
+        return 'simplex'
     def computeGeometricInfo(self):
         from .import cmeshTools
         cmeshTools.computeGeometricInfo_edge(self.cmesh)

@@ -23,6 +23,7 @@ from . import cfemIntegrals
 from .csparsity import CSR_INDEX_DTYPE
 from .TransportCoefficients import *
 from . import NumericalFlux
+from . import BoundaryKinds
 from . import cnumericalFlux
 from . import Comm
 from . import csparsity
@@ -100,6 +101,13 @@ class OneLevelTransport(NonlinearEquation):
         a discontinous velocity field.
 
     """
+    #The per-face boundary kinds of BoundaryKinds. A subclass (a model with its own residual) does not inherit
+    #the support: it implements it and says so with ``implementsBoundaryKinds = True`` in its own class body, and
+    #NumericalFlux.NF_base refuses a declared setter for a model that did not.
+    implementsBoundaryKinds = True
+    @property
+    def supportsBoundaryKinds(self):
+        return bool(type(self).__dict__.get('implementsBoundaryKinds',False))
     #share the storage of weighted shape arrays whose quadrature weights are equal
     #(see makeAliasForEqualWeights in __init__); a class attribute so it can be turned off
     shareWeightedArrays = True
@@ -321,6 +329,10 @@ class OneLevelTransport(NonlinearEquation):
         self.nFreeDOF_global  = [dc.nFreeDOF_global for dc in list(self.dirichletConditions.values())]
         self.nVDOF_element    = sum(self.nDOF_trial_element)
         self.nFreeVDOF_global = sum(self.nFreeDOF_global)
+        #coefficients whose sparse diffusion layout depends on the space
+        #dimension (not known when they are built) set it up now
+        if self.sd and hasattr(coefficients,'initializeSparseDiffusion'):
+            coefficients.initializeSparseDiffusion(self.nSpace_global)
         #cek make full diffusion default if not in sdInfo
         if self.sd:
             for ci,ckDict in coefficients.diffusion.items():
@@ -940,9 +952,25 @@ class OneLevelTransport(NonlinearEquation):
         logEvent(memory("global exterior element boundary quadrature","OneLevelTransport"),level=4)
         self.forceStrongConditions= numericalFluxType.useStrongDirichletConstraints
         self.dirichletConditionsForceDOF = {}
+        #Per-face kinds (C12): under a flux class that is weak by default, the faces of a declared setter that say
+        #'strong' are imposed by replacing the rows of their dofs (the dofs stay unknowns: the layout of a weak
+        #class, which is also the parallel one); a bare function stays weak, as it always was. Whether the rows of
+        #some component are replaced is decided by the declaration, not by what this rank holds, because the
+        #parallel authority of a shared dof (LinearAlgebraTools.attachStrongDirichletAuthority) is collective.
+        self.declaredBoundaryKinds = [BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(cj)) for cj in range(self.nc)]
+        strongFacesOnly = (not numericalFluxType.useStrongDirichletConstraints and
+                           numericalFluxType.useWeakDirichletConditions and any(self.declaredBoundaryKinds))
+        if strongFacesOnly:
+            self.forceStrongConditions = True
         if self.forceStrongConditions:
             for cj in range(self.nc):
-                self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
+                if strongFacesOnly:
+                    if self.declaredBoundaryKinds[cj]:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False,strongFacesOnly=True)
+                    else:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,None,weakDirichletConditions=True)
+                else:
+                    self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
                 # A DOF of a periodic pair is one unknown shared with its
                 # partner, and periodicity wins over a Dirichlet value there,
                 # as it does where Dirichlet DOFs are eliminated.
@@ -3183,10 +3211,23 @@ class OneLevelTransport(NonlinearEquation):
                     self.u[cj].getGradientValuesTrace(self.ebq[('grad(v)',cj)],
                                                  self.ebq[('grad(u)',cj)])
 
+    #the stabilized (subgrid error) versions of coefficient derivatives the strong residual reads
+    _SGE_KEYS = ('dH', 'da', 'df', 'dm', 'dmt', 'dphi', 'grad(phi)')
+
+    def _aliasMissingSubgridErrorCoefficients(self,cq):
+        """Alias X_sge to X for each coefficient the strong residual reads but no subgrid error
+        object set up (shock capturing alone, or a subgrid error for another term), as a
+        subgrid error that does not lag does."""
+        for key in [k for k in list(cq.keys()) if isinstance(k,tuple) and k[0] in self._SGE_KEYS]:
+            sgeKey = (key[0]+'_sge',)+key[1:]
+            if sgeKey not in cq:
+                cq[sgeKey] = cq[key]
+
     def calculateStrongResidualAndAdjoint(self,cq):
         """
         break off computation of strong residual and adjoint so that we can do this at different quadrature locations?
         """
+        self._aliasMissingSubgridErrorCoefficients(cq)
         if (self.stabilization or self.shockCapturing):
             for ci in range(self.nc):
                 cq[('pdeResidual',ci)].fill(0.0)
@@ -4111,17 +4152,18 @@ class OneLevelTransport(NonlinearEquation):
                                                                   self.ebq['sqrt(det(g))'],
                                                                   self.ebq[('w',ci)],
                                                                   self.ebq[('w*dS_'+I,ci)])
-                    #for w*dS_a
+                    #for w*dS_a: ('w*dS_a',ck,ci) is component ci's test function weighted for its
+                    #diffusion term in ck, whose weights are (I,ci,ck) (as for grad(w)*dV_a)
                     for ck in range(self.nc):
-                        if (I,ci,ck) in self.ebq:
+                        if ('w*dS_'+I,ck,ci) in self.ebq:
                             cfemIntegrals.calculateWeightedShapeTrace(self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                       self.ebq['sqrt(det(g))'],
                                                                       self.ebq[('w',ci)],
-                                                                      self.ebq[('w*dS_'+I,ci,ck)])
+                                                                      self.ebq[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebq and len(self.elementBoundaryIntegralKeys) > 0:
                     for ck in range(self.nc):
                         try:
-                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ci,ck)]
+                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:
@@ -4287,20 +4329,20 @@ class OneLevelTransport(NonlinearEquation):
                                                                                 self.ebqe[('w',ci)],
                                                                                 self.ebqe[('w*dS_'+I,ci)])
 
-                    #for w*dS_a
+                    #for w*dS_a (see the element boundary loop: test component last)
                     for ck in range(self.nc):
-                        if ('w*dS_'+I,ci,ck) in self.ebqe:
+                        if ('w*dS_'+I,ck,ci) in self.ebqe:
                             cfemIntegrals.calculateWeightedShapeGlobalExteriorTrace(self.mesh.exteriorElementBoundariesArray,
                                                                                     self.mesh.elementBoundaryElementsArray,
                                                                                     self.mesh.elementBoundaryLocalElementBoundariesArray,
                                                                                     self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                                     self.ebqe['sqrt(det(g))'],
                                                                                     self.ebqe[('w',ci)],
-                                                                                    self.ebqe[('w*dS_'+I,ci,ck)])
+                                                                                    self.ebqe[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebqe:
                     for ck in range(self.nc):
                         try:
-                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ci,ck)]
+                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:

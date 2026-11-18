@@ -346,6 +346,10 @@ if opts.logLevel > 0:
     else:
         Profiling.openLog(args[0][-3:]+".log",opts.logLevel,logLocation=logDir)
 
+# a case given only as -f fileName.py (the form most READMEs use) is the case argument
+if len(args) == 0 and opts.fileName:
+    args = [opts.fileName]
+
 #blanket import statements can go below here now that petsc4py should be initialized
 from proteus import *
 try:
@@ -369,8 +373,9 @@ elif opts.contextOptionsFile != None:
 pList = []
 nList = []
 sList = []
-if len(args) < 1 and not opts.TwoPhaseFlow:
-    raise RuntimeError("No input file specified")
+if len(args) < 1:
+    raise RuntimeError("No input file specified: run parun case.py --TwoPhaseFlow, "
+                       "parun case_so.py, or parun -f case.py --TwoPhaseFlow")
 log("Importing input modules")
 
 if opts.SWEs:
@@ -452,7 +457,7 @@ elif opts.TwoPhaseFlow:
             sList.append(s)
     else:
         sList = so.sList
-elif len(args) == 1:#arg should be an sso file or an so module
+elif len(args) == 1:#arg should be an so module
     if args[0][-3:] == '.py':
         log("Loading so module = "+args[0])
         #so = __import__(args[0][:-3])
@@ -477,6 +482,10 @@ elif len(args) == 1:#arg should be an sso file or an so module
                 sList.append(s)
         else:
             sList = so.sList
+    else:
+        parser.error("%s: expected an so module (a .py file with pnList); old-style .sso text "
+                     "files are no longer read, write an so module with "
+                     "pnList = [(pModule, nModule), ...] instead" % args[0])
 elif len(args) == 2: #p and n modules provided
     so=proteus.defaults.System_base()
     s = default_s

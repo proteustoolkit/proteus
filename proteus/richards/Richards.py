@@ -644,6 +644,13 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             self.model.rho_nodal[:] = rho_nodal
             self.model.ghostScatter(self.model.rho_nodal)
             self.model.use_rho_nodal = 1
+        if firstStep:
+            # The old-time mass of the first step was stored while the flow model was initialized, before
+            # the transport model had set its density: at rho_f, where c0 gives rho_f (1 + eps c0).  Left
+            # as it is, the storage term (m(u) - m_last)/dt of the first step carries a mass that no
+            # head can remove (rho_f vs rho(c0), 1.25 % in the levee deck, in a saturated cell a mass the
+            # head does not control), divided by a dt that the transport's CFL makes 3e-14.
+            self.model.refreshOldTimeMass()
 
         # ------------------------------------------------------------------
         # BOUNDARY VELOCITY COUPLING DEFECT.  Measurement only -- nothing here
@@ -841,8 +848,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
             np.isnan(c[('u',0)]).any() or
             np.isnan(c[('m',0)]).any() or
             np.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
     
     # def postStep(self, t, firstStep=False):
     #     if not self.outputQuantDOFs:
@@ -2963,6 +2969,21 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         #print("The seepage is ", anb_seepage_flux)
     def estimate_mt(self):
         pass
+    def refreshOldTimeMass(self):
+        """Rebuild the old-time mass at the quadrature points, m_last = m(u^n), with the density
+        q['rho'] the model holds now. Used by Coefficients.preStep at the first step, whose history
+        was stored before the coupled density was copied in; later steps carry the mass their
+        previous step produced (updateTimeHistory), each level at its own density."""
+        ti = self.timeIntegration
+        dof = self.u[0].dof.copy()
+        ti_u = ti.u     # getResidual points ti.u at the array it is given
+        scratch = np.zeros(dof.shape, 'd')
+        self.getResidual(self.u_dof_old.copy(), scratch)
+        for ci in range(self.coefficients.nc):
+            ti.m_last[ci][:] = ti.m_tmp[ci]
+        # leave the iterate where the step controller put it
+        ti.u = ti_u
+        self.u[0].dof[:] = dof
     def calculateSolutionAtQuadrature(self):
         pass
     def calculateAuxiliaryQuantitiesAfterStep(self):
