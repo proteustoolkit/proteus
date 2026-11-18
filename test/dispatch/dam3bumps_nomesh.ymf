@@ -1,0 +1,5 @@
+# dam3bumps.ymf without its mesh: the base of the specs that state another one (a file can remove only from what it
+# composes, not from itself).
+extends: dam3bumps.ymf
+remove:
+  - "solution_paths.discretizations[convex_limited].mesh"

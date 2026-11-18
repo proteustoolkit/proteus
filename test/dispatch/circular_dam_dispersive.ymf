@@ -1,0 +1,35 @@
+# test/SWFlow/circular_damBreak.py with sw_model = 1 (the dispersive model),
+# its default: a circular dam of radius 2 m and height 0.8 m over still water
+# of depth 1 m at the middle of a 20 m × 20 m flat basin, walls all round. The
+# deck's 50 × 50 nodes are 49 × 49 cells. The auxiliaries take the deck's
+# initial values (hη = h², hw = hβ = 0), which the spec leaves to their roles.
+# The dam's edge: the deck writes (x−10)² + (y−10)² <= r² (h + 0.8 on the
+# circle), ymf's heaviside is 1/2 there; the two agree off the circle.
+extends: dispersive_numerics.ymf
+
+model:
+  name: "Circular dam break, dispersive, 20 m × 20 m (circular_damBreak, sw_model 1)"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 20] × [0, 20],  t ∈ (0, 20]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_sets:
+      - {region: all, set: wall}
+    initial_conditions:
+      - {field: h, type: function, formula: "max(1 + 0.8 heaviside(4 − (x − 10)² − (y − 10)²) − Z, 0)", units: m}
+      - {field: q, type: constant, value: 0.0}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.0}
+      θ: {value: 1.0}
+      Z: {value: 0.0}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: relaxed_convex_limited
+      mesh: {cells: 49}
+      step_control: {type: min_cfl, cfl: 0.25}

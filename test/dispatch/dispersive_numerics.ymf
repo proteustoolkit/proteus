@@ -1,0 +1,39 @@
+# How proteus solves the dispersive model: GN_SW2DCV, the shallow-water
+# scheme of proteus_numerics.ymf (convex-limited graph viscosity, SSP RK3)
+# on the relaxed system of six unknowns: the model's h and q, and the three
+# auxiliaries the hyperbolic-relaxation closure introduces. GN_SW2DCV reads
+# only lumped_mass of the scheme's options (it uses the lumped solve whatever
+# it says), so the scheme states no entropy-viscosity coefficient.
+extends: dispersive.ymf
+ymf_state: abstract
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: relaxed_convex_limited
+      provenance: proteus_derived
+      binds:
+        he: {meaning: element_size}                 # the relaxation length
+        hε: {meaning: dry_depth}
+      regularize:
+        heaviside: {by: smoothed_heaviside, width: he}
+        inverse: {by: wet_dry_cutoff, of: h, width: hε}
+      step_control: {type: min_cfl, cfl: 0.33}
+      solver: {type: time_marching}
+      discretization:
+        scheme: graph_viscosity_convex_limiting
+        time_integration: ssp_rk3
+        lumped_mass: false
+      subproblems:
+        - name: gn
+          solves: [mass, momentum]
+          finite_element: {fields: {family: CG, order: 1}}
+          time_integration: ssp_rk3
+          dispersion:
+            closure: hyperbolic_relaxation
+            closes: [Pd, Qd]
+            auxiliaries:
+              - {name: hη, role: relaxed_depth, units: m2}
+              - {name: hw, role: relaxed_divergence, units: m2/s}
+              - {name: hβ, role: relaxed_bed_flux, units: m2/s}
+          proteus: {model: GN_SW2DCV}
