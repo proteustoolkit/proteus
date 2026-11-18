@@ -12,6 +12,7 @@ from warnings import warn
 import numpy
 from . import Norms
 from .Profiling import logEvent
+from .csparsity import CSR_INDEX_DTYPE
 from warnings import warn
 
 ## \file TransportCoefficients.py
@@ -36,6 +37,33 @@ from warnings import warn
 #the equations and the diffusion tensor may be provided as a sparse
 #matrix.
 #
+class _SparseDiffusionInfo(dict):
+    """{(ci,ck): (rowptr, colind)} with both arrays held as CSR_INDEX_DTYPE.
+
+    The kernels take the diffusion tensor's layout as proteus_csr_index_t (the
+    width of PetscInt); the models and tests write these arrays with dtype 'i'.
+    Converting on every store keeps that out of each model (C33)."""
+    @staticmethod
+    def _csr(value):
+        try:
+            rowptr, colind = value
+            return (numpy.ascontiguousarray(rowptr, dtype=CSR_INDEX_DTYPE),
+                    numpy.ascontiguousarray(colind, dtype=CSR_INDEX_DTYPE))
+        except (TypeError, ValueError):
+            return value  # not a (rowptr, colind) pair: store as given
+    def __init__(self, *args, **kw):
+        super().__init__()
+        self.update(*args, **kw)
+    def __setitem__(self, key, value):
+        super().__setitem__(key, self._csr(value))
+    def update(self, *args, **kw):
+        for k, v in dict(*args, **kw).items():
+            self[k] = v
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
 class TC_base(object):
     """
     This is the base class for coefficients of the vector transport
@@ -71,6 +99,13 @@ class TC_base(object):
 
     a_{i,j} = 1
     """
+    @property
+    def sdInfo(self):
+        return self._sdInfo
+    @sdInfo.setter
+    def sdInfo(self, value):
+        # kernels take the layout as the CSR index type (see _SparseDiffusionInfo)
+        self._sdInfo = _SparseDiffusionInfo(value)
     def __init__(self,
                  nc=2,
                  mass      = {},

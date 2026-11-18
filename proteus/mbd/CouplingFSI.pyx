@@ -48,6 +48,13 @@ import xml.etree.ElementTree as ET
 import h5py
 # chrono C++ headers
 cimport ChronoHeaders as ch
+
+cdef extern from "index_type.h":
+    ctypedef int proteus_index_t
+
+#: dtype of the mesh's index arrays (nodeStarOffsets, nodeStarArray, ...): the
+#: width of proteus_index_t in index_type.h, same rule as cmeshTools.INDEX_DTYPE
+_INDEX_DTYPE = np.dtype('i%d' % sizeof(proteus_index_t))
 # chrono Python headers
 from proteus.mprans import BodyDynamics as bd
 import pychrono as chrono
@@ -2991,8 +2998,8 @@ cdef class ProtChMoorings:
             self.fluid_acceleration_array = np.zeros((nb_nodes, 3))
         if self.fluid_density_array is None:
             self.fluid_density_array = np.zeros(nb_nodes)
-        self.nearest_node_array = np.zeros(nb_nodes, dtype=np.int32)
-        self.containing_element_array = np.zeros(nb_nodes, dtype=np.int32)
+        self.nearest_node_array = np.zeros(nb_nodes, dtype=_INDEX_DTYPE)
+        self.containing_element_array = np.zeros(nb_nodes, dtype=_INDEX_DTYPE)
         self.owning_rank = np.zeros(nb_nodes, dtype=np.int32)
 
     def prestep(self):
@@ -3535,9 +3542,9 @@ def getLocalNearestNode(coords, kdtree):
 
 cdef pyxGetLocalNearestNode(double[:] coords,
                             double[:,:] nodeArray,
-                            int[:] nodeStarOffsets,
-                            int[:] nodeStarArray,
-                            int node,
+                            proteus_index_t[:] nodeStarOffsets,
+                            proteus_index_t[:] nodeStarArray,
+                            proteus_index_t node,
                             int rank):
     """Finds nearest node to coordinates (local)
     Parameters
@@ -3563,9 +3570,9 @@ cdef pyxGetLocalNearestNode(double[:] coords,
         distance to nearest node
     """
     # determine local nearest node distance
-    cdef int nearest_node = copy.deepcopy(node)
-    cdef int nearest_node0 = copy.deepcopy(node)
-    cdef int nOffsets
+    cdef proteus_index_t nearest_node = node
+    cdef proteus_index_t nearest_node0 = node
+    cdef proteus_index_t nOffset
     cdef double dist
     cdef double min_dist
     cdef double[:] node_coords

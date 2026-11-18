@@ -217,14 +217,14 @@ void getLHS(Mat &K,apf::NewArray <apf::DynamicVector> &shdrv,int nsd,double weig
           term1[s][t] = temp*weight*visc_val;
         }
       } 
-      int idx[nshl]; //indices for PETSc Mat insertion
+      PetscInt idx[nshl]; //indices for PETSc Mat insertion
       for(int i=0; i<nsd;i++){
         for(int j=0;j<nshl;j++){
           idx[j] = i*nshl+j;
         }
         MatSetValues(K,nshl,idx,nshl,idx,term1[0],ADD_VALUES);
       }
-      int idxr[nshl],idxc[nshl]; //indices for PETSc rows and columns
+      PetscInt idxr[nshl],idxc[nshl]; //indices for PETSc rows and columns
       for(int i = 0; i< nsd;i++){
         for(int j=0; j< nsd;j++){
           for(int s=0;s<nshl;s++){
@@ -264,7 +264,7 @@ void getRHS(Vec &F,apf::NewArray <double> &shpval,apf::NewArray <apf::DynamicVec
 //  F is the vector representing the RHS
 
 {
-      int idx[nshl];
+      PetscInt idx[nshl];
       for( int i = 0; i<nsd; i++){
         double temp_vect[nshl];
         for( int s=0;s<nshl;s++){
@@ -608,7 +608,7 @@ void setErrorField(apf::Field* estimate,Vec coef,apf::MeshEntity* ent,int nsd,in
 {
     apf::Mesh* m = apf::getMesh(estimate);
     double coef_ez[nshl*nsd];
-    int ez_idx[nshl*nsd];
+    PetscInt ez_idx[nshl*nsd];
     for(int ez=0;ez<nshl*nsd;ez++){ez_idx[ez]=ez;}
     VecGetValues(coef,nshl*nsd,ez_idx,coef_ez);
 
@@ -843,7 +843,7 @@ void MeshAdaptPUMIDrvr::get_local_error(double &total_error)
     VecAssemblyEnd(F); 
     VecScale(F,Jdet); //must be done after assembly
     double* bflux;
-    int F_idx[ndofs];
+    PetscInt F_idx[ndofs];
     bflux = (double*) calloc(ndofs,sizeof(double));
 
     getBoundaryFlux(m, ent,bflux);

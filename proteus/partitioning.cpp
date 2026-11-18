@@ -2807,7 +2807,11 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done applying partition");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //determine the number of nodes per subdomain in new partitioning
   valarray<int> nNodes_subdomain_new(size);
-  ISPartitioningCount(nodePartitioningIS_new,size,&nNodes_subdomain_new[0]);
+  {
+    std::vector<PetscInt> counts(size); // PETSc's own width (64-bit-index PETSc)
+    ISPartitioningCount(nodePartitioningIS_new,size,counts.data());
+    for (int sdN = 0; sdN < size; sdN++) nNodes_subdomain_new[sdN] = int(counts[sdN]);
+  }
   //need new offsets for subdomain to global numbering
   valarray<proteus_index_t> nodeOffsets_new(size+1);
   nodeOffsets_new[0] = 0;
