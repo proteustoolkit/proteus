@@ -23,6 +23,7 @@ import importlib
 import re
 
 from proteus import DispatchTable as table
+from ymf import stabilization
 from ymf import vocabulary as vocab
 
 __all__ = ["DispatchError", "Dispatched", "Dispatch", "dispatch", "dispatch_file", "role_of", "family_of"]
@@ -241,13 +242,32 @@ def _width(sub, function, entry):
     return _element_size_factor(rule["width"], entry, sub, function)
 
 
-def _stabilization(sub):
+def _stabilization(sub, entry=None):
+    """The sub-problem's stabilization (or the entry's, the default of its sub-problems) in ymf's words, read through
+    ``ymf.stabilization.resolve`` (the older spellings ``lag``, ``sc_beta``, ``sc_uref`` fold into ``lagged``,
+    ``beta``, ``reference``), then under the names this module sets: ``{method, tau?, lag?, shock_capturing:
+    {factor, lag?, sc_beta?, sc_uref?}}``. Only the stated keys are present. An explicit ``shock_capturing: none``
+    is ``shock_capturing: None``."""
     s = sub.get("stabilization")
+    if s is None and entry is not None:
+        s = entry.get("stabilization")
     if s is None:
         return {}
-    out = {"method": s} if isinstance(s, str) else _value(dict(s))
-    if out.get("method") is not None:
-        out["method"] = _canonical("stabilization", out["method"])
+    s = {"method": s} if isinstance(s, str) else _value(dict(s))
+    try:
+        r = stabilization.resolve(s, "%s stabilization" % sub.get("name", "?"))
+    except stabilization.StabilizationError as exc:
+        raise DispatchError(str(exc), subproblem=sub.get("name")) from None
+    out = {"method": r["method"]}
+    if "tau" in r:
+        out["tau"] = r["tau"]
+    if "lagged" in r:
+        out["lag"] = r["lagged"]
+    if "shock_capturing" in r:
+        sc = r["shock_capturing"]
+        out["shock_capturing"] = None if sc is None else {
+            new: sc[old] for old, new in (("factor", "factor"), ("lagged", "lag"), ("beta", "sc_beta"),
+                                          ("reference", "sc_uref")) if old in sc}
     return out
 
 
@@ -280,7 +300,7 @@ def _options(sub, entry, formulation):
     fe = sub.get("finite_element") or {}
     spaces = {slot: (str(v.get("family")), int(v.get("order"))) for slot, v in fe.items() if isinstance(v, dict)}
     return {"formulation": formulation, "spaces": spaces, "time_integration": _time_of(sub),
-            "stabilization": _stabilization(sub).get("method"), "scheme": _scheme(entry).get("scheme")}
+            "stabilization": _stabilization(sub, entry).get("method"), "scheme": _scheme(entry).get("scheme")}
 
 
 def _describe(options):
@@ -346,7 +366,7 @@ def _set(d, where, key, value, source):
 def _build(index, sub, role, cell, entry, model, options):
     d = Dispatched(index, sub["name"], role, cell)
     physics, numerics = cell["physics"], cell["numerics"]
-    stab = _stabilization(sub)
+    stab = _stabilization(sub, entry)
     stab_cell = cell.get("stabilization") or {}
 
     # spaces: stated or the cell's default
@@ -375,6 +395,7 @@ def _build(index, sub, role, cell, entry, model, options):
         carried = any(name in model.heaviside_of or (isinstance(lag, dict) and lag.get("of") in model.heaviside_of)
                       for name, lag in lags.items())
         _set(d, d.coefficients, physics["from_carrier_lag"], 1.0 if carried else 0.0, "spec")
+    sc_none = "shock_capturing" in stab and stab["shock_capturing"] is None     # stated: no shock capturing
     sc_spec = stab.get("shock_capturing") or {}
     sc_cell = stab_cell.get("shock_capturing") or {}
     for key in physics.get("from_shock_capturing") or []:
@@ -382,6 +403,8 @@ def _build(index, sub, role, cell, entry, model, options):
             _set(d, d.coefficients, key, float(sc_spec[key]), "spec")
         elif key in sc_cell:
             _set(d, d.coefficients, key, sc_cell[key], "default")
+    if "tau" in stab and "useMetrics" in d.coefficients:
+        _set(d, d.coefficients, "useMetrics", 1.0 if stab["tau"] == "metric" else 0.0, "spec")
     scheme = _scheme(entry)
     for key, (flag, kind) in (physics.get("from_scheme") or {}).items():
         if key in scheme:
@@ -423,6 +446,8 @@ def _build(index, sub, role, cell, entry, model, options):
         if "velocity" in d.spaces:
             _set(d, d.numerics, "subgridError.hFactor", table.H_FACTOR[d.spaces["velocity"][1]], "spec")
     if d.numerics.get("shockCapturing"):
+        if sc_none:
+            _set(d, d.numerics, "shockCapturing.shockCapturingFactor", 0.0, "spec")
         for key, attribute in (("factor", "shockCapturingFactor"), ("lag", "lag")):
             if key in sc_spec:
                 _set(d, d.numerics, "shockCapturing." + attribute, sc_spec[key], "spec")
