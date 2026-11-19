@@ -153,16 +153,27 @@ jobs:
           environment-file: environment-ci.yml
           activate-environment: proteus-dev
 
-      # ymf comes from "git+https://github.com/proteustoolkit/ymf.git@main" in the
-      # environment file -- a moving branch, resolved at run time, because ymf
-      # is on neither PyPI nor conda-forge. So the same proteus commit passes
-      # or fails depending on when it ran relative to an ymf merge, and the
-      # skew is invisible until it surfaces as a few hundred KeyErrors deep in
-      # the suite. cekees/proteus#46 lost a debugging session to exactly that:
-      # 272 failures, all of them ymf.archive still writing the capitalized
-      # keys this branch had already renamed, because the run started 11 hours
-      # before cekees/ymf#2 merged.
+      # ymf comes from PyPI at the floor the environment files state (ymf >=0.3.1).
+      # It used to come from "git+https://github.com/proteustoolkit/ymf.git@main", a
+      # moving branch resolved at run time, so the same proteus commit passed or
+      # failed depending on when it ran relative to an ymf merge: cekees/proteus#46
+      # lost a debugging session to 272 KeyErrors (ymf.archive still writing keys this
+      # branch had renamed, run started 11 hours before cekees/ymf#2 merged), and ymf
+      # 0.3.0 at @main broke main's test/dispatch for half a day on 2026-11-17/18.
       #
+      # To test against ymf on purpose (before a release, or to see whether a proteus change needs one), set the
+      # Actions variable YMF_REF of the repository (Settings > Secrets and variables > Actions > Variables) to a
+      # branch, tag or commit of proteustoolkit/ymf, e.g. main, and re-run; unset it afterwards. Every leg of every
+      # run then installs that ymf over the PyPI one. (A variable rather than a workflow_dispatch input: pushes and
+      # pull requests have no inputs, and the fork's dev overlay already edits that block.)
+      - name: Install ymf from git (only when the Actions variable YMF_REF is set)
+        if: vars.YMF_REF != ''
+        shell: bash -l {0}
+        env:
+          YMF_REF: ${{ vars.YMF_REF }}
+        run: |
+          pip install --no-deps --force-reinstall "ymf @ git+https://github.com/proteustoolkit/ymf.git@${YMF_REF}"
+
       # Record what this leg actually resolved, so the next one is a glance
       # rather than a bisect across two repositories. Diagnostics only: every
       # lookup is guarded, and nothing here can fail the build.
@@ -219,9 +230,31 @@ jobs:
           # installs it with default build isolation, through pip run from this env, which finds the bundle.
           python -m build --sdist --no-isolation
 
+      # The coverage leg builds BoundaryConditions, mprans.BoundaryConditions and WaveTools (compiled by Cython from
+      # .py files, so coverage.py saw their lines never run: 0%) with line tracing; setup.py reads this variable.
+      # Every other leg builds as before: tracing slows those modules down and nothing else needs it.
       - name: Install sdist with default build isolation
         shell: bash -l {0}
+        env:
+          PROTEUS_CYTHON_LINETRACE: ${{ matrix.leg.coverage == 'yes' && '1' || '' }}
         run: pip install dist/*.tar.gz
+
+      # The Cython.Coverage plugin finds a traced module's executable lines in the C++ file Cython generated, which it
+      # looks for next to the installed .so. pip builds in a temporary directory and keeps no generated source, so make
+      # the three files again here (the lines they map are the same ones) and put them there; the coverage job reads
+      # the same files from the artifact below.
+      - name: Generate the Cython sources the coverage plugin reads (coverage leg)
+        if: matrix.leg.coverage == 'yes'
+        shell: bash -l {0}
+        run: |
+          PKG="$(cd "$(mktemp -d)" && python -c 'import os, proteus; print(os.path.dirname(proteus.__file__))')"
+          echo "installed package: $PKG; cython $(cython --version 2>&1)"
+          for mod in BoundaryConditions mprans/BoundaryConditions WaveTools; do
+            cython --cplus -3 -X linetrace=True -I . "proteus/$mod.py" -o "proteus/$mod.cpp"
+            cp "proteus/$mod.cpp" "$PKG/$mod.cpp"
+          done
+          ls "$PKG"/BoundaryConditions.* "$PKG"/mprans/BoundaryConditions.* "$PKG"/WaveTools.*
+          tar czf linetrace-sources.tgz proteus/BoundaryConditions.cpp proteus/mprans/BoundaryConditions.cpp proteus/WaveTools.cpp
 
       - name: Smoke test
         shell: bash -l {0}
@@ -420,8 +453,16 @@ jobs:
           # every module against its floor (.github/coverage/floors.json).
           COV_ARGS=()
           if [ "${{ matrix.leg.coverage }}" = yes ]; then
+            # pyproject.toml's coverage configuration plus the Cython plugin, which counts the lines of the three
+            # line-traced modules (installed above); written here so no other run of coverage needs Cython.
+            # The plugin is .github/coverage/cython_traced.py (Cython.Coverage plus the hook that stops the combine
+            # failing with "Conflicting file tracer name"), so every process the tests start must find it.
+            export PYTHONPATH="$GITHUB_WORKSPACE/.github/coverage${PYTHONPATH:+:$PYTHONPATH}"
+            awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"cython_traced\"]"}' \
+              "$GITHUB_WORKSPACE/pyproject.toml" > "$RUNNER_TEMP/coverage-cython.toml"
+            grep -q '^plugins = ' "$RUNNER_TEMP/coverage-cython.toml" || { echo "::error::coverage plugin line not added"; exit 1; }
             # an absolute path: each xdist worker runs in test_output/<worker id>
-            COV_ARGS=(--cov=proteus --cov-config="$GITHUB_WORKSPACE/pyproject.toml"
+            COV_ARGS=(--cov=proteus --cov-config="$RUNNER_TEMP/coverage-cython.toml"
                       --cov-report=xml:coverage.xml --cov-report=html:htmlcov
                       --cov-report=term-missing:skip-covered)
           fi
@@ -451,6 +492,14 @@ jobs:
             test_output/coverage.xml
             test_output/htmlcov
           include-hidden-files: true
+          if-no-files-found: warn
+
+      - name: Keep the Cython sources the coverage plugin read
+        if: always() && matrix.leg.coverage == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-linetrace-sources-${{ matrix.leg.os }}-py${{ matrix.leg.python }}${{ matrix.suite == 'fsi' && '-fsi' || '' }}
+          path: linetrace-sources.tgz
           if-no-files-found: warn
 
       # A cancelled job can leave MPI ranks running on a self-hosted runner. At the end of a job the runner ends the
@@ -522,10 +571,26 @@ jobs:
         with:
           name: coverage-ubuntu-latest-py3.12.5-fsi
           path: cov/fsi
+      - name: Fetch the Cython sources of the line-traced modules
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-linetrace-sources-ubuntu-latest-py3.12.5
+          path: cov/linetrace
       - name: Combine and check against the floors
         shell: bash
         run: |
-          pip install -q "coverage>=7.10"
+          # Cython: the plugin that reads the line-traced modules' data (BoundaryConditions, mprans.BoundaryConditions,
+          # WaveTools) has to be there to combine and report them
+          pip install -q "coverage>=7.10" "cython>=3.0,<4"
+          # the plugin looks for each module's generated C++ next to its .py
+          if [ -f cov/linetrace/linetrace-sources.tgz ]; then
+            tar xzf cov/linetrace/linetrace-sources.tgz
+          else
+            echo "::warning::no Cython sources from the coverage leg; the three line-traced modules are not reported"
+          fi
+          awk '{print} /^source = \["proteus"\]$/ {print "plugins = [\"cython_traced\"]"}' pyproject.toml > coverage-cython.toml
+          export PYTHONPATH="$PWD/.github/coverage${PYTHONPATH:+:$PYTHONPATH}"
           PARTIAL=()
           DATA=()
           for suite in main fsi; do
@@ -539,9 +604,9 @@ jobs:
           done
           [ ${#DATA[@]} -gt 0 ] || { echo "::error::no coverage data at all"; exit 1; }
           # [tool.coverage.paths] maps the runner's site-packages/proteus onto this checkout's proteus/
-          coverage combine --rcfile=pyproject.toml "${DATA[@]}"
-          coverage xml --rcfile=pyproject.toml -i -o coverage.xml
-          coverage html --rcfile=pyproject.toml -i -d htmlcov
+          coverage combine --rcfile=coverage-cython.toml "${DATA[@]}"
+          coverage xml --rcfile=coverage-cython.toml -i -o coverage.xml
+          coverage html --rcfile=coverage-cython.toml -i -d htmlcov
           python .github/coverage/ratchet.py coverage.xml .github/coverage/floors.json "${PARTIAL[@]}" \
             | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Keep the combined report
