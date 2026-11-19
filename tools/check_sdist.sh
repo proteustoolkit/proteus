@@ -26,16 +26,25 @@ BYTES=$(wc -c < "$SDIST")
 echo "sdist: $SDIST ($(( BYTES / 1024 )) KB, limit ${LIMIT_MB} MB)"
 [ "$BYTES" -le $(( LIMIT_MB * 1024 * 1024 )) ] || { echo "sdist too large"; exit 1; }
 
+# List the sdist once, to a file. Piping `tar tzf` into `grep -q` or `head` under
+# pipefail is a race: when the reader exits on its first match while tar is still
+# writing, tar's next write gets EPIPE ("tar: stdout: write error"), the pipeline
+# fails and the check reports a file as missing that is there. GNU tar on the
+# ubuntu runner lost that race in the 2.0.0rc1 release run ("missing from the
+# sdist: setup.py"); bsdtar on macOS passed 3 of 3 on the same sdist.
+LISTING="$OUT/sdist-listing.txt"
+tar tzf "$SDIST" > "$LISTING"
+
 # Compiled or generated files, logs, data and CI files must not ship by accident.
-if tar tzf "$SDIST" | grep -E '\.(so|o|pyc|log|h5|xmf|smb|dmg|msh)$|/\.github/|\.DS_Store|/build/'; then
+if grep -E '\.(so|o|pyc|log|h5|xmf|smb|dmg|msh)$|/\.github/|\.DS_Store|/build/' "$LISTING"; then
   echo "unexpected files in the sdist (listed above)"; exit 1
 fi
 # The files a build cannot do without.
 for need in setup.py pyproject.toml LICENSE.md README.md PKG-INFO proteus/__init__.py proteus/proteus_blas.h; do
-  tar tzf "$SDIST" | grep -q "^[^/]*/$need$" || { echo "missing from the sdist: $need"; exit 1; }
+  grep -q "^[^/]*/$need$" "$LISTING" || { echo "missing from the sdist: $need"; exit 1; }
 done
 
-TOP="$(tar tzf "$SDIST" | head -1 | cut -d/ -f1)"
+TOP="$(sed -n '1s|/.*||p' "$LISTING")"
 INFO="$(tar xzf "$SDIST" -O "$TOP/PKG-INFO")"
 NAME="$(printf '%s\n' "$INFO" | sed -n 's/^Name: //p')"
 VER="$(printf '%s\n' "$INFO" | sed -n 's/^Version: //p')"
