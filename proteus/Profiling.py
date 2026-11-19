@@ -158,6 +158,12 @@ def memory(message=None,className='',memSaved=None):
                 if message is None:
                     message = ''
                 logEvent("PROTEUS ERROR: MEMORY HARDLIMIT REACHED, EXIT From "+filename.split("/")[-1]+", "+className+caller+", line "+repr(line)+": "+message+", %f MB in routine, %f MB in program, %f MB is hard limit" % (memInc,mem,memHardLimit))
+                # logEvent writes only on rank 0 (and to the log file): put the
+                # message on this rank's stderr, then drain before the abort
+                # or the launcher can drop it
+                sys.stderr.write("PROTEUS ERROR: MEMORY HARDLIMIT REACHED on rank %d, in %s, %s%s, line %s: %s, %f MB in program, %f MB is hard limit\n" % (MPI.COMM_WORLD.rank, filename.split("/")[-1], className, caller, line, message, mem, memHardLimit))
+                from proteus.runtime import drain_before_abort
+                drain_before_abort()
                 MPI.COMM_WORLD.Abort(1)
                 sys.exit("MPI.COMM_WORLD.Abort(1); exit(1)")
         if message:

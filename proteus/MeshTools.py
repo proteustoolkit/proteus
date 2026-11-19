@@ -9075,6 +9075,13 @@ def _runMesher(cmd):
                            % (result.returncode, cmd, result.stdout[-2000:], result.stderr[-2000:]))
     return result.stdout
 
+def _mvMeshFile(src, dst):
+    """Rename a mesher's output; a file triangle did not write raises here, naming it."""
+    result = run(["mv", src, dst], capture_output=True, encoding='utf-8')
+    if result.returncode != 0:
+        raise RuntimeError("the mesh generator did not leave %s (mv to %s failed, status %d): %s"
+                           % (src, dst, result.returncode, result.stderr.strip()))
+
 def _writeMeshFilesOnMaster(comm, domain, meshOptions, needed):
     """:func:`writeMeshFiles` on rank 0 when ``needed`` there; a failure raises on every rank.
 
@@ -9127,9 +9134,8 @@ def writeMeshFiles(domain, meshOptions):
             logEvent("Calling triangle on rank 0 with command %s" % (tricmd,))
             logEvent(_runMesher(tricmd))
             logEvent("Done running triangle")
-            run("mv {0:s}.1.ele {0:s}.ele".format(fileprefix), shell=True)
-            run("mv {0:s}.1.node {0:s}.node".format(fileprefix), shell=True)
-            run("mv {0:s}.1.edge {0:s}.edge".format(fileprefix), shell=True)
+            for ext in ("ele", "node", "edge"):
+                _mvMeshFile("{0:s}.1.{1:s}".format(fileprefix, ext), "{0:s}.{1:s}".format(fileprefix, ext))
     elif isinstance(domain, Domain.PiecewiseLinearComplexDomain):
         if domainMeshOptions.use_gmsh is True:
             fileprefix = domain.geofile
