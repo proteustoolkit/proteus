@@ -4,7 +4,7 @@ test_hdiv_dofmap.py, serially and under mpiexec.
 
 Environment: SHAPE (edge|tri|tet|quad|hex), PART_TYPE (node|element), NLAYERS, FAMILIES (comma list, default all those
 defined for the shape), OUT (directory for the per-rank tables), RATES (1: also the interpolation errors on this mesh and on the mesh with twice the intervals,
-serial only). Prints one line ``RESULT {json}`` per rank and case.
+serial only). Writes ``result_<tag>.json`` per rank and case to OUT.
 
 Per case (family, local vertex orders as generated or scrambled per rank):
 * the dof map builds (its own check: elements agree on the point of a shared dof and on the face normals);
@@ -256,7 +256,9 @@ def run_case(family, scrambled):
         saved[dm.dofInteriorIndex >= 0] = 0.0
     key = np.hstack([dm.dofPoints, dm.dofFaceCentroids, np.maximum(dm.dofInteriorIndex, 0)[:, None] + 0.0])
     np.savez(os.path.join(out, tag + ".npz"), s2g=s2g[used], x=key[used], dof=saved[used], nOwned=dm.nDOF_subdomain_owned)
-    print("RESULT " + json.dumps(res), flush=True)
+    # one file per rank and case: the ranks share stdout, and lines from two of them can interleave
+    with open(os.path.join(out, "result_" + tag + ".json"), "w") as fh:
+        json.dump(res, fh)
 
 
 def interpolation_errors(family, m):
