@@ -7576,6 +7576,10 @@ class DOFBoundaryConditions(object):
             return g
         if strongFacesOnly:
             getPeriodicBoundaryConditions = None
+        #kept for adoptDOF: a dof this rank sees but whose condition came from a face of another rank
+        self._getPointwiseBoundaryConditions = getPointwiseBoundaryConditions
+        self._impose = impose
+        self._exactConversion = exactConversion
         if (getPointwiseBoundaryConditions is not None and femSpace.strongDirichletConditions and
             (not weakDirichletConditions or strongFacesOnly)):
             for eN in range(femSpace.elementMaps.mesh.nElements_global):
@@ -7762,6 +7766,32 @@ class DOFBoundaryConditions(object):
             self.global2freeGlobal_global_dofs[i] = dofN#map each of the unknown DOF's to the original node number
             self.global2freeGlobal_free_dofs[i] = self.global2freeGlobal[dofN]#map each of the unknown DOF's to the free unknown number
 
+
+    def adoptDOF(self,dofN,x,materialFlag):
+        """Hold the strong condition that another rank's face (or node) flag gives this dof.
+
+        A dof on the rank cut is in a rank's dictionary only if one of that rank's own elements has the
+        face or node that selects it; ``LinearAlgebraTools.strongDirichletNonAuthorityDofs`` hands the
+        authority's point and flag to the other ranks that see the dof, so that every copy loads the
+        same value into ``u`` and zeroes the same column. The setter is called exactly as the
+        constructor does. Returns whether the dof was adopted (not for exact-conversion spaces, whose
+        condition is a combination of data at several points, and not where the setter gives nothing).
+        """
+        if self._getPointwiseBoundaryConditions is None or self._exactConversion or dofN in self.DOFBoundaryConditionsDict:
+            return False
+        gReturn = self._getPointwiseBoundaryConditions(x,materialFlag)
+        try:
+            g = gReturn[0]
+        except TypeError:
+            g = gReturn
+        g = self._impose(g)
+        if not g:
+            return False
+        self.DOFBoundaryConditionsDict[dofN] = g
+        self.DOFBoundaryPointDict[dofN] = x
+        self.DOFBoundaryMaterialFlag[dofN] = materialFlag
+        self.freeDOFSet.discard(dofN)
+        return True
 
     @staticmethod
     def exactConversionCondition(femSpace,eN,i,g,materialFlag,getPointwiseBoundaryConditions,impose=lambda g: g):

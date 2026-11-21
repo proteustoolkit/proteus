@@ -2425,7 +2425,7 @@ if not HAVE_PETSC4PY:
     ParMat_petsc4py = ParMat_mpi4py
 
 
-def strongDirichletNonAuthorityDofs(model, par_r):
+def strongDirichletNonAuthorityDofs(model, par_r, adopt=None):
     """The local dofs whose strong-Dirichlet row this rank must not contribute.
 
     With ``forceStrongConditions`` every rank replaces the rows of the dofs in its own
@@ -2442,6 +2442,21 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     and one ``u - g`` whatever the partition. No Dirichlet value is exchanged, so
     values that depend on x or t work. Collective, once per level model.
 
+    The copies that are not held are not left alone: ``u - g`` is the authority's row,
+    but every other rank that sees the dof still assembles the PDE rows of its own
+    equations with its copy of ``u``, and zeroes the column of the dof only if it
+    holds it. If the owner is not the authority (the cut puts the face that selects
+    the dof on another rank than the owner's elements) the owner's copy was never
+    loaded with g and the owner's rows kept the column of an unknown that is not one:
+    the corner (0, 1) of the unit square (node flag 3, the top face, selected by the
+    left face of an element on another rank) stayed at 0 instead of 1 and the solution
+    followed (s = -146.306 against -140.990 serial). So the authority's point and flag
+    (no value, no function) go to every other rank that sees the dof and has no entry
+    of its own, and it adopts the condition (``DOFBoundaryConditions.adoptDOF``, which
+    calls the same setter as the constructor): every copy then loads the same g and
+    zeroes the same column. Those adoptions are appended to ``adopt`` as
+    ``(component, local dof number, point, flag)``, and the caller applies them.
+
     Returns the local dof indices to zero (an int array, maybe empty).
     """
     mpi = Comm.get().comm.tompi4py()
@@ -2452,17 +2467,27 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     s2g = numpy.asarray(par_r.subdomain2global)
     nloc = s2g.shape[0]
     hold = numpy.zeros(nloc, dtype=bool)
+    info = {}  # local dof -> (point, flag) of what this rank's dictionary says, where it can be handed on
+    where = {}  # local dof -> (component, dof number) for every dof the dictionaries can hold
     outside = 0
     dbcs = model.dirichletConditionsForceDOF
     if hasattr(dbcs, 'DOFBoundaryConditionsDict'):  # one object, not one per component (a single-component model)
         dbcs = {0: dbcs}
     for cj, dbc in dbcs.items():
+        flags = getattr(dbc, 'DOFBoundaryMaterialFlag', {})
         for dofN in dbc.DOFBoundaryConditionsDict:
             d = model.offset[cj] + model.stride[cj] * dofN
             if d < nloc:
                 hold[d] = True
+                if dofN in flags and dofN in dbc.DOFBoundaryPointDict and hasattr(dbc, 'adoptDOF'):
+                    info[d] = (numpy.array(dbc.DOFBoundaryPointDict[dofN], dtype=float), int(flags[dofN]))
             else:
                 outside += 1
+        if hasattr(dbc, 'adoptDOF'):
+            for dofN in range(model.u[cj].femSpace.dim):
+                d = model.offset[cj] + model.stride[cj] * dofN
+                if d < nloc:
+                    where[d] = (cj, dofN)
     # a layout whose Dirichlet dofs are not subdomain dofs (a serial-periodic numbering) is left as it was;
     # every rank must agree, so the decision is collective
     # (and likewise where two local dofs share a global number, as merged periodic dofs do)
@@ -2475,7 +2500,7 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     send = [None] * size
     for r in numpy.unique(gown):
         sel = gown == r
-        send[r] = (s2g[ghosts[sel]], hold[ghosts[sel]])
+        send[r] = (s2g[ghosts[sel]], hold[ghosts[sel]], [info.get(int(d)) for d in ghosts[sel]])
     recv = mpi.alltoall(send)
     owned_order = numpy.argsort(s2g[:nproc])
     owned_sorted = s2g[:nproc][owned_order]
@@ -2484,36 +2509,48 @@ def strongDirichletNonAuthorityDofs(model, par_r):
     for src, item in enumerate(recv):
         if item is None:
             continue
-        for g, h in zip(*item):
-            rec = any_holder.setdefault(int(g), [None, None])  # [lowest holder rank among ghosts, owner holds]
+        for g, h, i in zip(*item):
+            rec = any_holder.setdefault(int(g), [None, None, None])  # [lowest holder rank among ghosts, its info, ...]
             if h and (rec[0] is None or src < rec[0]):
                 rec[0] = src
+                rec[1] = i
     zero_owned = []
+    authority_of = {}
     for g, rec in any_holder.items():
         d = int(owned_order[numpy.searchsorted(owned_sorted, g)])
         owner_holds = bool(hold[d])
-        rec[1] = owner_holds
         if rec[0] is None and not owner_holds:
             continue  # nobody holds it
         authority = rank if owner_holds else rec[0]
-        rec.append(authority)
+        auth_info = info.get(d) if owner_holds else rec[1]
+        authority_of[g] = (authority, auth_info)
         if authority != rank:
             zero_owned.append(d)
+            if adopt is not None and auth_info is not None and not owner_holds and d in where:
+                adopt.append(where[d] + auth_info)
     reply = [None] * size
     for src, item in enumerate(recv):
         if item is None:
             continue
         flags = numpy.zeros(len(item[0]), dtype=bool)
+        given = [None] * len(item[0])
         for k, g in enumerate(item[0]):
-            rec = any_holder[int(g)]
-            if len(rec) == 3 and rec[2] != src:
-                flags[k] = True
-        reply[src] = flags
+            if int(g) in authority_of:
+                authority, auth_info = authority_of[int(g)]
+                if authority != src:
+                    flags[k] = True
+                    given[k] = auth_info
+        reply[src] = (flags, given)
     back = mpi.alltoall(reply)
     zero_ghost = []
     for r in numpy.unique(gown):
         sel = numpy.where(gown == r)[0]
-        zero_ghost.extend(ghosts[sel][back[r]].tolist())
+        flags, given = back[r]
+        zero_ghost.extend(ghosts[sel][flags].tolist())
+        if adopt is not None:
+            for dloc, auth_info in zip(ghosts[sel], given):
+                if auth_info is not None and not hold[dloc] and int(dloc) in where:
+                    adopt.append(where[int(dloc)] + auth_info)
     # an owned dof that no other rank sees is never shared: nothing to do for it
     return numpy.array(sorted(zero_owned + zero_ghost), dtype=cmeshTools.INDEX_DTYPE)
 
@@ -2526,7 +2563,13 @@ def attachStrongDirichletAuthority(model, par_r, par_jacobian):
         return
     if getattr(par_r, 'proteus2petsc_subdomain', None) is not None or par_r.getBlockSize() != 1:
         return  # permuted or block layouts are not handled
-    idx = strongDirichletNonAuthorityDofs(model, par_r)
+    adopt = []
+    idx = strongDirichletNonAuthorityDofs(model, par_r, adopt)
+    dbcs = model.dirichletConditionsForceDOF
+    if hasattr(dbcs, 'DOFBoundaryConditionsDict'):
+        dbcs = {0: dbcs}
+    for cj, dofN, x, flag in adopt:
+        dbcs[cj].adoptDOF(dofN, x, flag)
     par_r.dirichlet_nonauthority = idx
     par_jacobian.dirichlet_nonauthority = idx
-    logEvent("Strong Dirichlet authority on rank %i: %i local dofs not contributed" % (Comm.get().rank(), idx.shape[0]), level=4)
+    logEvent("Strong Dirichlet authority on rank %i: %i local dofs not contributed, %i adopted" % (Comm.get().rank(), idx.shape[0], len(adopt)), level=4)
