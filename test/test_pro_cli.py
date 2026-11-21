@@ -83,6 +83,25 @@ def test_model_kind(tmp_path):
     assert model_kind(str(case)) == "case"
 
 
+@pytest.mark.parametrize("source, kind", [
+    # the air-water-vv shape: pnList chosen by an option, assigned in an if/else
+    ("import tank3D\nif tank3D.useOnlyVF:\n    pnList = [('a_p', 'a_n')]\nelse:\n    pnList = [('a_p', 'a_n'), ('b_p', 'b_n')]\n", "so"),
+    ("try:\n    pnList = [('a_p', 'a_n')]\nexcept ImportError:\n    pnList = []\n", "so"),
+    ("import os\nwith open(os.devnull) as f:\n    pnList = [('a_p', 'a_n')]\n", "so"),
+    ("pnList = [('a_p', 'a_n')]\n", "so"),
+    ("pnList: list = [('a_p', 'a_n')]\n", "so"),
+    # not an so file: pnList only inside a function or a class, or never
+    ("def build():\n    pnList = [('a_p', 'a_n')]\n    return pnList\n", "case"),
+    ("class C:\n    pnList = [('a_p', 'a_n')]\n", "case"),
+    ("if True:\n    def f():\n        pnList = 1\n", "case"),
+    ("myTpFlowProblem = None\n", "case"),
+])
+def test_model_kind_sees_a_conditional_pnlist(tmp_path, source, kind):
+    f = tmp_path / "m.py"
+    f.write_text(source)
+    assert model_kind(str(f)) == kind
+
+
 def test_petsc_argv(tmp_path):
     f = tmp_path / "petsc.options"
     f.write_text(textwrap.dedent("""\
