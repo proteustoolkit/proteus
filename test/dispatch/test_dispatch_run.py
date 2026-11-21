@@ -292,6 +292,34 @@ def _split_of(name, entry, mutate=None):
     return split_problem(doc, entry)
 
 
+def test_a_squared_initial_value_is_the_product_the_deck_computes():
+    """ymf's ``**2`` on one point is the C library's pow(u, 2.0), not u*u, for about one double in 800; the deck squares
+    arrays, which multiplies. The initial level set of the 3-D dam break must equal the deck's at every point, including
+    the ones where the two differ (the chewbacca nightly's TetGen mesh has such a node: 38 of 95 datasets differed)."""
+    from proteus.DispatchRun import _field, exact_squares
+    split = _split_of("dambreak3d_short.ymf", "level_set_five")
+    code = split["initial"]["φ"]
+    assert "**2" in code
+    column = (1.2, 0.5, 0.6)
+
+    def deck(x):
+        d = numpy.array([x[0] - column[0], x[1] - column[1], x[2] - column[2]])
+        if (d <= 0.0).all():
+            return float(d.max())
+        return float(numpy.sqrt((numpy.maximum(d, 0.0)**2).sum()))
+
+    field = _field(code, 3)
+    # points whose scalar pow(u, 2.0) is not u*u, found rather than listed: the C library decides
+    hits = [i for i in range(1, 4000) if (numpy.float64(1.2 + i * 1e-3) - 1.2)**2 != numpy.square(numpy.float64(1.2 + i * 1e-3) - 1.2)]
+    if not hits:
+        pytest.skip("this C library's pow(u, 2.0) equals u*u on every probe point: nothing to tell the two apart")
+    for i in hits[:200]:
+        point = numpy.array([1.2 + i * 1e-3, 0.77, 0.9])
+        assert float(field.uOfXT(point, 0.0)) == deck(point), point
+    assert exact_squares("(x - 1)**2 + y**3 + (z)**2.0 + t**(2) + w**p") == \
+        "numpy.square(x - 1) + y ** 3 + numpy.square(z) + numpy.square(t) + w ** p"
+
+
 def test_a_3d_tank_sets_one_setter_per_face():
     from proteus.DispatchRun import _tank, tank_sides
 
