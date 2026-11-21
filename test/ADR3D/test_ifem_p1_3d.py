@@ -8,7 +8,7 @@ and share no code with the kernel:
 * ``pointwise_basis``: the defining conditions solved as a linear system, as IFEM_3D.ipynb does (nodal values,
   continuity at d cut points, one flux condition), for any dimension;
 * ``closed_form``: the formula of the C44 plan, section 2.1, for any dimension, so the 2D construction that ADR
-  already uses (the 6x6 solve of ifemBasisCoefficients_wrapper.h) is checked against the same formula;
+  already uses (the 6x6 solve of Unfitted.h) is checked against the same formula;
 * the 32 coefficients IFEM_3D.ipynb prints for x0 = y0 = z0 = 0.45, mu_a = 2, mu_b = 1.
 
 What is checked: nodal values, partition of unity, continuity on the cut, zero flux jump, agreement of the three

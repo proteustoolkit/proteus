@@ -2,6 +2,7 @@
 #define MESH_IO_H
 
 #include <iostream>
+#include "index_type.h"
 #include <vector>
 /***********************************************************************
   some basic utilities for reading formatted files
@@ -90,9 +91,9 @@ readTriangleMeshNodesAndElements(const char * filebase,
 bool 
 writeTriangleMeshNodesAndElements(const char * filebase, 
 				  const int& indexBase,
-				  const int& nElements, const int& nNodes,
+				  const proteus_index_t& nElements, const proteus_index_t& nNodes,
 				  const double* nodeArray,
-				  const int* elementNodesArray,
+				  const proteus_index_t* elementNodesArray,
 				  const int* nodeMaterialTypes = 0,
 				  const int* elementMaterialTypes = 0);
 
@@ -132,8 +133,8 @@ readTriangleElementBoundaries(const char * filebase,
 bool 
 writeTriangleElementBoundaryNodes(const char * filebase, 
 				  const int& indexBase,
-				  const int& nElementBoundaries,
-				  const int* elementBoundaryNodesArray,
+				  const proteus_index_t& nElementBoundaries,
+				  const proteus_index_t* elementBoundaryNodesArray,
 				  const int* elementBoundaryMaterialTypesArray = 0);
 
 
@@ -241,9 +242,9 @@ readTetgenElementBoundaries(const char * filebase,
 bool 
 writeTetgenMeshNodesAndElements(const char * filebase, 
 				const int& indexBase,
-				const int& nElements, const int& nNodes,
+				const proteus_index_t& nElements, const proteus_index_t& nNodes,
 				const double* nodeArray,
-				const int* elementNodesArray,
+				const proteus_index_t* elementNodesArray,
 				const int* nodeMaterialTypes = 0,
 				const int* elementMaterialTypes = 0);
 
@@ -259,11 +260,11 @@ writeTetgenMeshNodesAndElements(const char * filebase,
 bool 
 writeTetgenElementBoundaryNodes(const char * filebase, 
 				const int& indexBase,
-				const int& nElementBoundaries,
-				const int* elementBoundaryNodesArray,
+				const proteus_index_t& nElementBoundaries,
+				const proteus_index_t* elementBoundaryNodesArray,
 				const int* elementBoundaryMaterialTypesArray = 0,
 				const bool& writeExteriorBoundariesOnly = false,
-				const int* exteriorElementBoundariesArray = 0);
+				const proteus_index_t* exteriorElementBoundariesArray = 0);
 
 /***********************************************************************
  \brief simple routine for writing the vertex and element 
@@ -290,9 +291,9 @@ writeTetgenElementBoundaryNodes(const char * filebase,
 bool 
 write3dmMeshNodesAndElements(const char * filebase, 
 			     const int& indexBase,
-			     const int& nElements, const int& nNodes,
+			     const proteus_index_t& nElements, const proteus_index_t& nNodes,
 			     const double* nodeArray,
-			     const int* elementNodesArray,
+			     const proteus_index_t* elementNodesArray,
 			     const int* elementMaterialTypes = 0);
 
 
@@ -322,9 +323,9 @@ write3dmMeshNodesAndElements(const char * filebase,
 bool 
 write2dmMeshNodesAndElements(const char * filebase, 
 			     const int& indexBase,
-			     const int& nElements, const int& nNodes,
+			     const proteus_index_t& nElements, const proteus_index_t& nNodes,
 			     const double* nodeArray,
-			     const int* elementNodesArray,
+			     const proteus_index_t* elementNodesArray,
 			     const int* elementMaterialTypes = 0);
 
 

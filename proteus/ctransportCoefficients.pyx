@@ -3381,7 +3381,7 @@ def burgersDiagonalVelHJEvaluate(const double self_a,
                   np.ndarray phi,
                   np.ndarray dphi):
     cburgersDiagonalVelHJEvaluate(u.size,
-                  dH[dH.ndim-1],
+                  dH.shape[dH.ndim-1],
                   self_a,
                   <double*> self_v.data,
                   <double*> u.data,
@@ -3545,7 +3545,7 @@ def ncLevelSetCoefficientsEvaluate(np.ndarray v,
                                     np.ndarray H,
                                     np.ndarray dH):
     cncLevelSetCoefficientsEvaluate(u.size,
-                                    dH[dH.ndim-1],
+                                    dH.shape[dH.ndim-1],
                                     <double*> v.data,
                                     <double*> u.data,
                                     <double*> grad_u.data,
@@ -3626,7 +3626,7 @@ def eikonalEquationEvaluate(double rhs,
                  np.ndarray dH,
                  np.ndarray r):
     ceikonalEquationEvaluate(u.size,
-                  dH[dH.ndim-1],
+                  dH.shape[dH.ndim-1],
                   rhs,
                  <double*> u.data,
                  <double*> grad_u.data,
@@ -3645,7 +3645,7 @@ def redistanceLevelSetCoefficientsEvaluate(double eps,
                         np.ndarray dH,
                         np.ndarray r):
     credistanceLevelSetCoefficientsEvaluate(u.size,
-                        dH[dH.ndim-1],
+                        dH.shape[dH.ndim-1],
                         eps,
                         <double*> u_levelSet.data,
                         <double*> u.data,
@@ -3667,7 +3667,7 @@ def redistanceLevelSetCoefficientsWithWeakPenaltyEvaluate(double eps,
                                np.ndarray r,
                                np.ndarray dr):
     credistanceLevelSetCoefficientsWithWeakPenaltyEvaluate(u.size,
-                                dH[dH.ndim-1],
+                                dH.shape[dH.ndim-1],
                                 eps,
                                 Lambda_penalty,
                                 <double*> u_levelSet.data,
@@ -3698,7 +3698,7 @@ def redistanceLevelSetSandFCoefficientsEvaluate(double eps,
             nPointsPerSimplex = u.shape[2]
         credistanceLevelSetSandFCoefficientsEvaluate( nSimplex, 
                           nPointsPerSimplex,
-                          dH[dH.ndim-1],
+                          dH.shape[dH.ndim-1],
                           eps,
                          <double*> u_levelSet.data,
                          <double*> dV.data,
@@ -5464,7 +5464,7 @@ def HJBurgersEvaluate(const double offset,
                np.ndarray H,
                np.ndarray dH):
     cHJBurgersEvaluate(u.size,
-                dH[dH.ndim-1],
+                dH.shape[dH.ndim-1],
                 offset,
                 <double*> u.data,
                 <double*> gradu.data,
@@ -8115,7 +8115,12 @@ def L2projectEvaluate(int rank,
     elif rank == 1:
         l2projectVector(r.shape[0],r.shape[1],r.shape[2],dV,r)
     elif rank == 2:
-        l2project2Tensor(r.shape[0],r.shape[1],r.shape[2],dV,r)
+        if r.ndim == 3:
+            #a sparse layout ([element, point, entries]): the element average of each stored entry
+            #(l2project2Tensor reads [element, point, nd, nd], and took the entry count for nd)
+            l2projectVector(r.shape[0],r.shape[1],r.shape[2],dV,r)
+        else:
+            l2project2Tensor(r.shape[0],r.shape[1],r.shape[2],dV,r)
     else:
         assert 0
 def conservativeHeadRichardsJLeverettEvaluate(np.ndarray materialTypes,

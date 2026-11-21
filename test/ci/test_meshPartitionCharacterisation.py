@@ -757,6 +757,22 @@ def test_files_node_number_exchange(tmp_path, n):
                        'directory': got['directory']}
 
 
+@pytest.mark.parametrize('path', ['element', 'node'])
+@pytest.mark.parametrize('overlap', [1, 2])
+@pytest.mark.parametrize('n', [2, 3, 4])
+def test_a_hexahedral_subdomain_holds_only_edges_of_the_mesh(tmp_path, path, overlap, n):
+    """A hexahedron has 12 edges but 28 pairs of nodes. partitionElements added
+    the overlap's edges by looking every pair up with operator[], which inserted
+    each pair that is not an edge as edge 0 (rank 1 then held edge 0, with nodes
+    it does not have: a subdomain.edgeNodesArray row (0,0); found by C8,
+    2026-11-14). Every row must join two nodes one grid step apart, and the
+    ranks' edges together are the serial mesh's (meshPartition_hex_mpi.py)."""
+    serial = _launch([path, overlap, 5], None, cwd=str(tmp_path), script='meshPartition_hex_mpi.py')
+    got = _launch([path, overlap, 5], n, cwd=str(tmp_path), script='meshPartition_hex_mpi.py')
+    assert got['bad'] == ','.join(['0'] * n), got
+    assert got['all'] == serial['all'], (got, serial)
+
+
 @pytest.mark.parametrize('n', [1, 2, 3, 4])
 @pytest.mark.parametrize('case,message', [
     ('directory', 'entity 0 (asked by rank {asker}, of rank 0) has no owner'),

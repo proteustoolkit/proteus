@@ -21,7 +21,7 @@ import math
 import sys
 from dataclasses import dataclass
 
-__all__ = ["RunOptions", "petsc_argv", "init", "start", "abort_on_uncaught_exception"]
+__all__ = ["RunOptions", "petsc_argv", "init", "start", "abort_on_uncaught_exception", "drain_before_abort"]
 
 
 @dataclass
@@ -121,7 +121,7 @@ def init(options=None, options_file=None):
     return Comm.init()
 
 
-def start(log="proteus.log", log_level=1):
+def start(log="proteus.log", log_level=1, abort_program=None):
     """Start Proteus once for a caller that has no command line; return the Comm.
 
     If nothing has started Proteus, :func:`init` it with no PETSc options
@@ -129,6 +129,11 @@ def start(log="proteus.log", log_level=1):
     ``Profiling.procID`` if it is unset. Then open ``log`` in the working directory at
     ``log_level`` unless a log is already open, or ``log`` is None. This is
     what importing :mod:`proteus.iproteus` did, without its shared ``opts``.
+
+    A script that runs under ``mpiexec`` directly, not through ``parun`` or
+    ``pro``, has no :func:`abort_on_uncaught_exception` unless it asks:
+    ``abort_program="name"`` installs it (see there), so an exception on one
+    rank ends the job instead of leaving the other ranks in a collective.
     """
     from proteus import Comm, Profiling
     comm = Comm.comm
@@ -139,7 +144,39 @@ def start(log="proteus.log", log_level=1):
         Profiling.procID = comm.rank()
     if log is not None and Profiling.logFile is None:
         Profiling.openLog(log, log_level)
+    if abort_program is not None:
+        abort_on_uncaught_exception(abort_program)
     return comm
+
+
+#: Seconds to let a launcher forward what the ranks wrote before ``MPI_Abort``.
+#: MPICH's hydra kills its proxies on abort and can exit before it has forwarded
+#: the ranks' output (empty stderr, exit 1: ``abortWith`` in partitioning.cpp,
+#: macOS 2026-11-15; this hook, ceds-model nightly 2026-11-16 at load 31).
+#: partitioning.cpp's ``abortWith`` waits the same 0.2 s.
+ABORT_DRAIN_SECONDS = 0.2
+
+
+def drain_before_abort(seconds=None):
+    """Flush every output buffer, then wait for the launcher to forward it.
+
+    Flushes Python's stdout and stderr and, through libc, every C stdio
+    stream (``fflush(NULL)``: PETSc and the extensions print through it),
+    then sleeps :data:`ABORT_DRAIN_SECONDS`. Call it right before
+    ``MPI_Abort``, when the run is ending anyway. Never raises.
+    """
+    import time
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    try:
+        import ctypes
+        ctypes.CDLL(None).fflush(None)
+    except Exception:
+        pass
+    time.sleep(ABORT_DRAIN_SECONDS if seconds is None else seconds)
 
 
 def abort_on_uncaught_exception(program):
@@ -182,6 +219,7 @@ def abort_on_uncaught_exception(program):
         except Exception:
             pass
         if size > 1:
+            drain_before_abort()
             comm.comm.tompi4py().Abort(1)
     sys.excepthook = hook
     return hook

@@ -39,6 +39,12 @@ class SO_base(object):
         self.updateAfterModelStep=True
         self.stepExactEps = 1.0e-12
         self.stepFailures = 0
+        #retries of a failed sequence; the subclasses that choose the step from
+        #some of the models (FLCBDF, adaptive) take it from those models, and
+        #without such a model this default keeps retrySequence_modelStepFailure
+        #from failing on a missing attribute
+        self.maxFailures = max([getattr(getattr(model,'stepController',None),'maxSolverFailures',1)
+                                for model in self.modelList] or [1])
         self.stepSchedule = None
         #self.atol_iso=1.e-8 #tjp added for iterative SO routine tolerance
     def state(self):
@@ -134,6 +140,10 @@ class SO_base(object):
     def initialize_dt_system(self,t0,tOut):
         self.its=0
         self.t_system_last = t0
+        if self.dt_system_fixed is None:
+            #no dt_system_fixed in the so module: one system step per output interval, as
+            #before the fixed step became an so option (None + float: TypeError)
+            self.dt_system_fixed = tOut - t0
         self.dt_system = self.scheduled_dt(self.dt_system_fixed)
         self.t_system = self.t_system_last + self.dt_system
         self.stepSequence=[(self.t_system,m) for m in self.modelList]

@@ -896,7 +896,7 @@ int cartesianVertexInterpolation(int kind, int triangleFlag, const int* nn, cons
 }
 
 int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const int* rankGrid, int level, int rank,
-                              std::vector<int>& parents)
+                              std::vector<proteus_index_t>& parents)
 {
   /* For each element of this rank's subdomain on level, the element of its
      subdomain on level-1 that contains it, or -1 if that one is not there.
@@ -911,9 +911,9 @@ int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const i
     }
   const std::vector<Index> fineOrder = arithmeticSubdomainElements(fine, rank);
   const std::vector<Index> coarseOrder = arithmeticSubdomainElements(coarse, rank);
-  std::unordered_map<Index,int> coarseLocal;
+  std::unordered_map<Index,proteus_index_t> coarseLocal;
   for (size_t i = 0; i < coarseOrder.size(); i++)
-    coarseLocal[coarseOrder[i]] = int(i);
+    coarseLocal[coarseOrder[i]] = proteus_index_t(i);
   parents.resize(fineOrder.size());
   for (size_t i = 0; i < fineOrder.size(); i++)
     {
@@ -921,7 +921,7 @@ int cartesianSubdomainParents(int kind, int triangleFlag, const int* nn, const i
       int sub;
       fine.elementFromOld(fineOrder[i], c, sub);
       const Ijk cc{c[0]/2, c[1]/2, c[2]/2}, o{c[0]%2, c[1]%2, c[2]%2};
-      const std::unordered_map<Index,int>::iterator it = coarseLocal.find(coarse.elementOld(cc, coarseSubOf(fine, o, sub)));
+      const std::unordered_map<Index,proteus_index_t>::iterator it = coarseLocal.find(coarse.elementOld(cc, coarseSubOf(fine, o, sub)));
       parents[i] = it == coarseLocal.end() ? -1 : it->second;
     }
   return 0;
@@ -1139,9 +1139,9 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
         sd.nodeArray[nN*3+d] = (d < g.dim ? sdNodes[nN][d]*g.h[d] : 0.0) + g.x0[d];
       sd.nodeMaterialTypes[nN] = nodeMaterial(g, sdNodes[nN]);
     }
-  sd.elementNodesArray = new int[sd.nElements_global*nNodes_element];
+  sd.elementNodesArray = new proteus_index_t[sd.nElements_global*nNodes_element];
   sd.elementMaterialTypes = new int[sd.nElements_global];
-  sd.elementBoundariesArray = new int[sd.nElements_global*nElementBoundaries_element];
+  sd.elementBoundariesArray = new proteus_index_t[sd.nElements_global*nElementBoundaries_element];
   for (int eN = 0; eN < sd.nElements_global; eN++)
     {
       const Entity& el = elements.at(elementOrder[eN]);
@@ -1152,7 +1152,7 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
       for (int ebN = 0; ebN < nElementBoundaries_element; ebN++)
         sd.elementBoundariesArray[eN*nElementBoundaries_element+ebN] = faceLocal.at(elementFaceOld[eN*nElementBoundaries_element+ebN]);
     }
-  sd.edgeNodesArray = new int[sd.nEdges_global*2];
+  sd.edgeNodesArray = new proteus_index_t[sd.nEdges_global*2];
   for (int i = 0; i < sd.nEdges_global; i++)
     {
       //the global edge's nodes in its own order: the lower old number first
@@ -1204,7 +1204,7 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
   //interior to the global mesh. The partitioner reserves -1 for those.
   for (int ebNE = 0; ebNE < sd.nExteriorElementBoundaries_global; ebNE++)
     {
-      const int ebN = sd.exteriorElementBoundariesArray[ebNE];
+      const proteus_index_t ebN = sd.exteriorElementBoundariesArray[ebNE];
       if (sd.elementBoundaryMaterialTypes[ebN] == 0)
         sd.elementBoundaryMaterialTypes[ebN] = -1;
     }
@@ -1220,15 +1220,19 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
   mesh.nElementBoundaries_element = nElementBoundaries_element;
   //the global largest node star: every owned node's star is whole in its
   //subdomain and no ghost's is larger than it is globally
-  MPI_Allreduce(&sd.max_nNodeNeighbors_node,&mesh.max_nNodeNeighbors_node,1,MPI_INT,MPI_MAX,PROTEUS_COMM_WORLD);
+{ // max_nNodeNeighbors_node is proteus_index_t; reduce it in a type MPI knows the width of
+    long long localMax = sd.max_nNodeNeighbors_node, globalMax = 0;
+    MPI_Allreduce(&localMax,&globalMax,1,MPI_LONG_LONG,MPI_MAX,PROTEUS_COMM_WORLD);
+    mesh.max_nNodeNeighbors_node = static_cast<proteus_index_t>(globalMax);
+  }
   delete [] mesh.nodeOffsets_subdomain_owned;
   delete [] mesh.elementOffsets_subdomain_owned;
   delete [] mesh.elementBoundaryOffsets_subdomain_owned;
   delete [] mesh.edgeOffsets_subdomain_owned;
-  mesh.nodeOffsets_subdomain_owned = new int[size+1];
-  mesh.elementOffsets_subdomain_owned = new int[size+1];
-  mesh.elementBoundaryOffsets_subdomain_owned = new int[size+1];
-  mesh.edgeOffsets_subdomain_owned = new int[size+1];
+  mesh.nodeOffsets_subdomain_owned = new proteus_index_t[size+1];
+  mesh.elementOffsets_subdomain_owned = new proteus_index_t[size+1];
+  mesh.elementBoundaryOffsets_subdomain_owned = new proteus_index_t[size+1];
+  mesh.edgeOffsets_subdomain_owned = new proteus_index_t[size+1];
   for (int r = 0; r <= size; r++)
     {
       mesh.nodeOffsets_subdomain_owned[r] = checkedInt(PROTEUS_COMM_WORLD, r < size ? nodes.offset(r) : mesh.nNodes_global);
@@ -1240,10 +1244,10 @@ int generateCartesianSubdomain(const MPI_Comm& PROTEUS_COMM_WORLD, int kind, int
   delete [] mesh.elementNumbering_subdomain2global;
   delete [] mesh.elementBoundaryNumbering_subdomain2global;
   delete [] mesh.edgeNumbering_subdomain2global;
-  mesh.nodeNumbering_subdomain2global = new int[sd.nNodes_global];
-  mesh.elementNumbering_subdomain2global = new int[sd.nElements_global];
-  mesh.elementBoundaryNumbering_subdomain2global = new int[sd.nElementBoundaries_global];
-  mesh.edgeNumbering_subdomain2global = new int[sd.nEdges_global];
+  mesh.nodeNumbering_subdomain2global = new proteus_index_t[sd.nNodes_global];
+  mesh.elementNumbering_subdomain2global = new proteus_index_t[sd.nElements_global];
+  mesh.elementBoundaryNumbering_subdomain2global = new proteus_index_t[sd.nElementBoundaries_global];
+  mesh.edgeNumbering_subdomain2global = new proteus_index_t[sd.nEdges_global];
   for (int nN = 0; nN < sd.nNodes_global; nN++)
     mesh.nodeNumbering_subdomain2global[nN] = checkedInt(PROTEUS_COMM_WORLD, nodes.node(sdNodes[nN]));
   for (int eN = 0; eN < sd.nElements_global; eN++)

@@ -1,0 +1,8 @@
+# dam3Bumps.py on SWFlow's structured mesh at the deck's default refinement 4: nnx = 81, nny = 41 nodes, i.e. 80 x 40 cells
+# (mesh.cells per axis, ymf round 5). test_dispatch_run.py compares it with the deck (structured=True) bitwise.
+extends: dam3bumps_nomesh.ymf
+
+solution_paths:
+  discretizations:
+    - name: convex_limited
+      mesh: {cells: {x: 80, y: 40}}

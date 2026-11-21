@@ -1508,6 +1508,23 @@ class CheckTimeSeriesFailureModes(unittest.TestCase):
             )
         self.assertEqual(cm6.exception.code, 1 )
 
+class TestTimeSeriesPositionalCalls(unittest.TestCase):
+    def test_shifted_arguments_after_g_are_refused(self):
+        """cutoffTotal was inserted before rec_direct, so a 1.x call that passed
+        rec_direct and window_params after g positionally silently passed them as
+        cutoffTotal and rec_direct (then died with 'window_params must be a
+        dictionary' and sys.exit). Now it is a TypeError that says what to do."""
+        path = os.path.dirname(os.path.abspath(__file__))
+        args = (os.path.join(path, "data_timeSeries.txt"), 0, np.array([0., 0., 0]), 1., 64, 1.,
+                np.array([1, 0, 0]), np.array([0, 0, -9.81]))
+        from proteus.WaveTools import TimeSeries
+        with self.assertRaises(TypeError):
+            TimeSeries(*args, True, {"Nwaves": 15, "Tm": 1., "Window": "costap",
+                                     "Overlap": 0.7, "Cutoff": 0.1})
+        # by keyword it builds
+        TimeSeries(*args, rec_direct=True)
+
+
 class VerifyTimeSeries(unittest.TestCase):
     def testDirect(self):
 # Testing class while reading from file

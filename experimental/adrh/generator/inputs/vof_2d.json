@@ -1,0 +1,89 @@
+{
+ "kernel": "VOF",
+ "dim": 2,
+ "subproblem": "vof",
+ "adr": {
+  "dim": 2,
+  "components": [
+   "χh"
+  ],
+  "equations": [
+   {
+    "component": "χh",
+    "mass": {
+     "m": "χh",
+     "dm": {
+      "χh": "1"
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    },
+    "advection": {
+     "f": [
+      "χh*v_0",
+      "χh*v_1"
+     ],
+     "df": {
+      "χh": [
+       "v_0",
+       "v_1"
+      ]
+     },
+     "depends_on": {
+      "χh": "linear"
+     }
+    }
+   }
+  ]
+ },
+ "reads": {
+  "v": {
+   "at": "current_step",
+   "via": "flow",
+   "components": [
+    "v_0",
+    "v_1"
+   ]
+  }
+ },
+ "stabilization": {
+  "method": "SUPG",
+  "tau": "metric",
+  "lagged": false,
+  "shock_capturing": {
+   "factor": 0.5,
+   "beta": 1.5,
+   "reference": 1.0,
+   "lagged": true
+  }
+ },
+ "regularized": {
+  "heaviside": {
+   "by": "smoothed_heaviside",
+   "width": "1.5*h"
+  }
+ },
+ "unknowns": {
+  "χh": [
+   "χh"
+  ]
+ },
+ "time_integration": "backward_euler",
+ "finite_element": {
+  "fields": {
+   "family": "CG",
+   "order": 1
+  }
+ },
+ "mesh_symbols": [],
+ "boundary_conditions": [
+  {
+   "type": "dirichlet",
+   "variable": "χ",
+   "region": "top",
+   "only": "inflow",
+   "kind": "strong"
+  }
+ ]
+}

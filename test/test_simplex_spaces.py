@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _data = np.load(os.path.join(HERE, "fem_oracle", "reference_tables.npz"))
 ALL = {k: _data[k] for k in _data.files}
 CELL = {1: "interval", 2: "triangle", 3: "tetrahedron"}
-CI_MAX_P = {1: 5, 2: 5, 3: 4}      # degrees with oracle tables (the CI-supported range)
+CI_MAX_P = {1: 5, 2: 5, 3: 5}      # degrees with oracle tables (the CI-supported range)
 GEN_MAX_P = 7                      # the generator range
 ORACLE_FAMILY = {("lagrange", "gll"): "lagrange_gll", ("lagrange", "equispaced"): "lagrange_equi",
                  ("bernstein", "gll"): "bernstein"}

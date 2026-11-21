@@ -2,6 +2,7 @@ import proteus
 import proteus.MeshTools
 from proteus.mprans.cCLSVOF import *
 import numpy as np
+from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, Quadrature
 from proteus.Transport import logEvent, memory, FluxBoundaryConditions, Comm
@@ -334,7 +335,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature#True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1,coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
 
         ## Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh #assume the same mesh for  all components for now
@@ -551,7 +552,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global,i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray=np.zeros((self.nNodes_internal,),'i')
+        self.internalNodesArray=np.zeros((self.nNodes_internal,),cmeshTools.INDEX_DTYPE)
         for nI,n in enumerate(self.internalNodes):
             self.internalNodesArray[nI]=n
         #
@@ -979,7 +980,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
-        argsDict["degree_polynomial"] = float(self.degree_polynomial)
+        argsDict["degree_polynomial"] = self.degree_polynomial
         argsDict["epsFactHeaviside"] = self.coefficients.epsFactHeaviside
         argsDict["u_dof"] = self.u[0].dof
         argsDict["u_dof_old"] = self.u_dof_old
@@ -1236,7 +1237,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["nElements_global"] = self.mesh.nElements_global
         argsDict["nElements_owned"] = self.mesh.nElements_owned
-        argsDict["useMetrics"] = float(self.coefficients.useMetrics)
+        argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["q_vos"] = self.coefficients.q_vos
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
@@ -1362,7 +1363,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["normal_ref"] = self.u[0].femSpace.elementMaps.boundaryNormals
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["nElements_global"] = self.mesh.nElements_global
-        argsDict["useMetrics"] = float(self.coefficients.useMetrics)
+        argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["q_vos"] = self.coefficients.q_vos
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray

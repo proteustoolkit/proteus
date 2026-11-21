@@ -1,0 +1,5 @@
+# dam3bumps.ymf without its box and its element size: the base of dam3bumps_stored.ymf, which names a mesh that is already
+# made. A file can remove only from what it composes, not from itself, so the removal is here.
+extends: dam3bumps_nomesh.ymf
+remove:
+  - "model.strong_form.domain"

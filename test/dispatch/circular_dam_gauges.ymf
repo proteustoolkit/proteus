@@ -1,0 +1,7 @@
+# circular_dam.ymf with a point gauge on the depth, at the centre of the dam and at a point 2 m east of it
+# (a shallow-water model's gauge goes on SWFlow's n module).
+extends: circular_dam.ymf
+
+model:
+  gauges:
+    - {name: depth, kind: point, fields: [h], points: [[10.0, 10.0], [12.0, 10.0]], file: depth.csv}

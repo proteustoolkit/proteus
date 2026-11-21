@@ -120,12 +120,27 @@ void writeErrorLine(const std::string& line)
     }
 }
 
+/* MPI_Abort on comm, after the output has had time to reach the launcher. Every
+   abort in this file goes through here (the message, if any, is already written). */
+[[noreturn]] void abortAfterDrain(const MPI_Comm& comm)
+{
+  std::cerr.flush();
+  fflush(NULL);
+  //MPICH's launcher (hydra) kills its proxies on MPI_Abort and can exit before
+  //it has forwarded what the ranks wrote: the whole message was lost on the
+  //macOS leg of the scheduled dev run of 2026-11-15 (empty output, nonzero
+  //exit). The run is ending: let the pipe drain first.
+  //runtime.drain_before_abort waits the same 0.2 s (ABORT_DRAIN_SECONDS)
+  usleep(200000);
+  MPI_Abort(comm, 1);
+  std::abort();
+}
+
 /* The message, then MPI_Abort on comm. */
 [[noreturn]] void abortWith(const MPI_Comm& comm, const std::string& message)
 {
   writeErrorLine(message);
-  MPI_Abort(comm, 1);
-  std::abort();
+  abortAfterDrain(comm);
 }
 
 /* Every rank computes the owners of all entities from the same global data, so
@@ -154,7 +169,7 @@ bool everyEntityOwned(const std::vector<int>& owner, int size, const char* what)
 void checkEveryEntityOwned(const MPI_Comm& comm, const std::vector<int>& owner, int size, const char* what)
 {
   if (!everyEntityOwned(owner,size,what))
-    MPI_Abort(comm,1);
+    abortAfterDrain(comm);
 }
 
 /* Check prescribed owners and copy them. */
@@ -500,7 +515,7 @@ int partitionNodes(const MPI_Comm& PROTEUS_COMM_WORLD,  Mesh& mesh, int nNodes_o
   timer.mark("node_owners");
   //4.-8. Everything else follows from the owners without communication
   if (partitionNodesLocal(mesh, rank, size, nNodes_overlap, nodeOwner, &timer) != 0)
-    MPI_Abort(PROTEUS_COMM_WORLD,1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   timer.report();
   return 0;
 }
@@ -539,7 +554,7 @@ OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
   using namespace std;
   OverlapSets overlap;
   //what the stars of one node (in the old numbering) add to the sets given
-  auto addNodeStar = [&](int nN_global_old, OverlapSets& into)
+  auto addNodeStar = [&](proteus_index_t nN_global_old, OverlapSets& into)
   {
     //nodes in the node star, if another rank owns them
     for (proteus_index_t offset_old = mesh.nodeStarOffsets[nN_global_old];
@@ -582,7 +597,7 @@ OverlapSets nodeOverlapSets(const Mesh& mesh, int rank, int nNodes_overlap,
               map<NodeTuple<2>, proteus_index_t>::const_iterator edge_it = nodesEdgeMap_global_new.find(et);
               if (edge_it == nodesEdgeMap_global_new.end())
                 continue;
-              const int edge_global = edge_it->second;
+              const proteus_index_t edge_global = edge_it->second;
               if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
                 into.edges.insert(edge_global);
             }//edges
@@ -1150,7 +1165,7 @@ delete [] mesh.elementBoundaryOffsets_subdomain_owned;
    element and keeps O(chunk) data. Returns false, having said why, if the file
    cannot be opened. */
 bool readSimplexNodeStars(const std::string& elementFileName, const char* format, int simplexDim,
-                          int indexBase, proteus_index_t nNodes_global, int begin, int end, proteus_index_t& nElements_global,
+                          int indexBase, proteus_index_t nNodes_global, proteus_index_t begin, proteus_index_t end, proteus_index_t& nElements_global,
                           std::vector<std::set<proteus_index_t> >& nodeStar)
 {
   using namespace std;
@@ -1544,7 +1559,7 @@ std::map<proteus_index_t,proteus_index_t> newNumbersOfFileNodes(const MPI_Comm& 
   MPI_Comm_rank(comm, &rank);
   const proteus_index_t begin = nodeOffsets_old[rank];
   return askOwningRanks(comm, nodeOffsets_old, wanted,
-                        [&](int nN_old) { return old2new_chunk[nN_old - begin]; }, "node");
+                        [&](proteus_index_t nN_old) { return old2new_chunk[nN_old - begin]; }, "node");
 }
 
 /* MPI: file number -> new number for the entities `subdomain` (elements,
@@ -1590,7 +1605,7 @@ std::vector<std::pair<proteus_index_t,proteus_index_t> > subdomainNumbersByDirec
     if (owned.find(*it) == owned.end())
       wanted.insert(*it);
   std::map<proteus_index_t,proteus_index_t> ghosts = askOwningRanks(comm, offsets, wanted,
-                                            [&](int n_old) { return directory[n_old - begin]; }, what);
+                                            [&](proteus_index_t n_old) { return directory[n_old - begin]; }, what);
   std::vector<std::pair<proteus_index_t,proteus_index_t> > old2new;
   old2new.reserve(mine.size() + ghosts.size());
   //by old number only: ghosts' elements are pair<const int,int>, mine's
@@ -1691,7 +1706,7 @@ int markRankInterfacesByOwner(const MPI_Comm& comm, Mesh& mesh, bool flagsFromFi
         askAbout.insert(ebN_global);
     }
   //the owner of a face holds it in its subdomain; -1 (not there) ends the run in askOwningRanks
-  std::map<proteus_index_t,proteus_index_t> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](int ebN_global) {
+  std::map<proteus_index_t,proteus_index_t> meshExterior = askOwningRanks(comm, offsets, askAbout, [&](proteus_index_t ebN_global) {
       std::map<proteus_index_t,proteus_index_t>::const_iterator it = global2subdomain.find(ebN_global);
       if (it == global2subdomain.end())
         return -1;
@@ -1724,7 +1739,7 @@ void collectSubdomainElements(proteus_index_t ownedBegin, proteus_index_t ownedE
                               std::vector<std::set<proteus_index_t> >& nodeElementsStar,
                               std::vector<std::set<proteus_index_t> >& nodeStarNew,
                               std::map<proteus_index_t,NodeVec>& elementNodesArrayMap,
-                              std::map<proteus_index_t,long int>& elementMaterialTypesMap,
+                              std::map<proteus_index_t,int>& elementMaterialTypesMap,
                               std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
                               std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
                               std::map<proteus_index_t,proteus_index_t>& nodes_old2new_subdomain_map)
@@ -1794,7 +1809,7 @@ void collectSubdomainElements(proteus_index_t ownedBegin, proteus_index_t ownedE
       if (nodeTuple.nodes[1] >= ownedBegin && nodeTuple.nodes[1] < ownedEnd)
         elements_subdomain_owned.insert(ne);
       if (!elementIds.empty())
-        elementMaterialTypesMap[ne] = static_cast<long int>(elementIds[eN_c]);
+        elementMaterialTypesMap[ne] = static_cast<int>(elementIds[eN_c]);
     }
 }
 
@@ -1810,7 +1825,7 @@ bool readSubdomainElements(const MPI_Comm& comm, const std::string& elementFileN
                            std::vector<std::set<proteus_index_t> >& nodeElementsStar,
                            std::vector<std::set<proteus_index_t> >& nodeStarNew,
                            std::map<proteus_index_t,NodeVec>& elementNodesArrayMap,
-                           std::map<proteus_index_t,long int>& elementMaterialTypesMap,
+                           std::map<proteus_index_t,int>& elementMaterialTypesMap,
                            std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
                            std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
                            std::map<proteus_index_t,proteus_index_t>& nodes_old2new_subdomain_map)
@@ -1866,7 +1881,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
                              std::vector<std::set<proteus_index_t> >& nodeElementsStar,
                              std::vector<std::set<proteus_index_t> >& nodeStarNew,
                              std::map<proteus_index_t,std::vector<proteus_index_t> >& elementNodesArrayMap,
-                             std::map<proteus_index_t,long int>& elementMaterialTypesMap,
+                             std::map<proteus_index_t,int>& elementMaterialTypesMap,
                              std::map<NodeTuple<simplexDim-1>,ElementNeighbors>& elementBoundaryElementsMap,
                              std::map<NodeTuple<2>,std::set<std::pair<int,int> > >& edgeElementsMap,
                              std::map<proteus_index_t,proteus_index_t>& nodes_old2new_subdomain_map,
@@ -1935,7 +1950,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
     }
   valarray<int> nElements_subdomain_new_send = nElements_subdomain_new;
   MPI_Allreduce(&nElements_subdomain_new_send[0],&nElements_subdomain_new[0],size,MPI_INT,MPI_SUM,PROTEUS_COMM_WORLD);
-  sprintf(log_buffer,"Final partitioning: Max nElements_subdomain %d nElements_global %d",nElements_subdomain_new.max(),nElements_global);
+  sprintf(log_buffer,"Final partitioning: Max nElements_subdomain %lld nElements_global %lld",(long long)nElements_subdomain_new.max(),(long long)nElements_global);
   logEvent(log_buffer,5);
 
   //construct new offsets for elements
@@ -1984,7 +1999,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
   //note, these will be in the new element numbering
   set<proteus_index_t> elementBoundaries_subdomain_owned;
   vector<set<proteus_index_t>> nodeElementBoundariesStar(nNodes_subdomain_new[rank]);
-  map<proteus_index_t,proteus_index_t> elementBoundaryMaterialTypesMap;
+  map<proteus_index_t,int> elementBoundaryMaterialTypesMap;
   map<proteus_index_t,vector<proteus_index_t> > elementBoundariesMap;
   set<proteus_index_t> supportedElementBoundaries;
   set<proteus_index_t> elementBoundaries_subdomain;
@@ -2158,7 +2173,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
           nodeEdgesStar.at(nn0_new-nodeOffsets_new[rank]).insert(ned);
           supportedEdges.insert(ned);
         }
-      int nn1_new = -2;
+      proteus_index_t nn1_new = -2;
       if(nodes_old2new_subdomain_map.find(nn1) != nodes_old2new_subdomain_map.end())
         nn1_new = nodes_old2new_subdomain_map[nn1];
       if (nn1_new >= nodeOffsets_new[rank] && nn1_new < nodeOffsets_new[rank+1])
@@ -2381,7 +2396,7 @@ bool buildSubdomainFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, int rank, int s
                              nodeOffsets_new[rank], nodeOffsets_new[rank+1], nodes_overlap_global2subdomainMap,
                              &nodeNumbering_subdomain2global[0], nodeNumbering_global2subdomainMap,
                              newMesh.subdomainp->nodeArray, newMesh.subdomainp->nodeMaterialTypes))
-    MPI_Abort(PROTEUS_COMM_WORLD, 1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   //done with vertex file (and all file reads at this point)
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done reading vertices");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
 
@@ -2792,7 +2807,11 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   ierr = enforceMemoryLimit(PROTEUS_COMM_WORLD, rank, max_rss_gb,"Done applying partition");CHKERRABORT(PROTEUS_COMM_WORLD, ierr);
   //determine the number of nodes per subdomain in new partitioning
   valarray<int> nNodes_subdomain_new(size);
-  ISPartitioningCount(nodePartitioningIS_new,size,&nNodes_subdomain_new[0]);
+  {
+    std::vector<PetscInt> counts(size); // PETSc's own width (64-bit-index PETSc)
+    ISPartitioningCount(nodePartitioningIS_new,size,counts.data());
+    for (int sdN = 0; sdN < size; sdN++) nNodes_subdomain_new[sdN] = int(counts[sdN]);
+  }
   //need new offsets for subdomain to global numbering
   valarray<proteus_index_t> nodeOffsets_new(size+1);
   nodeOffsets_new[0] = 0;
@@ -2827,7 +2846,7 @@ int partitionNodesFromFiles(const MPI_Comm& PROTEUS_COMM_WORLD, const char* file
   vector<set<proteus_index_t> > nodeElementsStar(nNodes_subdomain_new[rank]);
   vector<set<proteus_index_t> > nodeStarNew(nNodes_subdomain_new[rank]);
   map<proteus_index_t,vector<proteus_index_t> > elementNodesArrayMap;
-  map<proteus_index_t,long int> elementMaterialTypesMap;
+  map<proteus_index_t,int> elementMaterialTypesMap;
   map<NodeTuple<simplexDim-1>,ElementNeighbors> elementBoundaryElementsMap;
   map<NodeTuple<2>,set<pair<int,int> > > edgeElementsMap;
   map<proteus_index_t,proteus_index_t> nodes_old2new_subdomain_map;
@@ -3050,7 +3069,7 @@ int partitionElements(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh, int nEleme
   timer.mark("element_owners");
   //4.-6. Everything else follows from the owners without communication
   if (partitionElementsLocal(mesh, rank, size, nElements_overlap, elementOwner, &timer) != 0)
-    MPI_Abort(PROTEUS_COMM_WORLD,1);
+    abortAfterDrain(PROTEUS_COMM_WORLD);
   timer.report();
   return 0;
 }
@@ -3088,13 +3107,13 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
   //preserve subdomain2old and subdomain2global mappings
   valarray<proteus_index_t> elementNodesArray_new(mesh.nElements_global*mesh.nNodes_element),
     elementNeighborsArray_new(mesh.nElements_global*mesh.nElementBoundaries_element),
-    elementMaterialTypes_new(mesh.nElements_global),
     elementBoundariesArray_new(mesh.nElements_global*mesh.nElementBoundaries_element),
     elementBoundaryElementsArray_new(mesh.nElementBoundaries_global*2),
-    elementBoundaryLocalElementBoundariesArray_new(mesh.nElementBoundaries_global*2),
     elementBoundaryNodesArray_new(mesh.nElementBoundaries_global*mesh.nNodes_elementBoundary),
     edgeNodesArray_new(mesh.nEdges_global*2);
-  valarray<int> elementBoundaryMaterialTypes_new(mesh.nElementBoundaries_global);
+  valarray<int> elementBoundaryMaterialTypes_new(mesh.nElementBoundaries_global),
+    elementMaterialTypes_new(mesh.nElements_global),
+    elementBoundaryLocalElementBoundariesArray_new(mesh.nElementBoundaries_global*2);
   for(proteus_index_t eN=0;eN<mesh.nElements_global;eN++)
     {
       for (int nN=0;nN<mesh.nNodes_element;nN++)
@@ -3340,7 +3359,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
               assert(nodes_overlap.find(nN1_global) != nodes_overlap.end());
             if (nodesEdgeMap_global_new.find(et) != nodesEdgeMap_global_new.end())
               {
-                const int edge_global = nodesEdgeMap_global_new[et];
+                const proteus_index_t edge_global = nodesEdgeMap_global_new[et];
                 if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
                   edges_overlap.insert(edge_global);
               }
@@ -3403,7 +3422,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
                         const proteus_index_t nN1_global = elementNodesArray_new[eN_new*mesh.nNodes_element+nN1];
                         if (nodesEdgeMap_global_new.find(et) != nodesEdgeMap_global_new.end())
                           {
-                            const int edge_global = nodesEdgeMap_global_new[et];
+                            const proteus_index_t edge_global = nodesEdgeMap_global_new[et];
                             if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
                               edges_overlap.insert(edge_global);
                           }
@@ -3442,10 +3461,16 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
                       NodeTuple<2> et(nodes);
                       const proteus_index_t nN0_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN0];
                       const proteus_index_t nN1_global = elementNodesArray_new[eN_ebN*mesh.nNodes_element+nN1];
-                      bool foundEdge = false;
-                      const int edge_global = nodesEdgeMap_global_new[et];
-                      if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
-                        edges_overlap.insert(edge_global);
+                      //every pair of a hexahedron's nodes is not an edge: operator[] on a
+                      //pair that is not one inserted it as edge 0 (and then every later
+                      //find matched it), so a rank held edge 0 with nodes it did not have
+                      const auto edgeFound = nodesEdgeMap_global_new.find(et);
+                      if (edgeFound != nodesEdgeMap_global_new.end())
+                        {
+                          const proteus_index_t edge_global = edgeFound->second;
+                          if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
+                            edges_overlap.insert(edge_global);
+                        }
                     }//edges
               }
           }
@@ -3487,7 +3512,7 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
                         bool foundEdge = false;
                         if (nodesEdgeMap_global_new.find(et) != nodesEdgeMap_global_new.end())
                           {
-                            const int edge_global = nodesEdgeMap_global_new[et];
+                            const proteus_index_t edge_global = nodesEdgeMap_global_new[et];
                             if (edge_global < edgeOffsets_new[rank] || edge_global >= edgeOffsets_new[rank+1])
                               edges_overlap.insert(edge_global);
                           }
@@ -3783,16 +3808,16 @@ int partitionElementsLocal(Mesh& mesh, int rank, int size, int nElements_overlap
 }
 
 int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                              const int *elementOffsets_subdomain_owned,
-                                              const int *nodeOffsets_subdomain_owned,
-                                              const int *elementNumbering_subdomain2global,
-                                              const int *nodeNumbering_subdomain2global,
-                                              int& nDOF_all_processes,//total number of dofs in whole domain
-                                              int& nDOF_subdomain,//total number of dofs in sub-domain
-                                              int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                              int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                              int * subdomain_l2g, //local to global dof mapping on subdomain
-                                              int* subdomain2global,//subdomain dof to global (parallel) numbering
+                                              const proteus_index_t *elementOffsets_subdomain_owned,
+                                              const proteus_index_t *nodeOffsets_subdomain_owned,
+                                              const proteus_index_t *elementNumbering_subdomain2global,
+                                              const proteus_index_t *nodeNumbering_subdomain2global,
+                                              proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                              proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                              proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                              proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                              proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                              proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                               double * lagrangeNodesArray)//location of nodes corresponding to dofs
 {
   using namespace std;
@@ -3812,8 +3837,8 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
   assert(nodeNumbering_subdomain2global);
   assert(mesh.subdomainp);
 
-  const int nNodes_owned    = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
-  const int nElements_owned = elementOffsets_subdomain_owned[rank+1]-elementOffsets_subdomain_owned[rank];
+  const proteus_index_t nNodes_owned    = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
+  const proteus_index_t nElements_owned = elementOffsets_subdomain_owned[rank+1]-elementOffsets_subdomain_owned[rank];
 
   //start with a logical global ordering of dofs as
   //[global nodes, global elements]
@@ -3822,7 +3847,7 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
   valarray<proteus_index_t> quadraticNumbering_new2old(nNodes_owned + nElements_owned);
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global = nodeNumbering_subdomain2global[nN];
       quadraticNumbering_new2old[nN] = dof_global;
     }
   for (int eN = 0; eN < nElements_owned; eN++)
@@ -3833,7 +3858,7 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
 
   //every rank's new numbering, gathered
   std::vector<proteus_index_t> quadraticNumbering_global_new2old =
-    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),nNodes_owned + nElements_owned);
+    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),static_cast<int>(nNodes_owned + nElements_owned));
   //get old 2 new mapping for dofs
   valarray<proteus_index_t> quadraticNumbering_old2new_global(mesh.nNodes_global + mesh.nElements_global);
   for(proteus_index_t id = 0; id < mesh.nNodes_global + mesh.nElements_global; id++)
@@ -3861,7 +3886,7 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
   int localOffset = 0;
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN] = dof_global_new;
       //mwf debug
@@ -3879,7 +3904,7 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
   localOffset += nElements_owned;
   for(proteus_index_t nN = nNodes_owned; nN < mesh.subdomainp->nNodes_global; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN -nNodes_owned] = dof_global_new;
       //mwf debug
@@ -3896,7 +3921,7 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
     }
   //setup local to global mapping on the subdomain for finite elements
   const int nDOF_element = 3;
-  const int ghostNodeOffset = nNodes_owned + nElements_owned;
+  const proteus_index_t ghostNodeOffset = nNodes_owned + nElements_owned;
   const proteus_index_t ghostElementOffset = ghostNodeOffset + mesh.subdomainp->nNodes_global-nNodes_owned;
 
   //for lagrange nodes
@@ -3928,16 +3953,16 @@ int buildQuadraticSubdomain2GlobalMappings_1d(const MPI_Comm& PROTEUS_COMM_WORLD
 }
 
 int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                              const int *elementBoundaryOffsets_subdomain_owned,
-                                              const int *nodeOffsets_subdomain_owned,
-                                              const int *elementBoundaryNumbering_subdomain2global,
-                                              const int *nodeNumbering_subdomain2global,
-                                              int& nDOF_all_processes,//total number of dofs in whole domain
-                                              int& nDOF_subdomain,//total number of dofs in sub-domain
-                                              int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                              int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                              int *subdomain_l2g, //local to global dof mapping on subdomain
-                                              int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                              const proteus_index_t *elementBoundaryOffsets_subdomain_owned,
+                                              const proteus_index_t *nodeOffsets_subdomain_owned,
+                                              const proteus_index_t *elementBoundaryNumbering_subdomain2global,
+                                              const proteus_index_t *nodeNumbering_subdomain2global,
+                                              proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                              proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                              proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                              proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                              proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                              proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                               double * lagrangeNodesArray)//location of nodes corresponding to dofs
 {
   using namespace std;
@@ -3956,9 +3981,9 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
   assert(nodeNumbering_subdomain2global);
   assert(mesh.subdomainp);
 
-  const int nNodes_owned    = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
-  const int nElementBoundaries_owned = elementBoundaryOffsets_subdomain_owned[rank+1]-elementBoundaryOffsets_subdomain_owned[rank];
-  const int nDOFs_owned = nNodes_owned + nElementBoundaries_owned;
+  const proteus_index_t nNodes_owned    = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
+  const proteus_index_t nElementBoundaries_owned = elementBoundaryOffsets_subdomain_owned[rank+1]-elementBoundaryOffsets_subdomain_owned[rank];
+  const proteus_index_t nDOFs_owned = nNodes_owned + nElementBoundaries_owned;
   const proteus_index_t nDOFs_global= mesh.nNodes_global + mesh.nElementBoundaries_global;
   //start with a logical global ordering of dofs as
   //[global nodes, global elementBoundaries]
@@ -3967,7 +3992,7 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
   valarray<proteus_index_t> quadraticNumbering_new2old(nDOFs_owned);
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global = nodeNumbering_subdomain2global[nN];
       quadraticNumbering_new2old[nN] = dof_global;
     }
   for (int ebN = 0; ebN < nElementBoundaries_owned; ebN++)
@@ -3978,7 +4003,7 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
 
   //every rank's new numbering, gathered
   std::vector<proteus_index_t> quadraticNumbering_global_new2old =
-    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),nDOFs_owned);
+    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),static_cast<int>(nDOFs_owned));
   //get old 2 new mapping for dofs
   valarray<proteus_index_t> quadraticNumbering_old2new_global(nDOFs_global);
   for(proteus_index_t id = 0; id < nDOFs_global; id++)
@@ -4005,7 +4030,7 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
   int localOffset = 0;
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN] = dof_global_new;
       //mwf debug
@@ -4024,7 +4049,7 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
   localOffset += nElementBoundaries_owned;
   for(proteus_index_t nN = nNodes_owned; nN < mesh.subdomainp->nNodes_global; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN -nNodes_owned] = dof_global_new;
       //mwf debug
@@ -4041,7 +4066,7 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
     }
   //setup local to global mapping on the subdomain for finite elements
   const int nDOF_element = 6;
-  const int ghostNodeOffset = nNodes_owned + nElementBoundaries_owned;
+  const proteus_index_t ghostNodeOffset = nNodes_owned + nElementBoundaries_owned;
   const proteus_index_t ghostElementBoundaryOffset = ghostNodeOffset + mesh.subdomainp->nNodes_global-nNodes_owned;
 
   //for lagrange nodes
@@ -4080,16 +4105,16 @@ int buildQuadraticSubdomain2GlobalMappings_2d(const MPI_Comm& PROTEUS_COMM_WORLD
 
 
 int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                              const int *edgeOffsets_subdomain_owned,
-                                              const int *nodeOffsets_subdomain_owned,
-                                              const int *edgeNumbering_subdomain2global,
-                                              const int *nodeNumbering_subdomain2global,
-                                              int& nDOF_all_processes,//total number of dofs in whole domain
-                                              int& nDOF_subdomain,//total number of dofs in sub-domain
-                                              int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                              int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                              int *subdomain_l2g, //local to global dof mapping on subdomain
-                                              int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                              const proteus_index_t *edgeOffsets_subdomain_owned,
+                                              const proteus_index_t *nodeOffsets_subdomain_owned,
+                                              const proteus_index_t *edgeNumbering_subdomain2global,
+                                              const proteus_index_t *nodeNumbering_subdomain2global,
+                                              proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                              proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                              proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                              proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                              proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                              proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                               double * lagrangeNodesArray)//location of nodes corresponding to dofs
 {
   using namespace std;
@@ -4108,9 +4133,9 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
   assert(nodeNumbering_subdomain2global);
   assert(mesh.subdomainp);
 
-  const int nNodes_owned = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
-  const int nEdges_owned = edgeOffsets_subdomain_owned[rank+1]-edgeOffsets_subdomain_owned[rank];
-  const int nDOFs_owned = nNodes_owned + nEdges_owned;
+  const proteus_index_t nNodes_owned = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
+  const proteus_index_t nEdges_owned = edgeOffsets_subdomain_owned[rank+1]-edgeOffsets_subdomain_owned[rank];
+  const proteus_index_t nDOFs_owned = nNodes_owned + nEdges_owned;
   const proteus_index_t nDOFs_global= mesh.nNodes_global + mesh.nEdges_global;
   //start with a logical global ordering of dofs as
   //[global nodes, global edges]
@@ -4119,7 +4144,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
   valarray<proteus_index_t> quadraticNumbering_new2old(nDOFs_owned);
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global = nodeNumbering_subdomain2global[nN];
       quadraticNumbering_new2old[nN] = dof_global;
     }
   for (int i = 0; i < nEdges_owned; i++)
@@ -4130,7 +4155,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
 
   //every rank's new numbering, gathered
   std::vector<proteus_index_t> quadraticNumbering_global_new2old =
-    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),nDOFs_owned);
+    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),static_cast<int>(nDOFs_owned));
   //get old 2 new mapping for dofs
   valarray<proteus_index_t> quadraticNumbering_old2new_global(nDOFs_global);
   for(proteus_index_t id = 0; id < nDOFs_global; id++)
@@ -4160,7 +4185,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
   int localOffset = 0;
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN] = dof_global_new;
       //mwf debug
@@ -4181,7 +4206,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
   localOffset += nEdges_owned;
   for(proteus_index_t nN = nNodes_owned; nN < mesh.subdomainp->nNodes_global; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN -nNodes_owned] = dof_global_new;
       //mwf debug
@@ -4200,7 +4225,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
     }
   //setup local to global mapping on the subdomain for finite elements
   const int nDOF_element = 10;
-  const int ghostNodeOffset = nNodes_owned + nEdges_owned;
+  const proteus_index_t ghostNodeOffset = nNodes_owned + nEdges_owned;
   const proteus_index_t ghostEdgeOffset = ghostNodeOffset + mesh.subdomainp->nNodes_global-nNodes_owned;
   //need mapping from nodes to edge to setup element based relationship
   map<NodeTuple<2>, proteus_index_t> nodesEdgeMap_subdomain;
@@ -4249,7 +4274,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
           const proteus_index_t nN_global_subdomain     = mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN];
           const proteus_index_t nN_neig_global_subdomain= mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN_neig];
           //unique edge subdomain id and global id
-          int edge_subdomain = -1,edge_global=-1;
+          proteus_index_t edge_subdomain = -1,edge_global=-1;
           //see if edge is (nN,nN_neig) or vice versa
           proteus_index_t nodes[2];
           nodes[0] = nN_global_subdomain;
@@ -4284,7 +4309,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
           const proteus_index_t nN_global_subdomain     = mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN];
           const proteus_index_t nN_neig_global_subdomain= mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN_neig];
           //unique edge subdomain id and global id
-          int edge_subdomain = -1, edge_global = -1;
+          proteus_index_t edge_subdomain = -1, edge_global = -1;
           //see if edge is (nN,nN_neig) or vice versa
           proteus_index_t nodes[2];
           nodes[0] = nN_global_subdomain;
@@ -4318,7 +4343,7 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
           const proteus_index_t nN_global_subdomain     = mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN];
           const proteus_index_t nN_neig_global_subdomain= mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + nN_neig];
           //unique edge subdomain id and global id
-          int edge_subdomain = -1, edge_global = -1;
+          proteus_index_t edge_subdomain = -1, edge_global = -1;
           //see if edge is (nN,nN_neig) or vice versa
           proteus_index_t nodes[2];
           nodes[0] = nN_global_subdomain;
@@ -4352,16 +4377,16 @@ int buildQuadraticSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD
 }
 
 int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                  const int *edgeOffsets_subdomain_owned,
-                                                  const int *nodeOffsets_subdomain_owned,
-                                                  const int *edgeNumbering_subdomain2global,
-                                                  const int *nodeNumbering_subdomain2global,
-                                                  int& nDOF_all_processes,//total number of dofs in whole domain
-                                                  int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                  int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                  int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                  int *subdomain_l2g, //local to global dof mapping on subdomain
-                                                  int *subdomain2global,//subdomain dof to global (parallel) numbering
+                                                  const proteus_index_t *edgeOffsets_subdomain_owned,
+                                                  const proteus_index_t *nodeOffsets_subdomain_owned,
+                                                  const proteus_index_t *edgeNumbering_subdomain2global,
+                                                  const proteus_index_t *nodeNumbering_subdomain2global,
+                                                  proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                  proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                  proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                  proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                  proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                  proteus_index_t *subdomain2global,//subdomain dof to global (parallel) numbering
                                                   double * lagrangeNodesArray)//location of nodes corresponding to dofs
 {
   using namespace std;
@@ -4385,8 +4410,8 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
   const proteus_index_t *elementBoundaryNumbering_subdomain2global=mesh.elementBoundaryNumbering_subdomain2global;
   const proteus_index_t *elementNumbering_subdomain2global=mesh.elementNumbering_subdomain2global;
 
-  const int nNodes_owned      = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
-  const int nEdges_owned      = edgeOffsets_subdomain_owned[rank+1]-edgeOffsets_subdomain_owned[rank];
+  const proteus_index_t nNodes_owned      = nodeOffsets_subdomain_owned[rank+1]-nodeOffsets_subdomain_owned[rank];
+  const proteus_index_t nEdges_owned      = edgeOffsets_subdomain_owned[rank+1]-edgeOffsets_subdomain_owned[rank];
   const proteus_index_t nBoundaries_owned = elementBoundaryOffsets_subdomain_owned[rank+1]-elementBoundaryOffsets_subdomain_owned[rank];
   const proteus_index_t nElements_owned   = elementOffsets_subdomain_owned[rank+1]-elementOffsets_subdomain_owned[rank];
 
@@ -4399,7 +4424,7 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
   valarray<proteus_index_t> quadraticNumbering_new2old(nDOFs_owned);
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global = nodeNumbering_subdomain2global[nN];
       quadraticNumbering_new2old[nN] = dof_global;
     }
   for (int i = 0; i < nEdges_owned; i++)
@@ -4424,7 +4449,7 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
 
   //every rank's new numbering, gathered
   std::vector<proteus_index_t> quadraticNumbering_global_new2old =
-    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),nDOFs_owned);
+    allGatherInts(PROTEUS_COMM_WORLD,std::begin(quadraticNumbering_new2old),static_cast<int>(nDOFs_owned));
   //get old 2 new mapping for dofs
   valarray<proteus_index_t> quadraticNumbering_old2new_global(nDOFs_global);
   for(proteus_index_t id = 0; id < nDOFs_global; id++)
@@ -4454,7 +4479,7 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
   int localOffset = 0;
   for (int nN = 0; nN < nNodes_owned; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN] = dof_global_new;
       //mwf debug
@@ -4502,7 +4527,7 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
   localOffset += nElements_owned;
   for(proteus_index_t nN = nNodes_owned; nN < mesh.subdomainp->nNodes_global; nN++)
     {
-      int dof_global_old = nodeNumbering_subdomain2global[nN];
+      proteus_index_t dof_global_old = nodeNumbering_subdomain2global[nN];
       proteus_index_t dof_global_new = quadraticNumbering_old2new_global[dof_global_old];
       subdomain2global[localOffset + nN - nNodes_owned] = dof_global_new;
       //mwf debug
@@ -4623,8 +4648,8 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
           nodes[0] = mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + ledge[nN][0]];
           nodes[1] = mesh.subdomainp->elementNodesArray[eN*mesh.subdomainp->nNodes_element + ledge[nN][1]];
           NodeTuple<2> nt(nodes);
-          int edge_subdomain = nodesEdgeMap_subdomain[nt];
-          int edge_global    = edgeNumbering_subdomain2global[edge_subdomain];
+          proteus_index_t edge_subdomain = nodesEdgeMap_subdomain[nt];
+          proteus_index_t edge_global    = edgeNumbering_subdomain2global[edge_subdomain];
           assert(edge_subdomain >= 0 && edge_global >= 0);
           //assign unique subdomain id based on |owned nodes|owned edges|ghost nodes|ghost edges|
           if (edge_subdomain < nEdges_owned)
@@ -4656,7 +4681,7 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
           NodeTuple<4> ebt(nodes);
 
 
-          int boundary_subdomain = nodesBoundaryMap_subdomain[ebt];
+          proteus_index_t boundary_subdomain = nodesBoundaryMap_subdomain[ebt];
           proteus_index_t boundary_global    = elementBoundaryNumbering_subdomain2global[boundary_subdomain];
 
           assert(boundary_subdomain >= 0 && boundary_global >= 0);
@@ -4719,15 +4744,15 @@ int buildQuadraticCubeSubdomain2GlobalMappings_3d(const MPI_Comm& PROTEUS_COMM_W
 
 
 int buildDiscontinuousGalerkinSubdomain2GlobalMappings(const MPI_Comm& PROTEUS_COMM_WORLD, Mesh& mesh,
-                                                       const int *elementOffsets_subdomain_owned,
-                                                       const int *elementNumbering_subdomain2global,
+                                                       const proteus_index_t *elementOffsets_subdomain_owned,
+                                                       const proteus_index_t *elementNumbering_subdomain2global,
                                                        int nDOF_element,
-                                                       int& nDOF_all_processes,//total number of dofs in whole domain
-                                                       int& nDOF_subdomain,//total number of dofs in sub-domain
-                                                       int& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
-                                                       int *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
-                                                       int * subdomain_l2g, //local to global dof mapping on subdomain
-                                                       int* subdomain2global)//subdomain dof to global (parallel) numbering
+                                                       proteus_index_t& nDOF_all_processes,//total number of dofs in whole domain
+                                                       proteus_index_t& nDOF_subdomain,//total number of dofs in sub-domain
+                                                       proteus_index_t& max_dof_neighbors,//maximum number of neighbors for connectivity of dofs
+                                                       proteus_index_t *offsets_subdomain_owned, //starting point of local dofs on each processor (nProcs+1)
+                                                       proteus_index_t *subdomain_l2g, //local to global dof mapping on subdomain
+                                                       proteus_index_t *subdomain2global)//subdomain dof to global (parallel) numbering
 
 {
   using namespace std;
@@ -4742,7 +4767,7 @@ int buildDiscontinuousGalerkinSubdomain2GlobalMappings(const MPI_Comm& PROTEUS_C
   assert(elementNumbering_subdomain2global);
   assert(mesh.subdomainp);
 
-  const int nElements_owned = elementOffsets_subdomain_owned[rank+1]-elementOffsets_subdomain_owned[rank];
+  const proteus_index_t nElements_owned = elementOffsets_subdomain_owned[rank+1]-elementOffsets_subdomain_owned[rank];
 
   assert(offsets_subdomain_owned);
   assert(subdomain2global);

@@ -1148,7 +1148,10 @@ class __cppClass_WavesCharacteristics:
             self.wind_speed = wind_speed
 
     def __cpp_calculate_velocity(self, x, t):
-        cython.declare(u=cython.double[3])
+        # u is returned as a memoryview (pxd: cdef double[:]); a C array declared here lives on this
+        # function's stack and the view dangles once it returns. Unnoticed until the module was built
+        # with line tracing, which reuses that stack: the caller then read 0.0.
+        u = np.empty(3)
         cython.declare(xx=cython.double[3])
         cython.declare(x_max=cython.double[3])
         xx[0] = x[0]

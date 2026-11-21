@@ -12,6 +12,7 @@ from warnings import warn
 import numpy
 from . import Norms
 from .Profiling import logEvent
+from .csparsity import CSR_INDEX_DTYPE
 from warnings import warn
 
 ## \file TransportCoefficients.py
@@ -36,6 +37,33 @@ from warnings import warn
 #the equations and the diffusion tensor may be provided as a sparse
 #matrix.
 #
+class _SparseDiffusionInfo(dict):
+    """{(ci,ck): (rowptr, colind)} with both arrays held as CSR_INDEX_DTYPE.
+
+    The kernels take the diffusion tensor's layout as proteus_csr_index_t (the
+    width of PetscInt); the models and tests write these arrays with dtype 'i'.
+    Converting on every store keeps that out of each model (C33)."""
+    @staticmethod
+    def _csr(value):
+        try:
+            rowptr, colind = value
+            return (numpy.ascontiguousarray(rowptr, dtype=CSR_INDEX_DTYPE),
+                    numpy.ascontiguousarray(colind, dtype=CSR_INDEX_DTYPE))
+        except (TypeError, ValueError):
+            return value  # not a (rowptr, colind) pair: store as given
+    def __init__(self, *args, **kw):
+        super().__init__()
+        self.update(*args, **kw)
+    def __setitem__(self, key, value):
+        super().__setitem__(key, self._csr(value))
+    def update(self, *args, **kw):
+        for k, v in dict(*args, **kw).items():
+            self[k] = v
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
 class TC_base(object):
     """
     This is the base class for coefficients of the vector transport
@@ -71,6 +99,13 @@ class TC_base(object):
 
     a_{i,j} = 1
     """
+    @property
+    def sdInfo(self):
+        return self._sdInfo
+    @sdInfo.setter
+    def sdInfo(self, value):
+        # kernels take the layout as the CSR index type (see _SparseDiffusionInfo)
+        self._sdInfo = _SparseDiffusionInfo(value)
     def __init__(self,
                  nc=2,
                  mass      = {},
@@ -2027,7 +2062,7 @@ class TwophaseNavierStokes_LS_SO(TC_base):
         else:
             phi = self.ebq_phi
         if self.nd==2:
-            self.TwophaseNavierStokes_LS_SO_2D_Evaluate(self.eps,
+            TwophaseNavierStokes_LS_SO_2D_Evaluate(self.eps,
                                                         self.rho_0,
                                                         self.nu_0,
                                                         self.rho_1,
@@ -2060,7 +2095,7 @@ class TwophaseNavierStokes_LS_SO(TC_base):
                                                         c[('H',2)],
                                                         c[('dH',2,0)])
         elif  self.nd==3:
-            self.TwophaseNavierStokes_LS_SO_3D_Evaluate(self.eps,
+            TwophaseNavierStokes_LS_SO_3D_Evaluate(self.eps,
                                                         self.rho_0,
                                                         self.nu_0,
                                                         self.rho_1,
@@ -2381,6 +2416,13 @@ class TwophaseNavierStokes_ST_LS_SO(TC_base):
             phi   = self.ebq_phi
             n     = self.ebq_n
             kappa = self.ebq_kappa
+        if phi is None or n is None or kappa is None:
+            #the level set/curvature model keeps no values on the element boundaries;
+            #the kernel would dereference None
+            raise RuntimeError("TwophaseNavierStokes_ST_LS_SO: this model evaluates its coefficients on the element "
+                               "boundaries (a conservative flux or an interior numerical flux), but the level set "
+                               "model (LS_model=%s) or curvature model (KN_model=%s) keeps no values there; set "
+                               "needEBQ = True in the so module" % (self.LS_model, self.KN_model))
         if self.nd==2:
             if self.sd:
                 TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd(self.eps_density,
@@ -2886,7 +2928,7 @@ class ThreephaseNavierStokes_ST_LS_SO(TC_base):
                     phi,n = self.defaultSolidProfile(cebqe['x'].flat[3*i:3*(i+1)])
                     self.ebqe_phi_s.flat[i] = phi
                     self.ebqe_n_s.flat[self.nd*i:self.nd*(i+1)] = n[:]
-        if self.defaultFluidProfile is None:
+        if self.defaultFluidProfile is not None:
             try:
                 self.defaultFluidProfile(t,cebqe['x'],self.ebqe_phi,self.ebqe_n)
             except TypeError:
@@ -3201,12 +3243,26 @@ class TwophaseStokes_LS_SO(TC_base):
         if self.levelSetModelIndex is None:
             self.ebqe_phi = numpy.ones(cebqe[('u',0)].shape,'d')
     def evaluate(self,t,c):
+        #steady=True leaves out the mass terms; the kernels still write them: scratch arrays then
+        m = {}; dm = {}
+        for ci in range(1,self.nd+1):
+            if ('m',ci) in c:
+                m[ci] = c[('m',ci)]; dm[ci] = c[('dm',ci,ci)]
+            else:
+                m[ci] = numpy.zeros_like(c[('u',ci)]); dm[ci] = numpy.zeros_like(c[('u',ci)])
         if c[('u',0)].shape == self.q_phi.shape:
             phi = self.q_phi
         elif c[('u',0)].shape == self.ebqe_phi.shape:
             phi = self.ebqe_phi
         else:
             phi = self.ebq_phi
+        if phi is None or phi.shape != c[('u',0)].shape:
+            #the kernel would read past phi (SIGSEGV)
+            raise RuntimeError("TwophaseStokes_LS_SO: no level set values at these points (shape %s): the level set "
+                               "model must use the flow model's quadrature (and no mass lumping, which adds nodal points), and keep "
+                               "element boundary values "
+                               "(needEBQ = True in the so module) if the flow model evaluates there"
+                               % (c[('u',0)].shape,))
         if self.nd==2:
             TwophaseStokes_LS_SO_2D_Evaluate(self.eps,
                                              self.rho_0,
@@ -3219,10 +3275,10 @@ class TwophaseStokes_LS_SO(TC_base):
                                              c[('grad(u)',0)],
                                              c[('u',1)],
                                              c[('u',2)],
-                                             c[('m',1)],
-                                             c[('dm',1,1)],
-                                             c[('m',2)],
-                                             c[('dm',2,2)],
+                                             m[1],
+                                             dm[1],
+                                             m[2],
+                                             dm[2],
                                              c[('f',0)],
                                              c[('df',0,1)],
                                              c[('df',0,2)],
@@ -3248,12 +3304,12 @@ class TwophaseStokes_LS_SO(TC_base):
                                              c[('u',1)],
                                              c[('u',2)],
                                              c[('u',3)],
-                                             c[('m',1)],
-                                             c[('dm',1,1)],
-                                             c[('m',2)],
-                                             c[('dm',2,2)],
-                                             c[('m',3)],
-                                             c[('dm',3,3)],
+                                             m[1],
+                                             dm[1],
+                                             m[2],
+                                             dm[2],
+                                             m[3],
+                                             dm[3],
                                              c[('f',0)],
                                              c[('df',0,1)],
                                              c[('df',0,2)],
@@ -4116,6 +4172,22 @@ class LevelSetNormalCoefficients(TC_base):
         self.epsFact=epsFact
     def initializeMesh(self,mesh):
         self.eps = self.epsFact*mesh.h
+    def _setDiffusionToEps(self,a):
+        """Set the diffusion tensor to eps*I at every quadrature point.
+
+        With sparse diffusion (the default) the last axis of ``a`` holds the
+        entries of the layout in ``sdInfo[(0,0)]``, which Transport fills in
+        as a full tensor; otherwise ``a`` is dense, ``[...,nd,nd]``.
+        """
+        a[:]=0.0
+        if self.sd and (0,0) in self.sdInfo:
+            rowptr,colind = self.sdInfo[(0,0)]
+            diagonal = [p for I in range(len(rowptr)-1)
+                        for p in range(rowptr[I],rowptr[I+1]) if colind[p] == I]
+            a[...,diagonal] = self.eps
+        else:
+            for I in range(a.shape[-1]):
+                a[...,I,I] = self.eps
     def attachModels(self,modelList):
         #print "normal attach models",self.levelSetModelIndex
         if self.levelSetModelIndex > 0:
@@ -4129,29 +4201,19 @@ class LevelSetNormalCoefficients(TC_base):
         self.q_r = numpy.ones(cq[('u',0)].shape,'d')
         if self.phi_func is not None:
             self.phi_func(cq['x'],self.q_r)
-        for eN in range(cq[('a',0,0)].shape[0]):
-            for k in range(cq[('a',0,0)].shape[1]):
-                for I in range(cq[('a',0,0)].shape[2]):
-                    cq[('a',0,0)][eN,k,I,I]=self.eps
+        self._setDiffusionToEps(cq[('a',0,0)])
         cq[('dr',0,0)].flat[:]=1.0
     def initializeElementBoundaryQuadrature(self,t,cebq,cebq_global):
         self.ebq_r = numpy.ones(cebq[('u',0)].shape,'d')
         if self.phi_func is not None:
             self.phi_func(cebq['x'],self.ebq_r)
-        for eN in range(cebq[('a',0,0)].shape[0]):
-            for ebN in range(cebq[('a',0,0)].shape[1]):
-                for k in range(cebq[('a',0,0)].shape[2]):
-                    for I in range(cebq[('a',0,0)].shape[3]):
-                        cebq[('a',0,0)][eN,ebN,k,I,I]=self.eps
+        self._setDiffusionToEps(cebq[('a',0,0)])
         cebq[('dr',0,0)].flat[:]=1.0
     def initializeGlobalExteriorElementBoundaryQuadrature(self,t,cebqe):
         self.ebqe_r = numpy.ones(cebqe[('u',0)].shape,'d')
         if self.phi_func is not None:
             self.phi_func(cebqe['x'],self.ebqe_r)
-        for ebNE in range(cebqe[('a',0,0)].shape[0]):
-            for k in range(cebqe[('a',0,0)].shape[1]):
-                for I in range(cebqe[('a',0,0)].shape[2]):
-                    cebq[('a',0,0)][ebNE,k,I,I]=self.eps
+        self._setDiffusionToEps(cebqe[('a',0,0)])
         cebqe[('dr',0,0)].flat[:]=1.0
     def evaluate(self,t,c):
         if c[('r',0)].shape == self.q_r.shape:
@@ -4162,6 +4224,17 @@ class LevelSetNormalCoefficients(TC_base):
             r = self.ebq_r
         c[('r',0)].flat[:]=c[('u',0)].flat
         c[('r',0)] -= r
+
+
+def _diagonalSparseDiffusion(nd):
+    """The sparse diffusion layout {(0,0):(rowptr,colind)} of a diagonal nd x nd tensor."""
+    return {(0,0):(numpy.arange(start=0,stop=nd+1,step=1,dtype='i'),
+                   numpy.arange(start=0,stop=nd,step=1,dtype='i'))}
+
+def _initializeDiagonalSparseDiffusion(self,nd):
+    """Transport hook: with sd=True and no nd at construction, use a diagonal layout."""
+    if self.sd and (0,0) not in self.sdInfo:
+        self.sdInfo.update(_diagonalSparseDiffusion(nd))
 
 from .ctransportCoefficients import levelSetCurvatureCoefficientsEvaluate    
 class LevelSetCurvatureCoefficients(TC_base):
@@ -4178,10 +4251,8 @@ class LevelSetCurvatureCoefficients(TC_base):
         diffusion={0:{0:{0:'constant'}}}
         potential={0:{0:'u'}}
         reaction={0:{0:'linear'}}
-        if self.sd:
-            assert nd is not None,"You must set the number of dimensions to use sparse diffusion in LevelSetCurvatureCoefficients"
-            sdInfo = {(0,0):(numpy.arange(start=0,stop=nd+1,step=1,dtype='i'),
-                             numpy.arange(start=0,stop=nd,step=1,dtype='i'))}
+        if self.sd and nd is not None:
+            sdInfo = _diagonalSparseDiffusion(nd)
         else:
             sdInfo={}
         TC_base.__init__(self,
@@ -4197,6 +4268,7 @@ class LevelSetCurvatureCoefficients(TC_base):
                          useSparseDiffusion = sd)
         self.levelSetModelIndex=LSModel_index
         self.epsFact=epsFact
+    initializeSparseDiffusion = _initializeDiagonalSparseDiffusion
     def initializeMesh(self,mesh):
         self.eps = self.epsFact*mesh.h
     def attachModels(self,modelList):
@@ -4254,6 +4326,10 @@ class LevelSetCurvatureCoefficients(TC_base):
             grad_phi = self.ebqe_grad_phi
         else:
             grad_phi = self.ebq_grad_phi
+        if grad_phi is None:
+            #the kernel would read a null pointer
+            raise RuntimeError("LevelSetCurvatureCoefficients: the level set model has no element boundary values of "
+                               "grad(u); set needEBQ = True (n file or so module)")
         levelSetCurvatureCoefficientsEvaluate(grad_phi,
                                               c[('u',0)],
                                               c[('f',0)],
@@ -4275,10 +4351,8 @@ class LevelSetConservation(TC_base):
         potential={0:{0:'u'}}
         reaction={0:{0:'nonlinear'}}
         #reaction={}
-        if self.sd:
-            assert nd is not None,"You must set the number of dimensions to use sparse diffusion in LevelSetConservationCoefficients"
-            sdInfo = {(0,0):(numpy.arange(start=0,stop=nd+1,step=1,dtype='i'),
-                             numpy.arange(start=0,stop=nd,step=1,dtype='i'))}
+        if self.sd and nd is not None:
+            sdInfo = _diagonalSparseDiffusion(nd)
         else:
             sdInfo={}
         TC_base.__init__(self,
@@ -4305,11 +4379,16 @@ class LevelSetConservation(TC_base):
             self.applyCorrectionToDOF=applyCorrectionToDOF
         else:
             self.applyCorrection = False
+    initializeSparseDiffusion = _initializeDiagonalSparseDiffusion
     def initializeMesh(self,mesh):
         self.h=mesh.h
         self.epsHeaviside = self.epsFactHeaviside*mesh.h
         self.epsDirac = self.epsFactDirac*mesh.h
         self.epsDiffusion = self.epsFactDiffusion*mesh.h
+    def _vofFluxIntegral(self):
+        #the boundary flux of the volume fraction over the last step, for the mass bookkeeping;
+        #VOF coefficients that do not compute it (CLevelSetCoefficients) count none
+        return getattr(self.vofModel.coefficients,'fluxIntegral',0.0)
     def attachModels(self,modelList):
         import copy
         logEvent("Attaching models in LevelSetConservation")
@@ -4347,14 +4426,18 @@ class LevelSetConservation(TC_base):
                 self.totalFluxGlobal = 0.0
                 self.vofGlobalMassArray = [self.vofGlobalMass]
                 self.lsGlobalMassArray = [self.lsGlobalMass]
-                self.vofGlobalMassErrorArray = [self.vofGlobalMass - self.vofGlobalMassArray[0] + self.vofModel.timeIntegration.dt*self.vofModel.coefficients.fluxIntegral]
-                self.lsGlobalMassErrorArray = [self.lsGlobalMass - self.lsGlobalMassArray[0] + self.vofModel.timeIntegration.dt*self.vofModel.coefficients.fluxIntegral]
-                self.fluxArray = [self.vofModel.coefficients.fluxIntegral]
+                self.vofGlobalMassErrorArray = [self.vofGlobalMass - self.vofGlobalMassArray[0] + self.vofModel.timeIntegration.dt*self._vofFluxIntegral()]
+                self.lsGlobalMassErrorArray = [self.lsGlobalMass - self.lsGlobalMassArray[0] + self.vofModel.timeIntegration.dt*self._vofFluxIntegral()]
+                self.fluxArray = [self._vofFluxIntegral()]
                 self.timeArray = [self.vofModel.timeIntegration.t]
                 logEvent("Attach Models MCorr: Phase 0 mass after mass correction (VOF) %12.5e" % (self.vofGlobalMass,),level=2)
                 logEvent("Attach Models MCorr: Phase 0 mass after mass correction (LS) %12.5e" % (self.lsGlobalMass,),level=2)
-                logEvent("Attach Models MCorr: Phase  0 mass conservation (VOF) after step = %12.5e" % (self.vofGlobalMass - self.vofModel.coefficients.m_pre + self.vofModel.timeIntegration.dt*self.vofModel.coefficients.fluxIntegral,),level=2)
-                logEvent("Attach Models MCorr: Phase  0 mass conservation (LS) after step = %12.5e" % (self.lsGlobalMass - self.lsModel.coefficients.m_pre + self.vofModel.timeIntegration.dt*self.vofModel.coefficients.fluxIntegral,),level=2)
+                #m_pre (the mass before the step) is kept by the mprans VOF/NCLS coefficients; not every
+                #level set or VOF coefficients object has it, and a log line must not stop the run
+                if hasattr(self.vofModel.coefficients,'m_pre'):
+                    logEvent("Attach Models MCorr: Phase  0 mass conservation (VOF) after step = %12.5e" % (self.vofGlobalMass - self.vofModel.coefficients.m_pre + self.vofModel.timeIntegration.dt*self._vofFluxIntegral(),),level=2)
+                if hasattr(self.lsModel.coefficients,'m_pre'):
+                    logEvent("Attach Models MCorr: Phase  0 mass conservation (LS) after step = %12.5e" % (self.lsGlobalMass - self.lsModel.coefficients.m_pre + self.vofModel.timeIntegration.dt*self._vofFluxIntegral(),),level=2)
     def initializeElementQuadrature(self,t,cq):
         if self.sd and ('a',0,0) in cq:
             cq[('a',0,0)].fill(self.epsDiffusion)
@@ -4401,18 +4484,22 @@ class LevelSetConservation(TC_base):
                 logEvent("mass correction %12.5e" % (Norms.scalarDomainIntegral(self.vofModel.q['dV'],
                                                                            self.massCorrModel.q[('r',0)],
                                                                            self.massCorrModel.mesh.nElements_owned),),level=2)
-                self.fluxGlobal = self.vofModel.coefficients.fluxIntegral*self.vofModel.timeIntegration.dt
-                self.totalFluxGlobal += self.vofModel.coefficients.fluxIntegral*self.vofModel.timeIntegration.dt
+                self.fluxGlobal = self._vofFluxIntegral()*self.vofModel.timeIntegration.dt
+                self.totalFluxGlobal += self._vofFluxIntegral()*self.vofModel.timeIntegration.dt
                 self.vofGlobalMassArray.append(self.vofGlobalMass)
                 self.lsGlobalMassArray.append(self.lsGlobalMass)
                 self.vofGlobalMassErrorArray.append(self.vofGlobalMass - self.vofGlobalMassArray[0] + self.totalFluxGlobal)
                 self.lsGlobalMassErrorArray.append(self.lsGlobalMass - self.lsGlobalMassArray[0] + self.totalFluxGlobal)
-                self.fluxArray.append(self.vofModel.coefficients.fluxIntegral)
+                self.fluxArray.append(self._vofFluxIntegral())
                 self.timeArray.append(self.vofModel.timeIntegration.t)
                 logEvent("Phase 0 mass after mass correction (VOF) %12.5e" % (self.vofGlobalMass,),level=2)
                 logEvent("Phase 0 mass after mass correction (LS) %12.5e" % (self.lsGlobalMass,),level=2)
-                logEvent("Phase  0 mass conservation (VOF) after step = %12.5e" % (self.vofGlobalMass - self.vofModel.coefficients.m_last + self.fluxGlobal,),level=2)
-                logEvent("Phase  0 mass conservation (LS) after step = %12.5e" % (self.lsGlobalMass - self.lsModel.coefficients.m_last + self.fluxGlobal,),level=2)
+                #m_last (the mass at the start of the step) is kept by the level set and VOF coefficients
+                #that check mass; as for m_pre in attachModels, a log line must not stop the run
+                if hasattr(self.vofModel.coefficients,'m_last'):
+                    logEvent("Phase  0 mass conservation (VOF) after step = %12.5e" % (self.vofGlobalMass - self.vofModel.coefficients.m_last + self.fluxGlobal,),level=2)
+                if hasattr(self.lsModel.coefficients,'m_last'):
+                    logEvent("Phase  0 mass conservation (LS) after step = %12.5e" % (self.lsGlobalMass - self.lsModel.coefficients.m_last + self.fluxGlobal,),level=2)
         copyInstructions = {}
         return copyInstructions
     def evaluate(self,t,c):
@@ -5161,8 +5248,7 @@ class ConservativeHeadRichardsBrooksCoreyBurdineHet(TC_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
 
 from .ctransportCoefficients import conservativeHeadRichardsMualemVanGenuchtenHetEvaluate                
@@ -5376,8 +5462,7 @@ class ConservativeHeadRichardsMualemVanGenuchtenBlockHetV2(TC_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
 from .ctransportCoefficients import seepageBrezis
 class SeepageBrezis(TC_base):
@@ -5545,7 +5630,7 @@ class ConservativeHeadRichardsJLeverett(TC_base):
         self.materialTypes_q    = None
         self.materialTypes_ebq  = None
         self.materialTypes_ebqe  = None
-        self.debug=True
+        self.debug=False #True stopped every run in the debugger on a nan input
     def initializeMesh(self,mesh):
         self.elementMaterialTypes = mesh.elementMaterialTypes
         #want element boundary material types for evaluating heterogeneity
@@ -5608,11 +5693,11 @@ class ConservativeHeadRichardsJLeverett(TC_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
         if c[('u',0)].shape == self.q_shape:
-            c[('visPerm',0)]=c[('a',0,0)][:,:,0,0]
+            #a is stored sparse (full or diagonal layout, [..., entries]) or dense ([..., nd, nd]): the (0,0) entry
+            c[('visPerm',0)]=c[('a',0,0)][:,:,0] if c[('a',0,0)].ndim == 3 else c[('a',0,0)][:,:,0,0]
 
 from .ctransportCoefficients import conservativeHeadRichardsJLeverettAniEvaluate
 class ConservativeHeadRichardsJLeverettAni(TC_base):
@@ -5666,7 +5751,7 @@ class ConservativeHeadRichardsJLeverettAni(TC_base):
         self.materialTypes_q    = None
         self.materialTypes_ebq  = None
         self.materialTypes_ebqe  = None
-        self.debug=True
+        self.debug=False #True stopped every run in the debugger on a nan input
     def initializeMesh(self,mesh):
         self.elementMaterialTypes = mesh.elementMaterialTypes
         #want element boundary material types for evaluating heterogeneity
@@ -5731,11 +5816,11 @@ class ConservativeHeadRichardsJLeverettAni(TC_base):
             numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
         if c[('u',0)].shape == self.q_shape:
-            c[('visPerm',0)]=c[('a',0,0)][:,:,0,0]
+            #a is stored sparse (full or diagonal layout, [..., entries]) or dense ([..., nd, nd]): the (0,0) entry
+            c[('visPerm',0)]=c[('a',0,0)][:,:,0] if c[('a',0,0)].ndim == 3 else c[('a',0,0)][:,:,0,0]
 
 from .ctransportCoefficients import constantVelocityLevelSetEvaluate
 class ConstantVelocityLevelSet(TC_base):
@@ -6182,10 +6267,10 @@ from proteus.ctransportCoefficients import redistanceLevelSetSandFCoefficientsEv
 class RedistanceLevelSetSandF(RedistanceLevelSet):
     def __init__(self,applyRedistancing=True,epsFact=2.0,nModelId=1,u0=None,rdModelId=-1,vofModelId=4,massCorrModelId=5,
                  checkMass=True):
+        #vofModelId, massCorrModelId and checkMass are kept for old decks; RedistanceLevelSet
+        #has not taken them since at least 2013
         RedistanceLevelSet.__init__(self,applyRedistancing=applyRedistancing,epsFact=epsFact,
-                                    nModelId=nModelId,u0=u0,rdModelId=rdModelId,
-                                    vofModelId=vofModelId,massCorrModelId=massCorrModelId,
-                                    checkMass=checkMass)
+                                    nModelId=nModelId,u0=u0,rdModelId=rdModelId)
     #init
     def evaluate(self,t,c):
         quadWeights= None
@@ -8315,8 +8400,9 @@ class VolumeAveragedNavierStokesFullDevStress(TC_base):
         self.ebq_porosity = numpy.ones(cebq[('u',0)].shape,'d')
         self.ebq_meanGrain = numpy.ones(cebq[('u',0)].shape,'d')
         self.ebq_meanGrain.flat[:] = self.meanGrainSize
-        self.ebq_global_porosity = numpy.ones(cebq_global[('u',0)].shape,'d')
-        self.ebq_global_meanGrain = numpy.ones(cebq_global[('u',0)].shape,'d')
+        #ebq_global holds no solution values now; its points are always there: (boundaries, points)
+        self.ebq_global_porosity = numpy.ones(cebq_global['x'].shape[:-1],'d')
+        self.ebq_global_meanGrain = numpy.ones(cebq_global['x'].shape[:-1],'d')
         self.ebq_global_meanGrain.flat[:] = self.meanGrainSize
         if self.setParamsFunc is not None:
             self.setParamsFunc(cebq['x'],self.ebq_porosity,self.ebq_meanGrain)
@@ -8736,7 +8822,7 @@ class VolumeAveragedTwophaseNavierStokes(TwophaseReynoldsAveragedNavierStokes_Al
             meanGrain= self.ebq_meanGrain
         #
         if phi is None or n is None or kappa is None or porosity is None or meanGrain is None:
-            pdb.set_trace()
+            raise RuntimeError("level set, normal, curvature, porosity or mean grain size not set for these quadrature points")
         if self.nd==2:
             if self.sd:
                 VolumeAveragedTwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd(self.killNonlinearDrag,
@@ -9033,8 +9119,7 @@ class VolumeAveragedTwophaseNavierStokes(TwophaseReynoldsAveragedNavierStokes_Al
                 c[('r',0)].fill(0.0)
                 eps_source=self.eps_source
                 if numpy.isnan(c[('r',0)].any()):
-                    import pdb
-                    pdb.set_trace()
+                    pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
             else:
                 c[('r',0)].fill(0.0)
                 eps_source=self.eps_source
@@ -9120,15 +9205,13 @@ class VolumeAveragedVOFCoefficients(VOFCoefficients):
                                                   c[('f',0)],
                                                   c[('df',0,0)])
         else:
-            import pdb
-            pdb.set_trace()
+            raise RuntimeError("no quadrature points of this model match c[('u',0)].shape=%s" % (c[('u',0)].shape,))
         if (numpy.isnan(c[('u',0)]).any() or
             numpy.isnan(c[('m',0)]).any() or
             numpy.isnan(c[('dm',0,0)]).any() or
             numpy.isnan(c[('f',0)]).any() or
             numpy.isnan(c[('df',0,0)]).any()):
-            import pdb
-            pdb.set_trace()
+            pass #nan: the solve fails and the step is retried (a debugger stop here ended batch runs)
 
     #
 #
@@ -9208,8 +9291,7 @@ class GroundwaterTransportCoefficients(TC_base):
             if v.shape == self.q_v.shape:
                 for i in range(len(c[('u',0)].flat)):
                     if c['x'].flat[3*i+0] > 100.0-2.5 and c['x'].flat[3*i+1] < 2.5 and c[('u',0)].flat[i] < -1.0e-1:
-                        import pdb
-                        pdb.set_trace()
+                        pass #a probe for one old case (x > 97.5, y < 2.5, u < -0.1); it stopped in the debugger
 
 
 from proteus.ctransportCoefficients import groundwaterBiodegradation01EvaluateFC
@@ -9582,6 +9664,11 @@ class ConservativeHeadRichardsMualemVanGenuchtenBlockHetV2withUpwind(TC_base):
             materialTypes = self.materialTypes_ebq
         else:
             assert False, "no materialType found to match c[('u',0)].shape= %s " % c[('u',0)].shape
+        if self.upwindFlag != 0 and self.ebq_global_n is None:
+            #upwinding reads the element boundary normals: without a numerical or conservative flux the
+            #element boundary quadrature is built only on request
+            raise RuntimeError("%s: upwindFlag = %s needs the element boundary quadrature; set needEBQ = True "
+                               "in the n module" % (self.__class__.__name__, self.upwindFlag))
         if self.upwindFlag == 0:
             conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2(materialTypes,
                                                                     self.rho,
@@ -9650,6 +9737,7 @@ class ConservativeHeadRichardsMualemVanGenuchtenBlockHetV2withUpwind(TC_base):
                 if self.sd:
                     conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm_sd(useUpwindApprox,
                                                                                                 computeAverages,
+                                                                                                self.ebq_global_n.shape[1], #nQuadraturePoints_elementBoundary, which the kernel now takes
                                                                                                 self.sdInfo[(0,0)][0],
                                                                                                 self.sdInfo[(0,0)][1],
                                                                                                 self.mesh.elementBoundaryElementsArray,
@@ -9680,6 +9768,7 @@ class ConservativeHeadRichardsMualemVanGenuchtenBlockHetV2withUpwind(TC_base):
                 else:
                     conservativeHeadRichardsMualemVanGenuchtenHetEvaluateV2withUpwindAndHarm(useUpwindApprox,
                                                                                              computeAverages,
+                                                                                             self.ebq_global_n.shape[1], #nQuadraturePoints_elementBoundary, which the kernel now takes
                                                                                              self.mesh.elementBoundaryElementsArray,
                                                                                              quad2bnd,
                                                                                              materialTypes,

@@ -21,7 +21,9 @@ What is pinned here:
   boundaries are now owned through the boundary's own nodes (the mask chain applied the
   simplex rule, which gave an edge to a rank holding neither end point and left Q2 rows
   incomplete). Only the element-boundary arrays differ from the 2d21116f recording and
-  the six `quad node` digests were re-recorded; see MULTILEVEL_MG_CAMPAIGN.md 3.19;
+  the six `quad node` digests were re-recorded; see MULTILEVEL_MG_CAMPAIGN.md 3.19; and the six `hex element` digests at 3, 4 and 8 ranks
+  (C32 round 5: the mask chain's overlap gave rank > 0 a non-edge node pair as edge 0, a row (0,0)
+  in edgeNodesArray; only the edge arrays differ);
 * the graph partitioner's own numbering is the prescribed-owner numbering of
   the partition it chose, so that path changed in nothing but the gather;
 * a rank that owns nothing works (the old partitioner crashed): every array is

@@ -1,0 +1,19 @@
+# dam3bumps.ymf on a mesh that is already made: the unstructured mesh of the deck's own run (dam3bumps.node, .ele,
+# .edge, .poly written by triangle at he = 2), read with genMesh off. test_dispatch_run.py replaces MESH_PREFIX with the
+# path of the deck's run directory; a mesh that is already made has no h to state, and the realizer does not use one.
+extends: dam3bumps_unmeshed.ymf
+
+model:
+  strong_form:
+    domain:
+      kind: file
+      format: tetgen
+      path: MESH_PREFIX
+      bounds: {lower: [0, 0], upper: [75, 30]}
+      boundary_tags: {bottom: 1, right: 2, top: 3, left: 4}
+      time: [0, 0.5]
+
+solution_paths:
+  discretizations:
+    - name: convex_limited
+      mesh: {levels: 1}

@@ -23,6 +23,7 @@ from . import cfemIntegrals
 from .csparsity import CSR_INDEX_DTYPE
 from .TransportCoefficients import *
 from . import NumericalFlux
+from . import BoundaryKinds
 from . import cnumericalFlux
 from . import Comm
 from . import csparsity
@@ -100,6 +101,13 @@ class OneLevelTransport(NonlinearEquation):
         a discontinous velocity field.
 
     """
+    #The per-face boundary kinds of BoundaryKinds. A subclass (a model with its own residual) does not inherit
+    #the support: it implements it and says so with ``implementsBoundaryKinds = True`` in its own class body, and
+    #NumericalFlux.NF_base refuses a declared setter for a model that did not.
+    implementsBoundaryKinds = True
+    @property
+    def supportsBoundaryKinds(self):
+        return bool(type(self).__dict__.get('implementsBoundaryKinds',False))
     #share the storage of weighted shape arrays whose quadrature weights are equal
     #(see makeAliasForEqualWeights in __init__); a class attribute so it can be turned off
     shareWeightedArrays = True
@@ -255,7 +263,7 @@ class OneLevelTransport(NonlinearEquation):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature#True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1,coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         ## Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh #assume the same mesh for  all components for now
         self.testSpace = testSpaceDict
@@ -321,6 +329,10 @@ class OneLevelTransport(NonlinearEquation):
         self.nFreeDOF_global  = [dc.nFreeDOF_global for dc in list(self.dirichletConditions.values())]
         self.nVDOF_element    = sum(self.nDOF_trial_element)
         self.nFreeVDOF_global = sum(self.nFreeDOF_global)
+        #coefficients whose sparse diffusion layout depends on the space
+        #dimension (not known when they are built) set it up now
+        if self.sd and hasattr(coefficients,'initializeSparseDiffusion'):
+            coefficients.initializeSparseDiffusion(self.nSpace_global)
         #cek make full diffusion default if not in sdInfo
         if self.sd:
             for ci,ckDict in coefficients.diffusion.items():
@@ -940,9 +952,25 @@ class OneLevelTransport(NonlinearEquation):
         logEvent(memory("global exterior element boundary quadrature","OneLevelTransport"),level=4)
         self.forceStrongConditions= numericalFluxType.useStrongDirichletConstraints
         self.dirichletConditionsForceDOF = {}
+        #Per-face kinds (C12): under a flux class that is weak by default, the faces of a declared setter that say
+        #'strong' are imposed by replacing the rows of their dofs (the dofs stay unknowns: the layout of a weak
+        #class, which is also the parallel one); a bare function stays weak, as it always was. Whether the rows of
+        #some component are replaced is decided by the declaration, not by what this rank holds, because the
+        #parallel authority of a shared dof (LinearAlgebraTools.attachStrongDirichletAuthority) is collective.
+        self.declaredBoundaryKinds = [BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(cj)) for cj in range(self.nc)]
+        strongFacesOnly = (not numericalFluxType.useStrongDirichletConstraints and
+                           numericalFluxType.useWeakDirichletConditions and any(self.declaredBoundaryKinds))
+        if strongFacesOnly:
+            self.forceStrongConditions = True
         if self.forceStrongConditions:
             for cj in range(self.nc):
-                self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
+                if strongFacesOnly:
+                    if self.declaredBoundaryKinds[cj]:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False,strongFacesOnly=True)
+                    else:
+                        self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,None,weakDirichletConditions=True)
+                else:
+                    self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(self.u[cj].femSpace,dofBoundaryConditionsSetterDict[cj],weakDirichletConditions=False)
                 # A DOF of a periodic pair is one unknown shared with its
                 # partner, and periodicity wins over a Dirichlet value there,
                 # as it does where Dirichlet DOFs are eliminated.
@@ -1646,17 +1674,18 @@ class OneLevelTransport(NonlinearEquation):
         self._refuseDiscontinuousSpaceWithoutFaceNeighbours()
         #set penalty terms
         #cek todo move into numerical flux initialization
+        penaltyFactor = self.numericalFlux.penaltyOrderFactor() if self.numericalFlux is not None and hasattr(self.numericalFlux,'penaltyOrderFactor') else 1.0
         if 'penalty' in self.ebq_global:
             for ebN in range(self.mesh.nElementBoundaries_global):
                 for k in range(self.nElementBoundaryQuadraturePoints_elementBoundary):
-                    self.ebq_global['penalty'][ebN,k] = self.numericalFlux.penalty_constant/(self.mesh.elementBoundaryDiametersArray[ebN]**self.numericalFlux.penalty_power)
+                    self.ebq_global['penalty'][ebN,k] = penaltyFactor*self.numericalFlux.penalty_constant/(self.mesh.elementBoundaryDiametersArray[ebN]**self.numericalFlux.penalty_power)
         #penalty term
         #cek move  to Numerical flux initialization
         if 'penalty' in self.ebqe:
             for ebNE in range(self.mesh.nExteriorElementBoundaries_global):
                 ebN = self.mesh.exteriorElementBoundariesArray[ebNE]
                 for k in range(self.nElementBoundaryQuadraturePoints_elementBoundary):
-                    self.ebqe['penalty'][ebNE,k] = self.numericalFlux.penalty_constant/self.mesh.elementBoundaryDiametersArray[ebN]**self.numericalFlux.penalty_power
+                    self.ebqe['penalty'][ebNE,k] = penaltyFactor*self.numericalFlux.penalty_constant/self.mesh.elementBoundaryDiametersArray[ebN]**self.numericalFlux.penalty_power
         logEvent(memory("numericalFlux","OneLevelTransport"),level=4)
         self.elementEffectiveDiametersArray  = self.mesh.elementInnerDiametersArray
         #use post processing tools to get conservative fluxes, None by default
@@ -1692,7 +1721,7 @@ class OneLevelTransport(NonlinearEquation):
             return
         if isinstance(nf, NumericalFlux.NoFlux):
             return              # zero interior flux: the elements are not coupled through their faces
-        if not any(isinstance(u.femSpace.dofMap, (DiscontinuousGalerkinDOFMap, p0DOFMap)) for u in self.u.values()):
+        if not any(u.femSpace.continuity == 'DG' for u in self.u.values()):
             return
         mesh = self.mesh
         marked = int(bool(mesh.__dict__.get('rankInterfacesMarked')))
@@ -3182,10 +3211,23 @@ class OneLevelTransport(NonlinearEquation):
                     self.u[cj].getGradientValuesTrace(self.ebq[('grad(v)',cj)],
                                                  self.ebq[('grad(u)',cj)])
 
+    #the stabilized (subgrid error) versions of coefficient derivatives the strong residual reads
+    _SGE_KEYS = ('dH', 'da', 'df', 'dm', 'dmt', 'dphi', 'grad(phi)')
+
+    def _aliasMissingSubgridErrorCoefficients(self,cq):
+        """Alias X_sge to X for each coefficient the strong residual reads but no subgrid error
+        object set up (shock capturing alone, or a subgrid error for another term), as a
+        subgrid error that does not lag does."""
+        for key in [k for k in list(cq.keys()) if isinstance(k,tuple) and k[0] in self._SGE_KEYS]:
+            sgeKey = (key[0]+'_sge',)+key[1:]
+            if sgeKey not in cq:
+                cq[sgeKey] = cq[key]
+
     def calculateStrongResidualAndAdjoint(self,cq):
         """
         break off computation of strong residual and adjoint so that we can do this at different quadrature locations?
         """
+        self._aliasMissingSubgridErrorCoefficients(cq)
         if (self.stabilization or self.shockCapturing):
             for ci in range(self.nc):
                 cq[('pdeResidual',ci)].fill(0.0)
@@ -4110,17 +4152,18 @@ class OneLevelTransport(NonlinearEquation):
                                                                   self.ebq['sqrt(det(g))'],
                                                                   self.ebq[('w',ci)],
                                                                   self.ebq[('w*dS_'+I,ci)])
-                    #for w*dS_a
+                    #for w*dS_a: ('w*dS_a',ck,ci) is component ci's test function weighted for its
+                    #diffusion term in ck, whose weights are (I,ci,ck) (as for grad(w)*dV_a)
                     for ck in range(self.nc):
-                        if (I,ci,ck) in self.ebq:
+                        if ('w*dS_'+I,ck,ci) in self.ebq:
                             cfemIntegrals.calculateWeightedShapeTrace(self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                       self.ebq['sqrt(det(g))'],
                                                                       self.ebq[('w',ci)],
-                                                                      self.ebq[('w*dS_'+I,ci,ck)])
+                                                                      self.ebq[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebq and len(self.elementBoundaryIntegralKeys) > 0:
                     for ck in range(self.nc):
                         try:
-                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ci,ck)]
+                            self.ebq[('w*dS_f',ci)] = self.ebq[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:
@@ -4286,20 +4329,20 @@ class OneLevelTransport(NonlinearEquation):
                                                                                 self.ebqe[('w',ci)],
                                                                                 self.ebqe[('w*dS_'+I,ci)])
 
-                    #for w*dS_a
+                    #for w*dS_a (see the element boundary loop: test component last)
                     for ck in range(self.nc):
-                        if ('w*dS_'+I,ci,ck) in self.ebqe:
+                        if ('w*dS_'+I,ck,ci) in self.ebqe:
                             cfemIntegrals.calculateWeightedShapeGlobalExteriorTrace(self.mesh.exteriorElementBoundariesArray,
                                                                                     self.mesh.elementBoundaryElementsArray,
                                                                                     self.mesh.elementBoundaryLocalElementBoundariesArray,
                                                                                     self.elementBoundaryQuadratureWeights[(I,ci,ck)],
                                                                                     self.ebqe['sqrt(det(g))'],
                                                                                     self.ebqe[('w',ci)],
-                                                                                    self.ebqe[('w*dS_'+I,ci,ck)])
+                                                                                    self.ebqe[('w*dS_'+I,ck,ci)])
                 if ('w*dS_f',ci) not in self.ebqe:
                     for ck in range(self.nc):
                         try:
-                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ci,ck)]
+                            self.ebqe[('w*dS_f',ci)] = self.ebqe[('w*dS_a',ck,ci)]
                             break
                         except:
                             try:
@@ -4810,8 +4853,8 @@ class OneLevelTransport(NonlinearEquation):
         if Viewers.viewerType == 'gnuplot':
             if self.nSpace_global == 1:
                 for ci in range(self.coefficients.nc):
-                    if (isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) or
-                        isinstance(self.u[ci].femSpace,NC_AffineLinearOnSimplexWithNodalBasis)): #CrR same in 1d
+                    if (self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') or
+                        self.u[ci].femSpace.isSpace('NC')): #CrR same in 1d
                         #
                         xandu = [(x,u) for x,u in zip(self.mesh.nodeArray[:,0],self.u[ci].dof)]
                         xandu.sort()#sorts based on first entry by default I believe
@@ -4828,8 +4871,8 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.newPlot()
                         Viewers.newWindow()
                     #
-                    elif (isinstance(self.u[ci].femSpace,DG_AffineLinearOnSimplexWithNodalBasis) or
-                          isinstance(self.u[ci].femSpace,DG_AffineQuadraticOnSimplexWithNodalBasis)) :
+                    elif (self.u[ci].femSpace.isSpace('DG','lagrange',1) or
+                          self.u[ci].femSpace.isSpace('DG','lagrange',2)) :
                         ldim = self.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim
                         #sort for now
                         xandu = []
@@ -4850,7 +4893,7 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.viewerPipe.write(cmd)
                         Viewers.newPlot()
                         Viewers.newWindow()
-                    elif (isinstance(self.u[ci].femSpace,DG_AffinePolynomialsOnSimplexWithMonomialBasis)):
+                    elif (self.u[ci].femSpace.isSpace('DG','monomial')):
                         npoints  = self.q['x'].shape[0]*self.q['x'].shape[1]
                         xandu = [(self.q['x'].flat[i*3+0],self.q[('u',ci)].flat[i]) for i in range(npoints)]
                         xandu.sort()
@@ -4866,8 +4909,8 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.newPlot()
                         Viewers.newWindow()
 
-                    elif  (isinstance(self.u[ci].femSpace,DG_Constants) or
-                           isinstance(self.u[ci].femSpace,DG_AffineP0_OnSimplexWithMonomialBasis)):
+                    elif  (self.u[ci].femSpace.isSpace('DG','constant') or
+                           self.u[ci].femSpace.isSpace('DG','monomial',0)):
                         #sort for now
                         xandu = []
                         for eN in range(self.mesh.nElements_global):
@@ -4886,7 +4929,7 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.viewerPipe.write(cmd)
                         Viewers.newPlot()
                         Viewers.newWindow()
-                    elif isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
+                    elif self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'):
                         xandu = []
                         for eN in range(self.mesh.nElements_global):
                             for i in range(self.u[ci].femSpace.dofMap.l2g.shape[1]):
@@ -4908,8 +4951,8 @@ class OneLevelTransport(NonlinearEquation):
             elif self.nSpace_global == 2:
                 for ci in range(self.coefficients.nc):
                     #
-                    if (isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) or
-                        isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis)):
+                    if (self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') or
+                        self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex')):
                         #mwf todo 10/17/09 won't work in parallel for C0_AffineQuadratic
                         for x,y,u in zip(self.mesh.nodeArray[:,0],self.mesh.nodeArray[:,1],self.u[ci].dof[:self.mesh.nodeArray.shape[0]]):
                             Viewers.datFile.write("%12.5e %12.5e %12.5e \n" % (x,y,u))
@@ -4924,8 +4967,8 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.newWindow()
 
                     #
-                    elif (isinstance(self.u[ci].femSpace,DG_AffineLinearOnSimplexWithNodalBasis) or
-                          isinstance(self.u[ci].femSpace,DG_AffineQuadraticOnSimplexWithNodalBasis)):
+                    elif (self.u[ci].femSpace.isSpace('DG','lagrange',1) or
+                          self.u[ci].femSpace.isSpace('DG','lagrange',2)):
                         for eN in range(self.mesh.nElements_global):
                             for nN in range(self.mesh.nNodes_element):
                                 ldim = self.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim
@@ -4941,8 +4984,8 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.viewerPipe.write(cmd)
                         Viewers.newPlot()
                         Viewers.newWindow()
-                    elif  (isinstance(self.u[ci].femSpace,DG_Constants) or
-                           isinstance(self.u[ci].femSpace,DG_AffineP0_OnSimplexWithMonomialBasis)):
+                    elif  (self.u[ci].femSpace.isSpace('DG','constant') or
+                           self.u[ci].femSpace.isSpace('DG','monomial',0)):
                         for eN in range(self.mesh.nElements_global):
                             for nN in range(self.mesh.nNodes_element):
                                 Viewers.datFile.write("%12.5e %12.5e %12.5e \n" % (self.mesh.nodeArray[self.mesh.elementNodesArray[eN,nN]][0],
@@ -4957,7 +5000,7 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.viewerPipe.write(cmd)
                         Viewers.newPlot()
                         Viewers.newWindow()
-                    elif isinstance(self.u[ci].femSpace,NC_AffineLinearOnSimplexWithNodalBasis):
+                    elif self.u[ci].femSpace.isSpace('NC'):
                         #dofs are values at edge midpoints
                         for eN in range(self.mesh.nElements_global):
                             for nN in range(self.mesh.nNodes_element):
@@ -4995,8 +5038,8 @@ class OneLevelTransport(NonlinearEquation):
             elif self.nSpace_global == 3:
                 (slice_x,slice_y,slice_z) = self.mesh.nodeArray[self.mesh.nodeArray.shape[0]//2,:]
                 for ci in range(self.coefficients.nc):
-                    if (isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) or
-                        isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis)):
+                    if (self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') or
+                        self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex')):
                         #mwf todo 10/17/09 won't work in parallel for C0_AffineQuadratic
                         for x,y,z,u in zip(self.mesh.nodeArray[:,0],self.mesh.nodeArray[:,1],self.mesh.nodeArray[:,2],
                                            self.u[ci].dof[:self.mesh.nodeArray.shape[0]]):
@@ -5039,12 +5082,12 @@ class OneLevelTransport(NonlinearEquation):
                         Viewers.newWindow()
 
                 if (self.coefficients.vectorComponents is not None and
-                    (isinstance(self.u[0].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                     isinstance(self.u[1].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                     isinstance(self.u[2].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) or
-                     isinstance(self.u[0].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                     isinstance(self.u[1].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                     isinstance(self.u[2].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis))):
+                    (self.u[0].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                     self.u[1].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                     self.u[2].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') or
+                     self.u[0].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                     self.u[1].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                     self.u[2].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'))):
                     #mwf todo 10/17/09 won't work in parallel for C0_AffineQuadratic
                     for x,y,z,u,v,w in zip(self.mesh.nodeArray[:,0],
                                            self.mesh.nodeArray[:,1],
@@ -5109,8 +5152,8 @@ class OneLevelTransport(NonlinearEquation):
                     vci0 = self.coefficients.vectorComponents[0]
                     vci1 = self.coefficients.vectorComponents[1]
 
-                    if (isinstance(self.u[vci0].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                        isinstance(self.u[vci1].femSpace,C0_AffineLinearOnSimplexWithNodalBasis)):
+                    if (self.u[vci0].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                        self.u[vci1].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex')):
 
                         writer = Viewers.MatlabWriter(nxgrid=50,nygrid=50,nzgrid=10)
                         nplotted = writer.viewVector_LagrangeC0P1(Viewers.cmdFile,self.nSpace_global,
@@ -5120,8 +5163,8 @@ class OneLevelTransport(NonlinearEquation):
                                                                   figureNumber = Viewers.windowNumber+1,
                                                                   title = 'velocity_{dof}' + titleModifier)
                         Viewers.windowNumber += nplotted
-                    elif (isinstance(self.u[vci0].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                          isinstance(self.u[vci1].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis)):
+                    elif (self.u[vci0].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                          self.u[vci1].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex')):
 
                         writer = Viewers.MatlabWriter(nxgrid=50,nygrid=50,nzgrid=10)
                         nplotted = writer.viewVector_LagrangeC0P2(Viewers.cmdFile,self.nSpace_global,
@@ -5139,9 +5182,9 @@ class OneLevelTransport(NonlinearEquation):
                     vci1 = self.coefficients.vectorComponents[1]
                     vci2 = self.coefficients.vectorComponents[2]
 
-                    if (isinstance(self.u[vci0].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                        isinstance(self.u[vci1].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                        isinstance(self.u[vci2].femSpace,C0_AffineLinearOnSimplexWithNodalBasis)):
+                    if (self.u[vci0].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                        self.u[vci1].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                        self.u[vci2].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex')):
 
                         writer = Viewers.MatlabWriter(nxgrid=50,nygrid=50,nzgrid=10)
                         nplotted = writer.viewVector_LagrangeC0P1(Viewers.cmdFile,self.nSpace_global,
@@ -5152,9 +5195,9 @@ class OneLevelTransport(NonlinearEquation):
                                                                   figureNumber = Viewers.windowNumber+1,
                                                                   title = 'velocity_{dof}' + titleModifier)
                         Viewers.windowNumber += nplotted
-                    elif (isinstance(self.u[vci0].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                          isinstance(self.u[vci1].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                          isinstance(self.u[vci2].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis)):
+                    elif (self.u[vci0].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                          self.u[vci1].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                          self.u[vci2].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex')):
                         writer = Viewers.MatlabWriter(nxgrid=50,nygrid=50,nzgrid=10)
                         nplotted = writer.viewVector_LagrangeC0P2(Viewers.cmdFile,self.nSpace_global,
                                                                   self.u[vci0].femSpace.dofMap.lagrangeNodesArray,self.mesh.elementNodesArray,
@@ -5184,18 +5227,18 @@ class OneLevelTransport(NonlinearEquation):
         if self.nSpace_global == 1:
             for ci in range(self.coefficients.nc):
                 title = self.coefficients.variableNames[ci]+titleModifier
-                if isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis):
+                if self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex'):
                     vtkViewers.viewScalar_1D(self.mesh.nodeArray[:,0],self.u[ci].dof,"x",self.u[ci].name,title,Viewers.windowNumber,
                                                 Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,NC_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('NC'):
                     vtkViewers.viewScalar_1D(self.mesh.elementBoundaryBarycentersArray[:,0],self.u[ci].dof,"x",self.u[ci].name,title,Viewers.windowNumber,
                                                 Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif isinstance(self.u[ci].femSpace,DG_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',1):
                     ldim = self.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim
                     xvals = []; yvals = []
                     for eN in range(self.mesh.nElements_global):
@@ -5208,7 +5251,7 @@ class OneLevelTransport(NonlinearEquation):
                                              Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,DG_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',2):
                     ldim = self.u[ci].femSpace.referenceFiniteElement.localFunctionSpace.dim
                     xvals = []; yvals = []
                     for eN in range(self.mesh.nElements_global):
@@ -5226,8 +5269,8 @@ class OneLevelTransport(NonlinearEquation):
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif (isinstance(self.u[ci].femSpace,DG_Constants) or
-                      isinstance(self.u[ci].femSpace,DG_AffineP0_OnSimplexWithMonomialBasis)):
+                elif (self.u[ci].femSpace.isSpace('DG','constant') or
+                      self.u[ci].femSpace.isSpace('DG','monomial',0)):
                     xvals = []; yvals = []
                     for eN in range(self.mesh.nElements_global):
                         for nN in range(self.mesh.nNodes_element):
@@ -5237,7 +5280,7 @@ class OneLevelTransport(NonlinearEquation):
                                              Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,DG_AffinePolynomialsOnSimplexWithMonomialBasis)):
+                elif (self.u[ci].femSpace.isSpace('DG','monomial')):
                     npoints  = self.q['x'].shape[0]*self.q['x'].shape[1]
                     xvals = [self.q['x'].flat[i*3+0] for i in range(npoints)]
                     yvals = [self.q[('u',ci)].flat[i] for i in range(npoints)]
@@ -5245,7 +5288,7 @@ class OneLevelTransport(NonlinearEquation):
                                              Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'):
                     #mwf switch order for parallel now
 #                     vtkViewers.viewScalar_1D(numpy.append(self.mesh.nodeArray,
 #                                                           self.u[ci].femSpace.dofMap.lagrangeNodesArray)[::3],
@@ -5264,7 +5307,7 @@ class OneLevelTransport(NonlinearEquation):
                                              Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1P0BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1p0-bubble')):
                     npoints  = self.q['x'].shape[0]*self.q['x'].shape[1]
                     xvals = [self.q['x'].flat[i*3+0] for i in range(npoints)]
                     yvals = [self.q[('u',ci)].flat[i] for i in range(npoints)]
@@ -5272,7 +5315,7 @@ class OneLevelTransport(NonlinearEquation):
                                              Pause=pause,sortPoints=True)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1-bubble')):
                     vtkViewers.viewScalar_1D(self.mesh.nodeArray[:,0],self.u[ci].dof,"x",self.u[ci].name,title,Viewers.windowNumber,
                                              Pause=pause,sortPoints=True)
                     #full solution at quadrature points
@@ -5286,7 +5329,7 @@ class OneLevelTransport(NonlinearEquation):
         elif self.nSpace_global == 2:
             for ci in range(self.coefficients.nc):
                 title = self.coefficients.variableNames[ci]+titleModifier
-                if (isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis)):
+                if (self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex')):
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].dof[:self.mesh.nodeArray.shape[0]],
                                                   self.coefficients.variableNames[ci]+titleModifier,
@@ -5296,7 +5339,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'):
                     vtkViewers.viewScalar_tri6_2D(self.mesh,
                                                   self.u[ci].femSpace.dofMap,
                                                   self.u[ci].dof,
@@ -5307,7 +5350,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,DG_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',1):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5318,7 +5361,7 @@ class OneLevelTransport(NonlinearEquation):
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif isinstance(self.u[ci].femSpace,DG_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',2):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5328,8 +5371,8 @@ class OneLevelTransport(NonlinearEquation):
                                                   Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif  (isinstance(self.u[ci].femSpace,DG_Constants) or
-                       isinstance(self.u[ci].femSpace,DG_AffineP0_OnSimplexWithMonomialBasis)):
+                elif  (self.u[ci].femSpace.isSpace('DG','constant') or
+                       self.u[ci].femSpace.isSpace('DG','monomial',0)):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5339,7 +5382,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,NC_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('NC'):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5350,7 +5393,7 @@ class OneLevelTransport(NonlinearEquation):
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif (isinstance(self.u[ci].femSpace,DG_AffinePolynomialsOnSimplexWithMonomialBasis)):
+                elif (self.u[ci].femSpace.isSpace('DG','monomial')):
                     vtkViewers.viewScalar_pointSet_2D(self.q['x'],
                                                       self.q[('u',ci)],
                                                       title,
@@ -5359,7 +5402,7 @@ class OneLevelTransport(NonlinearEquation):
 
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1P0BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1p0-bubble')):
                     vtkViewers.viewScalar_pointSet_2D(self.q['x'],
                                                       self.q[('u',ci)],
                                                       title,
@@ -5368,7 +5411,7 @@ class OneLevelTransport(NonlinearEquation):
 
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1-bubble')):
                     vtkViewers.viewScalar_tri3_2D(self.mesh,
                                                   self.u[ci].dof[:self.mesh.nodeArray.shape[0]],
                                                   self.coefficients.variableNames[ci]+titleModifier,
@@ -5393,14 +5436,14 @@ class OneLevelTransport(NonlinearEquation):
                 L = min((max(self.mesh.nodeArray[:,0]),max(self.mesh.nodeArray[:,1])))
                 scale=10.0*max((scale_x,scale_y,1.0e-16))/L
                 #assume all components the same FemSpace for now
-                if isinstance(self.u[self.coefficients.vectorComponents[0]].femSpace,C0_AffineLinearOnSimplexWithNodalBasis):
+                if self.u[self.coefficients.vectorComponents[0]].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex'):
                     vtkViewers.viewVector_tri3_2D(self.mesh,
                                                   self.u[self.coefficients.vectorComponents[0]].dof,
                                                   self.u[self.coefficients.vectorComponents[1]].dof,
                                                   self.coefficients.vectorName+titleModifier)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[self.coefficients.vectorComponents[0]].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[self.coefficients.vectorComponents[0]].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'):
                     vtkViewers.viewVector_tri6_2D(self.mesh,
                                                   self.u[ci].femSpace.dofMap,
                                                   self.u[self.coefficients.vectorComponents[0]].dof,
@@ -5412,14 +5455,14 @@ class OneLevelTransport(NonlinearEquation):
             (slice_x,slice_y,slice_z) = self.mesh.nodeArray[self.mesh.nodeArray.shape[0]//2,:]
             for ci in range(self.coefficients.nc):
                 title = self.coefficients.variableNames[ci]+titleModifier
-                if isinstance(self.u[ci].femSpace,C0_AffineLinearOnSimplexWithNodalBasis):
+                if self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex'):
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].dof,
                                                   self.coefficients.variableNames[ci]+titleModifier,
                                                   Viewers.windowNumber, Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex'):
                     vtkViewers.viewScalar_tet10_3D(self.mesh,
                                                    self.u[ci].femSpace.dofMap,
                                                    self.u[ci].dof,
@@ -5427,7 +5470,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Viewers.windowNumber, Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,DG_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',1):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5435,7 +5478,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Viewers.windowNumber, Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,DG_AffineQuadraticOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('DG','lagrange',2):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5444,7 +5487,7 @@ class OneLevelTransport(NonlinearEquation):
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif  isinstance(self.u[ci].femSpace,DG_Constants):
+                elif  self.u[ci].femSpace.isSpace('DG','constant'):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5452,7 +5495,7 @@ class OneLevelTransport(NonlinearEquation):
                                                   Viewers.windowNumber, Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif isinstance(self.u[ci].femSpace,NC_AffineLinearOnSimplexWithNodalBasis):
+                elif self.u[ci].femSpace.isSpace('NC'):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5460,15 +5503,15 @@ class OneLevelTransport(NonlinearEquation):
                                                   Viewers.windowNumber, Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,DG_AffinePolynomialsOnSimplexWithMonomialBasis)):
+                elif (self.u[ci].femSpace.isSpace('DG','monomial')):
                     vtkViewers.vtkDisplay3DScalarMeshGeneric(self.q['x'],self.q[('u',ci)].flat,title,Viewers.windowNumber,Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1P0BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1p0-bubble')):
                     vtkViewers.vtkDisplay3DScalarMeshGeneric(self.q['x'],self.q[('u',ci)].flat,title,Viewers.windowNumber,Pause=pause)
                     Viewers.newPlot()
                     Viewers.newWindow()
-                elif (isinstance(self.u[ci].femSpace,C0_AffineP1BubbleOnSimplexWithNodalBasis)):
+                elif (self.u[ci].femSpace.isSpace('C0','p1-bubble')):
                     self.u[ci].calculateValuesAtMeshNodes()
                     vtkViewers.viewScalar_tet4_3D(self.mesh,
                                                   self.u[ci].meshNodeValues,
@@ -5485,9 +5528,9 @@ class OneLevelTransport(NonlinearEquation):
                 L = min((max(self.mesh.nodeArray[:,0]),max(self.mesh.nodeArray[:,1]),max(self.mesh.nodeArray[:,2])))
                 scale=10.0*max((scale_x,scale_y,scale_z,1.0e-16))/L
                 #assume all components the same FemSpace for now
-                if (isinstance(self.u[self.coefficients.vectorComponents[0]].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                    isinstance(self.u[self.coefficients.vectorComponents[1]].femSpace,C0_AffineLinearOnSimplexWithNodalBasis) and
-                    isinstance(self.u[self.coefficients.vectorComponents[2]].femSpace,C0_AffineLinearOnSimplexWithNodalBasis)) :
+                if (self.u[self.coefficients.vectorComponents[0]].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                    self.u[self.coefficients.vectorComponents[1]].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex') and
+                    self.u[self.coefficients.vectorComponents[2]].femSpace.isSpace('C0',('lagrange','bernstein'),1,'simplex')) :
                     vtkViewers.viewVector_tet4_3D(self.mesh,
                                                   self.u[self.coefficients.vectorComponents[0]].dof,
                                                   self.u[self.coefficients.vectorComponents[1]].dof,
@@ -5496,9 +5539,9 @@ class OneLevelTransport(NonlinearEquation):
                     Viewers.newPlot()
                     Viewers.newWindow()
 
-                elif (isinstance(self.u[self.coefficients.vectorComponents[0]].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                      isinstance(self.u[self.coefficients.vectorComponents[1]].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis) and
-                      isinstance(self.u[self.coefficients.vectorComponents[2]].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis)):
+                elif (self.u[self.coefficients.vectorComponents[0]].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                      self.u[self.coefficients.vectorComponents[1]].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex') and
+                      self.u[self.coefficients.vectorComponents[2]].femSpace.isSpace('C0',('lagrange','bernstein'),2,'simplex')):
                     vtkViewers.viewVector_tet10_3D(self.mesh,
                                                    self.u[ci].femSpace.dofMap,
                                                    self.u[self.coefficients.vectorComponents[0]].dof,

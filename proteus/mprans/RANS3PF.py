@@ -2,6 +2,8 @@ import proteus
 from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 from proteus import Profiling
 import numpy as np
+from proteus import cmeshTools
+from proteus.csparsity import CSR_INDEX_DTYPE
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import pi
 import os
@@ -1123,12 +1125,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                 self.model.q[('phis')] = self.phisField
                  #Update velocity inside the particle
                 for ci_g_dof,ci_fg_dof in self.model.dirichletConditions[0].global2freeGlobal.items():
-                    if isinstance(self.model.u[0].femSpace,C0_AffineLinearOnSimplexWithNodalBasis):
-                        xyz = self.model.mesh.nodeArray[ci_g_dof,:]
-                    elif isinstance(self.model.u[0].femSpace,C0_AffineQuadraticOnSimplexWithNodalBasis):
-                        xyz = self.model.u[0].femSpace.dofMap.lagrangeNodesArray[ci_g_dof,:]
-                    else:
-                        assert False,"Use P1 or P2 for velocity"
+                    assert self.model.u[0].femSpace.isSpace('C0',('lagrange','bernstein'),cell='simplex'),"Use a continuous Lagrange or Bernstein simplex space for velocity"
+                    xyz = self.model.u[0].femSpace.dofCoordinates()[ci_g_dof,:]
                     distance_to_solid = 1e10
                     for i in range(self.nParticles):
                         if self.granular_sdf_Calc is not None:
@@ -1272,8 +1270,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[
-                    0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         # assume the same mesh for  all components for now
         self.mesh = self.u[0].femSpace.mesh
@@ -1958,7 +1955,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #
@@ -2122,17 +2119,17 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.timeIntegration.beta_bdf[
                 2] = self.timeIntegration.beta_bdf[1].copy()
             self.coefficients.sdInfo[(0, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(1, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 1)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.offset.append(self.offset[1])
             self.stride.append(self.stride[1])
             self.numericalFlux.isDOFBoundary[
@@ -2243,8 +2240,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         nSpace = self.nSpace_global
         self.nnz_1D = self.nnz // nSpace // nSpace
         self.numDOFs_1D = (len(self.rowptr) - 1) // nSpace
-        self.rowptr_1D = np.zeros(self.numDOFs_1D + 1, 'i')  # NOTE: rowptr_1D[0]=0
-        self.colind_1D = np.zeros(self.nnz_1D, 'i')
+        self.rowptr_1D = np.zeros(self.numDOFs_1D + 1, CSR_INDEX_DTYPE)  # NOTE: rowptr_1D[0]=0
+        self.colind_1D = np.zeros(self.nnz_1D, CSR_INDEX_DTYPE)
         # fill vector rowptr_scalar
         for i in range(1, self.rowptr_1D.size):
             self.rowptr_1D[i]=(self.rowptr_1D[i - 1] +
@@ -2468,7 +2465,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dc"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dc"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["ebq_global_phi_solid"] = self.coefficients.ebq_global_phi_s
@@ -2641,7 +2638,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["USE_SUPG"] = int(self.coefficients.USE_SUPG)
         argsDict["ARTIFICIAL_VISCOSITY"] = self.coefficients.ARTIFICIAL_VISCOSITY
         argsDict["cMax"] = self.coefficients.cMax
-        argsDict["cE"] = float(self.coefficients.cE)
+        argsDict["cE"] = self.coefficients.cE
         argsDict["MULTIPLY_EXTERNAL_FORCE_BY_DENSITY"] = self.coefficients.MULTIPLY_EXTERNAL_FORCE_BY_DENSITY
         argsDict["forcex"] = self.q[('force', 0)]
         argsDict["forcey"] = self.q[('force', 1)]
@@ -2654,7 +2651,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["dynamic_viscosity_as_function"] = self.q['dynamic_viscosity']
         argsDict["ebqe_density_as_function"] = self.ebqe['density']
         argsDict["ebqe_dynamic_viscosity_as_function"] = self.ebqe['dynamic_viscosity']
-        argsDict["order_polynomial"] = float(self.u[0].femSpace.order)
+        argsDict["order_polynomial"] = self.u[0].femSpace.order
         argsDict["isActiveDOF"] = self.isActiveDOF
         argsDict["USE_SBM"] = self.coefficients.use_sbm
         argsDict["ncDrag"] = self.ncDrag
@@ -2804,7 +2801,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dg"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dg"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["ebq_global_phi_solid"] = self.coefficients.ebq_global_phi_s

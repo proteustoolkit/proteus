@@ -334,6 +334,17 @@ print("proteus build: PUMI partitioners (%s): %s" % (
 # (or references into fixed-size element arrays) and compile-time element
 # shape. Keep -O2 the default; do not tune the legacy passes for flags.
 
+# Line tracing for the coverage leg only (PROTEUS_CYTHON_LINETRACE=1 in the environment of the build). BoundaryConditions,
+# mprans.BoundaryConditions and WaveTools are compiled by Cython from .py files, so coverage.py never sees their lines
+# execute and reports them at 0%. Built with linetrace and CYTHON_TRACE, and measured with the Cython.Coverage plugin
+# (pyproject.toml's coverage config is unchanged; the CI coverage leg adds the plugin), their lines count. Slower at run
+# time, so every other build -- and every other leg of CI -- leaves it off.
+if os.environ.get('PROTEUS_CYTHON_LINETRACE', '') not in ('', '0'):
+    PROTEUS_LINETRACE = dict(define_macros=[('CYTHON_TRACE', '1')],
+                             cython_directives={'linetrace': True})
+else:
+    PROTEUS_LINETRACE = {}
+
 EXTENSIONS_TO_BUILD = [
     Extension("MeshAdaptPUMI.MeshAdapt",
               sources = ['proteus/MeshAdaptPUMI/MeshAdapt.pyx', 'proteus/MeshAdaptPUMI/cMeshAdaptPUMI.cpp',
@@ -532,13 +543,15 @@ EXTENSIONS_TO_BUILD = [
               depends=['proteus/BoundaryConditions.pxd'],
               language='c++',
               extra_compile_args=PROTEUS_OPT+['-std=c++14'],
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("mprans.BoundaryConditions",
               sources=['proteus/mprans/BoundaryConditions.py'],
               depends=['proteus/mprans/BoundaryConditions.pxd'],
               language='c++',
               extra_compile_args=PROTEUS_OPT+['-std=c++14'],
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("mprans.MeshSmoothing",
               sources=['proteus/mprans/MeshSmoothing.pyx'],
               language='c++',
@@ -579,7 +592,8 @@ EXTENSIONS_TO_BUILD = [
               depends=['proteus/WaveTools.h'],
               language='c++',
               extra_compile_args=PROTEUS_OPT,
-              include_dirs=[numpy.get_include(),'proteus']),
+              include_dirs=[numpy.get_include(),'proteus'],
+              **PROTEUS_LINETRACE),
     Extension("fenton.Fenton",
               sources=['proteus/fenton/Fenton.pyx',
                        'proteus/fenton/Solve.cpp',
@@ -599,7 +613,7 @@ EXTENSIONS_TO_BUILD = [
         'cADR',
         sources=['proteus/ADR.cpp'],
         depends=['proteus/ADR.h', 'proteus/mprans/ArgumentsDict.h', 'proteus/pyarray.h', 'proteus/ModelFactory.h', 'proteus/CompKernel.h',
-                 'proteus/equivalent_polynomials.h', 'proteus/cutquadric.h', 'proteus/cutclip.h',
+                 'proteus/equivalent_polynomials.h', 'proteus/cutquadric.h', 'proteus/cutclip.h', 'proteus/Unfitted.h', 'proteus/UnfittedKernels.h',
                  'proteus/equivalent_polynomials_utils.h',
                  'proteus/equivalent_polynomials_coefficients.h',
                  'proteus/equivalent_polynomials_coefficients_quad.h'],
@@ -609,13 +623,20 @@ EXTENSIONS_TO_BUILD = [
     ),
     Extension('cutclip',
               sources=['proteus/cutclip.cpp'],
-              depends=['proteus/cutclip.h', 'proteus/equivalent_polynomials.h', 'proteus/ifemBasisCoefficients_wrapper.h'],
+              depends=['proteus/cutclip.h', 'proteus/equivalent_polynomials.h', 'proteus/Unfitted.h', 'proteus/UnfittedKernels.h'],
               include_dirs=get_pybind_include_dirs(),
               extra_compile_args=PROTEUS_OPT+['-std=c++20'],
               language='c++'),
     Extension('cutquadric',
               sources=['proteus/cutquadric.cpp'],
               depends=['proteus/cutquadric.h', 'proteus/cutclip.h'],
+              include_dirs=get_pybind_include_dirs(),
+              extra_compile_args=PROTEUS_OPT+['-std=c++20'],
+              language='c++'),
+    Extension('cutpair',
+              sources=['proteus/cutpair.cpp'],
+              depends=['proteus/cutpair.h', 'proteus/cutquadric.h', 'proteus/cutclip.h', 'proteus/equivalent_polynomials.h',
+                       'proteus/equivalent_polynomials_coefficients.h'],
               include_dirs=get_pybind_include_dirs(),
               extra_compile_args=PROTEUS_OPT+['-std=c++20'],
               language='c++'),
@@ -1136,51 +1157,11 @@ def setup_given_extensions(extensions):
     for ext in extensions:
         if getattr(ext, 'library_dirs', None):
             ext.library_dirs = list(dict.fromkeys(ext.library_dirs))
-    setup(name='proteus',
-          version='2.0.0.dev',
-          classifiers=[
-              'Development Status :: 4 - Beta',
-              'Environment :: Console',
-              'Environment :: Web Environment',
-              'Intended Audience :: End Users/Desktop',
-              'Intended Audience :: Developers',
-              'Intended Audience :: Science/Research',
-              'License :: OSI Approved :: MIT License',
-              'Programming Language :: Python :: 3',
-              'Programming Language :: Python :: 3 :: Only',
-              'Programming Language :: Python :: Implementation :: CPython',
-              'Topic :: Scientific/Engineering :: Mathematics',
-              'Topic :: Scientific/Engineering :: Physics',
-              'Operating System :: MacOS :: MacOS X',
-              'Operating System :: POSIX',
-          ],
-          description='Python tools for multiphysics modeling',
-          author='The Proteus Developers',
-          author_email='proteus-dev@googlegroups.com',
-          url='http://proteustoolkit.org',
-          python_requires='>=3.9',
-          install_requires=[
-              'numpy',
-              'scipy',
-              'mpi4py',
-              'petsc4py',
-              'h5py',
-              # The archive of record is a .ymf file written through
-              # ymf.archive (pyyaml only). The heavy front end,
-              # ymf[symbolic]/ymf[frontend] (sympy, strictyaml, pint), is
-              # deliberately not required. ymf is not on PyPI or
-              # conda-forge yet, so install it first (the environment
-              # files do, from git). Not a direct "ymf @ git+..."
-              # reference: pip re-fetches those even when ymf is
-              # installed, which fails on offline compute nodes and
-              # replaces an editable checkout. No version floor either:
-              # a --no-build-isolation build without setuptools_scm
-              # reports ymf as 0.0.0.
-              'ymf',
-          ],
-          extras_require={
-              'test': ['pytest', 'pytest-cov', 'pytest-xdist', 'pytest-forked', 'matplotlib'],
-          },
+    # Distribution metadata (name, description, readme, license, authors, URLs,
+    # classifiers, python floor, dependencies, extras, the `pro` console script) lives in pyproject.toml's
+    # [project] table. The version stays here: RELEASE.md names the three files
+    # that carry it, and [project] declares it dynamic.
+    setup(version='2.0.0rc1',
           packages = ['proteus',
                       'proteus.fenton',
                       'proteus.mprans',
@@ -1198,7 +1179,6 @@ def setup_given_extensions(extensions):
                       'proteus.MeshAdaptPUMI',
                       'proteus.cli',
           ],
-          entry_points={'console_scripts': ['pro = proteus.cli:main']},
           cmdclass = {'build_ext':custom_build_ext},
           ext_package='proteus',
           ext_modules=extensions,

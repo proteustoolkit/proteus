@@ -149,9 +149,9 @@ readTriangleMeshNodesAndElements(const char * filebase,
 bool 
 writeTriangleMeshNodesAndElements(const char * filebase,
 				  const int& indexBase,
-				  const int& nElements, const int& nNodes,
+				  const proteus_index_t& nElements, const proteus_index_t& nNodes,
 				  const double* nodeArray,
-				  const int* elementNodesArray,
+				  const proteus_index_t* elementNodesArray,
 				  const int* nodeMaterialTypes,
 				  const int* elementMaterialTypes)
 {
@@ -205,13 +205,13 @@ writeTriangleMeshNodesAndElements(const char * filebase,
     hasElementMarkers = 1;
   elementFile << nElements <<" 3 "<< hasElementMarkers <<" #number of elements, nodes per triangle has Markers "<<std::endl;
   elementFile <<"#element id nodes 0 1 2, [propid]  base= "<<indexBase<<std::endl;
-   for (int ie = 0; ie < nElements; ie++)
+   for (proteus_index_t ie = 0; ie < nElements; ie++)
     {
-      int ne = ie + indexBase;
+      proteus_index_t ne = ie + indexBase;
       elementFile << ne;
       for (int iv = 0; iv < simplexDim; iv++)
 	{
-	  int nv = elementNodesArray[simplexDim*ie + iv];
+	  proteus_index_t nv = elementNodesArray[simplexDim*ie + iv];
 	  nv += indexBase;
 	  elementFile <<" "<< nv; 
 	}//end iv
@@ -290,8 +290,8 @@ readTriangleElementBoundaries(const char * filebase,
 bool 
 writeTriangleElementBoundaryNodes(const char * filebase,
 				  const int& indexBase,
-				  const int& nElementBoundaries,
-				  const int* elementBoundaryNodesArray,
+				  const proteus_index_t& nElementBoundaries,
+				  const proteus_index_t* elementBoundaryNodesArray,
 				  const int* elementBoundaryMaterialTypes)
 {
   bool failed = false;
@@ -315,12 +315,12 @@ writeTriangleElementBoundaryNodes(const char * filebase,
   //
   elementBoundaryFile << nElementBoundaries <<" " << hasElementBoundaryMarkers <<" #number of elementBoundaries, has Markers"<<std::endl;
   elementBoundaryFile <<"#elementBoundary node0 node1 [id], base= "<<indexBase<<std::endl;
-  for (int ieb = 0; ieb < nElementBoundaries; ieb++)
+  for (proteus_index_t ieb = 0; ieb < nElementBoundaries; ieb++)
     {
-      int neb = ieb + indexBase;
-      int nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
+      proteus_index_t neb = ieb + indexBase;
+      proteus_index_t nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
       nn0 += indexBase;
-      int nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
+      proteus_index_t nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
       nn1 += indexBase;
       elementBoundaryFile << neb <<" " <<nn0 <<" "<< nn1;
       if (hasElementBoundaryMarkers > 0)
@@ -508,9 +508,9 @@ readTetgenElementBoundaries(const char * filebase,
 bool 
 writeTetgenMeshNodesAndElements(const char * filebase,
 				const int& indexBase,
-				const int& nElements, const int& nNodes,
+				const proteus_index_t& nElements, const proteus_index_t& nNodes,
 				const double* nodeArray,
-				const int* elementNodesArray,
+				const proteus_index_t* elementNodesArray,
 				const int* nodeMaterialTypes,
 				const int* elementMaterialTypes)
 {
@@ -565,13 +565,13 @@ writeTetgenMeshNodesAndElements(const char * filebase,
     hasElementMarkers = 1;
   elementFile << nElements <<" 4 "<< hasElementMarkers <<" #number of elements, nodes per simplex has Markers "<<std::endl;
   elementFile <<"#element id nodes 0 1 2 3, [propid]  base= "<<indexBase<<std::endl;
-  for (int ie = 0; ie < nElements; ie++)
+  for (proteus_index_t ie = 0; ie < nElements; ie++)
     {
-      int ne = ie + indexBase;
+      proteus_index_t ne = ie + indexBase;
       elementFile << ne;
       for (int iv = 0; iv < simplexDim; iv++)
 	{
-	  int nv = elementNodesArray[simplexDim*ie + iv];
+	  proteus_index_t nv = elementNodesArray[simplexDim*ie + iv];
 	  nv += indexBase;
 	  elementFile <<" "<< nv; 
 	}//end iv
@@ -587,11 +587,11 @@ writeTetgenMeshNodesAndElements(const char * filebase,
 bool 
 writeTetgenElementBoundaryNodes(const char * filebase,
 				const int& indexBase,
-				const int& nElementBoundariesToWrite,
-				const int* elementBoundaryNodesArray,
+				const proteus_index_t& nElementBoundariesToWrite,
+				const proteus_index_t* elementBoundaryNodesArray,
 				const int* elementBoundaryMaterialTypes,
 				const bool& writeExteriorElementBoundariesOnly,
-				const int* exteriorElementBoundariesArray)
+				const proteus_index_t* exteriorElementBoundariesArray)
 {
   bool failed = false;
   const int elementBoundaryDim=3;
@@ -623,15 +623,15 @@ writeTetgenElementBoundaryNodes(const char * filebase,
   if (writeExteriorElementBoundariesOnly)
     {
       assert(exteriorElementBoundariesArray);
-      for (int iebe = 0; iebe < nElementBoundariesToWrite; iebe++)
+      for (proteus_index_t iebe = 0; iebe < nElementBoundariesToWrite; iebe++)
 	{
-	  int niebe = iebe + indexBase; //number output by exterior boundary number
-	  int ieb = exteriorElementBoundariesArray[iebe];
-	  int nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
+	  proteus_index_t niebe = iebe + indexBase; //number output by exterior boundary number
+	  proteus_index_t ieb = exteriorElementBoundariesArray[iebe];
+	  proteus_index_t nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
 	  nn0 += indexBase;
-	  int nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
+	  proteus_index_t nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
 	  nn1 += indexBase;
-	  int nn2 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 2];
+	  proteus_index_t nn2 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 2];
 	  nn2 += indexBase;
 	  
 	  elementBoundaryFile << niebe <<" " <<nn0 <<" "<< nn1 <<" "<< nn2;
@@ -642,14 +642,14 @@ writeTetgenElementBoundaryNodes(const char * filebase,
     }
   else
     {
-      for (int ieb = 0; ieb < nElementBoundariesToWrite; ieb++)
+      for (proteus_index_t ieb = 0; ieb < nElementBoundariesToWrite; ieb++)
 	{
-	  int neb = ieb + indexBase;
-	  int nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
+	  proteus_index_t neb = ieb + indexBase;
+	  proteus_index_t nn0 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 0];
 	  nn0 += indexBase;
-	  int nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
+	  proteus_index_t nn1 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 1];
 	  nn1 += indexBase;
-	  int nn2 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 2];
+	  proteus_index_t nn2 = elementBoundaryNodesArray[elementBoundaryDim*ieb + 2];
 	  nn2 += indexBase;
 	  elementBoundaryFile << neb <<" " <<nn0 <<" "<< nn1 <<" "<< nn2;
 	  if (hasElementBoundaryMarkers > 0)
@@ -669,9 +669,9 @@ writeTetgenElementBoundaryNodes(const char * filebase,
 bool
 write3dmMeshNodesAndElements(const char * filebase,
 			     const int& indexBase,
-			     const int& nElements, const int& nNodes,
+			     const proteus_index_t& nElements, const proteus_index_t& nNodes,
 			     const double* nodeArray,
-			     const int* elementNodesArray,
+			     const proteus_index_t* elementNodesArray,
 			     const int* elementMaterialTypes)
 {
 
@@ -719,9 +719,9 @@ write3dmMeshNodesAndElements(const char * filebase,
 bool
 write2dmMeshNodesAndElements(const char * filebase,
 			     const int& indexBase,
-			     const int& nElements, const int& nNodes,
+			     const proteus_index_t& nElements, const proteus_index_t& nNodes,
 			     const double* nodeArray,
-			     const int* elementNodesArray,
+			     const proteus_index_t* elementNodesArray,
 			     const int* elementMaterialTypes)
 {
 

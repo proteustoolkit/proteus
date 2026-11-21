@@ -2,6 +2,7 @@
 Optimized  Two-Phase Reynolds Averaged Navier-Stokes
 """
 import math
+import warnings
 import proteus
 from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 import sys
@@ -12,10 +13,12 @@ from proteus import LinearAlgebraTools as LAT
 from proteus.Comm import (globalSum,
                           globalMax)
 import numpy
+from proteus import cmeshTools
 from proteus import *
 from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
 from . import cArgumentsDict
+from proteus.csparsity import CSR_INDEX_DTYPE
 import proteus.NumericalFlux
 import proteus.Profiling
 import proteus.ShockCapturing
@@ -183,6 +186,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     but in some instances it may produced better preconditioning
     results than the full SGE approach.
     """
+    # RANS2P's kernels do not read epsFact_solid (RANS2P_IB's do)
+    _epsFact_solid_is_used = False
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_2D_Evaluate
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_3D_Evaluate
     from proteus.ctransportCoefficients import TwophaseNavierStokes_ST_LS_SO_2D_Evaluate_sd
@@ -405,6 +410,16 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.eb_adjoint_sigma = eb_adjoint_sigma
         self.eb_penalty_constant = eb_penalty_constant
         self.movingDomain = movingDomain
+        if epsFact_solid is not None and not self._epsFact_solid_is_used:
+            # in 1.x epsFact_solid was the smoothing width of the porous and
+            # relaxation zones, which is epsFact_porous now; the RANS2P kernels
+            # never read it, so an old deck's smoothing was silently dropped
+            # (and its zones got the default width, ones)
+            msg = ("RANS2P.Coefficients(epsFact_solid=...) is ignored by RANS2P. In 1.x it was the "
+                   "smoothing width of the porous and relaxation zones; that is now epsFact_porous "
+                   "(and domain.epsFact_porous). Pass epsFact_porous=%s." % (repr(epsFact_solid),))
+            Profiling.logEvent("WARNING: " + msg, level=0)
+            warnings.warn(msg, UserWarning, stacklevel=2)
         self.epsFact_solid = epsFact_solid
         self.epsFact_porous = epsFact_porous
         self.useConstant_he = useConstant_he
@@ -1159,7 +1174,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.phiTrialIsTrial = True
         self.u = uDict
         self.Hess = False
-        if isinstance(self.u[0].femSpace, C0_AffineQuadraticOnSimplexWithNodalBasis):
+        if self.u[0].femSpace.hasBasisHessians():
             self.Hess = True
         self.ua = {}  # analytical solutions
         self.phi = phiDict
@@ -1573,7 +1588,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = numpy.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = numpy.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #
@@ -1705,18 +1720,18 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.u[3].name="w"
             self.timeIntegration.m_tmp[3] = self.timeIntegration.m_tmp[2].copy()
             self.timeIntegration.beta_bdf[3] = self.timeIntegration.beta_bdf[2].copy()
-            self.coefficients.sdInfo[(1, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(2, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 0)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 1)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 2)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
-            self.coefficients.sdInfo[(3, 3)] = (numpy.array([0, 1, 2], dtype='i'),
-                                                numpy.array([0, 1], dtype='i'))
+            self.coefficients.sdInfo[(1, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(2, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 0)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 1)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 2)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
+            self.coefficients.sdInfo[(3, 3)] = (numpy.array([0, 1, 2], dtype=CSR_INDEX_DTYPE),
+                                                numpy.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.offset.append(self.offset[2])
             self.stride.append(self.stride[2])
             self.numericalFlux.isDOFBoundary[3] = self.numericalFlux.isDOFBoundary[2].copy()
@@ -1768,6 +1783,25 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 if self.coefficients.force_z:
                     self.q[('force', 2)][eN,k] = self.coefficients.force_z(self.q['x'][eN,k])
 
+    def _warnParticleSurfaceDegree(self):
+        """Once per model: say that the particle's surface weights are one polynomial degree short for a quadratic velocity.
+
+        With ``useExact`` the solid particle's surface weight D is the moment fit of order nP = 3 (``gf_s`` in RANS2P.h):
+        it reproduces int_Gamma N_a N_b for integrands up to degree 3. P1 x P1 (degree 2) and the pressure x velocity
+        blocks of P1/P2 (degree 3) are exact once the element rule is exact to degree 5 and 6; the velocity x velocity
+        block of a P2 velocity (degree 4) is not exact at any quadrature degree: the surface integral carries an error of
+        8e-2 .. 2e-1 of its largest entry (measured on the cut cells of ``test_gf_surface_degree.py``).
+        """
+        if getattr(self, '_warnedParticleSurfaceDegree', False):
+            return
+        self._warnedParticleSurfaceDegree = True
+        c = self.coefficients
+        if getattr(c, 'useExact', False) and getattr(c, 'nParticles', 0) > 0 and self.nDOF_trial_element[1] > self.nSpace_global + 1:
+            logEvent("WARNING RANS2P: useExact with solid particles and a quadratic velocity space: the particle's surface "
+                     "weights (equivalent polynomials of order 3) are not exact for the degree-4 velocity x velocity "
+                     "surface integrals (error 8e-2..2e-1 of the block's largest entry, any quadrature degree); "
+                     "see test/test_gf_surface_degree.py", level=0)
+
     def getResidual(self, u, r):
         """
         Calculate the element residuals and add in to the global residual
@@ -1780,6 +1814,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         """
         assert(np.all(np.isfinite(u)))
         assert(np.all(np.isfinite(r)))
+        self._warnParticleSurfaceDegree()
         # Load the unknowns into the finite element dof
         self.timeIntegration.calculateCoefs()
         self.timeIntegration.calculateU(u)
@@ -1856,10 +1891,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                             if self.MOVING_DOMAIN == 1.0:
                                 self.u[cj].dof[dofN] += self.mesh.nodeVelocityArray[dofN, cj - 1]
         argsDict = cArgumentsDict.ArgumentsDict()
-        argsDict["NONCONSERVATIVE_FORM"] = float(self.coefficients.NONCONSERVATIVE_FORM)
-        argsDict["MOMENTUM_SGE"] = float(self.coefficients.MOMENTUM_SGE)
-        argsDict["PRESSURE_SGE"] = float(self.coefficients.PRESSURE_SGE)
-        argsDict["VELOCITY_SGE"] = float(self.coefficients.VELOCITY_SGE)
+        argsDict["NONCONSERVATIVE_FORM"] = self.coefficients.NONCONSERVATIVE_FORM
+        argsDict["MOMENTUM_SGE"] = self.coefficients.MOMENTUM_SGE
+        argsDict["PRESSURE_SGE"] = self.coefficients.PRESSURE_SGE
+        argsDict["VELOCITY_SGE"] = self.coefficients.VELOCITY_SGE
         argsDict["PRESSURE_PROJECTION_STABILIZATION"] = self.coefficients.PRESSURE_PROJECTION_STABILIZATION
         argsDict["numerical_viscosity"] = self.coefficients.numerical_viscosity
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
@@ -1899,7 +1934,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["hFactor"] = self.stabilization.hFactor
         argsDict["nElements_global"] = self.mesh.nElements_global
         argsDict["nElementBoundaries_owned"] = int(self.mesh.nElementBoundaries_owned)
-        argsDict["useRBLES"] = float(self.coefficients.useRBLES)
+        argsDict["useRBLES"] = self.coefficients.useRBLES
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["epsFact_rho"] = self.coefficients.epsFact_density
@@ -1913,7 +1948,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dc"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dc"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["phi_solid"] = self.coefficients.q_phi_solid
@@ -2222,10 +2257,10 @@ velocity_I.append({:21.16e})
             self.csrColumnOffsets_eb[(3, 2)] = self.csrColumnOffsets[(0, 2)]
             self.csrColumnOffsets_eb[(3, 3)] = self.csrColumnOffsets[(0, 2)]
         argsDict = cArgumentsDict.ArgumentsDict()
-        argsDict["NONCONSERVATIVE_FORM"] = float(self.coefficients.NONCONSERVATIVE_FORM)
-        argsDict["MOMENTUM_SGE"] = float(self.coefficients.MOMENTUM_SGE)
-        argsDict["PRESSURE_SGE"] = float(self.coefficients.PRESSURE_SGE)
-        argsDict["VELOCITY_SGE"] = float(self.coefficients.VELOCITY_SGE)
+        argsDict["NONCONSERVATIVE_FORM"] = self.coefficients.NONCONSERVATIVE_FORM
+        argsDict["MOMENTUM_SGE"] = self.coefficients.MOMENTUM_SGE
+        argsDict["PRESSURE_SGE"] = self.coefficients.PRESSURE_SGE
+        argsDict["VELOCITY_SGE"] = self.coefficients.VELOCITY_SGE
         argsDict["PRESSURE_PROJECTION_STABILIZATION"] = self.coefficients.PRESSURE_PROJECTION_STABILIZATION
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
@@ -2263,7 +2298,7 @@ velocity_I.append({:21.16e})
         argsDict["nodeDiametersArray"] = self.mesh.nodeDiametersArray
         argsDict["hFactor"] = self.stabilization.hFactor
         argsDict["nElements_global"] = self.mesh.nElements_global
-        argsDict["useRBLES"] = float(self.coefficients.useRBLES)
+        argsDict["useRBLES"] = self.coefficients.useRBLES
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["epsFact_rho"] = self.coefficients.epsFact_density
@@ -2277,7 +2312,7 @@ velocity_I.append({:21.16e})
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
         argsDict["Cd_sge"] = self.Cd_sge
-        argsDict["C_dg"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["C_dg"] = self.shockCapturing.shockCapturingFactor
         argsDict["C_b"] = self.numericalFlux.penalty_constant
         argsDict["eps_solid"] = self.coefficients.epsFact_solid
         argsDict["phi_solid"] = self.coefficients.q_phi_solid

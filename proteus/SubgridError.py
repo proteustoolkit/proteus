@@ -36,6 +36,13 @@ class SGE_base(object):
         """Restore what ``state()`` returned; see TimeIntegration.TI_base.state."""
         pass
 
+    def _diagonalDiffusion(self,a):
+        """True if the diffusion tensor ``a`` (q[('a',ci,ci)]) holds only its diagonal, nd entries
+        per quadrature point: the layout the *_sd kernels index. Coefficients that use sparse
+        diffusion without declaring a diagonal layout (Stokes) get Transport's full layout, nd*nd
+        entries per point, which is the dense one."""
+        return self.coefficients.sd and a.shape[-1] == self.nd and a.size == a.shape[0]*a.shape[1]*self.nd
+
     def initializeElementQuadrature(self,mesh,t,cq):
         self.mesh=mesh
         self.tau=[]
@@ -812,7 +819,7 @@ class StokesStabilization_1(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
     def calculateSubgridError(self,q):
-        if self.coefficients.sd:
+        if self._diagonalDiffusion(q[('a',1,1)]):
             csubgridError.calculateSubgridErrorStokes2D_1_sd(self.mesh.elementDiametersArray,
                                                              q[('u',1)],
                                                              q[('u',2)],
@@ -884,7 +891,7 @@ class StokesASGS_velocity(SGE_base):
             coefficients.stencil[3].add(2)
     def calculateSubgridError(self,q):
         if self.nd == 2:
-            if self.coefficients.sd:
+            if self._diagonalDiffusion(q[('a',1,1)]):
                 csubgridError.calculateSubgridErrorStokes2D_GLS_velocity_sd(self.mesh.elementDiametersArray,
                                                                             q[('a',1,1)],
                                                                             q[('pdeResidual',1)],
@@ -915,7 +922,7 @@ class StokesASGS_velocity(SGE_base):
                                                                          q[('dsubgridError',2,0)],
                                                                          q[('dsubgridError',2,2)])
         elif self.nd == 3:
-            if self.coefficients.sd:
+            if self._diagonalDiffusion(q[('a',1,1)]):
                 csubgridError.calculateSubgridErrorStokes3D_GLS_velocity_sd(self.mesh.elementDiametersArray,
                                                                             q[('a',1,1)],
                                                                             q[('pdeResidual',1)],
@@ -1007,7 +1014,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
             for cj in cjDict:
                 cq[('dH_sge',ci,cj)]=cq[('dH',ci,cj)]
         if self.lag:
-            if self.coefficients.sd:
+            if self._diagonalDiffusion(cq[('a',1,1)]):
                 csubgridError.calculateSubgridErrorNavierStokes2D_GLS_tau_sd(self.hFactor,
                                                                              self.mesh.elementDiametersArray,
                                                                              cq[('dmt',1,1)],
@@ -1050,7 +1057,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
             else:
                 v = q[('f',0)]
             if oldTau:
-                if self.coefficients.sd:
+                if self._diagonalDiffusion(q[('a',1,1)]):
                     csubgridError.calculateSubgridErrorNavierStokes2D_GLS_tau_sd(self.hFactor,
                                                                                  self.mesh.elementDiametersArray,
                                                                                  q[('dmt',1,1)],
@@ -1071,7 +1078,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
                                                                               self.tau[1],
                                                                               q[('cfl',0)])
             else:
-                if self.coefficients.sd:
+                if self._diagonalDiffusion(q[('a',1,1)]):
                     csubgridError.calculateSubgridErrorNavierStokes2D_generic_tau_sd(q['inverse(J)'],
                                                                                      q[('dmt',1,1)],
                                                                                      q[('dm',1,1)],
@@ -1127,7 +1134,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
             else:
                 v = q[('f',0)]
             if oldTau:
-                if self.coefficients.sd:
+                if self._diagonalDiffusion(q[('a',1,1)]):
                     csubgridError.calculateSubgridErrorNavierStokes2D_GLS_tau_sd(self.hFactor,
                                                                                  self.mesh.elementDiametersArray,
                                                                                  q[('dmt',1,1)],
@@ -1148,7 +1155,7 @@ class NavierStokesASGS_velocity_pressure(SGE_base):
                                                                               self.tau[1],
                                                                               q[('cfl',0)])
             else:
-                if self.coefficients.sd:
+                if self._diagonalDiffusion(q[('a',1,1)]):
                     csubgridError.calculateSubgridErrorNavierStokes2D_generic_tau_sd(q['inverse(J)'],
                                                                                      q[('dmt',1,1)],
                                                                                      q[('dm',1,1)],
@@ -1244,14 +1251,14 @@ class NavierStokesASGS_velocity_pressure_opt(SGE_base):
     def calculateSubgridError(self,q):
         if self.nSteps < self.delayLagSteps:
             self.v_last = q[('f',0)]
-            cq[('df_sge',1,1)]=q[('f',0)]
-            cq[('df_sge',2,2)]=q[('f',0)]
-            cq[('df_sge',3,3)]=q[('f',0)]
+            q[('df_sge',1,1)]=q[('f',0)]
+            q[('df_sge',2,2)]=q[('f',0)]
+            q[('df_sge',3,3)]=q[('f',0)]
         else:
             self.v_last = q[('velocity',0)]
-            cq[('df_sge',1,1)]=q[('velocity',0)]
-            cq[('df_sge',2,2)]=q[('velocity',0)]
-            cq[('df_sge',3,3)]=q[('velocity',0)]
+            q[('df_sge',1,1)]=q[('velocity',0)]
+            q[('df_sge',2,2)]=q[('velocity',0)]
+            q[('df_sge',3,3)]=q[('velocity',0)]
 
 class NavierStokesASGS_velocity_pressure_optV2(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,delayLagSteps=0,hFactor=1.0,noPressureStabilization=False):

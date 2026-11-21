@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from petsc4py import PETSc
 from proteus.Profiling import logEvent
@@ -46,6 +47,34 @@ default_kappa_turbulence = 1e-3
 default_dissipation_turbulence = 1e-3
 
 
+# 1.x option names that moved (see the migration table in the TwoPhaseFlow documentation)
+RENAMED_1X_OPTIONS = {
+    'densityA': 'SystemPhysics.rho_0',
+    'densityB': 'SystemPhysics.rho_1',
+    'kinematicViscosityA': 'SystemPhysics.nu_0',
+    'kinematicViscosityB': 'SystemPhysics.nu_1',
+    'useSuperLu': 'SystemNumerics.useSuperlu',
+    'cfl': 'SystemNumerics.cfl',
+    'final_time': 'outputStepping.final_time',
+    'dt_init': 'outputStepping.dt_init',
+    'dt_output': 'outputStepping.dt_output',
+}
+
+# the 1.x names that cannot be anything else in 2.0: refused even by the classes that are not frozen
+# (SystemPhysics, SystemNumerics), where the assignment used to create an attribute nobody reads
+OBSOLETE_1X_OPTIONS = ('densityA', 'densityB', 'kinematicViscosityA', 'kinematicViscosityB', 'useSuperLu')
+
+MIGRATION_HINT_1X = (
+    "The 1.x TwoPhaseFlowProblem(ns_model=, ls_model=, nd=, cfl=, outputStepping=, ...) "
+    "constructor is gone. In 2.0: problem = TwoPhaseFlowProblem(); problem.domain = domain; "
+    "physics = problem.SystemPhysics; physics.setDefaults(); "
+    "physics.useDefaultModels(flowModel=0 (RANS2P) or 1 (RANS3PF), interfaceModel=0 (VOF/NCLS/RDLS/MCorr) or 1 (CLSVOF)); "
+    "cfl is problem.SystemNumerics.cfl; final_time, dt_init and dt_output are problem.outputStepping.<name>; "
+    "rho_0, rho_1, nu_0, nu_1, surf_tension_coeff, gravity are on problem.SystemPhysics; the models are "
+    "problem.SystemPhysics.modelDict['flow'/'vof'/'ncls'/'rdls'/'mcorr'] (was params.Models.rans2p, ...). "
+    "See the air-water-vv migration table (PROTEUS_HANDOFF.md, proteus-2.0.x-update branch).")
+
+
 class ParametersHolder:
     """
     """
@@ -55,6 +84,14 @@ class ParametersHolder:
         # default options
         self.model_list = []
         self.physical = self._Problem.SystemPhysics
+
+    def __getattr__(self, name):
+        # only reached for names that do not exist
+        if name == 'Models':
+            raise AttributeError("Parameters.Models (1.x: Models.rans2p, .vof, .ncls, .rdls, .mcorr) is "
+                                 "gone: use SystemPhysics.modelDict['flow'], ['vof'], ['ncls'], ['rdls'], "
+                                 "['mcorr']. " + MIGRATION_HINT_1X)
+        raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
 
     def initializeParameters(self):
         logEvent('----------')
@@ -131,8 +168,20 @@ class FreezableClass(object):
         self.__setattr__(key, val)
 
     def __setattr__(self, key, val):
-        if self.__frozen and not hasattr(self, key):
-            raise AttributeError("{key} is not an option for class {name}".format(key=key, name=self.__class__.__name__))
+        if not hasattr(self, key):
+            moved = RENAMED_1X_OPTIONS.get(key)
+            hint = (" (the 1.x name; it is now %s)" % moved) if moved else ""
+            if self.__frozen:
+                raise AttributeError("{key} is not an option for class {name}{hint}".format(
+                    key=key, name=self.__class__.__name__, hint=hint))
+            if key in OBSOLETE_1X_OPTIONS:
+                # not frozen (SystemPhysics, SystemNumerics): the assignment creates an attribute nobody
+                # reads, as it always did (proteus's own test/TwoPhaseFlow/fillingTank.py sets densityA
+                # and its pinned results rest on the value being ignored): say so, keep going
+                msg = ("{key} is not an option for class {name}{hint}: the value is ignored".format(
+                    key=key, name=self.__class__.__name__, hint=hint))
+                logEvent("WARNING: " + msg, level=0)
+                warnings.warn(msg, UserWarning, stacklevel=2)
         object.__setattr__(self, key, val)
 
     def _freeze(self):

@@ -1,6 +1,8 @@
 import proteus
 from proteus import Profiling
 import numpy as np
+from proteus import cmeshTools
+from proteus.csparsity import CSR_INDEX_DTYPE
 import math
 from proteus.Transport import OneLevelTransport
 import os
@@ -795,8 +797,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[
-                    0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         # Simplicial Mesh
         # assume the same mesh for  all components for now
         self.mesh = self.u[0].femSpace.mesh
@@ -1408,7 +1409,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                     I = self.mesh.elementNodesArray[eN_global, i]
                     self.internalNodes -= set([I])
         self.nNodes_internal = len(self.internalNodes)
-        self.internalNodesArray = np.zeros((self.nNodes_internal,), 'i')
+        self.internalNodesArray = np.zeros((self.nNodes_internal,), cmeshTools.INDEX_DTYPE)
         for nI, n in enumerate(self.internalNodes):
             self.internalNodesArray[nI] = n
         #
@@ -1548,17 +1549,17 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.timeIntegration.beta_bdf[
                 2] = self.timeIntegration.beta_bdf[1].copy()
             self.coefficients.sdInfo[(0, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(1, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 0)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 1)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.coefficients.sdInfo[(2, 2)] = (np.array(
-                [0, 1, 2], dtype='i'), np.array([0, 1], dtype='i'))
+                [0, 1, 2], dtype=CSR_INDEX_DTYPE), np.array([0, 1], dtype=CSR_INDEX_DTYPE))
             self.offset.append(self.offset[1])
             self.stride.append(self.stride[1])
             self.numericalFlux.isDOFBoundary[
@@ -1735,7 +1736,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nu_0"] = self.coefficients.nu_0
         argsDict["rho_1"] = self.coefficients.rho_1
         argsDict["nu_1"] = self.coefficients.nu_1
-        argsDict["rho_s"] = float(self.coefficients.rho_s)
+        argsDict["rho_s"] = self.coefficients.rho_s
         argsDict["smagorinskyConstant"] = self.coefficients.smagorinskyConstant
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge
@@ -1762,7 +1763,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["v_dof"] = self.u[1].dof
         argsDict["w_dof"] = self.u[2].dof
         argsDict["g"] = self.coefficients.g
-        argsDict["useVF"] = float(self.coefficients.useVF)
+        argsDict["useVF"] = self.coefficients.useVF
         argsDict["vf"] = self.coefficients.q_vf
         argsDict["phi"] = self.coefficients.q_phi
         argsDict["normal_phi"] = self.coefficients.q_n
@@ -1961,7 +1962,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["nu_0"] = self.coefficients.nu_0
         argsDict["rho_1"] = self.coefficients.rho_1
         argsDict["nu_1"] = self.coefficients.nu_1
-        argsDict["rho_s"] = float(self.coefficients.rho_s)
+        argsDict["rho_s"] = self.coefficients.rho_s
         argsDict["smagorinskyConstant"] = self.coefficients.smagorinskyConstant
         argsDict["turbulenceClosureModel"] = self.coefficients.turbulenceClosureModel
         argsDict["Ct_sge"] = self.Ct_sge

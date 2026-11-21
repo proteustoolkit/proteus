@@ -524,6 +524,25 @@ class BoundaryPressure(AV_base):
             logEvent(repr(P))
         self.historyP.append(copy.deepcopy(self.levelPlist))
 
+def _writeHistory(av, files):
+    """Write the entries the coefficients' mass history gained since the last call.
+
+    The coefficients start the history in attachModels, which runs after the
+    auxiliary variables' calculate_init and calculate_initial_solution: until
+    then there is nothing to write, and the first call after it writes the
+    initial entry as well as the first step's."""
+    if not av.comm.isMaster():
+        return
+    c = av.model.levelModelList[-1].coefficients
+    if not hasattr(c, 'timeArray'):
+        return
+    n = getattr(av, 'nWritten', 0)
+    for f, name in files:
+        for value in getattr(c, name)[n:]:
+            f.write("%21.16e\n" % (value,))
+        f.flush()
+    av.nWritten = len(c.timeArray)
+
 class ConservationHistoryMC(AV_base):
     """A simple class for storing the time history of things related conservation in conservative level set methods"""
     def __init__(self,filename):
@@ -540,15 +559,15 @@ class ConservationHistoryMC(AV_base):
         self.massErrorLSFile = open(self.filename+"massErrorLS",'w')
         self.fluxFile = open(self.filename+"flux",'w')
         self.timeFile = open(self.filename+"time",'w')
+        #NumericalSolution keeps what attachModel returns
+        return self
     def calculate(self):
-        if self.comm.isMaster():
-            c = self.model.levelModelList[-1].coefficients
-            self.massVOFFile.write("%21.16e\n" % (c.vofGlobalMassArray[-1],))
-            self.massLSFile.write("%21.16e\n" % (c.lsGlobalMassArray[-1],))
-            self.massErrorVOFFile.write("%21.16e\n" % (c.vofGlobalMassErrorArray[-1],))
-            self.massErrorLSFile.write("%21.16e\n" % (c.lsGlobalMassErrorArray[-1],))
-            self.fluxFile.write("%21.16e\n" % (c.fluxArray[-1],))
-            self.timeFile.write("%21.16e\n" % (c.timeArray[-1],))
+        _writeHistory(self, [(self.massVOFFile, 'vofGlobalMassArray'),
+                             (self.massLSFile, 'lsGlobalMassArray'),
+                             (self.massErrorVOFFile, 'vofGlobalMassErrorArray'),
+                             (self.massErrorLSFile, 'lsGlobalMassErrorArray'),
+                             (self.fluxFile, 'fluxArray'),
+                             (self.timeFile, 'timeArray')])
 
 class ConservationHistoryLS(AV_base):
     """A simple class for storing the time history of things related conservation in non-conservative level set methods"""
@@ -564,13 +583,13 @@ class ConservationHistoryLS(AV_base):
         self.massErrorFile = open(self.filename+"massErrorLS",'w')
         self.fluxFile = open(self.filename+"flux",'w')
         self.timeFile = open(self.filename+"time",'w')
+        #NumericalSolution keeps what attachModel returns
+        return self
     def calculate(self):
-        if self.comm.isMaster():
-            c = self.model.levelModelList[-1].coefficients
-            self.massFile.write("%21.16e\n" % c.lsGlobalMassArray[-1])
-            self.massErrorFile.write("%21.16e\n" % c.lsGlobalMassErrorArray[-1])
-            self.fluxFile.write("%21.16e\n" % c.fluxArray[-1])
-            self.timeFile.write("%21.16e\n" % c.timeArray[-1])
+        _writeHistory(self, [(self.massFile, 'lsGlobalMassArray'),
+                             (self.massErrorFile, 'lsGlobalMassErrorArray'),
+                             (self.fluxFile, 'fluxArray'),
+                             (self.timeFile, 'timeArray')])
 
 
 class VelocityNormOverRegion(AV_base):

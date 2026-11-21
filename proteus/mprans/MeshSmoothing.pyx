@@ -8,11 +8,15 @@ from libc.math cimport sin, cos, acos, exp, sqrt, fabs, M_PI, abs
 from mpi4py import MPI
 from proteus.Profiling import logEvent
 
+# dtype and MPI datatype of proteus_index_t (index_type.h); counts and displacements stay int, as MPI requires
+INDEX_DTYPE = np.dtype("i%d" % sizeof(proteus_index_t))
+MPI_INDEX = MPI.INT if sizeof(proteus_index_t) == 4 else MPI.INT64_T
+
 def smoothNodesLaplace(double[:,:] nodeArray_,
-                       int[:] nodeStarOffsets,
-                       int[:] nodeStarArray,
+                       proteus_index_t[:] nodeStarOffsets,
+                       proteus_index_t[:] nodeStarArray,
                        int[:] nodeMaterialTypes,
-                       int nNodes_owned,
+                       proteus_index_t nNodes_owned,
                        int nd,
                        bool simultaneous=False,
                        bool smoothBoundaries=True,
@@ -62,13 +66,13 @@ def smoothNodesLaplace(double[:,:] nodeArray_,
                          alpha=alpha)
 
 def smoothNodesCentroid(double[:,:] nodeArray_,
-                        int[:] nodeElementOffsets,
-                        int[:] nodeElementsArray,
+                        proteus_index_t[:] nodeElementOffsets,
+                        proteus_index_t[:] nodeElementsArray,
                         int[:] nodeMaterialTypes,
                         double[:,:] elementBarycentersArray,
                         double[:] elementVolumesArray,
-                        int[:,:] elementNodesArray,
-                        int nNodes_owned,
+                        proteus_index_t[:,:] elementNodesArray,
+                        proteus_index_t nNodes_owned,
                         bool simultaneous=True,
                         bool smoothBoundaries=True,
                         int[:] fixedNodesBoolArray=None,
@@ -127,7 +131,7 @@ def smoothNodesCentroid(double[:,:] nodeArray_,
 def updateDilationElements(double[:] elementDilationArray_,
                            double[:] elementVolumeArray,
                            double[:] elementVolumeTargetArray,
-                           int nElements):
+                           proteus_index_t nElements):
     cyUpdateDilationElements(elementDilationArray_=elementDilationArray_,
                              elementVolumeArray=elementVolumeArray,
                              elementVolumeTargetArray=elementVolumeTargetArray,
@@ -135,7 +139,7 @@ def updateDilationElements(double[:] elementDilationArray_,
 
 def getDilationElements(double[:] elementVolumeArray,
                         double[:] elementVolumeTargetArray):
-    cdef int nElements = len(elementVolumeArray)
+    cdef proteus_index_t nElements = len(elementVolumeArray)
     elementDilationArray_ = np.zeros(nElements)
     cyUpdateDilationElements(elementDilationArray_=elementDilationArray_,
                              elementVolumeArray=elementVolumeArray,
@@ -147,7 +151,7 @@ def updateDistortionElements(double[:] elementDistortionArray_,
                              double[:,:,:,:] J_array,
                              double[:,:] detJ_array,
                              int nd,
-                             int nElements):
+                             proteus_index_t nElements):
     cyUpdateDistortionElements(elementDistortionArray_=elementDistortionArray_,
                                J_array=J_array,
                                detJ_array=detJ_array,
@@ -168,16 +172,16 @@ def getDistortionElements(double[:,:,:,:] J_array,
 
 def updateInverseMeanRatioTriangleElements(double[:] IMRElementsArray_,
                                            double[:,:] nodeArray,
-                                           int[:,:] elementNodesArray,
-                                           int nElements):
+                                           proteus_index_t[:,:] elementNodesArray,
+                                           proteus_index_t nElements):
     cyUpdateInverseMeanRatioTriangleElements(IMRElementsArray_=IMRElementsArray_,
                                              nodeArray=nodeArray,
                                              elementNodesArray=elementNodesArray,
                                              nElements=nElements)
 
 def getInverseMeanRatioTriangleElements(double[:,:] nodeArray,
-                                        int[:,:] elementNodesArray):
-    cdef int nElements = len(elementNodesArray)
+                                        proteus_index_t[:,:] elementNodesArray):
+    cdef proteus_index_t nElements = len(elementNodesArray)
     IMRElementsArray_ = np.zeros(nElements)
     cyUpdateInverseMeanRatioTriangleElements(IMRElementsArray_=IMRElementsArray_,
                                              nodeArray=nodeArray,
@@ -187,11 +191,11 @@ def getInverseMeanRatioTriangleElements(double[:,:] nodeArray,
 
 def updateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
                                         double[:,:] nodeArray,
-                                        int[:,:] elementNodesArray,
-                                        int[:] nodeElementOffsets,
-                                        int[:] nodeElementsArray,
-                                        int nNodes,
-                                        int nElements,
+                                        proteus_index_t[:,:] elementNodesArray,
+                                        proteus_index_t[:] nodeElementOffsets,
+                                        proteus_index_t[:] nodeElementsArray,
+                                        proteus_index_t nNodes,
+                                        proteus_index_t nElements,
                                         bool el_average=False):
     cyUpdateInverseMeanRatioTriangleNodes(IMRNodesArray_=IMRNodesArray_,
                                           nodeArray=nodeArray,
@@ -203,12 +207,12 @@ def updateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
                                           nElements=nElements)
 
 def getInverseMeanRatioTriangleNodes(double[:,:] nodeArray,
-                                     int[:,:] elementNodesArray,
-                                     int[:] nodeElementOffsets,
-                                     int[:] nodeElementsArray,
+                                     proteus_index_t[:,:] elementNodesArray,
+                                     proteus_index_t[:] nodeElementOffsets,
+                                     proteus_index_t[:] nodeElementsArray,
                                      bool el_average=False):
-    cdef int nNodes = len(nodeArray)
-    cdef int nElements = len(elementNodesArray)
+    cdef proteus_index_t nNodes = len(nodeArray)
+    cdef proteus_index_t nElements = len(elementNodesArray)
     IMRNodesArray_ = np.zeros(nNodes)
     cyUpdateInverseMeanRatioTriangleNodes(IMRNodesArray_=IMRNodesArray_,
                                           nodeArray=nodeArray,
@@ -220,11 +224,11 @@ def getInverseMeanRatioTriangleNodes(double[:,:] nodeArray,
                                           nElements=nElements)
     return IMRNodesArray_
 
-def getInverseMeanRatioSingleTriangle(int node0,
+def getInverseMeanRatioSingleTriangle(proteus_index_t node0,
                                       double[:,:] nodeArray,
-                                      int[:,:] elementNodesArray,
-                                      int[:] nodeElementOffsets,
-                                      int[:] nodeElementsArray):
+                                      proteus_index_t[:,:] elementNodesArray,
+                                      proteus_index_t[:] nodeElementOffsets,
+                                      proteus_index_t[:] nodeElementsArray):
     return cyGetInverseMeanRatioSingleTriangle(node0=node0,
                                                nodeArray=nodeArray,
                                                elementNodesArray=elementNodesArray,
@@ -234,11 +238,11 @@ def getInverseMeanRatioSingleTriangle(int node0,
 def smoothNodesQuality(double[:] distortion,
                        double[:] dilation,
                        double[:,:] nodeArray,
-                       int nNodes_owned,
+                       proteus_index_t nNodes_owned,
                        int[:] nodeMaterialTypes,
-                       int[:] nodeElementOffsets,
-                       int[:] nodeElementsArray,
-                       int[:,:] elementNodesArray,
+                       proteus_index_t[:] nodeElementOffsets,
+                       proteus_index_t[:] nodeElementsArray,
+                       proteus_index_t[:,:] elementNodesArray,
                        bool apply_directly=False):
     assert 1>2, 'smoothNodesQuality is work in progress, do not use'
     return cySmoothNodesQuality(distortion=distortion,
@@ -253,9 +257,9 @@ def smoothNodesQuality(double[:] distortion,
 
 def getLocalNearestNode(double[:] coords,
                         double[:,:] nodeArray,
-                        int[:] nodeStarOffsets,
-                        int[:] nodeStarArray,
-                        int node):
+                        proteus_index_t[:] nodeStarOffsets,
+                        proteus_index_t[:] nodeStarArray,
+                        proteus_index_t node):
     """Finds nearest node to coordinates (local)
 
     Parameters
@@ -284,8 +288,8 @@ def getLocalNearestNode(double[:] coords,
 
 def getLocalNearestElement(double[:] coords,
                            double[:,:] elementBarycentersArray,
-                           int[:,:] elementNeighborsArray,
-                           int eN):
+                           proteus_index_t[:,:] elementNeighborsArray,
+                           proteus_index_t eN):
     """Finds nearest element to coordinates (local)
 
     Parameters
@@ -310,10 +314,10 @@ def getLocalNearestElement(double[:] coords,
                                      eN)
 
 def getLocalNearestElementAroundNode(double[:] coords,
-                                     int[:] nodeElementOffsets,
-                                     int[:] nodeElementsArray,
+                                     proteus_index_t[:] nodeElementOffsets,
+                                     proteus_index_t[:] nodeElementsArray,
                                      double[:,:] elementBarycentersArray,
-                                     int node):
+                                     proteus_index_t node):
     """Finds nearest neighbouring element of node to coordinates (local)
 
     Parameters
@@ -326,7 +330,7 @@ def getLocalNearestElementAroundNode(double[:] coords,
         elements array from nodeElementOffsets
     elementBarycentersArray: int[:]
         array of mesh cell barycenter coordinates
-    node: int
+    node: proteus_index_t
         node from which to search
 
     Returns
@@ -343,11 +347,11 @@ def getLocalNearestElementAroundNode(double[:] coords,
 def getLocalNearestElementIntersection(double[:] coords,
                                        double[:] starting_coords,
                                        double[:,:,:] elementBoundaryNormalsArray,
-                                       int[:,:] elementBoundariesArray,
+                                       proteus_index_t[:,:] elementBoundariesArray,
                                        double[:,:] elementBoundaryBarycentersArray,
-                                       int[:,:] elementBoundaryElementsArray,
+                                       proteus_index_t[:,:] elementBoundaryElementsArray,
                                        int[:] exteriorElementBoundariesBoolArray,
-                                       int eN):
+                                       proteus_index_t eN):
     """Find element nearest or containing coords through element boundary intersection
 
     Parameters
@@ -451,11 +455,11 @@ def getLocalElement(femSpace,
 
 def updateElementBoundaryNormalsTriangle(double[:,:,:] elementBoundaryNormalsArray_,
                                          double[:,:] nodeArray,
-                                         int[:,:] elementBoundariesArray,
-                                         int[:,:] elementBoundaryNodesArray,
+                                         proteus_index_t[:,:] elementBoundariesArray,
+                                         proteus_index_t[:,:] elementBoundaryNodesArray,
                                          double[:,:] elementBoundaryBarycentersArray,
                                          double[:,:] elementBarycentersArray,
-                                         int nElements):
+                                         proteus_index_t nElements):
     pyxUpdateElementBoundaryNormalsTriangle(elementBoundaryNormalsArray_=elementBoundaryNormalsArray_,
                                             nodeArray=nodeArray,
                                             elementBoundariesArray=elementBoundariesArray,
@@ -465,12 +469,12 @@ def updateElementBoundaryNormalsTriangle(double[:,:,:] elementBoundaryNormalsArr
                                             nElements=nElements)
 
 def getElementBoundaryNormalsTriangle(double[:,:] nodeArray,
-                                      int[:,:] elementBoundariesArray,
-                                      int[:,:] elementBoundaryNodesArray,
+                                      proteus_index_t[:,:] elementBoundariesArray,
+                                      proteus_index_t[:,:] elementBoundaryNodesArray,
                                       double[:,:] elementBoundaryBarycentersArray,
                                       double[:,:] elementBarycentersArray):
     elementBoundaryNormalsArray_ = np.zeros(elementBoundariesArray.shape[0], 3, 3)
-    cdef int nElements = len(elementBoundaryNormalsArray_)
+    cdef proteus_index_t nElements = len(elementBoundaryNormalsArray_)
     pyxUpdateElementBoundaryNormalsTriangle(elementBoundaryNormalsArray_=elementBoundaryNormalsArray_,
                                             nodeArray=nodeArray,
                                             elementBoundariesArray=elementBoundariesArray,
@@ -482,11 +486,11 @@ def getElementBoundaryNormalsTriangle(double[:,:] nodeArray,
 
 def updateElementBoundaryNormalsTetra(double[:,:,:] elementBoundaryNormalsArray_,
                                       double[:,:] nodeArray,
-                                      int[:,:] elementBoundariesArray,
-                                      int[:,:] elementBoundaryNodesArray,
+                                      proteus_index_t[:,:] elementBoundariesArray,
+                                      proteus_index_t[:,:] elementBoundaryNodesArray,
                                       double[:,:] elementBoundaryBarycentersArray,
                                       double[:,:] elementBarycentersArray,
-                                      int nElements):
+                                      proteus_index_t nElements):
     pyxUpdateElementBoundaryNormalsTetra(elementBoundaryNormalsArray_=elementBoundaryNormalsArray_,
                                          nodeArray=nodeArray,
                                          elementBoundariesArray=elementBoundariesArray,
@@ -496,12 +500,12 @@ def updateElementBoundaryNormalsTetra(double[:,:,:] elementBoundaryNormalsArray_
                                          nElements=nElements)
 
 def getElementBoundaryNormalsTetra(double[:,:] nodeArray,
-                                   int[:,:] elementBoundariesArray,
-                                   int[:,:] elementBoundaryNodesArray,
+                                   proteus_index_t[:,:] elementBoundariesArray,
+                                   proteus_index_t[:,:] elementBoundaryNodesArray,
                                    double[:,:] elementBoundaryBarycentersArray,
                                    double[:,:] elementBarycentersArray):
     elementBoundaryNormalsArray_ = np.zeros(elementBoundariesArray.shape[0], 4, 3)
-    cdef int nElements = len(elementBoundaryNormalsArray_)
+    cdef proteus_index_t nElements = len(elementBoundaryNormalsArray_)
     pyxUpdateElementBoundaryNormalsTetra(elementBoundaryNormalsArray_=elementBoundaryNormalsArray_,
                                          nodeArray=nodeArray,
                                          elementBoundariesArray=elementBoundariesArray,
@@ -512,9 +516,9 @@ def getElementBoundaryNormalsTetra(double[:,:] nodeArray,
     return elementBoundaryNormalsArray_
 
 def updateElementVolumesTriangle(double[:] elementVolumesArray_,
-                                 int[:,:] elementNodesArray,
+                                 proteus_index_t[:,:] elementNodesArray,
                                  double[:,:] nodeArray,
-                                 int nElements):
+                                 proteus_index_t nElements):
     cyUpdateElementVolumesTriangle(elementVolumesArray_=elementVolumesArray_,
                                    elementNodesArray=elementNodesArray,
                                    nodeArray=nodeArray,
@@ -528,28 +532,28 @@ def getElementVolumeTriangle(double[:] nA,
                                       nC=nC)
 
 def updateElementVolumesTetra(double[:] elementVolumesArray_,
-                              int[:,:] elementNodesArray,
+                              proteus_index_t[:,:] elementNodesArray,
                               double[:,:] nodeArray,
-                              int nElements):
+                              proteus_index_t nElements):
     cyUpdateElementVolumesTetra(elementVolumesArray_=elementVolumesArray_,
                                 elementNodesArray=elementNodesArray,
                                 nodeArray=nodeArray,
                                 nElements=nElements)
 
 def updateElementBarycenters(double[:,:] elementBarycentersArray_,
-                             int[:,:] elementNodesArray,
+                             proteus_index_t[:,:] elementNodesArray,
                              double[:,:] nodeArray,
-                             int nElements):
+                             proteus_index_t nElements):
     cyUpdateElementBarycenters(elementBarycentersArray_=elementBarycentersArray_,
                                elementNodesArray=elementNodesArray,
                                nodeArray=nodeArray,
                                nElements=nElements)
 
 def getCornerNodesTriangle(double[:,:] nodeArray,
-                           int[:] nodeStarArray,
-                           int[:] nodeStarOffsets,
+                           proteus_index_t[:] nodeStarArray,
+                           proteus_index_t[:] nodeStarOffsets,
                            int[:] nodeMaterialTypes,
-                           int nNodes):
+                           proteus_index_t nNodes):
     return cyGetCornerNodesTriangle(nodeArray=nodeArray,
                                     nodeStarArray=nodeStarArray,
                                     nodeStarOffsets=nodeStarOffsets,
@@ -557,19 +561,19 @@ def getCornerNodesTriangle(double[:,:] nodeArray,
                                     nNodes=nNodes)
 
 def getNonOwnedNodeValues(args_,
-                          int nNodes_owned,
-                          int nNodes_global,
-                          int[:] nodeNumbering_subdomain2global,
-                          int[:] nodeOffsets_subdomain_owned):
-        nodeNumbering_subdomain2global = np.array(nodeNumbering_subdomain2global, dtype=np.int32)
-        nodeOffsets_subdomain_owned = np.array(nodeOffsets_subdomain_owned, dtype=np.int32)
+                          proteus_index_t nNodes_owned,
+                          proteus_index_t nNodes_global,
+                          proteus_index_t[:] nodeNumbering_subdomain2global,
+                          proteus_index_t[:] nodeOffsets_subdomain_owned):
+        nodeNumbering_subdomain2global = np.array(nodeNumbering_subdomain2global, dtype=INDEX_DTYPE)
+        nodeOffsets_subdomain_owned = np.array(nodeOffsets_subdomain_owned, dtype=INDEX_DTYPE)
         from proteus import Comm
         cdef object comm = Comm.get().comm.tompi4py()
         cdef int comm_size = comm.size
         cdef int my_rank = comm.rank
         cdef dict arg_2rank = {}
         cdef dict nodes_2rank = {}
-        cdef int[:] result
+        cdef proteus_index_t[:] result
         # the counts and displacements for nodes coming in from other processors
         cdef int[:] counts_in = np.zeros(comm_size, dtype=np.int32)
         cdef int[:] displacements_in = np.zeros(comm_size, dtype=np.int32)
@@ -582,16 +586,17 @@ def getNonOwnedNodeValues(args_,
         cdef int arg_shape_len = len(arg_shape)
         cdef int shape_factor = 1
         cdef int disp = 0
-        cdef int rank, rank_recv, ii, ir, iN, node_new_rank, new_rank
+        cdef int rank, rank_recv, ii, ir, new_rank
+        cdef proteus_index_t iN, node_new_rank
         cdef int sumtot
-        cdef int[:] nodes_2rank_values
-        cdef int[:] nodes_2doArray = np.zeros(0, dtype=np.int32)
+        cdef proteus_index_t[:] nodes_2rank_values
+        cdef proteus_index_t[:] nodes_2doArray = np.zeros(0, dtype=INDEX_DTYPE)
         if arg_shape_len > 1:
             for i in range(1, arg_shape_len):
                 shape_factor = shape_factor*arg_shape[i]
         if comm_size > 1:
             for rank in range(comm_size):
-                nodes_2rank[rank] = np.zeros(0, dtype=np.int32)
+                nodes_2rank[rank] = np.zeros(0, dtype=INDEX_DTYPE)
             for node in range(nNodes_owned, nNodes_global):
                 result = cyCheckOwnedVariable(variable_nb_local=node,
                                               rank=my_rank,
@@ -605,12 +610,12 @@ def getNonOwnedNodeValues(args_,
             for rank_recv in range(comm_size):
                 # -----
                 # find length of array to do on processor rank_recv
-                nodes_2rank_values = (nodes_2rank[rank_recv][:]).astype(np.int32)
+                nodes_2rank_values = (nodes_2rank[rank_recv][:]).astype(INDEX_DTYPE)
                 nodes_2rank_len = len(nodes_2rank_values)
                 array_size = comm.allreduce(nodes_2rank_len, op=MPI.SUM)
                 # initialise node_2doArray on receiving processor
                 if rank_recv == my_rank:
-                    nodes_2doArray = np.zeros(array_size, dtype=np.int32)
+                    nodes_2doArray = np.zeros(array_size, dtype=INDEX_DTYPE)
                 # -----
                 # get count and disp info for retrieving info from rank_recv later
                 # counts_out[rank_recv] = nodes_2rank_len
@@ -643,7 +648,7 @@ def getNonOwnedNodeValues(args_,
                              [nodes_2doArray,
                               counts_in,
                               displacements_in,
-                              MPI.INT],
+                              MPI_INDEX],
                               root=rank_recv)
             # SEND VALUE BACK TO ORIGINAL PROCESSORS
             arg_shape_copy[0] = 0
@@ -687,11 +692,11 @@ def getNonOwnedNodeValues(args_,
             #                                                                                                        comm_pp=str(4),
             #                                                                                                        nproc=str(comm_size)))
 
-def checkOwnedVariable(int variable_nb_local,
+def checkOwnedVariable(proteus_index_t variable_nb_local,
                        int rank,
-                       int nVariables_owned,
-                       int[:] variableNumbering_subdomain2global,
-                       int[:] variableOffsets_subdomain_owned):
+                       proteus_index_t nVariables_owned,
+                       proteus_index_t[:] variableNumbering_subdomain2global,
+                       proteus_index_t[:] variableOffsets_subdomain_owned):
     return cyCheckOwnedVariable(variable_nb_local=variable_nb_local,
                                 rank=rank,
                                 nVariables_owned=nVariables_owned,
@@ -699,17 +704,17 @@ def checkOwnedVariable(int variable_nb_local,
                                 variableOffsets_subdomain_owned=variableOffsets_subdomain_owned)
 
 def pyScalarRecoveryAtNodes(double[:] scalars,
-                            int[:] nodeElementsArray,
-                            int[:] nodeElementOffsets):
+                            proteus_index_t[:] nodeElementsArray,
+                            proteus_index_t[:] nodeElementOffsets):
     return cyScalarRecoveryAtNodes(scalars=scalars,
                                    nodeElementsArray=nodeElementsArray,
                                    nodeElementOffsets=nodeElementOffsets)
 
 def pyScalarRecoveryAtNodesWeighted(double[:] scalars,
-                                    int[:] nodeElementsArray,
-                                    int[:] nodeElementOffsets,
+                                    proteus_index_t[:] nodeElementsArray,
+                                    proteus_index_t[:] nodeElementOffsets,
                                     double[:] detJ_array,
-                                    int nNodes):
+                                    proteus_index_t nNodes):
     return cyScalarRecoveryAtNodesWeighted(scalars=scalars,
                                            nodeElementsArray=nodeElementsArray,
                                            nodeElementOffsets=nodeElementOffsets,
@@ -726,8 +731,8 @@ def pyVectorRecoveryAtNodes(vectors,
                                    nd=nd)
 
 def pyVectorRecoveryAtNodesWeighted(double[:,:] vectors,
-                                    int[:] nodeElementsArray,
-                                    int[:] nodeElementOffsets,
+                                    proteus_index_t[:] nodeElementsArray,
+                                    proteus_index_t[:] nodeElementOffsets,
                                     double[:,:] detJ_array,
                                     int nd):
     return cyVectorRecoveryAtNodesWeighted(vectors=vectors,
@@ -739,10 +744,10 @@ def pyVectorRecoveryAtNodesWeighted(double[:,:] vectors,
 ### Cython implementation of functions above
 
 cdef void cySmoothNodesLaplace(double[:,:] nodeArray_,
-                               int[:] nodeStarOffsets,
-                               int[:] nodeStarArray,
+                               proteus_index_t[:] nodeStarOffsets,
+                               proteus_index_t[:] nodeStarArray,
                                int[:] nodeMaterialTypes,
-                               int nNodes_owned,
+                               proteus_index_t nNodes_owned,
                                int nd,
                                bool simultaneous=False,
                                bool smoothBoundaries=True,
@@ -753,13 +758,13 @@ cdef void cySmoothNodesLaplace(double[:,:] nodeArray_,
         nodeArray0 = nodeArray_.copy()
     cdef double[3] sum_star
     cdef double dot
-    cdef int nNodeInStar
-    cdef int nNodes = 0
+    cdef proteus_index_t nNodeInStar
+    cdef proteus_index_t nNodes = 0
     cdef bool fixed_node = False
     cdef double[:] fixed_dir = np.zeros(3)
     cdef double fixed_dir_dist
-    cdef int nOffset
-    cdef int node
+    cdef proteus_index_t nOffset
+    cdef proteus_index_t node
     for node in range(nNodes_owned):
         sum_star[0] = 0.
         sum_star[1] = 0.
@@ -832,13 +837,13 @@ cdef void cySmoothNodesLaplace(double[:,:] nodeArray_,
         #     nodeArray_[node, 2] = alpha*nodeArray0[node, 0]+(1-alpha)*sum_star[2]/nNodes
 
 cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
-                                int[:] nodeElementOffsets,
-                                int[:] nodeElementsArray,
+                                proteus_index_t[:] nodeElementOffsets,
+                                proteus_index_t[:] nodeElementsArray,
                                 int[:] nodeMaterialTypes,
                                 double[:] elementVolumesArray,
                                 double[:,:] elementBarycentersArray,
-                                int[:,:] elementNodesArray,
-                                int nNodes_owned,
+                                proteus_index_t[:,:] elementNodesArray,
+                                proteus_index_t nNodes_owned,
                                 int[:] fixedNodesBoolArray,
                                 bool simultaneous=False,
                                 bool smoothBoundaries = True,
@@ -847,7 +852,7 @@ cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
     if simultaneous or alpha != 0:
         nodeArray0 = nodeArray_.copy()
     cdef double[3] sum_star
-    cdef int nNodeInStar
+    cdef proteus_index_t nNodeInStar
     cdef double areas = 0.
     cdef int nNodes_star = 0
     cdef double[:] nodeOffset0
@@ -859,9 +864,9 @@ cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
     cdef double[:] nC
     cdef double dot
     cdef double vec_dist
-    cdef int node
-    cdef int eOffset
-    cdef int eN
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t eN
     for node in range(nNodes_owned):
         sum_star[0] = 0.
         sum_star[1] = 0.
@@ -932,9 +937,9 @@ cdef void cySmoothNodesCentroid(double[:,:] nodeArray_,
 cdef void cyUpdateDilationElements(double[:] elementDilationArray_,
                                    double[:] elementVolumeArray,
                                    double[:] elementVolumeTargetArray,
-                                   int nElements):
+                                   proteus_index_t nElements):
     cdef double dilation
-    cdef int eN
+    cdef proteus_index_t eN
     for eN in range(nElements):
         dilation = elementVolumeArray[eN]/elementVolumeTargetArray[eN]
         if dilation < 1.:
@@ -945,13 +950,13 @@ cdef void cyUpdateDistortionElements(double[:] elementDistortionArray_,
                                      double[:,:,:,:] J_array,
                                      double[:,:] detJ_array,
                                      int nd,
-                                     int nElements):
+                                     proteus_index_t nElements):
     cdef double[:,:] J
     cdef double[:,:] JT
     cdef double detJ
     cdef double trJTJ
     cdef double[:,:] JTJ
-    cdef int eN
+    cdef proteus_index_t eN
     cdef int iJ
     for eN in range(len(nElements)):
         detJ = detJ_array[eN, 0]  # index 0 as it is the same for all quadrature points
@@ -966,11 +971,11 @@ cdef void cyUpdateDistortionElements(double[:] elementDistortionArray_,
 
 cdef void cyUpdateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
                                                 double[:,:] nodeArray,
-                                                int[:,:] elementNodesArray,
-                                                int[:] nodeElementOffsets,
-                                                int[:] nodeElementsArray,
-                                                int nElements,
-                                                int nNodes,
+                                                proteus_index_t[:,:] elementNodesArray,
+                                                proteus_index_t[:] nodeElementOffsets,
+                                                proteus_index_t[:] nodeElementsArray,
+                                                proteus_index_t nElements,
+                                                proteus_index_t nNodes,
                                                 bool el_average=False):
     cdef double[:,:] W = np.array([[1., 0.5],
                                    [0., sqrt(3)/2.]])
@@ -980,16 +985,16 @@ cdef void cyUpdateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
     cdef double[:] IMR_elements
     if el_average:
         IMR_elements = np.zeros(nNodes)
-    cdef int nNel = elementNodesArray.shape[1]
+    cdef proteus_index_t nNel = elementNodesArray.shape[1]
     cdef double[:] vec_a
     cdef double[:] vec_b
     cdef double[:] vec_c
     cdef double IMR
-    cdef int nEl = 0
-    cdef int iN
-    cdef int eN
-    cdef int node
-    cdef int eOffset
+    cdef proteus_index_t nEl = 0
+    cdef proteus_index_t iN
+    cdef proteus_index_t eN
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
     for eN in range(nElements):
         for iN in range(nNel):
             node = elementNodesArray[eN, iN]
@@ -1023,8 +1028,8 @@ cdef void cyUpdateInverseMeanRatioTriangleNodes(double[:] IMRNodesArray_,
 
 cdef void cyUpdateInverseMeanRatioTriangleElements(double[:] IMRElementsArray_,
                                                    double[:,:] nodeArray,
-                                                   int[:,:] elementNodesArray,
-                                                   int nElements):
+                                                   proteus_index_t[:,:] elementNodesArray,
+                                                   proteus_index_t nElements):
     cdef double[:,:] W = np.array([[1., 0.5],
                                    [0., sqrt(3)/2.]])
     cdef double[:,:] A = np.zeros((2,2))
@@ -1033,10 +1038,10 @@ cdef void cyUpdateInverseMeanRatioTriangleElements(double[:] IMRElementsArray_,
     cdef double[:] vec_b
     cdef double[:] vec_c
     cdef double IMR
-    cdef int nEl = 0
-    cdef int eN
-    cdef int iN
-    cdef int node
+    cdef proteus_index_t nEl = 0
+    cdef proteus_index_t eN
+    cdef proteus_index_t iN
+    cdef proteus_index_t node
     for eN in range(nElements):
         for iN, node in enumerate(elementNodesArray[eN]):
             vec_a = nodeArray[elementNodesArray[eN, iN]]
@@ -1051,27 +1056,27 @@ cdef void cyUpdateInverseMeanRatioTriangleElements(double[:] IMRElementsArray_,
             IMRElementsArray_[eN] += IMR
         IMRElementsArray_[eN] = IMRElementsArray_[eN]/3.
 
-cdef double cyGetInverseMeanRatioSingleTriangle(int node0,
+cdef double cyGetInverseMeanRatioSingleTriangle(proteus_index_t node0,
                                                 double[:,:] nodeArray,
-                                                int[:,:] elementNodesArray,
-                                                int[:] nodeElementOffsets,
-                                                int[:] nodeElementsArray,
+                                                proteus_index_t[:,:] elementNodesArray,
+                                                proteus_index_t[:] nodeElementOffsets,
+                                                proteus_index_t[:] nodeElementsArray,
                                                 bool el_average=False):
     cdef double[:,:] W = np.array([[1., 0.5],
                                    [0., sqrt(3)/2.]])
     cdef double[:,:] A = np.zeros((2,2))
     cdef double[:,:] AW = np.zeros((2,2))
     cdef double IMR_node = 0.
-    cdef int nEl = 0
+    cdef proteus_index_t nEl = 0
     cdef double[:] vec_a
     cdef double[:] vec_b
     cdef double[:] vec_c
     cdef double IMR
-    cdef int eOffset
-    cdef int iN
-    cdef int node
-    cdef int eN
-    cdef int nNel = elementNodesArray.shape[1]
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t iN
+    cdef proteus_index_t node
+    cdef proteus_index_t eN
+    cdef proteus_index_t nNel = elementNodesArray.shape[1]
     for eOffset in range(nodeElementOffsets[node0],
                          nodeElementOffsets[node0+1]):
         eN = nodeElementsArray[eOffset]
@@ -1108,11 +1113,11 @@ cdef double cyGetInverseMeanRatioSingleTriangle(int node0,
 cdef double[:,:] cySmoothNodesQuality(double[:] distortion,
                                       double[:] dilation,
                                       double[:,:] nodeArray,
-                                      int nNodes_owned,
+                                      proteus_index_t nNodes_owned,
                                       int[:] nodeMaterialTypes,
-                                      int[:] nodeElementOffsets,
-                                      int[:] nodeElementsArray,
-                                      int[:,:] elementNodesArray,
+                                      proteus_index_t[:] nodeElementOffsets,
+                                      proteus_index_t[:] nodeElementsArray,
+                                      proteus_index_t[:,:] elementNodesArray,
                                       bool apply_directly=False):
     cdef double[:,:] disp = nodeArray.copy()
     cdef double[:,:] nodeArrayMod
@@ -1121,14 +1126,14 @@ cdef double[:,:] cySmoothNodesQuality(double[:] distortion,
     else:
         nodeArrayMod = nodeArray
     cdef double[3] weighted_pos
-    cdef int nNel = elementNodesArray.shape[1]
+    cdef proteus_index_t nNel = elementNodesArray.shape[1]
     cdef double weight = 0
     cdef double weights = 0
-    cdef int node
-    cdef int eOffset
-    cdef int eN
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t eN
     cdef int eNnode
-    cdef int iN
+    cdef proteus_index_t iN
     for node in range(nNodes_owned):
         if nodeMaterialTypes[node] == 0:
             weights = 0
@@ -1156,11 +1161,11 @@ cdef double[:,:] cySmoothNodesQuality(double[:] distortion,
 
 cdef int pyxGetLocalNearestNode(double[:] coords,
                                 double[:,:] nodeArray,
-                                int[:] nodeStarOffsets,
-                                int[:] nodeStarArray,
-                                int node):
+                                proteus_index_t[:] nodeStarOffsets,
+                                proteus_index_t[:] nodeStarArray,
+                                proteus_index_t node):
     # determine local nearest node distance
-    cdef int nearest_node = node
+    cdef proteus_index_t nearest_node = node
     cdef int nearest_node0 = node
     cdef double dist
     cdef double min_dist
@@ -1170,7 +1175,7 @@ cdef int pyxGetLocalNearestNode(double[:] coords,
                (node_coords[1]-coords[1])*(node_coords[1]-coords[1])+\
                (node_coords[2]-coords[2])*(node_coords[2]-coords[2])
     cdef int i = 0
-    cdef int nOffset
+    cdef proteus_index_t nOffset
     while found_node is False:
         nearest_node0 = nearest_node
         for nOffset in range(nodeStarOffsets[nearest_node0],
@@ -1191,22 +1196,22 @@ cdef int pyxGetLocalNearestNode(double[:] coords,
 
 cdef int pyxGetLocalNearestElement(double[:] coords,
                                    double[:,:] elementBarycentersArray,
-                                   int[:,:] elementNeighborsArray,
-                                   int eN):
+                                   proteus_index_t[:,:] elementNeighborsArray,
+                                   proteus_index_t eN):
     # determine local nearest node distance
-    cdef int nearest_eN = eN
-    cdef int nearest_eN0 = eN
+    cdef proteus_index_t nearest_eN = eN
+    cdef proteus_index_t nearest_eN0 = eN
     cdef double dist
     cdef double min_dist
     cdef double[3] eN_coords
     cdef bool found_eN = False
-    cdef int nOffset
-    cdef int eN_
+    cdef proteus_index_t nOffset
+    cdef proteus_index_t eN_
     eN_coords[0] = elementBarycentersArray[eN, 0]
     eN_coords[1] = elementBarycentersArray[eN, 1]
     eN_coords[2] = elementBarycentersArray[eN, 2]
     cdef int nEneig = elementNeighborsArray.shape[1]
-    cdef int iEn
+    cdef proteus_index_t iEn
     min_dist = (eN_coords[0]-coords[0])*(eN_coords[0]-coords[0])+\
                (eN_coords[1]-coords[1])*(eN_coords[1]-coords[1])+\
                (eN_coords[2]-coords[2])*(eN_coords[2]-coords[2])
@@ -1230,16 +1235,16 @@ cdef int pyxGetLocalNearestElement(double[:] coords,
         i += 1
     return nearest_eN
 
-cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
+cdef proteus_index_t[:] pyxGetLocalNearestElementIntersection(double[:] coords,
                                                   double[:] starting_coords,
                                                   double[:,:,:] elementBoundaryNormalsArray,
-                                                  int[:,:] elementBoundariesArray,
+                                                  proteus_index_t[:,:] elementBoundariesArray,
                                                   double[:,:] elementBoundaryBarycentersArray,
-                                                  int[:,:] elementBoundaryElementsArray,
+                                                  proteus_index_t[:,:] elementBoundaryElementsArray,
                                                   int[:] exteriorElementBoundariesBoolArray,
-                                                  int eN):
+                                                  proteus_index_t eN):
     # determine local nearest node distance
-    cdef int[2] result
+    cdef proteus_index_t[2] result
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = -1
     result[1] = -1
@@ -1255,22 +1260,22 @@ cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
     direction[1] = (coords[1]-eN_coords[1])/min_dist
     direction[2] = (coords[2]-eN_coords[2])/min_dist
     cdef int maxit = 5*elementBoundariesArray.shape[0]
-    cdef int nEbn = elementBoundariesArray.shape[1]  # nb boundaries per element
-    cdef int nearest_eN = eN
-    cdef int nearest_eN0 = eN
+    cdef proteus_index_t nEbn = elementBoundariesArray.shape[1]  # nb boundaries per element
+    cdef proteus_index_t nearest_eN = eN
+    cdef proteus_index_t nearest_eN0 = eN
     cdef int nOffsets
     cdef double dist
     cdef bool found_eN = False
     cdef int i = 0
     cdef double[:] bound_bar  # barycenter of boundary
     cdef double alpha  # distance
-    cdef int b_i  # boundary index element
+    cdef proteus_index_t b_i  # boundary index element
     cdef int b_i_last = -1
     cdef double[:] normal  # element boundary normal
     cdef double dot  # dot product result
     cdef double dot2  # dot product 2 result
     cdef int it = 0
-    cdef int eN_
+    cdef proteus_index_t eN_
     cdef int j
     cdef int k
     while found_eN is False and it < maxit:
@@ -1321,16 +1326,16 @@ cdef int[:] pyxGetLocalNearestElementIntersection(double[:] coords,
     return result
 
 cdef int pyxGetLocalNearestElementAroundNode(double[:] coords,
-                                             int[:] nodeElementOffsets,
-                                             int[:] nodeElementsArray,
+                                             proteus_index_t[:] nodeElementOffsets,
+                                             proteus_index_t[:] nodeElementsArray,
                                              double[:,:] elementBarycentersArray,
-                                             int node):
+                                             proteus_index_t node):
     cdef double dist
     cdef double min_dist
     cdef double[:] eN_coords
     cdef int i = 0
-    cdef int eN
-    cdef int iEn
+    cdef proteus_index_t eN
+    cdef proteus_index_t iEn
     cdef int rmin = nodeElementOffsets[node]
     cdef int rmax = nodeElementOffsets[node+1]
     for iEn in range(rmin, rmax):
@@ -1348,15 +1353,15 @@ cdef int pyxGetLocalNearestElementAroundNode(double[:] coords,
 
 cdef void pyxUpdateElementBoundaryNormalsTetra(double[:,:,:] elementBoundaryNormalsArray_,
                                                double[:,:] nodeArray,
-                                               int[:,:] elementBoundariesArray,
-                                               int[:,:] elementBoundaryNodesArray,
+                                               proteus_index_t[:,:] elementBoundariesArray,
+                                               proteus_index_t[:,:] elementBoundaryNodesArray,
                                                double[:,:] elementBoundaryBarycentersArray,
                                                double[:,:] elementBarycentersArray,
-                                               int nElements):
+                                               proteus_index_t nElements):
     cdef double[3] normal_check
     cdef double[3] U
     cdef double[3] V
-    cdef int b_i
+    cdef proteus_index_t b_i
     cdef double[:] node0
     cdef double[:] node1
     cdef double[:] node2
@@ -1395,14 +1400,14 @@ cdef void pyxUpdateElementBoundaryNormalsTetra(double[:,:,:] elementBoundaryNorm
 
 cdef void pyxUpdateElementBoundaryNormalsTriangle(double[:,:,:] elementBoundaryNormalsArray_,
                                                   double[:,:] nodeArray,
-                                                  int[:,:] elementBoundariesArray,
-                                                  int[:,:] elementBoundaryNodesArray,
+                                                  proteus_index_t[:,:] elementBoundariesArray,
+                                                  proteus_index_t[:,:] elementBoundaryNodesArray,
                                                   double[:,:] elementBoundaryBarycentersArray,
                                                   double[:,:] elementBarycentersArray,
-                                                  int nElements):
+                                                  proteus_index_t nElements):
     cdef double[2] normal_check
     cdef double[2] U
-    cdef int b_i
+    cdef proteus_index_t b_i
     cdef double[:] node0
     cdef double[:] node1
     cdef int i
@@ -1429,15 +1434,15 @@ cdef void pyxUpdateElementBoundaryNormalsTriangle(double[:,:,:] elementBoundaryN
                 elementBoundaryNormalsArray_[i,j,1] = -elementBoundaryNormalsArray_[i,j,1]
 
 cdef void cyUpdateElementVolumesTriangle(double[:] elementVolumesArray_,
-                                         int[:,:] elementNodesArray,
+                                         proteus_index_t[:,:] elementNodesArray,
                                          double[:,:] nodeArray,
-                                         int nElements):
+                                         proteus_index_t nElements):
     cdef double[:] nA
     cdef double[:] nB
     cdef double[:] nC
     cdef double base
     cdef double height
-    cdef int eN
+    cdef proteus_index_t eN
     for eN in range(nElements):
         nA = nodeArray[elementNodesArray[eN, 0]]
         nB = nodeArray[elementNodesArray[eN, 1]]
@@ -1454,9 +1459,9 @@ cdef double cyGetElementVolumeTriangle(double[:] nA,
     return 0.5*base*height
 
 cdef void cyUpdateElementVolumesTetra(double[:] elementVolumesArray_,
-                                      int[:,:] elementNodesArray,
+                                      proteus_index_t[:,:] elementNodesArray,
                                       double[:,:] nodeArray,
-                                      int nElements):
+                                      proteus_index_t nElements):
     cdef double[:] nA
     cdef double[:] nB
     cdef double[:] nC
@@ -1465,7 +1470,7 @@ cdef void cyUpdateElementVolumesTetra(double[:] elementVolumesArray_,
     cdef double height_tri
     cdef double area_tri
     cdef double height_tetra
-    cdef int eN
+    cdef proteus_index_t eN
     for eN in range(nElements):
         nA = nodeArray[elementNodesArray[eN, 0]]
         nB = nodeArray[elementNodesArray[eN, 1]]
@@ -1478,13 +1483,13 @@ cdef void cyUpdateElementVolumesTetra(double[:] elementVolumesArray_,
         elementVolumesArray_[eN] = 1./3.*area_tri*height_tetra
 
 cdef void cyUpdateElementBarycenters(double[:,:] elementBarycentersArray_,
-                                     int[:,:] elementNodesArray,
+                                     proteus_index_t[:,:] elementNodesArray,
                                      double[:,:] nodeArray,
-                                     int nElements):
-    cdef int eN
-    cdef int iN
-    cdef int node
-    cdef int nNel = elementNodesArray.shape[1]
+                                     proteus_index_t nElements):
+    cdef proteus_index_t eN
+    cdef proteus_index_t iN
+    cdef proteus_index_t node
+    cdef proteus_index_t nNel = elementNodesArray.shape[1]
     for eN in range(nElements):
         elementBarycentersArray_[eN, 0] = 0.
         elementBarycentersArray_[eN, 1] = 0.
@@ -1499,17 +1504,17 @@ cdef void cyUpdateElementBarycenters(double[:,:] elementBarycentersArray_,
         elementBarycentersArray_[eN, 2] = elementBarycentersArray_[eN, 2]/(iN+1)
 
 cdef np.ndarray cyGetCornerNodesTriangle(double[:,:] nodeArray,
-                                         int[:] nodeStarArray,
-                                         int[:] nodeStarOffsets,
+                                         proteus_index_t[:] nodeStarArray,
+                                         proteus_index_t[:] nodeStarOffsets,
                                          int[:] nodeMaterialTypes,
-                                         int nNodes):
+                                         proteus_index_t nNodes):
     cdef np.ndarray cornerNodesArray = np.array([], dtype=np.int32)
     cdef double[3] vec
     cdef double[3] vec2
     cdef double vec_dist
     cdef double dot
-    cdef int node
-    cdef int nOffset
+    cdef proteus_index_t node
+    cdef proteus_index_t nOffset
     for node in range(nNodes):
         if nodeMaterialTypes[node] != 0:
             vec[0] = 0.
@@ -1542,17 +1547,17 @@ cdef np.ndarray cyGetCornerNodesTriangle(double[:,:] nodeArray,
                             cornerNodesArray = np.append(cornerNodesArray, node)
     return cornerNodesArray
 
-cdef int[:] cyCheckOwnedVariable(int variable_nb_local,
+cdef proteus_index_t[:] cyCheckOwnedVariable(proteus_index_t variable_nb_local,
                                  int rank,
-                                 int nVariables_owned,
-                                 int[:] variableNumbering_subdomain2global,
-                                 int[:] variableOffsets_subdomain_owned):
+                                 proteus_index_t nVariables_owned,
+                                 proteus_index_t[:] variableNumbering_subdomain2global,
+                                 proteus_index_t[:] variableOffsets_subdomain_owned):
     cdef int nSubdomains = variableOffsets_subdomain_owned.shape[0]-1
-    cdef int variable_nb_global
-    cdef int new_variable_nb_local
+    cdef proteus_index_t variable_nb_global
+    cdef proteus_index_t new_variable_nb_local
     cdef int new_rank = -2  # initialised as fake rank
     cdef int i
-    cdef int[2] result = [-1000, -1000]
+    cdef proteus_index_t[2] result = [-1000, -1000]
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = variable_nb_local
     result[1] = new_rank
@@ -1577,14 +1582,14 @@ cdef int[:] cyCheckOwnedVariable(int variable_nb_local,
 
 cdef void cyFindBoundaryDirectionTriangle(
     double[:] dir_,
-    int node,
+    proteus_index_t node,
     double[:,:] nodeArray,
-    int[:] nodeStarOffsets,
-    int[:] nodeStarArray,
+    proteus_index_t[:] nodeStarOffsets,
+    proteus_index_t[:] nodeStarArray,
     int[:] nodeMaterialTypes,
 ):
     cdef double dir_dist
-    cdef int nOffset
+    cdef proteus_index_t nOffset
     for nOffset in range(nodeStarOffsets[node],
                             nodeStarOffsets[node+1]):
         if nodeMaterialTypes[nodeStarArray[nOffset]] != 0:
@@ -1598,21 +1603,21 @@ cdef void cyFindBoundaryDirectionTriangle(
 
 cdef void cyFindBoundaryDirectionTetra(
     double[:] dir_,
-    int node,
+    proteus_index_t node,
     double[:,:] nodeArray,
-    int[:] nodeStarOffsets,
-    int[:] nodeStarArray,
+    proteus_index_t[:] nodeStarOffsets,
+    proteus_index_t[:] nodeStarArray,
     int[:] nodeMaterialTypes,
 ):
     cdef double[3] U
     cdef double[3] V
     cdef double dir_dist
-    cdef int b_i
+    cdef proteus_index_t b_i
     cdef double[:] node0
     cdef double[:] node1
     cdef double[:] node2
     cdef double nNode = 0
-    cdef int nOffset
+    cdef proteus_index_t nOffset
     # get normal
     for nOffset in range(nodeStarOffsets[node],
                          nodeStarOffsets[node+1]):
@@ -1642,17 +1647,17 @@ cdef void cyFindBoundaryDirectionTetra(
     dir_[1] = abs(1-dir_[1])
     dir_[2] = abs(1-dir_[2])
 
-cdef int[:] cyGetGlobalVariable(int variable_nb_local,
-                                int nVariables_owned,
-                                int[:] variableNumbering_subdomain2global,
-                                int[:] variableOffsets_subdomain_owned):
+cdef proteus_index_t[:] cyGetGlobalVariable(proteus_index_t variable_nb_local,
+                                proteus_index_t nVariables_owned,
+                                proteus_index_t[:] variableNumbering_subdomain2global,
+                                proteus_index_t[:] variableOffsets_subdomain_owned):
     cdef int nSubdomains = len(variableOffsets_subdomain_owned)-1
-    cdef int variable_nb_global
+    cdef proteus_index_t variable_nb_global
     cdef int new_rank = -2  # initialised as fake rank
     # change rank ownership
     variable_nb_global = variableNumbering_subdomain2global[variable_nb_local]
     cdef int i
-    cdef int[2] result
+    cdef proteus_index_t[2] result
     # cdef int[:] result = np.zeros(2, dtype=np.int32)
     result[0] = variable_nb_global
     result[1] = new_rank
@@ -1666,12 +1671,12 @@ cdef int[:] cyGetGlobalVariable(int variable_nb_local,
     result[1] = new_rank
     return result
 
-cdef int cyGetLocalVariable(int variable_nb_global,
+cdef int cyGetLocalVariable(proteus_index_t variable_nb_global,
                             int rank,
-                            int nVariables_owned,
-                            int[:] variableNumbering_subdomain2global,
-                            int[:] variableOffsets_subdomain_owned):
-    cdef int new_variable_nb_local
+                            proteus_index_t nVariables_owned,
+                            proteus_index_t[:] variableNumbering_subdomain2global,
+                            proteus_index_t[:] variableOffsets_subdomain_owned):
+    cdef proteus_index_t new_variable_nb_local
     if not variableOffsets_subdomain_owned[rank] <= variable_nb_global < variableOffsets_subdomain_owned[rank+1]:
         if variable_nb_global < nVariables_owned:
             new_variable_nb_local = variable_nb_global
@@ -1680,14 +1685,14 @@ cdef int cyGetLocalVariable(int variable_nb_global,
     return new_variable_nb_local
 
 cdef double[:] cyScalarRecoveryAtNodes(double[:] scalars,
-                                       int[:] nodeElementsArray,
-                                       int[:] nodeElementOffsets):
+                                       proteus_index_t[:] nodeElementsArray,
+                                       proteus_index_t[:] nodeElementOffsets):
     cdef double[:] recovered_scalars = np.zeros(len(nodeElementOffsets)-1)
-    cdef int nb_el
+    cdef proteus_index_t nb_el
     cdef double var_sum
-    cdef int node
-    cdef int eOffset
-    cdef int nNodes = nodeElementOffsets.shape[0]-1
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t nNodes = nodeElementOffsets.shape[0]-1
     for node in range(nNodes):
         nb_el = 0
         var_sum = 0
@@ -1699,17 +1704,17 @@ cdef double[:] cyScalarRecoveryAtNodes(double[:] scalars,
     return recovered_scalars
 
 cdef double[:] cyScalarRecoveryAtNodesWeighted(double[:] scalars,
-                                               int[:] nodeElementsArray,
-                                               int[:] nodeElementOffsets,
+                                               proteus_index_t[:] nodeElementsArray,
+                                               proteus_index_t[:] nodeElementOffsets,
                                                double[:] detJ_array,
-                                               int nNodes):
+                                               proteus_index_t nNodes):
     cdef double[:] recovered_scalars = np.zeros(nNodes)
     cdef double detJ_patch = 0.
     cdef double scalar_sum = 0.
-    cdef int nb_el
-    cdef int node
-    cdef int eOffset
-    cdef int eN
+    cdef proteus_index_t nb_el
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t eN
     for node in range(nNodes):
         nb_el = 0
         detJ_patch = 0.
@@ -1728,17 +1733,17 @@ cdef double[:] cyScalarRecoveryAtNodesWeighted(double[:] scalars,
     return recovered_scalars
 
 cdef double[:,:] cyVectorRecoveryAtNodes(double[:,:] vectors,
-                                         int[:] nodeElementsArray,
-                                         int[:] nodeElementOffsets,
+                                         proteus_index_t[:] nodeElementsArray,
+                                         proteus_index_t[:] nodeElementOffsets,
                                          int nd):
     cdef double[:, :] recovered_vectors = np.zeros((nodeElementOffsets.shape[0]-1, nd))
     cdef double[:] vector_sum = np.zeros(nd)
-    cdef int nNodes = nodeElementOffsets.shape[0]-1
-    cdef int nb_el
-    cdef int eOffset
-    cdef int eN
+    cdef proteus_index_t nNodes = nodeElementOffsets.shape[0]-1
+    cdef proteus_index_t nb_el
+    cdef proteus_index_t eOffset
+    cdef proteus_index_t eN
     cdef int ndi
-    cdef int node
+    cdef proteus_index_t node
     for node in range(nNodes):
         nb_el = 0
         for ndi in range(nd):
@@ -1758,19 +1763,19 @@ cdef double[:,:] cyVectorRecoveryAtNodes(double[:,:] vectors,
     return recovered_vectors
 
 cdef double[:,:] cyVectorRecoveryAtNodesWeighted(double[:,:] vectors,
-                                                 int[:] nodeElementsArray,
-                                                 int[:] nodeElementOffsets,
+                                                 proteus_index_t[:] nodeElementsArray,
+                                                 proteus_index_t[:] nodeElementOffsets,
                                                  double[:,:] detJ_array,
                                                  int nd):
     cdef double[:, :] recovered_vectors = np.zeros((len(nodeElementOffsets)-1, nd))
     cdef double[:] vector_sum = np.zeros(nd)
-    cdef int nNodes = nodeElementOffsets.shape[0]-1
+    cdef proteus_index_t nNodes = nodeElementOffsets.shape[0]-1
     cdef double detJ_patch = 0.
-    cdef int nb_el
-    cdef int eN
+    cdef proteus_index_t nb_el
+    cdef proteus_index_t eN
     cdef int ndi
-    cdef int node
-    cdef int eOffset
+    cdef proteus_index_t node
+    cdef proteus_index_t eOffset
     for node in range(nNodes):
         nb_el = 0
         detJ_patch = 0.

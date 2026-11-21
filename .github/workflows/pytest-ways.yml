@@ -87,7 +87,7 @@ jobs:
           pip install build "pytest-randomly>=3.16,<4"
           # --no-isolation for the reason given in sdist.yml (conda-forge pip 26.2.2 build _1)
           python -m build --sdist --no-isolation
-          pip install dist/proteus-*.tar.gz
+          pip install dist/*.tar.gz
 
       - name: Run the suite (${{ matrix.way }})
         shell: bash -l {0}

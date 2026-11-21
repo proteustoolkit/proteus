@@ -72,9 +72,14 @@ dependencies:
   - strictyaml >=1.7.3
   # provides `dot` for the docs inheritance diagrams
   - graphviz
-  # ymf itself has no conda-forge feedstock yet, so it is installed from git
-  # until one exists. Replace this pip entry with a plain "- ymf" dependency
-  # once the feedstock lands.
+  # ymf itself has no conda-forge feedstock yet, so it is installed from PyPI
+  # with pip, at a floor (not a moving git branch): ymf 0.3.0 at @main broke
+  # main's test/dispatch for half a day on 2026-11-17/18 and every run that
+  # started in that window failed for a reason outside the commit under test.
+  # To test against ymf's main on purpose, set the Actions variable YMF_REF
+  # (a branch, tag or commit; see sdist.yml), or pip install it over this one.
+  # Replace this pip entry with a plain "- ymf >=0.3.1" conda dependency
+  # once the feedstock lands. ymf-import-gmsh is not on PyPI: it stays at git.
   #
   # proteus at runtime needs only the ymf core, whose one dependency is the
   # pyyaml above: Archiver writes the archive of record through ymf.archive.
@@ -89,5 +94,5 @@ dependencies:
   # scripts/ymf_run is never exercised. pint (ymf[units]) stays out: nothing
   # proteus ships imports ymf.units.
   - pip:
-    - git+https://github.com/proteustoolkit/ymf.git@main
+    - ymf >=0.3.1
     - git+https://github.com/proteustoolkit/ymf-import-gmsh.git@main

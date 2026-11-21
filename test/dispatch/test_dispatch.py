@@ -13,6 +13,7 @@ import contextlib
 import copy
 import importlib.util
 import os
+import shutil
 import re
 import sys
 
@@ -210,6 +211,40 @@ def test_ymf_words_dispatch_as_their_older_aliases_did(dambreak):
     assert flow.numerics["timeIntegration"] == "proteus.TimeIntegration.VBDF" and flow.numerics["timeOrder"] == 2
     assert [m.role for m in found] == ["level_set_redistanced", "velocity", "pressure_increment", "pressure",
                                        "pressure_spin_up"]
+
+
+def test_stabilization_is_read_through_ymf_and_its_older_spellings_fold(dambreak):
+    """``lagged``, ``beta``, ``reference``, ``tau`` reach the numerics and coefficients; ``lag``, ``sc_beta``,
+    ``sc_uref`` (what the dispatcher read before) dispatch to the same cells."""
+    spec, older = copy.deepcopy(dambreak), copy.deepcopy(dambreak)
+    for doc, block in ((spec, {"method": "SUPG", "tau": "element_size", "lagged": "true",
+                               "shock_capturing": {"factor": "0.25", "beta": "1.25", "reference": "2.0",
+                                                   "lagged": "false"}}),
+                       (older, {"method": "SUPG", "tau": "element_size", "lag": "true",
+                                "shock_capturing": {"factor": "0.25", "sc_beta": "1.25", "sc_uref": "2.0",
+                                                    "lag": "false"}})):
+        _sub(doc, "level_set_five", "vof")["stabilization"] = block
+    found, again = dispatch(spec, "level_set_five"), dispatch(older, "level_set_five")
+    assert found.as_dict() == again.as_dict()
+    (vof,) = [m for m in found if m.subproblem == "vof"]
+    assert vof.numerics["subgridError.lag"] is True
+    assert vof.numerics["shockCapturing.shockCapturingFactor"] == 0.25 and vof.numerics["shockCapturing.lag"] is False
+    assert vof.coefficients["sc_beta"] == 1.25 and vof.coefficients["sc_uref"] == 2.0
+    assert vof.coefficients["useMetrics"] == 0.0
+
+
+def test_stabilization_without_a_method_or_with_a_key_the_method_does_not_read_is_refused(dambreak):
+    """A block without a method: ymf 0.3.0 refuses it (say the method); ymf 0.3.1 reads it as ``method: none``, which no
+    VOF cell offers (the cell has SUPG). Either way the dispatch is refused, naming the sub-problem."""
+    spec = copy.deepcopy(dambreak)
+    _sub(spec, "level_set_five", "vof")["stabilization"] = {"shock_capturing": {"factor": "0.5"}}
+    with pytest.raises(DispatchError, match=r"method|vof: stabilization none, the cell has SUPG"):
+        dispatch(spec, "level_set_five")
+    # a key the method does not read is refused by ymf in both
+    spec = copy.deepcopy(dambreak)
+    _sub(spec, "level_set_five", "vof")["stabilization"] = {"method": "SUPG", "no_such_key": "1"}
+    with pytest.raises(DispatchError, match="does not read no_such_key"):
+        dispatch(spec, "level_set_five")
 
 
 def test_the_scheme_block_in_ymf_words_and_in_the_older_ones_dispatch_alike(lake):
@@ -444,14 +479,23 @@ def test_ymf_run_refuses_a_split_discretization_no_module_covers(tmp_path, capsy
     assert not os.listdir(str(out))
 
 
-def test_ymf_run_refuses_a_split_discretization_meshed_by_cells(tmp_path, capsys):
-    """The deck machinery meshes a split discretization's region by element size: the lake at rest's cells study
+def test_ymf_run_refuses_a_split_discretization_refined_by_levels(tmp_path, capsys):
+    """The deck machinery meshes a split discretization's region once (cells or h): a refinement study over levels
     is refused before anything runs."""
     from proteus.cli import ymfrun
-    assert ymfrun.main([os.path.join(HERE, "lake_at_rest.ymf"), "--outdir", str(tmp_path)]) == 2
-    assert "convex_limited: a split discretization is meshed by element size, one level (mesh: {h: ...}); " \
-        "this one gives cells [50, 100, 200]" in capsys.readouterr().err
-    assert not os.listdir(str(tmp_path))
+    spec = tmp_path / "in"
+    spec.mkdir()
+    for f in os.listdir(HERE):
+        if f.endswith(".ymf"):
+            shutil.copy(os.path.join(HERE, f), str(spec))
+    text = open(os.path.join(HERE, "lake_at_rest.ymf")).read().replace(
+        "mesh: {cells: [50, 100, 200]}", "mesh: {cells: 50, levels: [1, 2]}")
+    (spec / "lake.ymf").write_text(text)
+    out = tmp_path / "out"
+    assert ymfrun.main([str(spec / "lake.ymf"), "--outdir", str(out)]) == 2
+    assert "convex_limited: a split discretization is meshed once (mesh: {h: ...} or {cells: ...}, no levels); " \
+        "this one gives cells 50, levels [1, 2]" in capsys.readouterr().err
+    assert not os.path.exists(str(out)) or not os.listdir(str(out))
 
 
 def test_ymf_run_refuses_a_boundary_no_setter_imposes_before_anything_runs(tmp_path, capsys):
@@ -794,3 +838,23 @@ def test_petsc_options_for_a_serial_direct_solve_are_warned_as_unused_not_droppe
     assert applied == {} and unused["flow"] == {"ksp_type": "cg"}
     applied, unused = _check_petsc_options(found, split, entry, 2)    # SuperLU_DIST goes through PETSc: they are read
     assert unused == {} and applied["flow"] == {"ksp_type": "cg"}
+
+
+# ---- SWFlow's open (outflow) boundaries (C5 step 4 part 2) -------------------------------------------------------
+
+def test_SWFlow_open_boundaries_are_reflectingBCs_off_and_a_mixed_boundary_is_refused(lake):
+    from proteus.DispatchRun import RealizeError, precheck, shallow_water_boundary
+    from ymf.symbolic.split import split_problem
+    doc = copy.deepcopy(lake)
+    strong = doc["model"]["strong_form"]
+    strong["boundary_sets"] = [{"region": "all", "set": "outflow"}]
+    split = split_problem(doc, "convex_limited")
+    boundary = shallow_water_boundary(split)
+    assert (boundary["name"], boundary["reflectingBCs"]) == ("outflow", False)
+    precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)
+    # a state imposed on part of the boundary has no SWFlow realization yet
+    strong["boundary_regions"] = [{"name": "all", "where": "∂Ω"}, {"name": "right", "where": "x = 25"}]
+    strong["boundary_conditions"] = [{"region": "right", "variable": "h", "type": "dirichlet", "value": 0.5}]
+    split = split_problem(doc, "convex_limited")
+    with pytest.raises(RealizeError, match="none SWFlow imposes|one boundary treatment"):
+        precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)

@@ -1,0 +1,27 @@
+# The 3-D dam break of test/TwoPhaseFlow/damBreakLevelSet3D.py as a spec: level_set_five of dambreak_short.ymf in a
+# 3.22 m x 1 m x 1.8 m tank, the water column a corner block (x < 1.2, y < 0.5, z < 0.6), gravity along -z, the top open
+# (atmosphere) and the other five faces free slip, for three outputs of 0.01 s on the deck's -C "he=0.4" tetrahedral
+# mesh (TetGen, volume h^3/6), solved with the iterative defaults (the deck's useSuperlu False). The signed distance to
+# the block is written as the deck computes it: the root of a sum of squares outside, the largest signed gap inside.
+extends: dambreak_short.ymf
+
+model:
+  name: "Dam break, 3.22 m x 1 m x 1.8 m tank, 1.2 m x 0.5 m x 0.6 m column (3-D)"
+  strong_form:
+    domain: "Ω = [0, 3.22] × [0, 1] × [0, 1.8],  t ∈ (0, 0.03]"
+    boundary_regions:
+      - {name: walls, where: "x = 0 or x = 3.22 or y = 0 or y = 1 or z = 0"}
+      - {name: top, where: "z = 1.8"}
+    initial_conditions:
+      - field: φ
+        type: function
+        formula: "sqrt(max(x − 1.2, 0)² + max(y − 0.5, 0)² + max(z − 0.6, 0)²) + min(max(x − 1.2, y − 0.5, z − 0.6), 0)"
+        units: m
+    coefficients:
+      g: {formula: "(0, 0, -9.8)"}
+
+solution_paths:
+  discretizations:
+    - name: level_set_five
+      mesh: {h: 0.4}
+      solver: {type: nonlinear, nonlinear_solver: newton, linear_solver: iterative, max_iterations: 50}

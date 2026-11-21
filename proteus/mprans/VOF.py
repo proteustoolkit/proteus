@@ -624,7 +624,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.reuse_test_trial_quadrature = reuse_trial_and_test_quadrature  # True#False
         if self.reuse_test_trial_quadrature:
             for ci in range(1, coefficients.nc):
-                assert self.u[ci].femSpace.__class__.__name__ == self.u[0].femSpace.__class__.__name__, "to reuse_test_trial_quad all femSpaces must be the same!"
+                assert self.u[ci].femSpace.sameSpaceAs(self.u[0].femSpace), "to reuse_test_trial_quad all femSpaces must be the same!"
         self.u_dof_old = None
         # Simplicial Mesh
         self.mesh = self.u[0].femSpace.mesh  # assume the same mesh for  all components for now
@@ -1228,7 +1228,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["sc_uref"] = self.coefficients.sc_uref
         argsDict["sc_alpha"] = self.coefficients.sc_beta
         argsDict["q_porosity"] = self.coefficients.q_porosity
@@ -1237,7 +1237,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
         argsDict["elementDiameter"] = self.mesh.elementDiametersArray
         argsDict["elementBoundaryDiameter"] = self.mesh.elementBoundaryDiametersArray
-        argsDict["degree_polynomial"] = float(self.degree_polynomial)
+        argsDict["degree_polynomial"] = self.degree_polynomial
         argsDict["u_dof"] = self.u[0].dof
         argsDict["u_dof_old"] = self.u_dof_old
         argsDict["velocity"] = self.coefficients.q_v
@@ -1378,7 +1378,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["useMetrics"] = self.coefficients.useMetrics
         argsDict["alphaBDF"] = self.timeIntegration.alpha_bdf
         argsDict["lag_shockCapturing"] = self.shockCapturing.lag
-        argsDict["shockCapturingDiffusion"] = float(self.shockCapturing.shockCapturingFactor)
+        argsDict["shockCapturingDiffusion"] = self.shockCapturing.shockCapturingFactor
         argsDict["q_porosity"] = self.coefficients.q_porosity
         argsDict["u_l2g"] = self.u[0].femSpace.dofMap.l2g
         argsDict["r_l2g"] = self.l2g[0]['freeGlobal']

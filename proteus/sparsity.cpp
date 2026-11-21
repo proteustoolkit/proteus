@@ -160,7 +160,7 @@ namespace proteus
       {
         for(int ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
           {
-            int ebN = exteriorElementBoundariesArray[ebNE],
+            proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
               eN_global   = elementBoundaryElementsArray[ebN*2+0];
             //ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
             for (int ii=0;ii<nFreeDOF_test[eN_global];ii++)
@@ -282,7 +282,7 @@ namespace proteus
       {
         for(int ebNI=0;ebNI<nInteriorElementBoundaries_global;ebNI++)
           {
-            int ebN = interiorElementBoundariesArray[ebNI],
+            proteus_index_t ebN = interiorElementBoundariesArray[ebNI],
               left_eN_global   = elementBoundaryElementsArray[ebN*2 + 0],
               right_eN_global  = elementBoundaryElementsArray[ebN*2 + 1];
             //left_ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2 + 0],
@@ -335,7 +335,7 @@ namespace proteus
               {
                 for(int ebN_eN=0;ebN_eN<nElementBoundaries_element;ebN_eN++)
                   {
-                    int left_eN_ebN = elementNeighborsArray[left_eN_global*nElementBoundaries_element+ebN_eN],
+                    proteus_index_t left_eN_ebN = elementNeighborsArray[left_eN_global*nElementBoundaries_element+ebN_eN],
                       right_eN_ebN = elementNeighborsArray[right_eN_global*nElementBoundaries_element+ebN_eN];
                     for(int ii=0;ii<nFreeDOF_test[left_eN_global];ii++)
                       {
@@ -409,7 +409,7 @@ namespace proteus
       {
         for(int ebNE=0;ebNE<nExteriorElementBoundaries_global;ebNE++)
           {
-            int ebN = exteriorElementBoundariesArray[ebNE],
+            proteus_index_t ebN = exteriorElementBoundariesArray[ebNE],
               eN_global   = elementBoundaryElementsArray[ebN*2+0];
             //ebN_element  = elementBoundaryLocalElementBoundariesArray[ebN*2+0];
             for (int ii=0;ii<nFreeDOF_test[eN_global];ii++)
@@ -463,19 +463,35 @@ namespace proteus
     //         std:://cout<<*sit<<'\t';
     //       std::cout<<std::endl;
     //     }
-    nrows = int(columnIndecesMap.size())+1;
+    // Rows are the keys of the map, 0..maxkey. A row nobody inserted (a dof no element couples, or none on this
+    // rank) is an empty row; it must not be created by operator[] while the loop bound is the map's size.
+    const proteus_index_t nrowsLocal = columnIndecesMap.empty() ? 0 : columnIndecesMap.rbegin()->first + 1;
+    nrows = nrowsLocal + 1;
     rowptr = new proteus_csr_index_t[nrows];
     rowptr[0] = 0;
-    for(proteus_index_t I=1;I< columnIndecesMap.size()+1;I++)
-      rowptr[I]=rowptr[I-1] + proteus_csr_index_t(columnIndecesMap[I-1].size());
-    nnz = rowptr[columnIndecesMap.size()];
+    {
+      std::map<proteus_index_t, std::set<proteus_index_t> >::const_iterator mit = columnIndecesMap.begin();
+      for(proteus_index_t I=0;I<nrowsLocal;I++)
+        {
+          proteus_csr_index_t rowSize = 0;
+          if (mit != columnIndecesMap.end() && mit->first == I)
+            {
+              rowSize = proteus_csr_index_t(mit->second.size());
+              ++mit;
+            }
+          rowptr[I+1] = rowptr[I] + rowSize;
+        }
+    }
+    nnz = rowptr[nrowsLocal];
     colind = new proteus_csr_index_t[nnz];
     nzval = new double[nnz];
     proteus_csr_index_t max_nonzeros=0;
-    for(proteus_index_t I=0;I< columnIndecesMap.size();I++)
+    for(std::map<proteus_index_t, std::set<proteus_index_t> >::const_iterator mit = columnIndecesMap.begin();
+        mit != columnIndecesMap.end(); ++mit)
       {
+        const proteus_index_t I = mit->first;
         int offset=0;
-        for(std::set<proteus_index_t>::iterator sit=columnIndecesMap[I].begin();sit != columnIndecesMap[I].end();sit++)
+        for(std::set<proteus_index_t>::const_iterator sit=mit->second.begin();sit != mit->second.end();sit++)
           {
             columnOffsetsMap[I][*sit] = offset;
             assert(rowptr[I]+offset < nnz);
