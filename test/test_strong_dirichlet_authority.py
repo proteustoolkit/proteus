@@ -95,7 +95,13 @@ def test_poisson_on_the_petsc_triangle_mesh_gives_the_serial_answer(ranks, tmp_p
     3 to 6 ranks, 1 and 2 ranks gave the serial answer). Fixed by handing the authority's point and flag to the ranks
     that see the dof (LinearAlgebraTools.strongDirichletNonAuthorityDofs, DOFBoundaryConditions.adoptDOF)."""
     _need_superlu_dist()
-    serial = _run(1, tmp_path, POISSON, STORED_MESH=STORED_MESH)
-    parallel = _run(ranks, tmp_path, POISSON, STORED_MESH=STORED_MESH)
+    # The partition is pinned to the element order (-mat_partitioning_type current): with PETSc's default partitioner
+    # (the Mac's and the Linux runner's alike) the same mesh is cut elsewhere and the unfixed code gives the serial
+    # answer on 3, 4 and 6 ranks (CI of #340: the strict xfail XPASSed on linux-64), so without the pin this test
+    # would not guard the defect. Pinned, the corner (0, 1) is owned by rank 0 (top-face element only) and held by
+    # rank 1 (left-face element) on 3 ranks, on every machine.
+    pinned = {"STORED_MESH": STORED_MESH, "PETSC_OPTIONS": "-mat_partitioning_type current"}
+    serial = _run(1, tmp_path, POISSON, **pinned)
+    parallel = _run(ranks, tmp_path, POISSON, **pinned)
     for key in ("s", "s2"):
         numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
