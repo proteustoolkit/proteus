@@ -231,6 +231,18 @@ def test_mesh_files_plan():
 
 
 @pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_pro_msh_opens_its_log_at_the_default_log_level(tmp_path):
+    # every other pro msh test passes -l 0, which skips openLog; at the default level it asserted that
+    # Profiling.procID was unset (found running the air-water-vv decks on Carpenter, 2026-11-21)
+    work = tmp_path / "pro"
+    _copy_ci_models(work)
+    made = pro("msh", *TETGEN_MODEL, cwd=work)
+    assert made.returncode == 0, made.stderr[-2000:]
+    assert (work / "poisson_3d_tetgen_p_msh.log").exists()
+    assert (work / "meshNoVessel.mesh.ymf").exists()
+
+
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
 def test_msh_then_run_without_meshing(tmp_path):
     work = tmp_path / "pro"
     _copy_ci_models(work)
