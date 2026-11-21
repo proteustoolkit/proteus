@@ -20,9 +20,15 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
                  rhow=998.2,#kg/m^3 water density (used if pore pressures specified)
                  pa=101325.0,#N/m^2 atmospheric pressure
                  nd=3,
-                 meIndex=0,seepageIndex=-1,SRF=1.0,pore_pressure_file_base=None,pore_pressure_field_path=None):
+                 meIndex=0,seepageIndex=-1,SRF=1.0,pore_pressure_file_base=None,pore_pressure_field_path=None,
+                 loadStepping=False):
         import copy
-        self.modelType_block = modelType_block
+        # constitutive model of each material, see evaluateConstitutiveModel in ElastoPlastic.h:
+        # 0, 1 mcdp (Mohr-Coulomb yield, Drucker-Prager potential), 2 von Mises, 3 Tresca, 4 Drucker-Prager,
+        # 5 Mohr-Coulomb. For 2 and 3 the uniaxial yield stress is twice the cohesion (modelParams_block[:,6]).
+        self.modelType_block = np.ascontiguousarray(modelType_block, dtype=np.intc)
+        if self.modelType_block.size and (self.modelType_block.min() < 0 or self.modelType_block.max() > 5):
+            raise ValueError("ElastoPlastic.Coefficients: modelType_block entries must be 0..5, got %r" % (modelType_block,))
         self.modelParams_block = modelParams_block
         self.materialProperties = self.modelParams_block
         self.materialProperties_default = copy.deepcopy(self.modelParams_block)
@@ -68,6 +74,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         self.vectorName="displacement"
         self.firstCall=True
         self.gravityStep=1
+        # loadStepping: quasi-static load steps with the total displacement as the unknown. There is no elastic
+        # gravity step and no strength reduction: every step is elastoplastic from the state at the end of the
+        # previous one (strain_last, plasticStrain_last), and the boundary conditions are functions of t.
+        self.loadStepping=loadStepping
+        if self.loadStepping:
+            self.gravityStep=0
         self.lastStepWasGravityStep=False
         self.meIndex = meIndex
         self.seepageIndex = seepageIndex
@@ -123,6 +135,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
     def initializeMesh(self,mesh):
         self.mesh = mesh
     def postStep(self,t,firstStep=False):
+        if self.loadStepping:
+            self.cq['strain_last'][:] = self.cq['strain']
+            self.cq['plasticStrain_last'][:] = self.cq['plasticStrain']
+            self.cebqe['strain_last'][:] = self.cebqe['strain']
+            self.cebqe['plasticStrain_last'][:] = self.cebqe['plasticStrain']
+            return
         if self.gravityStep:
             if self.gravityStep == 1:
                 self.cq['strain0'][:]=self.cq['strain']
@@ -159,6 +177,8 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         #self.mesh.nodeArray[:,1]+=self.model.u[1].dof
         #self.mesh.nodeArray[:,2]+=self.model.u[2].dof
     def preStep(self,t,firstStep=False):
+        if self.loadStepping:
+            return None
         print("Starting========================SRF = "+repr(self.SRF)+"===============================")
         if self.lastStepWasGravityStep:
             self.model.u[0].dof[:]=0.0
@@ -694,8 +714,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["ebqe_penalty"] = self.ebqe['penalty']
         argsDict["gravityStep"] = int(self.coefficients.gravityStep)
+        argsDict["totalDisplacement"] = int(self.coefficients.loadStepping)
         argsDict["nElements_global"] = self.mesh.nElements_global
         argsDict["materialTypes"] = self.mesh.elementMaterialTypes
+        argsDict["materialModelTypes"] = self.coefficients.modelType_block
         argsDict["nMaterialProperties"] = self.coefficients.nMaterialProperties
         argsDict["materialProperties"] = self.coefficients.materialProperties
         argsDict["pore_fluid_unit_weight"] = self.coefficients.pore_fluid_unit_weight
@@ -770,8 +792,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["boundaryJac_ref"] = self.u[0].femSpace.elementMaps.boundaryJacobians
         argsDict["ebqe_penalty"] = self.ebqe['penalty']
         argsDict["gravityStep"] = int(self.coefficients.gravityStep)
+        argsDict["totalDisplacement"] = int(self.coefficients.loadStepping)
         argsDict["nElements_global"] = self.mesh.nElements_global
         argsDict["materialTypes"] = self.mesh.elementMaterialTypes
+        argsDict["materialModelTypes"] = self.coefficients.modelType_block
         argsDict["nMaterialProperties"] = self.coefficients.nMaterialProperties
         argsDict["materialProperties"] = self.coefficients.materialProperties
         argsDict["pore_fluid_unit_weight"] = self.coefficients.pore_fluid_unit_weight
