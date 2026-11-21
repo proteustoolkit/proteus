@@ -21,12 +21,8 @@ tvc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tvc)
 
 
-@pytest.fixture
-def levee_deck(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    modules = tvc._load(tvc.CASE_D, tvc.CASE_D_MODULES)
-    yield modules
-    tvc._unload(tvc.CASE_D_MODULES)
+# the levee deck with its stored mesh (the external `triangle` of each environment makes a different mesh)
+levee_deck = tvc.levee_deck
 
 
 @pytest.mark.parametrize("stab,rtol", [(5, 1e-10), (4, 1e-4)])
