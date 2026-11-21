@@ -335,6 +335,9 @@ def _bring_mesh_up_to_date(args, comm, pList, nList, log):
     domain, meshOptions, plan = plan_for(pList, nList)
     if plan is None or not meshOptions.genMesh:
         return None
+    # Every rank has loaded the model, so none is still writing the generator's input: a model that rewrites its .poly on
+    # every rank at import (air-water-vv 45DEG_R1, 3072 ranks) had it hashed mid-rewrite, and a current mesh read as stale.
+    comm.barrier()
     error = None
     if comm.isMaster():
         state, reason = mesh.state(plan)

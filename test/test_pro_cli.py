@@ -1187,6 +1187,31 @@ def pro_on(ranks, *args, cwd):
                           timeout=600, env=env)
 
 
+@needs_mpiexec
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_pro_run_checks_the_mesh_after_every_rank_has_loaded_the_model(tmp_path):
+    # A model that rewrites its .poly on the ranks other than 0 after loading (air-water-vv 45DEG_R1 writes it on
+    # every rank): rank 0 hashed the file while it was being rewritten and found a current mesh stale (3072 ranks,
+    # Carpenter, 2026-11-21: "the generator's inputs or command changed" with --no-mesh).
+    work = tmp_path / "pro"
+    _copy_ci_models(work)
+    made = pro("msh", *TETGEN_MODEL, "-l", "0", cwd=work)
+    assert made.returncode == 0, made.stderr[-2000:]
+    p = work / "poisson_3d_tetgen_p.py"
+    source = p.read_text()
+    old = "    comm.barrier()\ndomain.MeshOptions.genMesh=genMesh"
+    assert old in source
+    p.write_text(source.replace(old, "    comm.barrier()\n"
+                                "    if not comm.isMaster():\n"
+                                "        import time\n"
+                                "        open(polyfile + '.poly', 'w').close()\n"
+                                "        time.sleep(3)\n"
+                                "        domain.writePoly(polyfile)\n"
+                                "domain.MeshOptions.genMesh=genMesh"))
+    ran = pro_on(2, "run", *TETGEN_MODEL, "--no-mesh", "-l", "0", cwd=work)
+    assert ran.returncode == 0, ran.stderr[-2000:]
+
+
 def _outputs(path):
     from ymf import closure
     _, outputs, _ = closure.load(str(path), check_state=False)
