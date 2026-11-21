@@ -17,6 +17,7 @@ dispatched discretization or nothing. What the dispatch does not cover is refuse
 
 This module is the front end's: it reads the model's coefficients through ymf.symbolic (sympy), as ymf_run does.
 """
+import ast
 import contextlib
 import os
 import warnings
@@ -66,9 +67,35 @@ def _entry(doc, name):
     return next(d for d in doc["solution_paths"]["discretizations"] if d["name"] == name)
 
 
+class _ExactSquares(ast.NodeTransformer):
+    """``u**2`` as ``numpy.square(u)``."""
+
+    def visit_BinOp(self, node):
+        self.generic_visit(node)
+        if (isinstance(node.op, ast.Pow) and isinstance(node.right, ast.Constant)
+                and isinstance(node.right.value, (int, float)) and not isinstance(node.right.value, bool)
+                and node.right.value == 2):
+            call = ast.Call(func=ast.Attribute(value=ast.Name(id="numpy", ctx=ast.Load()), attr="square", ctx=ast.Load()),
+                            args=[node.left], keywords=[])
+            return ast.copy_location(call, node)
+        return node
+
+
+def exact_squares(code):
+    """ymf's code string with every ``u**2`` replaced by ``numpy.square(u)``, i.e. ``u*u`` rounded once.
+
+    The decks square arrays (``(d**2).sum()``), and numpy squares an array by multiplying. The same ``**2`` on one
+    point (an initial condition is evaluated a node at a time, so ``x`` is a ``numpy.float64``) is the C library's
+    ``pow(u, 2.0)``, which is not ``u*u`` for about one double in 800 (measured on macOS arm64, macOS x86_64 and
+    Linux glibc alike, 356 to 517 of 400000 draws): the last bit of a signed distance, and a run that is no longer
+    bitwise the deck's. Whether a mesh has such a node is a matter of its coordinates (the damBreakLevelSet3D
+    comparison failed on the one node of a 274-node TetGen mesh that has it, and passed on 278-node ones)."""
+    return ast.unparse(_ExactSquares().visit(ast.parse(code, mode="eval")))
+
+
 def _field(code, dim):
     from proteus.ADRProblem import _Field
-    return _Field(code, dim)
+    return _Field(exact_squares(code), dim)
 
 
 class _Constant(object):
@@ -820,7 +847,7 @@ class _OfPoint(object):
 
     def __init__(self, code, dim):
         from proteus.ADRProblem import _compile
-        self.code = _compile(code)
+        self.code = _compile(exact_squares(code))
         self.dim = dim
 
     def __call__(self, X):
