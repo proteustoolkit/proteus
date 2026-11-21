@@ -79,3 +79,26 @@ def test_poisson_with_flag_selected_strong_dirichlet_dofs_gives_the_serial_answe
     parallel = _run(ranks, tmp_path, POISSON, **({"TRAP": 1} if trap else {}))
     for key in ("s", "s2"):
         numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
+
+
+STORED_MESH = os.path.join(HERE, "strong_dirichlet_stored_mesh")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "partition dependence of the flag-selected strong Dirichlet dofs that the trapped-corner test above does not "
+    "reach: on this mesh the corner node (0, 1) (flag 3, the top face) is left at u = 0 instead of the left face's "
+    "1.0 once the partition has 3 or 4 ranks (s = -146.306 against -140.990 on 1 and 2 ranks, newton 1 on all); "
+    "found by the triangle audit (TRIANGLE_AUDIT_2026-11-21.md), owner C0 (NumericalFlux, Transport)"))
+@pytest.mark.skipif(MPIEXEC is None, reason="mpiexec not available")
+@pytest.mark.parametrize("ranks", [3, 4])
+def test_poisson_on_the_petsc_triangle_mesh_gives_the_serial_answer(ranks, tmp_path):
+    """The mesh the PETSc-built `triangle` (the fleet nightly's, first on PATH there) makes of the unit square at
+    he = 0.1 (256 elements, 145 nodes; conda-forge's triangle makes 312 and 178) is read from
+    strong_dirichlet_stored_mesh/, so this is the same on every machine. With conda-forge's mesh the test above gives
+    the serial answer on 2, 3, 4, 5 and 6 ranks; with this one 3 and 4 ranks do not. Strict xfail: when the defect is
+    fixed this test passes, the marker must go."""
+    _need_superlu_dist()
+    serial = _run(1, tmp_path, POISSON, STORED_MESH=STORED_MESH)
+    parallel = _run(ranks, tmp_path, POISSON, STORED_MESH=STORED_MESH)
+    for key in ("s", "s2"):
+        numpy.testing.assert_allclose(parallel[key], serial[key], rtol=1e-9, atol=1e-12, err_msg=key)
