@@ -135,6 +135,12 @@ figure (`plot_fig8.py` uses them only when present; they are not ours to redistr
 - **Flags.** The edge-flux transport and its Richards FCT boundary block are on main and 1.9.x since cekees/proteus#173 and
   #174, where the boundary block is opt-in. Every deck here with Richards `FCT=True` therefore passes
   `FCT_BND_DIFF=True, FCT_BND_KRW=True`; without them the runs differ from Barua's builds.
+- **`BC_CONS=True`.** Every flow deck also passes `BC_CONS=True`. Barua's builds had the boundary-conservative velocity ON by
+  default (`RICHARDS_BC_CONS` unset meant on); proteus makes it opt-in (`Coefficients(BC_CONS=False)`), and it changes the boundary
+  velocity that the velocity-based transport coupling sees. Without it the UHD coupling rows of `tab:uhd_coupling` (velocity-based,
+  eos, Co 0.5: total 4.30 % instead of 1.81 %) and the bioswale step count on 2 ranks (442 instead of 443) differ from the manuscript's.
+  Henry and the MMS N = 40 case are not sensitive to it (identical to every printed digit); the compatible (edge-flux) coupling is not
+  affected. Measured on a fresh build of the 1.9.1 tag, serial or 2 ranks as noted.
 - **Reproduced:** Henry (this deck, TADR STAB 5) on the 1.9.x port equals Barua's build at `c3f611c6` bit for bit (205
   outputs, serial). On main it differs by round-off amplified at the early front: 5e-19 at output 2, 6.2e-3 at output 5,
   3.6e-5 at the final time; RMSE against the semi-analytical solution 2.840e-2 on both.
