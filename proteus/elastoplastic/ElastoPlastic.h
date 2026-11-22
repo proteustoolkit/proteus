@@ -167,80 +167,42 @@ namespace proteus
                     }
                 }
 
-                inline void evaluateConstitutiveModel(const double* materialProperties, const double* stress,
+                //Yield function f, its gradient df, flow direction r = dg/dstress and dr for the model of a material.
+                //modelType (Coefficients.modelType_block, one per material):
+                //  0, 1: mcdp, Mohr-Coulomb yield with a Drucker-Prager plastic potential (the model every
+                //        deck has used; 0 was "Lade" and 1 "Mohr-Coulomb" in the decks, both ran mcdp)
+                //  2: von Mises, f = sigma_vm - 2c (uniaxial yield stress 2c; phi and psi unused)
+                //  3: Tresca, f = (sigma_1 - sigma_3)/2 - c (uniaxial yield stress 2c; phi and psi unused)
+                //  4: Drucker-Prager
+                //  5: Mohr-Coulomb with a Mohr-Coulomb plastic potential
+                //Only mcdp returns the minor principal stress stress_3, which the pressure-dependent
+                //modulus (P_a > 0) needs; the other models set it to zero, so use them with P_a = 0.
+                inline void evaluateConstitutiveModel(const int modelType, const double* materialProperties, const double* stress,
                         double& f, double* df, double* r, double* dr, double& stress_3)
                 {
                     double g;
-                    /* std::cout<<materialProperties[5]<<"phi \n" */
-                    /*            <<materialProperties[7]<<"psi \n" */
-                    /*            <<materialProperties[6]<<"c \n"<<std::endl; */
-                    /* mohrCoulomb(materialProperties[5],//phi */
-                    /*           materialProperties[7],//psi */
-                    /*           materialProperties[6],//c */
-                    /*           stress, */
-                    /*           f, */
-                    /*           df, */
-                    /*           g, */
-                    /*           r, */
-                    /*           dr); */
-                    /* mohrCoulomb2(materialProperties[5],//phi */
-                    /*           materialProperties[7],//psi */
-                    /*           materialProperties[6],//c */
-                    /*           stress, */
-                    /*           f, */
-                    /*           df, */
-                    /*           g, */
-                    /*           r, */
-                    /*           dr); */
-                    /* if (! (std::isfinite(f) &&   */
-                    /*          std::isfinite(df[sXX]) && std::isfinite(df[sYY]) && std::isfinite(df[sZZ]) && std::isfinite(df[sYZ]) && std::isfinite(df[sXZ]) && std::isfinite(df[sXY]) &&  */
-                    /*          std::isfinite(r[sXX]) && std::isfinite(r[sYY]) && std::isfinite(r[sZZ]) && std::isfinite(r[sYZ]) && std::isfinite(r[sXZ]) && std::isfinite(r[sXY]))) */
-                    /*     { */
-                    /*       std::cout<<"f "<<f<<std::endl */
-                    /*            <<"stress "<<stress[sXX]<<'\t'<<stress[sYY]<<'\t'<<stress[sZZ]<<'\t'<<stress[sYZ]<<'\t'<<stress[sXZ]<<'\t'<<stress[sXY]<<std::endl */
-                    /*            <<"df "<<df[sXX]<<'\t'<<df[sYY]<<'\t'<<df[sZZ]<<'\t'<<df[sYZ]<<'\t'<<df[sXZ]<<'\t'<<df[sXY]<<std::endl */
-                    /*            <<"r "<<r[sXX]<<'\t'<<r[sYY]<<'\t'<<r[sZZ]<<'\t'<<r[sYZ]<<'\t'<<r[sXZ]<<'\t'<<r[sXY]<<std::endl; */
-                    /*     } */
-                    /* vonMises(materialProperties[5],//phi */
-                    /*           materialProperties[7],//psi */
-                    /*           materialProperties[6],//c */
-                    /*           stress, */
-                    /*           f, */
-                    /*           df, */
-                    /*           g, */
-                    /*           r, */
-                    /*           dr); */
-                    /* tresca(materialProperties[5],//phi */
-                    /*           materialProperties[7],//psi */
-                    /*           materialProperties[6],//c */
-                    /*           stress, */
-                    /*           f, */
-                    /*           df, */
-                    /*           g, */
-                    /*           r, */
-                    /*           dr); */
-                    /* druckerPrager(materialProperties[5],//phi */
-                    /*             materialProperties[7],//psi */
-                    /*             materialProperties[6],//c */
-                    /*             stress, */
-                    /*             f, */
-                    /*             df, */
-                    /*             g, */
-                    /*             r, */
-                    /*             dr); */
-                    mcdp(materialProperties[5],//phi
-                            materialProperties[7],//psi
-                            materialProperties[6],//c
-                            stress,
-                            f,
-                            df,
-                            g,
-                            r,
-                            dr,
-                            stress_3);
+                    const double &phi(materialProperties[5]), &c(materialProperties[6]), &psi(materialProperties[7]);
+                    stress_3 = 0.0;
+                    switch (modelType)
+                    {
+                        case 2:
+                            vonMises(phi,psi,c,stress,f,df,g,r,dr);
+                            break;
+                        case 3:
+                            tresca(phi,psi,c,stress,f,df,g,r,dr);
+                            break;
+                        case 4:
+                            druckerPrager(phi,psi,c,stress,f,df,g,r,dr);
+                            break;
+                        case 5:
+                            mohrCoulomb(phi,psi,c,stress,f,df,g,r,dr);
+                            break;
+                        default:
+                            mcdp(phi,psi,c,stress,f,df,g,r,dr,stress_3);
+                    }
                 }
 
-                inline void differenceJacobian(const double* materialProperties,const double* stress,const double& f,double *df, const double* r, double* dr)
+                inline void differenceJacobian(const int modelType, const double* materialProperties,const double* stress,const double& f,double *df, const double* r, double* dr)
                 {
                     double f_delta,
                            df_delta[nSymTen],
@@ -255,7 +217,7 @@ namespace proteus
                            {
                                double Delta_stress  = 1.0e-8*stress[j] + 1.0e-8;
                                stress_plus_delta[j] += Delta_stress;
-                               evaluateConstitutiveModel(materialProperties,stress_plus_delta,f_delta,df_delta,r_delta,dr_delta,stress_3);
+                               evaluateConstitutiveModel(modelType,materialProperties,stress_plus_delta,f_delta,df_delta,r_delta,dr_delta,stress_3);
                                df[j] = (f_delta - f)/Delta_stress;
                                for(int k=0;k<nSymTen;k++)
                                {
@@ -264,7 +226,8 @@ namespace proteus
                                stress_plus_delta[j] = stress[j];
                            }
                 }
-                inline void evaluateCoefficients(int usePicard,
+                inline void evaluateCoefficients(const int modelType,
+                        int usePicard,
                         const double pore_pressure,
                         const double* materialProperties,
                         const double* strain0,
@@ -337,7 +300,7 @@ namespace proteus
                                                   //get modulus from initial strain
                                                   elasticModuli(E,nu,C,Cinv);
                                                   elasticStress(C,strain0,stress);
-                                                  evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
+                                                  evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
                                                   const double n_e = 0.6,
                                                         P_a = materialProperties[12],
                                                         K_i = 500.0;
@@ -360,7 +323,7 @@ namespace proteus
                                                             effectiveStrain[i] = strain_last[i] - plasticStrain_last[i];
                                                         }
                                                         elasticStress(C,effectiveStrain,stress);
-                                                        evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3);
+                                                        evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3);
                                                         for (int i=0;i<nSymTen;i++)
                                                         {
                                                             r0[i]=r[i];
@@ -378,10 +341,10 @@ namespace proteus
                                                             a[i] = 0.0;
                                                         }
                                                         elasticStress(C,effectiveStrain,stress);
-                                                        evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3);
+                                                        evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3);
                                                         if (useDifferenceJacobian)
                                                         {
-                                                            differenceJacobian(materialProperties,stress,f,df,r,dr);//recalculate df and dr
+                                                            differenceJacobian(modelType,materialProperties,stress,f,df,r,dr);//recalculate df and dr
                                                         }
                                                         if (useSemiImplicit)//overwrite r and dr
                                                         {
@@ -488,10 +451,10 @@ namespace proteus
                                                                 stress_old[i] = stress[i];
                                                                 stress[i] += Delta_stress_incr[i];
                                                             }
-                                                            evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3);
+                                                            evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3);
                                                             if (useDifferenceJacobian)
                                                             {
-                                                                differenceJacobian(materialProperties,stress,f,df,r,dr);
+                                                                differenceJacobian(modelType,materialProperties,stress,f,df,r,dr);
                                                             }
                                                             //reset r and r0 to do sem-implicit BackwardEuler integration if true
                                                             if (useSemiImplicit)
@@ -517,10 +480,10 @@ namespace proteus
                                                                     Delta_stress[i] =  Delta_stress_old[i] + ds*Delta_stress_incr[i];
                                                                     stress[i] = stress_old[i] + ds*Delta_stress_incr[i];
                                                                 }
-                                                                evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3);
+                                                                evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3);
                                                                 if (useDifferenceJacobian)
                                                                 {
-                                                                    differenceJacobian(materialProperties,stress,f,df,r,dr);
+                                                                    differenceJacobian(modelType,materialProperties,stress,f,df,r,dr);
                                                                 }
                                                                 //reset r and r0 to do sem-implicit BackwardEuler integration if true
                                                                 if (useSemiImplicit || predictorPhase)
@@ -622,10 +585,10 @@ namespace proteus
                                                             /*       a[i] = 0.0; */
                                                             /*     } */
                                                             /*     elasticStress(C,effectiveStrain,stress); */
-                                                            /*     evaluateConstitutiveModel(materialProperties,stress,f,df,r,dr,stress_3); */
+                                                            /*     evaluateConstitutiveModel(modelType,materialProperties,stress,f,df,r,dr,stress_3); */
                                                             /*     if (useDifferenceJacobian) */
                                                             /*     { */
-                                                            /*       differenceJacobian(materialProperties,stress,f,df,r,dr); */
+                                                            /*       differenceJacobian(modelType,materialProperties,stress,f,df,r,dr); */
                                                             /*     } */
                                                             /*     if (useSemiImplicit) */
                                                             /*     { */
@@ -920,8 +883,11 @@ namespace proteus
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
         proteus::pyarray<double>& ebqe_penalty = args.array<double>("ebqe_penalty");
         int gravityStep = args.scalar<int>("gravityStep");
+        //load stepping: the displacement is the total one, so the strain increment of the step is strain(u) - strain_last
+        const int totalDisplacement = args.scalar<int>("totalDisplacement");
         proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         proteus::pyarray<int>& materialTypes = args.array<int>("materialTypes");
+        proteus::pyarray<int>& materialModelTypes = args.array<int>("materialModelTypes");
         int nMaterialProperties = args.scalar<int>("nMaterialProperties");
         proteus::pyarray<double>& materialProperties = args.array<double>("materialProperties");
         double pore_fluid_unit_weight = args.scalar<double>("pore_fluid_unit_weight");
@@ -1053,6 +1019,9 @@ namespace proteus
                                                  //q_displacement[eN_k_nSpace+2]=w;
 
                                                  calculateStrain(D,Delta_strain);
+                                                 if (totalDisplacement)
+                                                     for (int i=0; i<nSymTen; i++)
+                                                         Delta_strain[i] -= q_strain_last.data()[eN_k*nSymTen+i];
                                                  //std::cout<<"here "<<materialProperties[0]<<'\t'<<materialProperties[1]<<std::endl<<std::flush;
 
                                                  double C[nSymTen*nSymTen],Cinv[nSymTen*nSymTen];
@@ -1065,7 +1034,7 @@ namespace proteus
                                                      {
                                                          double f,df[nSymTen],r[nSymTen],dr[nSymTen*nSymTen],stress_3_init,E=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],nu=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+1];
                                                          elasticStress(C,&q_strain0.data()[eN_k*nSymTen],stress);
-                                                         evaluateConstitutiveModel(&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
+                                                         evaluateConstitutiveModel(materialModelTypes.data()[materialTypes.data()[eN]],&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                                  stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
                                                          const double n_e = 0.6,
                                                                P_a = materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+12],
@@ -1087,7 +1056,7 @@ namespace proteus
                                                          stress[i] -= pore_pressure;
                                                  }
                                                  else
-                                                     evaluateCoefficients(usePicard,
+                                                     evaluateCoefficients(materialModelTypes.data()[materialTypes.data()[eN]],usePicard,
                                                              pore_pressure,
                                                              &materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                              &q_strain0.data()[eN_k*nSymTen],
@@ -1240,6 +1209,9 @@ namespace proteus
                                              //calculate the pde coefficients using the solution and the boundary values for the solution
                                              //
                                              calculateStrain(D,Delta_strain);
+                                             if (totalDisplacement)
+                                                 for (int i=0; i<nSymTen; i++)
+                                                     Delta_strain[i] -= ebqe_strain_last.data()[ebNE_kb*nSymTen+i];
                                              double C[nSymTen*nSymTen],Cinv[nSymTen*nSymTen];
                                              if (gravityStep)
                                              {
@@ -1250,7 +1222,7 @@ namespace proteus
                                                  {
                                                      double f,df[nSymTen],r[nSymTen],dr[nSymTen*nSymTen],stress_3_init,E=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],nu=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+1];
                                                      elasticStress(C,&ebqe_strain0.data()[ebNE_kb*nSymTen],stress);
-                                                     evaluateConstitutiveModel(&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
+                                                     evaluateConstitutiveModel(materialModelTypes.data()[materialTypes.data()[eN]],&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                              stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
                                                      const double n_e = 0.6,
                                                            P_a = materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+12],
@@ -1272,7 +1244,7 @@ namespace proteus
                                                      stress[i] -= pore_pressure_ext;
                                              }
                                              else
-                                                 evaluateCoefficients(usePicard,
+                                                 evaluateCoefficients(materialModelTypes.data()[materialTypes.data()[eN]],usePicard,
                                                          pore_pressure_ext,
                                                          &materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                          &ebqe_strain0.data()[ebNE_kb*nSymTen],
@@ -1361,8 +1333,11 @@ namespace proteus
         proteus::pyarray<double>& boundaryJac_ref = args.array<double>("boundaryJac_ref");
         proteus::pyarray<double>& ebqe_penalty = args.array<double>("ebqe_penalty");
         int gravityStep = args.scalar<int>("gravityStep");
+        //load stepping: the displacement is the total one, so the strain increment of the step is strain(u) - strain_last
+        const int totalDisplacement = args.scalar<int>("totalDisplacement");
         proteus_index_t nElements_global = args.scalar<proteus_index_t>("nElements_global");
         proteus::pyarray<int>& materialTypes = args.array<int>("materialTypes");
+        proteus::pyarray<int>& materialModelTypes = args.array<int>("materialModelTypes");
         int nMaterialProperties = args.scalar<int>("nMaterialProperties");
         proteus::pyarray<double>& materialProperties = args.array<double>("materialProperties");
         double pore_fluid_unit_weight = args.scalar<double>("pore_fluid_unit_weight");
@@ -1511,6 +1486,9 @@ namespace proteus
                                                  }
                                     }
                                     calculateStrain(D,Delta_strain);
+                                    if (totalDisplacement)
+                                        for (int i=0; i<nSymTen; i++)
+                                            Delta_strain[i] -= q_strain_last.data()[eN_k*nSymTen+i];
                                     if (gravityStep)
                                     {
                                         double C[nSymTen*nSymTen],Cinv[nSymTen*nSymTen];
@@ -1521,7 +1499,7 @@ namespace proteus
                                         {
                                             double f,df[nSymTen],r[nSymTen],dr[nSymTen*nSymTen],stress_3_init,E=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],nu=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+1];
                                             elasticStress(C,&q_strain0.data()[eN_k*nSymTen],stress);
-                                            evaluateConstitutiveModel(&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
+                                            evaluateConstitutiveModel(materialModelTypes.data()[materialTypes.data()[eN]],&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                     stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
                                             const double n_e = 0.6,
                                                   P_a = materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+12],
@@ -1543,7 +1521,7 @@ namespace proteus
                                             stress[i] -= pore_pressure;
                                     }
                                     else
-                                        evaluateCoefficients(usePicard,
+                                        evaluateCoefficients(materialModelTypes.data()[materialTypes.data()[eN]],usePicard,
                                                 pore_pressure,
                                                 &materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                                 &q_strain0.data()[eN_k*nSymTen],
@@ -1705,6 +1683,9 @@ namespace proteus
                             //calculate the internal and external trace of the pde coefficients
                             //
                             calculateStrain(D_ext,Delta_strain);
+                            if (totalDisplacement)
+                                for (int i=0; i<nSymTen; i++)
+                                    Delta_strain[i] -= ebqe_strain_last.data()[ebNE_kb*nSymTen+i];
                             if (gravityStep)
                             {
                                 double C[nSymTen*nSymTen],Cinv[nSymTen*nSymTen];
@@ -1715,7 +1696,7 @@ namespace proteus
                                 {
                                     double f,df[nSymTen],r[nSymTen],dr[nSymTen*nSymTen],stress_3_init,E=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],nu=materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+1];
                                     elasticStress(C,&ebqe_strain0.data()[ebNE_kb*nSymTen],stress);
-                                    evaluateConstitutiveModel(&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
+                                    evaluateConstitutiveModel(materialModelTypes.data()[materialTypes.data()[eN]],&materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                             stress,f,df,r,dr,stress_3_init);//cek hack, this is just to get stress_3_init
                                     const double n_e = 0.6,
                                           P_a = materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties+12],
@@ -1737,7 +1718,7 @@ namespace proteus
                                     stress[i] -= pore_pressure_ext;
                             }
                             else
-                                evaluateCoefficients(usePicard,
+                                evaluateCoefficients(materialModelTypes.data()[materialTypes.data()[eN]],usePicard,
                                         pore_pressure_ext,
                                         &materialProperties.data()[materialTypes.data()[eN]*nMaterialProperties],
                                         &ebqe_strain0.data()[ebNE_kb*nSymTen],
