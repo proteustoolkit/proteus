@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/source/_static/logo/primary/proteus-lockup-h-dark-background.svg">
+    <img alt="Proteus" src="docs/source/_static/logo/primary/proteus-lockup-h-light-background.svg" width="360">
+  </picture>
+</p>
+
 # Proteus: Computational Methods and Simulation Toolkit [![Build Status](https://github.com/proteustoolkit/proteus/actions/workflows/sdist.yml/badge.svg?branch=main)](https://github.com/proteustoolkit/proteus/actions/workflows/sdist.yml) [![DOI](https://zenodo.org/badge/2212385.svg)](https://zenodo.org/badge/latestdoi/2212385)
 
 
