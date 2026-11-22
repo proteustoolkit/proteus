@@ -37,6 +37,14 @@ mo.triangleOptions = "VApq30Dena%8.8f" % ((HE ** 2) / 2.0,)
 mo.parallelPartitioningType = MeshTools.MeshParallelPartitioningTypes.element
 mo.nLayersOfOverlapForParallel = 0
 mo.genMesh = True
+if os.environ.get("STORED_MESH"):
+    # read triangle's output from a directory instead of running the `triangle` on PATH (every build of it meshes the
+    # same .poly differently; see TRIANGLE_AUDIT_2026-11-21.md): sd_poisson.{node,ele,edge} are staged into the cwd by
+    # every rank (rank_staging: atomic, the same bytes, no collective; test_rank_staging forbids an in-place copy).
+    import rank_staging
+    for ext in ("node", "ele", "edge"):
+        rank_staging.copy(os.path.join(os.environ["STORED_MESH"], name + "." + ext), name + "." + ext)
+    mo.genMesh = False
 
 
 def uex(x):
