@@ -1161,7 +1161,7 @@ def setup_given_extensions(extensions):
     # classifiers, python floor, dependencies, extras, the `pro` console script) lives in pyproject.toml's
     # [project] table. The version stays here: RELEASE.md names the three files
     # that carry it, and [project] declares it dynamic.
-    setup(version='2.0.0rc1',
+    setup(version='2.0.0rc2',
           packages = ['proteus',
                       'proteus.fenton',
                       'proteus.mprans',
