@@ -4308,4 +4308,62 @@ class CentralDifference_2ndD(TI_base):
             self.beta_bdf[ci].flat[:] -= self.mt1_last[ci].flat
 
 
+# From the 2012 gwvd decks (erdc/proteus-gwvd@14961d2 src/Gwvd_consolidated_classes.py), moved here from proteus/gwvd.
+
+class NonConservativeBackwardEuler(BackwardEuler):
+    """Backward Euler on the primary variable: m_t = dm (u - u_last)/dt, with dm frozen at the new iterate.
+
+    Until the time history is initialized, m_t is reported as zero. Current proteus spins up model 0
+    (the flow) before the transport history exists, when u_last is still zero and dt is the default
+    1.0; the flow source omega (drho/dc) c_t / rho would then see a fictitious c_t = omega rho c.
+    """
+
+    def __init__(self, transport, integrateInterpolationPoints=False):
+        BackwardEuler.__init__(self, transport,
+                                                       integrateInterpolationPoints=integrateInterpolationPoints)
+        self.historyInitialized = False
+
+    def initializeTimeHistory(self, resetFromDOF=True):
+        BackwardEuler.initializeTimeHistory(self, resetFromDOF)
+        self.historyInitialized = True
+
+    def calculateElementCoefficients(self, q):
+        self.calculateCoefs()
+        if not self.historyInitialized:
+            for ci in self.m_last.keys():
+                self.m_tmp[ci][:] = q[('u', ci)]
+                q[('mt', ci)].fill(0.0)
+            return
+        for ci in self.m_last.keys():
+            self.m_tmp[ci][:] = q[('u', ci)]
+            q[('mt', ci)][:] = q[('u', ci)]
+            q[('mt', ci)] -= self.m_last[ci]
+            q[('mt', ci)] /= self.dt
+            q[('mt', ci)] *= q[('dm', ci, ci)]
+            for cj in range(self.nc):
+                if ('dmt', ci, cj) in q:
+                    q[('dmt', ci, cj)][:] = q[('dm', ci, cj)]
+                    q[('dmt', ci, cj)] /= self.dt
+                if ('dm_sge', ci, cj) in q and ('dmt_sge', ci, cj) in q:
+                    q[('dmt_sge', ci, cj)][:] = q[('dm_sge', ci, cj)]
+                    q[('dmt_sge', ci, cj)] /= self.dt
+
+    def calculateGeneralizedInterpolationCoefficients(self, cip):
+        if not self.integrateInterpolationPoints:
+            return
+        for ci in self.m_ip_last.keys():
+            self.m_ip_tmp[ci][:] = cip[('u', ci)]
+            cip[('mt', ci)][:] = cip[('u', ci)]
+            cip[('mt', ci)] -= self.m_ip_last[ci]
+            cip[('mt', ci)] /= self.dt
+            cip[('mt', ci)] *= cip[('dm', ci, ci)]
+            for cj in range(self.nc):
+                if ('dmt', ci, cj) in cip:
+                    cip[('dmt', ci, cj)][:] = cip[('dm', ci, cj)]
+                    cip[('dmt', ci, cj)] /= self.dt
+                if ('dmt_sge', ci, cj) in cip:
+                    cip[('dmt_sge', ci, cj)][:] = cip[('dm_sge', ci, cj)]
+                    cip[('dmt_sge', ci, cj)] /= self.dt
+
+
 ## @}

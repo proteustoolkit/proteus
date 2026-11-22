@@ -1,5 +1,5 @@
 from proteus.default_so import *
-from proteus.gwvd import Gwvd_consolidated_classes
+from proteus import TransportCoefficients, StepControl, TimeIntegration, SplitOperator
 from gwvd_2dbox_cg import *
 
 name = "gwvd_2dbox_cv%d_pp%d_rho%d" % (consistentVelocityFlag, vel_pp, int(rho_sw))
@@ -10,7 +10,7 @@ modelSpinUpList=[0]
 
 #systemStepControllerType = Sequential_MinFLCBDFModelStep
 #systemStepControllerType = Sequential_FixedStep
-systemStepControllerType =Gwvd_consolidated_classes.ISO_fixed_MinModelStep # Sequential_MinAdaptiveModelStep
+systemStepControllerType =SplitOperator.ISO_fixed_MinModelStep # Sequential_MinAdaptiveModelStep
 atol_iso=1e-8
 needEBQ_GLOBAL  = True
 
