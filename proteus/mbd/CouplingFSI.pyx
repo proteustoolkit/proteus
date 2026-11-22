@@ -160,7 +160,7 @@ cdef class ProtChBody:
         ----------
         shape: SpatialTools.Shape
             instance of shape from proteus.SpatialTools or
-            proteus.mprans.SpatialTools
+            proteus.SpatialTools
         """
         assert self.Shape is None, 'Shape '+self.Shape.name+' was already attached'
         self.Shape = shape

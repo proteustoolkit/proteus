@@ -9,4 +9,3 @@ omit =
   */proteus/WaveTools.py
   */proteus/BoundaryConditions.py
   */proteus/SpatialTools.py
-  */proteus/mprans/SpatialTools.py

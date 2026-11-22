@@ -117,7 +117,7 @@ class TestRigidBody(unittest.TestCase):
 
     def testCalculateInit(self):
         from proteus import Domain  
-        from proteus.mprans import SpatialTools as st
+        from proteus import SpatialTools as st
         from proteus.mprans import BodyDynamics as bd   
         domain = Domain.PlanarStraightLineGraphDomain()
         pos = np.array([1.0, 1.0, 0.0])
@@ -141,7 +141,7 @@ class TestRigidBody(unittest.TestCase):
 
     def testStoreLastValues(self):
         from proteus import Domain  
-        from proteus.mprans import SpatialTools as st
+        from proteus import SpatialTools as st
         from proteus.mprans import BodyDynamics as bd   
         domain = Domain.PlanarStraightLineGraphDomain()
         pos = np.array([1.0, 1.0, 0.0])
@@ -195,7 +195,7 @@ class TestRigidBody(unittest.TestCase):
     def testGetInertia(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
 
         # 2d case
@@ -259,7 +259,7 @@ class TestRigidBody(unittest.TestCase):
 
     def testGetAcceleration(self):
         from proteus import Domain  
-        from proteus.mprans import SpatialTools as st
+        from proteus import SpatialTools as st
         from proteus.mprans import BodyDynamics as bd   
         domain = Domain.PlanarStraightLineGraphDomain()
         pos = np.array([1.0, 1.0, 0.0])
@@ -281,7 +281,7 @@ class TestRigidBody(unittest.TestCase):
 
     def testGetAngularAcceleration(self):
         from proteus import Domain  
-        from proteus.mprans import SpatialTools as st
+        from proteus import SpatialTools as st
         from proteus.mprans import BodyDynamics as bd   
         domain = Domain.PlanarStraightLineGraphDomain()
         pos = np.array([1.0, 1.0, 0.0])
@@ -304,7 +304,7 @@ class TestRigidBody(unittest.TestCase):
     def testGetDisplacement(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
 
         # parameters
@@ -348,7 +348,7 @@ class TestRigidBody(unittest.TestCase):
     def testStep(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
 
         # parameters
@@ -390,7 +390,7 @@ class TestRigidBody(unittest.TestCase):
 
     def _body3D(self, rotate=False):
         from proteus import Domain
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd
         domain3D = Domain.PiecewiseLinearComplexDomain()
         dim = (0.3, 0.385, 0.4)
@@ -453,7 +453,7 @@ class TestRigidBody(unittest.TestCase):
 #    def testSetRecordValues(self):
 #        from proteus import Domain  
 #        from proteus import SpatialTools as st    
-#        from proteus.mprans import SpatialTools as mst
+#        from proteus import SpatialTools as mst
 #        from proteus.mprans import BodyDynamics as bd   
         
 #        filename='test', all_values=True
@@ -464,7 +464,7 @@ class CaissonBody(unittest.TestCase):
     def testGetInertia(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
         # parameters
         domain2D = Domain.PlanarStraightLineGraphDomain()
@@ -491,7 +491,7 @@ class CaissonBody(unittest.TestCase):
     def testFrictionModule(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
 
         #########################
@@ -684,7 +684,7 @@ class CaissonBody(unittest.TestCase):
     def testOverturningModule(self):
         from proteus import Domain  
         from proteus import SpatialTools as st    
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans import BodyDynamics as bd   
 
         # parameters
@@ -741,7 +741,7 @@ class CaissonBody(unittest.TestCase):
 class Paddle(unittest.TestCase):
     def testCalculate_init(self):
         from proteus import Domain
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans.BodyDynamics import PaddleBody
         domain2D = Domain.PlanarStraightLineGraphDomain()        
         pos = np.array([2.0, 0.1 , 0.0])
@@ -772,7 +772,7 @@ class Paddle(unittest.TestCase):
 
     def testPaddleMotion(self):
         from proteus import Domain
-        from proteus.mprans import SpatialTools as mst
+        from proteus import SpatialTools as mst
         from proteus.mprans.BodyDynamics import PaddleBody
         domain2D = Domain.PlanarStraightLineGraphDomain()        
         pos = np.array([2.0, 0.1 , 0.0])

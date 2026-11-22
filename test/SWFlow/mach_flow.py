@@ -4,7 +4,7 @@ import numpy as np
 from proteus import (Domain, Context, MeshTools as mt)
 from proteus.Profiling import logEvent
 import proteus.SWFlow.SWFlowProblem as SWFlowProblem
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 
 
 """

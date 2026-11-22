@@ -16,7 +16,7 @@ class RigidBody(AuxiliaryVariables.AV_base, object):
 
     Parameters
     ----------
-    shape: proteus.mprans.SpatialTools.Shape_RANS
+    shape: proteus.SpatialTools.Shape_RANS
         Class instance of the shape associated to the rigid body calculations.
     cfl_target: Optional[float]
         UNUSED (to implement), sets the maximum displacement of the body

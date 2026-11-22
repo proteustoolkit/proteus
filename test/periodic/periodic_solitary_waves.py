@@ -2,7 +2,7 @@
 Non linear waves
 """
 from proteus import Domain, Context
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 from proteus import WaveTools as wt
 import math
 import numpy as np

@@ -515,7 +515,7 @@ def _tank(split, he, name, outdir, comm):
     """The SpatialTools tank of the domain's box (Tank2D meshed by triangle, Tank3D by TetGen), its sides' BC_RANS set by
     :func:`tank_sides`, at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint), or its stored mesh."""
     from proteus import Domain
-    from proteus.mprans import SpatialTools as st
+    from proteus import SpatialTools as st
     from proteus.ADRProblem import mesh_constraint
     sides = tank_sides(split)
     lower, upper = _box(split)

@@ -1,7 +1,7 @@
 import numpy as np
 from proteus import Domain
 from proteus import Context
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 from proteus.mbd import CouplingFSI as fsi
 import pychrono
 import os

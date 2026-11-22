@@ -12,7 +12,7 @@ import numpy as np
 
 from proteus import Comm, Context, Domain
 from proteus.ctransportCoefficients import smoothedHeaviside
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
 
 opts = Context.Options([
