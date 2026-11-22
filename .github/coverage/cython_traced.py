@@ -21,7 +21,7 @@ import os
 from Cython.Coverage import Plugin as _CythonPlugin
 
 # relative to the package directory, '/'-separated
-TRACED_MODULES = ('BoundaryConditions.py', 'mprans/BoundaryConditions.py', 'WaveTools.py')
+TRACED_MODULES = ('BoundaryConditions.py', 'WaveTools.py')
 
 
 class Plugin(_CythonPlugin):

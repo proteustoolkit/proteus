@@ -82,8 +82,8 @@ class _N(object):
 
 
 def test_each_gauge_goes_to_the_model_with_its_fields():
-    pList = [_P("proteus.mprans.RANS3PF", ["u", "v"]), _P("proteus.mprans.Pres", ["p"]),
-             _P("proteus.mprans.CLSVOF", ["phi"])]
+    pList = [_P("proteus.kernels.RANS3PF", ["u", "v"]), _P("proteus.kernels.Pres", ["p"]),
+             _P("proteus.kernels.CLSVOF", ["phi"])]
     nList = [_N(), _N(), _N()]
     gauges = attach_ymf_gauges(DAMBREAK, pList, nList, fields={"φ": "phi"}, tags=TAGS)
     assert nList[0].auxiliaryVariables == [gauges[3]]

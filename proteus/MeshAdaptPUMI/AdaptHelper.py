@@ -5,7 +5,7 @@ from proteus.Profiling import logEvent
 from proteus import MeshTools
 from proteus import SimTools
 import proteus.Domain
-import proteus.mprans
+import proteus.kernels
 
 def gatherGlobalMesh(sub, mpicomm, nd, vertices=None):
     """Assemble the whole (partitioned-numbering) mesh on rank 0 from the owned
@@ -285,7 +285,8 @@ class PUMI_helper:
 
             #clsvof needs to call poststep as well once, disc_ICs need to be turned off after initial time step
             try:
-                if(isinstance(self.modelList[self.phaseIdx].levelModelList[0],proteus.mprans.CLSVOF.LevelModel)):
+                from proteus.kernels import CLSVOF  # call time: proteus.kernels.CLSVOF imports proteus, which imports this module
+                if(isinstance(self.modelList[self.phaseIdx].levelModelList[0],CLSVOF.LevelModel)):
                     model = self.modelList[self.phaseIdx]
                     self.postStep(model)
                     model.levelModelList[0].coefficients.disc_ICs = modelListOld[self.phaseIdx].levelModelList[0].coefficients.disc_ICs
@@ -564,11 +565,12 @@ class PUMI_helper:
                     lm.u_store[ci] = lm.u[ci].copy()
 
         #for each type of phase tracking model, this will need to be done
+        from proteus.kernels import VOF, NCLS  # call time, as above
         for m in self.modelList:
             for lm in m.levelModelList:
                 try:
-                    if(isinstance(lm,proteus.mprans.VOF.LevelModel) or 
-                        isinstance(lm,proteus.mprans.NCLS.LevelModel)
+                    if(isinstance(lm,VOF.LevelModel) or 
+                        isinstance(lm,NCLS.LevelModel)
                     ):
                         lm.setUnknowns(m.uList[0])
                 except:

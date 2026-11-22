@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from .multiphase import *
-from proteus.mprans import VOF3P
+from proteus.kernels import VOF3P
 
 LevelModelType = VOF3P.LevelModel
 coefficients = VOF3P.Coefficients(LS_model=LS_model,

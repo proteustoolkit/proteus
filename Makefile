@@ -110,6 +110,7 @@ else
 	-rm -rf ${PROTEUS_PREFIX}
 endif
 	-rm -rf build proteus/*.pyc proteus/*.so proteus/*.a proteus/MeshAdaptPUMI/*.so
+	-rm -rf build proteus/kernels/*.pyc proteus/kernels/*.so proteus/kernels/*.a
 	-rm -rf build proteus/mprans/*.pyc proteus/mprans/*.so proteus/mprans/*.a
 	-rm -rf build proteus/richards/*.pyc proteus/richards/*.so proteus/richards/*.a
 	-rm -rf build proteus/elastoplastic/*.pyc proteus/elastoplastic/*.so proteus/elastoplastic/*.a

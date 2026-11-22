@@ -1,4 +1,4 @@
-"""Verification of proteus.elastoplastic in the elastic range against the Kirsch solution (plate with a hole, plane strain)."""
+"""Verification of proteus.kernels in the elastic range against the Kirsch solution (plate with a hole, plane strain)."""
 import math
 import os
 from . import kirsch

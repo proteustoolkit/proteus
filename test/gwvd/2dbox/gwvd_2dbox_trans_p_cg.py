@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.gwvd import GwvdCoefficients
+from proteus import TransportCoefficients, StepControl, TimeIntegration, SplitOperator
 from gwvd_2dbox_cg  import *
 import numpy
 from math import *
@@ -14,7 +14,7 @@ analyticalSolution = transportAnalyticalSolution
 
 
 
-coefficients =GwvdCoefficients.VDGroundwater_mod2_TransportCoefficients(nctrans,nd=nd,
+coefficients =TransportCoefficients.VDGroundwater_mod2_TransportCoefficients(nctrans,nd=nd,
                                                   omega=omega,
                                                   alpha_L=alpha_L,
                                                   alpha_T=alpha_T,

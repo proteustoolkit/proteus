@@ -19,7 +19,7 @@ from . import Archiver
 from . import Viewers
 from . import Gauges
 from . import WallLimit
-from .mprans import PressureNormalization
+from .kernels import PressureNormalization
 from .Archiver import ArchiveFlags
 from . import Domain
 from .MeshAdaptPUMI import Checkpoint,AdaptHelper
@@ -171,6 +171,32 @@ class StepTimeError(RuntimeError):
     NS_base.calculateSolution raises it on every rank at once (the check is collective), after closing the
     archives; parun reports it and exits 1. Before it existed such a run went on: a nan system time ends the loop's
     ``t_system_last < tn`` test as if the run had reached the final time, so it finished with exit code 0."""
+
+
+#: Module paths a hot-start state written before C49 R1 can carry, and where those modules are now (first match wins;
+#: whole path components only). The kernel packages became one, proteus.kernels; a few helper modules of
+#: proteus.mprans went to proteus/ and proteus/mbd, and proteus.ADR (top level) became proteus.kernels.ADR.
+_MOVED_MODULES = (("proteus.mprans.SpatialTools", "proteus.SpatialTools"),
+                  ("proteus.mprans.BoundaryConditions", "proteus.BoundaryConditions"),
+                  ("proteus.mprans.BodyDynamics", "proteus.mbd.BodyDynamics"),
+                  ("proteus.mprans.MeshSmoothing", "proteus.MeshSmoothing"),
+                  ("proteus.mprans.MoveMeshMonitor", "proteus.MoveMeshMonitor"),
+                  ("proteus.mprans.cMoveMeshMonitor", "proteus.cMoveMeshMonitor"),
+                  ("proteus.mprans.cArgumentsDict", "proteus.cArgumentsDict"),
+                  ("proteus.mprans", "proteus.kernels"),
+                  ("proteus.richards", "proteus.kernels"),
+                  ("proteus.m_comp_co2", "proteus.kernels"),
+                  ("proteus.elastoplastic", "proteus.kernels"),
+                  ("proteus.ADR", "proteus.kernels.ADR"))
+
+
+def _current_module_path(text):
+    """``text`` (a class path such as 'proteus.kernels.NCLS.RKEV lag=True') with a leading old module path replaced by
+    the current one; anything else comes back unchanged."""
+    for old, new in _MOVED_MODULES:
+        if text == old or text.startswith(old + ".") or text.startswith(old + " "):
+            return new + text[len(old):]
+    return text
 
 
 class NS_base(object):  # (HasTraits):
@@ -1509,6 +1535,13 @@ class NS_base(object):  # (HasTraits):
                             digest(mesh.elementNumbering_subdomain2global),
                             digest(mesh.nodeNumbering_subdomain2global)], dtype='int64')
 
+    @staticmethod
+    def _normalize_archived_policy(policy):
+        """An archived step policy with the module paths a state written before C49 R1 carries (proteus.kernels.NCLS.RKEV,
+        proteus.kernels.Richards...) read as the current ones (proteus.kernels.NCLS.RKEV, ...). Read side only: the
+        policy written now carries the current paths."""
+        return {k: _current_module_path(v) if isinstance(v, str) else v for k, v in policy.items()}
+
     def _hot_start_policy(self, model, index):
         """The step policy a ``continue`` hot start must find unchanged: the
         time integrator and its order, the step controllers, the shock
@@ -1877,7 +1910,7 @@ class NS_base(object):  # (HasTraits):
         differs = []
         if "policy" in state:
             import json
-            then = json.loads(bytes(state["policy"]).decode())
+            then = self._normalize_archived_policy(json.loads(bytes(state["policy"]).decode()))
             now = json.loads(json.dumps(self._hot_start_policy(model, index), default=str))
             differs = ["%s: archived %s, now %s" % (k, then.get(k), now.get(k))
                        for k in sorted(set(then) | set(now)) if then.get(k) != now.get(k)]

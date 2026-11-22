@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 from couette import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 from decimal import *
 
 from proteus import Context

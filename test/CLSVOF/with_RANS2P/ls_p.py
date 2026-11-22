@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 from .multiphase import *
 
 LevelModelType = NCLS.LevelModel

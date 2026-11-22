@@ -18,7 +18,7 @@ import pkgutil
 
 import pytest
 
-import proteus.mprans
+import proteus.kernels
 from proteus import ShockCapturing, SplitOperator, StepControl, SubgridError, TimeIntegration
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -32,9 +32,9 @@ CATEGORIES = {"state", "rebuilt", "follows", "unmeasured"}
 def _modules():
     yield from ("proteus.TimeIntegration", "proteus.ShockCapturing", "proteus.SubgridError",
                 "proteus.StepControl", "proteus.SplitOperator")
-    for m in pkgutil.iter_modules(proteus.mprans.__path__):
+    for m in pkgutil.iter_modules(proteus.kernels.__path__):
         if not m.name.startswith("c"):  # the compiled kernels are cNCLS, cVOF, ...
-            yield "proteus.mprans." + m.name
+            yield "proteus.kernels." + m.name
 
 
 def _classes():
@@ -97,7 +97,7 @@ def test_the_pressure_model_declares_its_state_through_the_coefficients_owner():
     capturing, subgrid error or time integration object; the archive reads them as the
     ``coefficients`` owner."""
     from proteus import NumericalSolution
-    from proteus.mprans import Pres
+    from proteus.kernels import Pres
     assert "coefficients" in NumericalSolution.NS_base.SOLVER_STATE_OWNERS
     assert "state" in vars(Pres.Coefficients) and "set_state" in vars(Pres.Coefficients)
     assert Pres.Coefficients().state() is None  # not attached to a model: nothing to carry

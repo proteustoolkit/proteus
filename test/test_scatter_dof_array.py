@@ -12,7 +12,7 @@ MODELS = ["GN_SW2DCV", "MCorr", "NCLS", "NCLS3P", "RANS3PF", "RDLS", "SW2DCV", "
 
 @pytest.mark.parametrize("name", MODELS)
 def test_models_use_the_shared_scatter(name):
-    model = importlib.import_module("proteus.mprans." + name).LevelModel
+    model = importlib.import_module("proteus.kernels." + name).LevelModel
     assert issubclass(model, OneLevelTransport)
     assert model.scatterDOFArray is OneLevelTransport.scatterDOFArray
 

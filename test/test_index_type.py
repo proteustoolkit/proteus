@@ -212,7 +212,7 @@ def test_a_matrix_too_large_for_superlu_is_refused():
 # --- ArgumentsDict: arrays go to the dict of their own dtype, nothing converts ---
 
 def test_arguments_dict_keeps_each_integer_width_in_its_own_dict():
-    from proteus.mprans import cArgumentsDict
+    from proteus import cArgumentsDict
     ad = cArgumentsDict.ArgumentsDict()
     ad["i32"] = np.arange(3, dtype=np.int32)
     ad["i64"] = np.arange(3, dtype=np.int64)
@@ -226,7 +226,7 @@ def test_arguments_dict_keeps_each_integer_width_in_its_own_dict():
 
 
 def test_arguments_dict_int_scalars_that_do_not_fit_an_int_are_64_bit_only():
-    from proteus.mprans import cArgumentsDict
+    from proteus import cArgumentsDict
     ad = cArgumentsDict.ArgumentsDict()
     ad["small"] = 7
     ad["big"] = 2 ** 40

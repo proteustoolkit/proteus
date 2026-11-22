@@ -1,10 +1,10 @@
-"""Shared set-up of proteus.elastoplastic problems on one-element-thick tetrahedral slabs (plane strain)."""
+"""Shared set-up of proteus.kernels problems on one-element-thick tetrahedral slabs (plane strain)."""
 import types
 import numpy as np
 from proteus import default_p, default_n, default_s, default_so
 from proteus import Domain, FemTools, Quadrature, NumericalFlux, StepControl, TimeIntegration, NonlinearSolvers
 from proteus import LinearSolvers, LinearAlgebraTools, MeshTools, NumericalSolution
-from proteus.elastoplastic import ElastoPlastic
+from proteus.kernels import ElastoPlastic
 
 MCDP, VON_MISES, TRESCA, DRUCKER_PRAGER, MOHR_COULOMB = 1, 2, 3, 4, 5
 

@@ -62,7 +62,7 @@ comm = Comm.init()
 from proteus import (cfemIntegrals, cnumericalFlux, csubgridError, cshockCapturing,  # noqa: E402
                      csparsity, csmoothers, ctimeIntegration, cpostprocessing, cmeshTools,
                      cpartitioning, LinearSolvers, NonlinearSolvers, Transport)
-from proteus.mprans import cArgumentsDict  # noqa: E402
+from proteus import cArgumentsDict  # noqa: E402
 
 rank, size = comm.rank(), comm.size()
 mpi = comm.comm.tompi4py()
@@ -95,7 +95,7 @@ def instrument_classes():
     for modname in ('RANS2P', 'RANS3PF', 'CLSVOF', 'VOF', 'NCLS', 'RDLS', 'MCorr',
                     'PresInc', 'Pres', 'PresInit'):
         try:
-            cls = importlib.import_module('proteus.mprans.' + modname).LevelModel
+            cls = importlib.import_module('proteus.kernels.' + modname).LevelModel
         except (ImportError, AttributeError):
             continue
         if cls in seen:
@@ -119,14 +119,14 @@ def instrument_kernels(ns):
         for lm in model.levelModelList:
             for attr, value in list(vars(lm).items()):
                 module = type(value).__module__ or ''
-                if module.startswith('proteus.mprans.c') or module.startswith('proteus.c'):
+                if module.startswith('proteus.kernels.c') or module.startswith('proteus.c'):
                     setattr(lm, attr, acc.KernelProxy(value, '%s.%s' % (lm.name, attr)))
                     continue
                 #a kernel method bound at setup (VOF: self.calculateResidual = self.vof.calculate...)
                 owner = getattr(value, '__self__', None)
                 owner_module = type(owner).__module__ or '' if owner is not None else ''
                 if (attr.startswith('calculate') and callable(value)
-                        and (owner_module.startswith('proteus.mprans.c') or owner_module.startswith('proteus.c'))):
+                        and (owner_module.startswith('proteus.kernels.c') or owner_module.startswith('proteus.c'))):
                     setattr(lm, attr, acc.wrap_pass(value, '%s.%s' % (lm.name, attr)))
 
 

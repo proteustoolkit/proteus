@@ -45,7 +45,7 @@ thelper_cons_ls.ct.unstructured = True
 thelper_cons_ls.ct.refinement = 1
 from mcpkg import (thelper_cons_ls_so, thelper_ncls_p, thelper_ncls_n, thelper_vof_p, thelper_vof_n,
                    thelper_MCorr_p, thelper_MCorr_n)
-from proteus.mprans import MCorr
+from proteus.kernels import MCorr
 if os.environ.get("NOFIX"):
     MCorr.LevelModel.scatterDOFArray = lambda self, a: None
 

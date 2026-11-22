@@ -45,5 +45,5 @@ def test_lumped_option_is_a_bounded_approximation_of_the_jacobian(tmp_path):
 
 
 def test_consistent_assembly_is_the_default(tmp_path):
-    import proteus.mprans.MCorr3P as M
+    import proteus.kernels.MCorr3P as M
     assert M.Coefficients.__init__.__defaults__[-1] is False

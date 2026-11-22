@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from proteus import Context
-from proteus.mprans import CLSVOF
+from proteus.kernels import CLSVOF
 from math import *
 try:
     from .clsvof import *

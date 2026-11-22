@@ -14,7 +14,7 @@ from proteus import (Domain,
                      Context,
                      AnalyticalSolutions)
 from proteus.default_so import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 
 opts = Context.Options([
     ("nd", 2, "Number of space dimensions"),

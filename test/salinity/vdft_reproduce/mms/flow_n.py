@@ -10,7 +10,7 @@ import os
 from proteus import *
 from proteus.default_n import *
 from proteus.default_so import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 
 # Domain first: domain_mms re-exports default_p's `coefficients = None`, so
 # importing it after flow_p would clobber the Richards coefficients.

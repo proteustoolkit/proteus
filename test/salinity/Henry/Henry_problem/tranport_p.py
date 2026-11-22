@@ -9,7 +9,7 @@ from proteus import Domain
 from proteus import Norms
 from proteus import Profiling 
 from proteus import Context 
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 from proteus.Profiling import logEvent
 

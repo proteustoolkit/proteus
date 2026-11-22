@@ -46,7 +46,7 @@ from petsc4py import PETSc
 
 from proteus import Context, defaults
 from proteus.iproteus import NumericalSolution, default_s, opts
-from proteus.m_comp_co2 import m_comp_co2
+from proteus.kernels import m_comp_co2
 
 
 HERE = Path(__file__).resolve().parent

@@ -5,7 +5,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import Pres
+from proteus.kernels import Pres
 
 name = "pressure"
 LevelModelType = Pres.LevelModel

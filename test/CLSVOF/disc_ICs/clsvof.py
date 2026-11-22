@@ -2,7 +2,7 @@ from proteus import Domain
 from proteus import Norms
 from proteus import Profiling
 from proteus import Context
-from proteus.mprans import CLSVOF
+from proteus.kernels import CLSVOF
 import numpy as np
 import math
 try:

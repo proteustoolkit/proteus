@@ -5,7 +5,7 @@ try:
     from .vortex2D import *
 except:
     from vortex2D import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 name=soname+"_vof"
 
 """

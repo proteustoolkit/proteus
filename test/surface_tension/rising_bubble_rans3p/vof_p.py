@@ -5,7 +5,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import VOF3P
+from proteus.kernels import VOF3P
 
 LevelModelType = VOF3P.LevelModel
 coefficients = VOF3P.Coefficients(LS_model=LS_model,

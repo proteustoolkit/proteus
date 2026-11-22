@@ -5,7 +5,7 @@ try:
 except:
     from vortex2D import *
 name=soname+"_phicor"
-from proteus.mprans import MCorr
+from proteus.kernels import MCorr
 
 
 LevelModelType = MCorr.LevelModel

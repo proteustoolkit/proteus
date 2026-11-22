@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.gwvd import GwvdCoefficients
+from proteus import TransportCoefficients, StepControl, TimeIntegration, SplitOperator
 from gwvd_2dbox_cg import *
 import numpy
 from math import *
@@ -134,14 +134,14 @@ analyticalSolution = flowAnalyticalSolution
 analyticalSolutionVelocity = velocityAnalyticalSolution
 
 if consistentVelocityFlag == 1:
-    coefficients = GwvdCoefficients.VariableDensity_mod2_FlowEquationCoefficients( S=S, omega = omega,
+    coefficients = TransportCoefficients.VariableDensity_mod2_FlowEquationCoefficients( S=S, omega = omega,
                                                                                   epsilon=epsilon, nc = ncflow, nd = nd,
                                                                                   rho_fw=rho_fw, gc=gc, Kx=Kx, Ky =Ky, mu=nu, 
                                                                                   drho_dmf=drho_dmf,
                                                                                   consistentVelocityFlag = consistentVelocityFlag,
                                                                                   gravity = gravity,T_model=1)  
 else:
-    coefficients = GwvdCoefficients.VariableDensity_mod2_FlowEquationCoefficients(S=S, omega=omega,
+    coefficients = TransportCoefficients.VariableDensity_mod2_FlowEquationCoefficients(S=S, omega=omega,
                                                            epsilon=epsilon, nc=ncflow, nd= nd,rho_fw=rho_fw,
                                                            gc=gc, Kx=Kx, Ky =Ky, mu=nu, drho_dmf=drho_dmf, T_model=1)
   

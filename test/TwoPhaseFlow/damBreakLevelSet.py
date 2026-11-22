@@ -9,8 +9,8 @@ danbreak 2-D
 import numpy as np
 from proteus import (Domain, Context)
 from proteus.Profiling import logEvent
-from proteus.mprans.SpatialTools import Tank2D
-from proteus.mprans import SpatialTools as st
+from proteus.SpatialTools import Tank2D
+from proteus import SpatialTools as st
 import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
 import proteus.TwoPhaseFlow.utils.Parameters as Parameters
 from proteus.Gauges import PointGauges, LineIntegralGauges, LineGauges

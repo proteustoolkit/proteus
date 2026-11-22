@@ -20,7 +20,7 @@ the action of gravity under the assumption that the deformations of the free sur
 are small compared to the water height.
 
 The implementation of the SWEs with source documentation is
-available here: :py:mod:`proteus.mprans.SW2DCV`.
+available here: :py:mod:`proteus.kernels.SW2DCV`.
 
 
 
@@ -32,7 +32,7 @@ Green-Naghdi equations, where h is the mesh size. The Green-Naghdi equations
 are used to describe dispersive water waves.
 
 The implementation of the mGN equations with source documentation is
-available here: :py:mod:`proteus.mprans.GN_SW2DCV`.
+available here: :py:mod:`proteus.kernels.GN_SW2DCV`.
 
 
 Running the tests

@@ -2,7 +2,7 @@ from proteus import Domain
 from proteus import Norms
 from proteus import Profiling 
 from proteus import Context 
-from proteus.mprans import VOS3P
+from proteus.kernels import VOS3P
 import numpy as np
 import math 
 

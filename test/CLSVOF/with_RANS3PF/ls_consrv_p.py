@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 from .multiphase import *
-from proteus.mprans import MCorr3P
+from proteus.kernels import MCorr3P
 
 LevelModelType = MCorr3P.LevelModel
 coefficients = MCorr3P.Coefficients(LS_model=LS_model,

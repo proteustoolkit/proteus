@@ -30,7 +30,7 @@ import numpy as np
 from proteus import *
 from proteus.default_p import *
 from proteus import Profiling
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 try:
     from .domain_simmons import *

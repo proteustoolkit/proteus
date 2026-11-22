@@ -1,6 +1,6 @@
 import numpy as np
 from proteus import Domain, Context, Comm
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
 import proteus.TwoPhaseFlow.utils.Parameters as Parameters
 from proteus import WaveTools as wt

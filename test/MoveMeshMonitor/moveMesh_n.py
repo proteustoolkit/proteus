@@ -13,7 +13,7 @@ except:
     import moveMesh_p as physics
 
 from proteus import Context
-from proteus.mprans import AddedMass
+from proteus.kernels import AddedMass
 
 ct = Context.get()
 domain = ct.domain

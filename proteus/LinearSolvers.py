@@ -16,7 +16,7 @@ from .petsc_optional import PETSc as p4pyPETSc, HAVE_PETSC4PY
 from math import *
 import math
 from .Profiling import logEvent
-from .mprans import cArgumentsDict
+from . import cArgumentsDict
 
 class LinearSolver(object):
     """ The base class for linear solvers.
@@ -928,7 +928,7 @@ class SchurOperatorConstructor(object):
         pde_type :  str
             Currently supports Stokes and navierStokes
         """
-        from proteus.mprans import RANS2P
+        from proteus.kernels import RANS2P
         if linear_smoother.PCType!='schur':
             raise Exception('This function only works with the' \
                 'LinearSmoothers for Schur Complements.')
@@ -4015,7 +4015,7 @@ class OperatorConstructor_rans2p(OperatorConstructor):
 
     Arguments:
     ----------
-    LevelModel : :class:`proteus.mprans.RANS2P.LevelModel`
+    LevelModel : :class:`proteus.kernels.RANS2P.LevelModel`
         Level transport model derived from the rans2p class.
     """
     def __init__(self,levelModel):

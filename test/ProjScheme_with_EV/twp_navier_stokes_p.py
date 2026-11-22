@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 from .NS_convergence import *
-from proteus.mprans import RANS3PF
+from proteus.kernels import RANS3PF
 
 LevelModelType = RANS3PF.LevelModel
 LS_model = None

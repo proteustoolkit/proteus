@@ -12,7 +12,7 @@ import os
 
 from proteus import *
 from proteus.default_n import *
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 # Import the domain BEFORE the physics module.  domain_simmons does
 # `from proteus.default_p import *`, which re-exports `coefficients = None`;

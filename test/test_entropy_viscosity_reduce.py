@@ -7,7 +7,7 @@ the identity, so the expected values are the kernels' formula on the given stati
 import numpy as np
 from mpi4py import MPI
 
-from proteus.mprans import EntropyViscosity
+from proteus.kernels import EntropyViscosity
 
 
 class _TwoRanks(object):

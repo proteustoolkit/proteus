@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from .vortex import *
 name=soname+"_phicor"
-from proteus.mprans import MCorr
+from proteus.kernels import MCorr
 
 
 LevelModelType = MCorr.LevelModel

@@ -17,14 +17,14 @@ from proteus.SpatialTools import (Rectangle,
                                   Cuboid,
                                   CustomShape,
                                   assembleDomain)
-from proteus.mprans.SpatialTools import (Rectangle as RectangleRANS,
+from proteus.SpatialTools import (Rectangle as RectangleRANS,
                                          Cuboid as CuboidRANS,
                                          CustomShape as CustomShapeRANS,
                                          assembleDomain as assembleDomainRANS,
                                          Tank2D,
                                          Tank3D,
                                          ShapeSTL)
-from proteus.mprans.BodyDynamics import RigidBody
+from proteus.mbd.BodyDynamics import RigidBody
 import pytest
 
 comm = Comm.init()

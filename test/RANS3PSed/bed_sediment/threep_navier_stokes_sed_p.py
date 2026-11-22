@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 from tank import *
-from proteus.mprans import RANS3PSed
+from proteus.kernels import RANS3PSed
 from proteus import Context
 
 ct = Context.get()

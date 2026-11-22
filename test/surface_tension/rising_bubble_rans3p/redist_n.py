@@ -5,7 +5,7 @@ try:
 except:
     from redist_p import *
     from risingBubble import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 tolFac = 0.0
 nl_atol_res = rd_nl_atol_res
 

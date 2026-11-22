@@ -10,7 +10,7 @@ Profiling.procID = comm.rank()
 Profiling.logEvent("Testing SedClosure")
 class GlobalVariables(object):
     def __init__(self):
-        from proteus.mprans.SedClosure import HsuSedStress
+        from proteus.kernels.SedClosure import HsuSedStress
         self.C4e = 1.
         self.C3e = 1.2
         self.eR = 0.8
@@ -734,7 +734,7 @@ class TestHsu(unittest.TestCase):
     def testKappaCoefficientsDeepcopy(self):
         """copy.deepcopy of a Kappa coefficients object that holds the closure."""
         import copy
-        from proteus.mprans import Kappa
+        from proteus.kernels import Kappa
         gl = GlobalVariables()
         coef = Kappa.Coefficients(nd=2, closure=gl.sedSt)
         dup = copy.deepcopy(coef)

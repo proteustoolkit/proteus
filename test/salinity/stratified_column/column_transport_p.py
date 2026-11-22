@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 import numpy as np
 
 try:

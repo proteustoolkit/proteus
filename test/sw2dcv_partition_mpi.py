@@ -19,7 +19,7 @@ rank_staging.write("circular_damBreak.py", open(os.path.join(os.path.dirname(os.
                    + "\nmySWFlowProblem.swe_parameters['LUMPED_MASS_MATRIX'] = %d\n" % (0 if os.environ.get("CONSISTENT") else 1))
 rank_staging.write("__init__.py", "")
 
-from proteus.mprans import SW2DCV
+from proteus.kernels import SW2DCV
 _SCATTER_CALLS = [0]
 if os.environ.get("NOSCAT"):
     def _no_scatter(self, a):

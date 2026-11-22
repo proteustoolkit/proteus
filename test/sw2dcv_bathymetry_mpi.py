@@ -51,7 +51,7 @@ for name in ('partitionNodes', 'partitionElements', 'partitionNodesFromTriangleF
         return wrapped
     setattr(cpartitioning, name, wrap(getattr(cpartitioning, name)))
 
-from proteus.mprans import SW2DCV, GN_SW2DCV
+from proteus.kernels import SW2DCV, GN_SW2DCV
 module = GN_SW2DCV if GN else SW2DCV
 _initializeMesh = module.Coefficients.initializeMesh
 def initializeMesh(self, mesh):

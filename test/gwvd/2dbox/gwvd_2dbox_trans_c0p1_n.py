@@ -1,12 +1,12 @@
 from proteus import *
 from proteus.default_n import *
-from proteus.gwvd import GwvdCoefficients, Gwvd_consolidated_classes
+from proteus import TransportCoefficients, StepControl, TimeIntegration, SplitOperator
 from gwvd_2dbox_trans_p_cg import *
 from gwvd_2dbox_cg import *
 
 # Time Integration and Step control
-timeIntegration =Gwvd_consolidated_classes.NonConservativeBackwardEuler#_cfl# TimeIntegration.BackwardEuler
-stepController = Gwvd_consolidated_classes.Fixed_dt_controller_systemit#
+timeIntegration =TimeIntegration.NonConservativeBackwardEuler#_cfl# TimeIntegration.BackwardEuler
+stepController = StepControl.Fixed_dt_controller_systemit#
 stepController= Min_dt_cfl_controller
 DT =DT
 #runCFL =1.0# 0.1

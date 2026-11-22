@@ -10,9 +10,9 @@ from proteus import (Domain, Context,
                      MeshTools as mt,
                      WaveTools as wt,
                      Gauges)
-from proteus.mprans import SpatialTools as st
+from proteus import SpatialTools as st
 from proteus.Profiling import logEvent
-from proteus.mprans.SpatialTools import Tank2D
+from proteus.SpatialTools import Tank2D
 from proteus.Gauges import PointGauges
 
 

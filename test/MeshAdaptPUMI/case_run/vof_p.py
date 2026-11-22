@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from couette import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 
 LevelModelType = VOF.LevelModel
 if useOnlyVF:

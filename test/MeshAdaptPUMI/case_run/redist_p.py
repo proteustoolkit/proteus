@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from math import *
 from couette import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 """
 The redistancing equation in the sloshbox test problem.
 """

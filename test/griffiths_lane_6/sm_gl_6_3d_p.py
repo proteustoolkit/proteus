@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.elastoplastic import ElastoPlastic
+from proteus.kernels import ElastoPlastic
 import os
 """
 Soil mechanics model for problem 6.3 in Smith and Griffiths

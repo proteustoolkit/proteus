@@ -5,12 +5,12 @@ from proteus import Domain
 from proteus import Norms
 from proteus import Profiling
 from proteus import Context
-#from proteus.mprans import TADR
+#from proteus.kernels import TADR
 import numpy as np
 import math
 from proteus.Profiling import logEvent
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 
 details = """
 The Dispersive Henry Benchmark problem (Arbarca et.al. 2007) and the modified Henry Benchmark

@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 from .multiphase import *
 import numpy as np
 

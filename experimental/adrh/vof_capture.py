@@ -107,7 +107,7 @@ def main(argv):
 
     from proteus import Comm
     Comm.init()
-    from proteus.mprans import cArgumentsDict
+    from proteus import cArgumentsDict
 
     base = cArgumentsDict.ArgumentsDict
 

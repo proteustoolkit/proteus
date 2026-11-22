@@ -1,35 +1,9 @@
-"""
-Modules for simulating free surface incompressible flow and fluid/structure interaction
-"""
+"""Deprecated: the free surface flow kernels are in proteus.kernels (C49 R1); see proteus._kernel_aliases."""
+from proteus import _kernel_aliases
 
-__all__ = ["AddedMass",
-           "BodyDynamics",
-           "BoundaryConditions",
-           "Dissipation",
-           "Kappa",
-           "MoveMeshMonitor",
-           "NCLS",
-           "Pres",
-           "RANS3PF",
-           "SpatialTools",
-           "VOF3P",
-           "ArchiveBeams",
-           "BoundaryConditions",
-           "GN_SW2DCV",
-           "MCorr3P",
-           "MoveMesh",
-           "PresInc",
-           "RANS2P_IB",
-           "RANS3PSed",
-           "SW2DCV",
-           "VOF",
-           "beamFEM",
-           "CLSVOF",
-           "MCorr",
-           "NCLS3P",
-           "PresInit",
-           "RANS2P",
-           "RDLS",
-           "SW2D",
-           "VOS3P",
-           "TADR"]
+_kernel_aliases.install(__name__)
+
+__all__ = ["AddedMass", "ArchiveBeams", "BodyDynamics", "BoundaryConditions", "CLSVOF", "Dissipation", "GN_SW2DCV",
+           "Kappa", "MCorr", "MCorr3P", "MoveMesh", "MoveMeshMonitor", "NCLS", "NCLS3P", "Pres", "PresInc", "PresInit",
+           "RANS2P", "RANS2P_IB", "RANS3PF", "RANS3PSed", "RDLS", "SW2D", "SW2DCV", "SpatialTools", "TADR", "VOF", "VOF3P",
+           "VOS3P", "beamFEM"]

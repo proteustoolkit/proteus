@@ -36,7 +36,7 @@ Verified on `main` at b9d98f5 (2026-11-17): 4 cores, 15 GB RAM, running as root.
    file.
 4. **Check it:**
    ```bash
-   python -c "import proteus, proteus.superluWrappers, proteus.mprans.cRANS2P, proteus.MeshAdaptPUMI.MeshAdapt, proteus.mbd.CouplingFSI"
+   python -c "import proteus, proteus.superluWrappers, proteus.kernels.cRANS2P, proteus.MeshAdaptPUMI.MeshAdapt, proteus.mbd.CouplingFSI"
    ```
 
 ## Making the tests pass

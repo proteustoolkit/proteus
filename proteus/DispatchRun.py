@@ -362,7 +362,7 @@ def _surface_tension(doc, spec, found):
         raise RealizeError("the surface tension %s must be a number (value: ...) for the realizer" % name)
     sigma = float(value)
     if sigma != 0.0:
-        flow = [m for m in found if m.module == "proteus.mprans.RANS2P"] \
+        flow = [m for m in found if m.module == "proteus.kernels.RANS2P"] \
             if found is not None else []
         if flow:
             raise RealizeError("the model states surface tension %s = %r, and %s computes none (only RANS3PF's "
@@ -515,7 +515,7 @@ def _tank(split, he, name, outdir, comm):
     """The SpatialTools tank of the domain's box (Tank2D meshed by triangle, Tank3D by TetGen), its sides' BC_RANS set by
     :func:`tank_sides`, at element size ``he`` (Proteus's convention, ADRProblem.mesh_constraint), or its stored mesh."""
     from proteus import Domain
-    from proteus.mprans import SpatialTools as st
+    from proteus import SpatialTools as st
     from proteus.ADRProblem import mesh_constraint
     sides = tank_sides(split)
     lower, upper = _box(split)

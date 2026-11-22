@@ -92,7 +92,7 @@ def _model(useExact, nParticles, ndof):
 @pytest.mark.parametrize("useExact,nParticles,ndof,warned", [(True, 1, 6, True), (True, 1, 3, False),
                                                               (False, 1, 6, False), (True, 0, 6, False)])
 def test_rans2p_warns_once_for_exact_particles_with_a_quadratic_velocity(monkeypatch, useExact, nParticles, ndof, warned):
-    from proteus.mprans import RANS2P
+    from proteus.kernels import RANS2P
     messages = []
     monkeypatch.setattr(RANS2P, 'logEvent', lambda msg, *a, **k: messages.append(msg))
     model = _model(useExact, nParticles, ndof)

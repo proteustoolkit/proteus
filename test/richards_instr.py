@@ -208,8 +208,8 @@ def newton_iteration_hint():
 
 def install():
     from proteus import LinearSolvers, NonlinearSolvers
-    from proteus.richards import Richards
-    from proteus.mprans import TADR
+    from proteus.kernels import Richards
+    from proteus.kernels import TADR
 
     for mod in (Richards, TADR):
         LM = mod.LevelModel

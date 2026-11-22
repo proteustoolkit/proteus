@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 import numpy as np
 
 try:

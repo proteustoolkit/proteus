@@ -5,7 +5,7 @@ try:
     from .multiphase import *
 except:
     from multiphase import *
-from proteus.mprans import Pres
+from proteus.kernels import Pres
 
 name = "pressure"
 LevelModelType = Pres.LevelModel

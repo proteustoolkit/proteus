@@ -1,5 +1,5 @@
 from proteus.default_n import *
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 try:
     from .column_transport_p import *

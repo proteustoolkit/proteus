@@ -5,7 +5,7 @@ try:
     from .cylinder import *
 except:
     from cylinder import *
-from proteus.mprans import PresInit
+from proteus.kernels import PresInit
 
 #domain = ctx.domain
 #nd = ctx.nd

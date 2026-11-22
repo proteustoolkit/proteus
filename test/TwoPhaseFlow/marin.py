@@ -5,9 +5,9 @@ import numpy as np
 from proteus import (Domain, Context, Gauges,
                      MeshTools as mt)
 from proteus.Profiling import logEvent
-from proteus.mprans.SpatialTools import Tank2D
-from proteus.mprans.SpatialTools import Tank3D
-from proteus.mprans import SpatialTools as st
+from proteus.SpatialTools import Tank2D
+from proteus.SpatialTools import Tank3D
+from proteus import SpatialTools as st
 from proteus.Profiling import logEvent
 import proteus.TwoPhaseFlow.TwoPhaseFlowProblem as TpFlow
 import proteus.TwoPhaseFlow.utils.Parameters as Parameters

@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.mprans import SW2DCV
+from proteus.kernels import SW2DCV
 from proteus.Domain import RectangularDomain
 import numpy as np
 from proteus import Context

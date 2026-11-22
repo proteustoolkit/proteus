@@ -91,7 +91,7 @@ class TestMCorr(object):
 
     # NOTE: need thorough evaluation -- unskipped this session after fixing
     # a missing `from proteus.LinearAlgebraTools import SparseMat` import in
-    # proteus/mprans/MCorr.py (getMassMatrix), plus this test's own
+    # proteus/kernels/MCorr.py (getMassMatrix), plus this test's own
     # comparison code (it hardcoded a "level_3" filename/baseline that this
     # config never produces -- actual output is "level_0" -- and used a
     # PyTables-style `.root.` attribute that doesn't exist on h5py.File).

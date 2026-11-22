@@ -1,6 +1,7 @@
 from proteus import *
 from proteus.default_p import *
-from proteus import ADR, Domain, AnalyticalSolutions
+from proteus.kernels import ADR
+from proteus import Domain, AnalyticalSolutions
 import numpy
 import math
 

@@ -82,7 +82,7 @@ def _rans2p(cell, form, flag):
         "cell": cell,
         "family": "two_phase_level_set",
         "role": "velocity_pressure",
-        "module": "proteus.mprans.RANS2P",
+        "module": "proteus.kernels.RANS2P",
         "name": "rans2p",
         "formulation": form,
         "spaces": {"velocity": {"options": [("CG", 1)], "default": ("CG", 1)},
@@ -162,7 +162,7 @@ CELLS = [
         "cell": "rans3pf_projection",
         "family": "two_phase_level_set",
         "role": "velocity",
-        "module": "proteus.mprans.RANS3PF",
+        "module": "proteus.kernels.RANS3PF",
         "name": "rans3p",
         "formulation": "nonconservative_inertia",
         "spaces": {"velocity": {"options": [("CG", 2)], "default": ("CG", 2)}},
@@ -205,7 +205,7 @@ CELLS = [
         "cell": "presinc",
         "family": "two_phase_level_set",
         "role": "pressure_increment",
-        "module": "proteus.mprans.PresInc",
+        "module": "proteus.kernels.PresInc",
         "name": "pressureIncrement",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -225,7 +225,7 @@ CELLS = [
         "cell": "pres",
         "family": "two_phase_level_set",
         "role": "pressure",
-        "module": "proteus.mprans.Pres",
+        "module": "proteus.kernels.Pres",
         "name": "pressure",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -244,7 +244,7 @@ CELLS = [
         "cell": "presinit",
         "family": "two_phase_level_set",
         "role": "pressure_spin_up",
-        "module": "proteus.mprans.PresInit",
+        "module": "proteus.kernels.PresInit",
         "name": "pressureInitial",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -260,15 +260,15 @@ CELLS = [
         "hints": [],
     },
     # ---- two-phase level-set flow: the interface -------------------------------------------------------------
-    _scalar_transport("vof", "volume_fraction", "proteus.mprans.VOF", "vof",
+    _scalar_transport("vof", "volume_fraction", "proteus.kernels.VOF", "vof",
                       {"useMetrics": 1.0}, _SUPG),
-    _scalar_transport("ncls", "level_set", "proteus.mprans.NCLS", "ncls",
+    _scalar_transport("ncls", "level_set", "proteus.kernels.NCLS", "ncls",
                       {"useMetrics": 1.0, "checkMass": False}, _SUPG, extra_hints=["checkMass"]),
     {
         "cell": "rdls",
         "family": "two_phase_level_set",
         "role": "redistancing",
-        "module": "proteus.mprans.RDLS",
+        "module": "proteus.kernels.RDLS",
         "name": "rdls",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -301,7 +301,7 @@ CELLS = [
         "cell": "mcorr",
         "family": "two_phase_level_set",
         "role": "mass_correction",
-        "module": "proteus.mprans.MCorr",
+        "module": "proteus.kernels.MCorr",
         "name": "mcorr",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -332,7 +332,7 @@ CELLS = [
         "cell": "clsvof",
         "family": "two_phase_level_set",
         "role": "level_set_redistanced",
-        "module": "proteus.mprans.CLSVOF",
+        "module": "proteus.kernels.CLSVOF",
         "name": "clsvof",
         "formulation": AS_WRITTEN,
         "spaces": {"fields": {"options": [("CG", 1)], "default": ("CG", 1)}},
@@ -365,7 +365,7 @@ CELLS = [
         "cell": "sw2dcv",
         "family": "shallow_water",
         "role": "shallow_water",
-        "module": "proteus.mprans.SW2DCV",
+        "module": "proteus.kernels.SW2DCV",
         "name": "sw",
         "formulation": AS_WRITTEN,
         "scheme": {"options": ["graph_viscosity_convex_limiting"], "default": "graph_viscosity_convex_limiting"},
@@ -402,7 +402,7 @@ CELLS = [
         "cell": "gn_sw2dcv",
         "family": "dispersive_shallow_water",
         "role": "shallow_water",
-        "module": "proteus.mprans.GN_SW2DCV",
+        "module": "proteus.kernels.GN_SW2DCV",
         "name": "GN_sw",
         "formulation": AS_WRITTEN,
         "scheme": {"options": ["graph_viscosity_convex_limiting"], "default": "graph_viscosity_convex_limiting"},
@@ -453,16 +453,16 @@ REALIZERS = {
 
 #: TwoPhaseFlow's Parameters class for each module: the deck machinery builds each model's p and n from it
 TWO_PHASE_PARAMETERS = {
-    "proteus.mprans.RANS2P": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS2P",
-    "proteus.mprans.RANS3PF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS3PF",
-    "proteus.mprans.PresInc": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureIncrement",
-    "proteus.mprans.Pres": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressure",
-    "proteus.mprans.PresInit": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureInitial",
-    "proteus.mprans.VOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelVOF",
-    "proteus.mprans.NCLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelNCLS",
-    "proteus.mprans.RDLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRDLS",
-    "proteus.mprans.MCorr": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelMCorr",
-    "proteus.mprans.CLSVOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelCLSVOF",
+    "proteus.kernels.RANS2P": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS2P",
+    "proteus.kernels.RANS3PF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRANS3PF",
+    "proteus.kernels.PresInc": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureIncrement",
+    "proteus.kernels.Pres": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressure",
+    "proteus.kernels.PresInit": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelPressureInitial",
+    "proteus.kernels.VOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelVOF",
+    "proteus.kernels.NCLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelNCLS",
+    "proteus.kernels.RDLS": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelRDLS",
+    "proteus.kernels.MCorr": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelMCorr",
+    "proteus.kernels.CLSVOF": "proteus.TwoPhaseFlow.utils.Parameters.ParametersModelCLSVOF",
 }
 
 #: a dispatched numerics attribute -> where TwoPhaseFlow's Parameters takes it before it builds the n module.
@@ -527,9 +527,9 @@ REGULARIZED_FUNCTIONS = {
 #: SWFlow's p and n modules for each module (proteus/SWFlow/models, read through Context's mySWFlowProblem, as
 #: parun --SWEs loads them) and its sw_model switch
 SHALLOW_WATER_MODELS = {
-    "proteus.mprans.SW2DCV": {"sw_model": 0, "p": "sw_p", "n": "sw_n"},
+    "proteus.kernels.SW2DCV": {"sw_model": 0, "p": "sw_p", "n": "sw_n"},
     # the dispersive model by hyperbolic relaxation: six unknowns, h, hu, hv and the auxiliaries h eta, h w, h beta
-    "proteus.mprans.GN_SW2DCV": {"sw_model": 1, "p": "GN_sw_p", "n": "GN_sw_n"},
+    "proteus.kernels.GN_SW2DCV": {"sw_model": 1, "p": "GN_sw_p", "n": "GN_sw_n"},
 }
 
 #: the dispersive family's auxiliary unknowns, by the role ymf gives them (ymf.dispersion.AUXILIARY_ROLES), in the

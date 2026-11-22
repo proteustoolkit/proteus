@@ -48,8 +48,8 @@ import proteus
 tree = os.path.dirname(os.path.dirname(proteus.__file__))
 sys.path.insert(0, os.path.join(tree, 'test', 'salinity'))
 import test_vdft_compatible as T
-from proteus.mprans import TADR
-from proteus.richards import Richards
+from proteus.kernels import TADR
+from proteus.kernels import Richards
 from proteus import NumericalSolution, NonlinearSolvers
 if not refresh:
     Richards.LevelModel.refreshOldTimeMass = lambda self: None

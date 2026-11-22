@@ -7,7 +7,7 @@ try:
 except:
     from vortex2D import *
     import ncls_p
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 
 name = soname+"_rdls"
 LevelModelType = RDLS.LevelModel

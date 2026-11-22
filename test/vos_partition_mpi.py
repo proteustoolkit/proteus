@@ -31,7 +31,7 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh
 
-from proteus.mprans import VOS3P
+from proteus.kernels import VOS3P
 if os.environ.get("NOFIX"):
     VOS3P.LevelModel.scatterDOFArray = lambda self, a: None
 if os.environ.get("GHOSTCFL"):

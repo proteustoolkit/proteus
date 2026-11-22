@@ -16,7 +16,7 @@ rank_staging.write("circular_damBreak.py", open(os.path.join(os.path.dirname(os.
                    + "\nmySWFlowProblem.GN_swe_parameters['LUMPED_MASS_MATRIX'] = 1\n")
 rank_staging.write("__init__.py", "")
 
-from proteus.mprans import GN_SW2DCV as SW2DCV
+from proteus.kernels import GN_SW2DCV as SW2DCV
 if os.environ.get("NOSCAT"):
     SW2DCV.LevelModel.scatterDOFArray = lambda self, a: None
 if os.environ.get("OLDVOL"):

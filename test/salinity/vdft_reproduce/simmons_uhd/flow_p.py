@@ -42,7 +42,7 @@ from proteus import *
 from proteus import Comm
 from proteus.default_p import *
 from proteus.Profiling import logEvent
-from proteus.richards import Richards
+from proteus.kernels import Richards
 
 try:
     from .domain_simmons import *

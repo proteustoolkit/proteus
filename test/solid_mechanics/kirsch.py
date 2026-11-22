@@ -1,4 +1,4 @@
-"""Kirsch plate with a hole in plane strain, solved with proteus.elastoplastic on a one-element-thick tetrahedral slab.
+"""Kirsch plate with a hole in plane strain, solved with proteus.kernels on a one-element-thick tetrahedral slab.
 
 Linear elasticity is obtained from the elastoplastic model with a cohesion far above any stress and P_a = 0.
 Exact displacements are imposed on the outer boundary, symmetry on x = 0 and y = 0, w = 0 on the slab faces, and the hole
