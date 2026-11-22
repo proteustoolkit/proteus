@@ -362,7 +362,7 @@ def _surface_tension(doc, spec, found):
         raise RealizeError("the surface tension %s must be a number (value: ...) for the realizer" % name)
     sigma = float(value)
     if sigma != 0.0:
-        flow = [m for m in found if m.module == "proteus.mprans.RANS2P"] \
+        flow = [m for m in found if m.module in ("proteus.mprans.RANS2P", "proteus.kernels.RANS2P")] \
             if found is not None else []
         if flow:
             raise RealizeError("the model states surface tension %s = %r, and %s computes none (only RANS3PF's "
