@@ -13,7 +13,7 @@ Oulhaj, Cances & Chainais-Hillairet (2018) and of Dielmann, Kuzmin & Kees (JNMA)
 """
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 from proteus import Context
 
 ct = Context.Options([

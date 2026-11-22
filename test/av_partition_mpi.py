@@ -23,7 +23,7 @@ case += ("\n[(setattr(mm.n, 'nl_atol_res', 1.0e-10), setattr(mm.n, 'l_atol_res',
 rank_staging.write("damBreak.py", case)
 
 if os.environ.get("NOFIX"):
-    from proteus.mprans import RANS3PF
+    from proteus.kernels import RANS3PF
     _scatter = RANS3PF.LevelModel.scatterDOFArray
     RANS3PF.LevelModel.scatterDOFArray = lambda self, a: None if a is self.uStar_psi_dof else _scatter(self, a)
 

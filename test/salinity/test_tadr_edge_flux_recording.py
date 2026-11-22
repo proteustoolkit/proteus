@@ -29,7 +29,7 @@ levee_deck = tvc.levee_deck
 def test_edge_flux_branches_record_the_applied_boundary_flux(levee_deck, monkeypatch, stab, rtol):
     """ImplicitEV (5): measured 6.6e-13 relative (the Newton tolerance). Explicit EV (4): measured 4.0e-6 (the
     recorded flux is evaluated at c^n with the step's B, the budget over the step)."""
-    from proteus.mprans import TADR
+    from proteus.kernels import TADR
     rows = []
     post = TADR.Coefficients.postStep
 

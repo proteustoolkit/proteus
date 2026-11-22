@@ -17,7 +17,7 @@
 #include "cutquadric.h"
 #include "UnfittedKernels.h"
 #include "Unfitted.h"
-#include "mprans/ArgumentsDict.h"
+#include "ArgumentsDict.h"
 #include "pyarray.h"
 
 namespace py = pybind11;

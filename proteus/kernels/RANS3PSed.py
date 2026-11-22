@@ -23,7 +23,7 @@ from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
 from . import cRANS3PSed
 from . import cRANS3PSed2D
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError

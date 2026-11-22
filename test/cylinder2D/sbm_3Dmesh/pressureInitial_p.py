@@ -2,7 +2,7 @@ from math import *
 from proteus import *
 from proteus.default_p import *
 from cylinder import *
-from proteus.mprans import PresInit
+from proteus.kernels import PresInit
 
 #domain = ctx.domain
 #nd = ctx.nd

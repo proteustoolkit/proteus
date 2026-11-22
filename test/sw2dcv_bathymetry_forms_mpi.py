@@ -59,7 +59,7 @@ rank_staging.write("obstacle_flow.py", _deck.replace(_here, repr(os.path.join(HE
                    + "\nmySWFlowProblem.bathymetry = " + _bathymetry + "\n")
 rank_staging.write("__init__.py", "")
 
-from proteus.mprans import SW2DCV, GN_SW2DCV
+from proteus.kernels import SW2DCV, GN_SW2DCV
 module = GN_SW2DCV if GN else SW2DCV
 _initializeMesh = module.Coefficients.initializeMesh
 def initializeMesh(self, mesh):

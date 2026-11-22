@@ -146,7 +146,7 @@ cable is desired, such as a catenary shape.
 ProtChAddedMass
 ---------------
 
-A class to deal with the added mass model from proteus.mprans.AddedMass. This
+A class to deal with the added mass model from proteus.kernels.AddedMass. This
 class should not be instantiated manually and will be automatically
 instantiating as a variable of `ProtChSystem` (accessible as
 `my_system.ProtChAddedMass`). It is used to build the added mass matrix for the

@@ -9,7 +9,7 @@ bends about 1 cm in 0.04 s).
 from proteus import *
 from proteus.default_p import *
 from proteus import Context
-from proteus.mprans import RANS2P_IB
+from proteus.kernels import RANS2P_IB
 
 opts = Context.Options([("beamRigid", True, "a rigid beam, or a flexible one (EI = GJ = 1e-4)")])
 

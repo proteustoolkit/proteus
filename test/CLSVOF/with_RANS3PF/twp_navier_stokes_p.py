@@ -4,7 +4,7 @@ try:
     from .multiphase import *
 except:
     from multiphase import *
-from proteus.mprans import RANS3PF
+from proteus.kernels import RANS3PF
 
 #No RANS
 Closure_0_model = None

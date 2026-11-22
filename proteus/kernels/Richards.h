@@ -7,7 +7,7 @@
 #include "CompKernel.h"
 #include "ModelFactory.h"
 #include "../pskRelations.h"
-#include "../mprans/ArgumentsDict.h"
+#include "ArgumentsDict.h"
 #include "pyarray.h"
 #define nnz nSpace
 

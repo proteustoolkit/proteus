@@ -18,7 +18,7 @@
 #include "tresca.h"
 #include "druckerPrager.h"
 #include "mcdp.h"
-#include "../mprans/ArgumentsDict.h"
+#include "ArgumentsDict.h"
 #include "pyarray.h"
 #include "pybind11/pybind11.h"
 

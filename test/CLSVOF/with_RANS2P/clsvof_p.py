@@ -3,7 +3,7 @@ from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from math import *
 from .multiphase import *
-from proteus.mprans import CLSVOF
+from proteus.kernels import CLSVOF
 
 LevelModelType = CLSVOF.LevelModel
 coefficients = CLSVOF.Coefficients(V_model=0,

@@ -4,7 +4,7 @@ from proteus.default_p import *
 Heterogeneous Poisson's equation, -div(a(x)u) = f(x), on unit domain [0,1]x[0,1]x[0,1]
 """
 
-from proteus import ADR
+from proteus.kernels import ADR
 
 LevelModelType = ADR.LevelModel
 

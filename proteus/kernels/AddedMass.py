@@ -15,7 +15,8 @@ from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
-from . import cAddedMass, cArgumentsDict
+from . import cAddedMass
+from proteus import cArgumentsDict
 from mpi4py import MPI
 import proteus.NumericalFlux
 import proteus.Transport

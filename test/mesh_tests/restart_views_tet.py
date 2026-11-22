@@ -38,7 +38,7 @@ from proteus import (Domain, MeshTools, NumericalSolution, SpatialTools, StepCon
 from proteus.FemTools import C0_AffineLinearOnSimplexWithNodalBasis  # noqa: E402
 from proteus.LinearAlgebraTools import SparseMatrix  # noqa: E402
 from proteus.LinearSolvers import KSP_petsc4py  # noqa: E402
-from proteus.mprans import VOF  # noqa: E402
+from proteus.kernels import VOF  # noqa: E402
 from proteus.NonlinearSolvers import Newton  # noqa: E402
 from proteus.Quadrature import SimplexGaussQuadrature  # noqa: E402
 

@@ -9,7 +9,7 @@ try:
     from .cavity2d import *
 except:
     from cavity2d import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 
 bcsTimeDependent = True
 LevelModelType = RANS2P.LevelModel

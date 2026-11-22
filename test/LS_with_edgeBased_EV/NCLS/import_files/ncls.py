@@ -1,6 +1,6 @@
 from proteus import Domain
 from proteus import Context
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 from proteus import Norms
 from proteus import Profiling 
 import numpy as np

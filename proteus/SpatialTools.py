@@ -43,7 +43,7 @@ import numbers
 import os
 from math import atan2, acos, asin
 from proteus import AuxiliaryVariables, Archiver, Profiling, Gauges
-from proteus.mprans import BodyDynamics as bd
+from proteus.mbd import BodyDynamics as bd
 from copy import deepcopy
 from functools import reduce
 

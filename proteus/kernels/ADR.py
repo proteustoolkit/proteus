@@ -21,8 +21,8 @@ from proteus.TransportCoefficients import evaluateAtPoints
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import  ShockCapturing_base
-from proteus.cADR import *
-from proteus.mprans import cArgumentsDict
+from proteus.kernels.cADR import *
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.Transport
 

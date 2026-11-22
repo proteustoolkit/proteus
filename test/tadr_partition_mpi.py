@@ -45,7 +45,7 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh
 
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 if os.environ.get("POROUS"):
     # a porosity that varies in space, so the nodal projection of it differs from dof to dof
     def _theta(x):
@@ -103,7 +103,7 @@ if os.environ.get("GHOSTCFL"):
     TADR.LevelModel.getResidual = getResidual
 if os.environ.get("NOREDUCE"):
     # each rank normalizes the Taylor-Galerkin entropy viscosity by its own subdomain (a control)
-    from proteus.mprans import EntropyViscosity
+    from proteus.kernels import EntropyViscosity
     EntropyViscosity.reduce_numDiff = lambda *args: None
 if os.environ.get("OLDMAX"):
     TADR.RKEV.ownedMaxCFL = lambda self: self.cfl.max()

@@ -5,7 +5,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 """
 The redistancing equation in the sloshbox test problem.
 """

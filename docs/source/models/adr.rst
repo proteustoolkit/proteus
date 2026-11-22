@@ -7,7 +7,7 @@ Advection-Diffusion-Reaction with Unfitted Interfaces
 Description
 ===========
 
-The ADR model (:py:mod:`proteus.ADR`) solves linear advection-diffusion-reaction equations
+The ADR model (:py:mod:`proteus.kernels.ADR`) solves linear advection-diffusion-reaction equations
 
 .. math::
 
@@ -37,7 +37,7 @@ the optimal orders for :math:`p=1,2` and coefficient contrasts up to 1000: :math
 :math:`L^2` and :math:`p` in the broken :math:`H^1` seminorm. The :math:`L^\infty` error also
 decreases at order :math:`p+1` on average, with fluctuating rates at the highest contrast.
 
-All options are arguments of :py:class:`proteus.ADR.Coefficients`; its documentation lists
+All options are arguments of :py:class:`proteus.kernels.ADR.Coefficients`; its documentation lists
 them with the values used in the paper below.
 
 

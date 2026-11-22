@@ -45,7 +45,7 @@ them, and the driver writes them in one loop:
 
 .. code-block:: python
 
-    # in proteus/mprans/SW2DCV.py, class Coefficients
+    # in proteus/kernels/SW2DCV.py, class Coefficients
     def archiveFields(self, lm):
         yield ArchiveField("bathymetry", self.b.dof)
         yield ArchiveField("eta", self.b.dof + lm.u[0].dof)

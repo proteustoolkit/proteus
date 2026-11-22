@@ -2,7 +2,7 @@ from proteus import StepControl
 from proteus import *
 from proteus.default_p import *
 from math import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 from proteus import Context
 
 """

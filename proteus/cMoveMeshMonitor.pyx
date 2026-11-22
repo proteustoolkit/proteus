@@ -10,8 +10,8 @@ from libcpp cimport bool
 from proteus.Profiling import logEvent
 
 INDEX_DTYPE = np.dtype('i%d' % sizeof(proteus_index_t))  # dtype of proteus_index_t (index_type.h)
-from proteus.mprans import MeshSmoothing as ms
-from proteus.mprans cimport MeshSmoothing as ms
+from proteus import MeshSmoothing as ms
+from proteus cimport MeshSmoothing as ms
 from proteus import Comm
 from mpi4py import MPI
 

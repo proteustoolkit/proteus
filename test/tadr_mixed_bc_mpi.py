@@ -28,7 +28,7 @@ from proteus.LinearSolvers import KSP_petsc4py
 from proteus.NonlinearSolvers import Newton
 from proteus.TimeIntegration import BackwardEuler
 from proteus.StepControl import Min_dt_controller
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 nx = int(os.environ.get("NN", "41"))
 D = float(os.environ.get("D", "0.05"))

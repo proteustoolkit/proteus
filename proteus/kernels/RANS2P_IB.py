@@ -1,6 +1,6 @@
 import proteus
-import proteus.mprans.RANS2P as RANS2P
-from proteus.mprans.cRANS2P_IB import *
+import proteus.kernels.RANS2P as RANS2P
+from proteus.kernels.cRANS2P_IB import *
 import numpy as np
 from proteus import cmeshTools
 from proteus.csparsity import CSR_INDEX_DTYPE
@@ -12,9 +12,9 @@ import numpy
 from proteus import *
 from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 
-class Coefficients(proteus.mprans.RANS2P.Coefficients):
+class Coefficients(proteus.kernels.RANS2P.Coefficients):
     _epsFact_solid_is_used = True  # the immersed-boundary kernels read it
 
     def __init__(self,
@@ -426,7 +426,7 @@ class Coefficients(proteus.mprans.RANS2P.Coefficients):
     pass
 
 
-class LevelModel(proteus.mprans.RANS2P.LevelModel):
+class LevelModel(proteus.kernels.RANS2P.LevelModel):
     # def __init__(self,
     #              uDict,
     #              phiDict,

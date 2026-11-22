@@ -11,7 +11,7 @@ import numpy as np
 """
 Module for creating boundary conditions: the generic classes (BC_Base, BoundaryCondition) and the two-phase
 flow ones (BC_RANS, RelaxationZone, RelaxationZoneWaveGenerator, WallFunctions, kWall; formerly
-proteus.mprans.BoundaryConditions, merged here by C49 R1). Imported in SpatialTools.py
+proteus.kernels.BoundaryConditions, merged here by C49 R1). Imported in SpatialTools.py
 
 .. inheritance-diagram:: proteus.BoundaryConditions
    :parts: 1

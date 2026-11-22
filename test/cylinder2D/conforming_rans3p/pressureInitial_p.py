@@ -6,7 +6,7 @@ try:
 except:
     from cylinder3p import *
     
-from proteus.mprans import PresInit
+from proteus.kernels import PresInit
 
 #domain = ctx.domain
 #nd = ctx.nd

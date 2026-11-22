@@ -15,7 +15,7 @@ domain_rg.py (`he`, `STABILIZATION_TYPE`, `FCT`), which this file imports.
 """
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 from domain_rg import *          # brings in the domain AND the context object ct
 
 analyticalSolution = None

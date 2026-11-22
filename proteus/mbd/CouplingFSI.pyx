@@ -56,7 +56,7 @@ cdef extern from "index_type.h":
 #: width of proteus_index_t in index_type.h, same rule as cmeshTools.INDEX_DTYPE
 _INDEX_DTYPE = np.dtype('i%d' % sizeof(proteus_index_t))
 # chrono Python headers
-from proteus.mprans import BodyDynamics as bd
+from proteus.mbd import BodyDynamics as bd
 import pychrono as chrono
 from pychrono import fea as chrono_fea
 

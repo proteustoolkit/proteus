@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 nd = 2
 
 L=(10.0,10.0,1.0)

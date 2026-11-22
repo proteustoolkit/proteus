@@ -19,7 +19,7 @@ import pytest
 
 from proteus.iproteus import *  # noqa: F401,F403  (opts, default_s, NumericalSolution)
 from proteus import LinearSolvers, NonlinearSolvers, StepControl
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASE_D = os.path.join(HERE, 'Levee_contamination_Density', 'Case_D')
@@ -303,7 +303,7 @@ def test_levee_edge_flux_diagnostics_run(levee_deck, monkeypatch, stab, tadr_dia
     """Every run-time diagnostic, turned on through the Coefficients options, runs and logs without a probe failure
     (the probes catch their own exceptions, so a broken one would only say so in the log), and leaves the
     solution unchanged: c0 = cin = 0.5 stays 0.5."""
-    from proteus.richards import Richards
+    from proteus.kernels import Richards
     logged = []
 
     def record(msg, level=1, *args, **kwargs):
@@ -347,7 +347,7 @@ def test_levee_edge_velocity(levee_deck):
 
 @pytest.mark.parametrize('model', ['TADR', 'Richards'])
 def test_an_unknown_diagnostic_is_refused(model):
-    from proteus.richards import Richards
+    from proteus.kernels import Richards
     module = {'TADR': TADR, 'Richards': Richards}[model]
     with pytest.raises(ValueError, match="unknown %s diagnostics" % model):
         module._diagnostics(("boundary_flux", "no_such_probe"))
@@ -485,7 +485,7 @@ def test_first_dt_is_not_set_by_an_uninitialized_mass(levee_deck, monkeypatch):
     1e-6, so dt > eps / nl_atol_res = 2e-10 (the deck's first output interval is 1e-8). The transport's RKEV
     used to propose 0.5 / 1.9e13 = 2.66e-14 because its edge-based CFL is formed from M_low = 0 (TADR.h floors it
     at 1e-14). Stops at the first step's preStep, so it needs no time stepping."""
-    from proteus.richards import Richards
+    from proteus.kernels import Richards
     domain, rp, rn, tp, tn, so = levee_deck
     rp.coefficients.FCT = True
     rp.coefficients.FCT_TYPE = 'implicit'
@@ -562,7 +562,7 @@ def test_first_step_old_time_mass_is_at_the_coupled_density(levee_deck, monkeypa
     change the mass: Newton's first step goes to |u| ~ 1e14, the iterates grow by 2 per iteration to 1e189
     and the linear solve of the diverged step makes the all-NaN Jacobian of the nightly. Stops at the first
     step's preStep, so it needs no time stepping."""
-    from proteus.richards import Richards
+    from proteus.kernels import Richards
     domain, rp, rn, tp, tn, so = levee_deck
     rp.coefficients.FCT = True
     rp.coefficients.FCT_TYPE = 'implicit'
@@ -604,6 +604,6 @@ def test_first_step_old_time_mass_is_at_the_coupled_density(levee_deck, monkeypa
 def test_the_conservative_boundary_flux_is_opt_in():
     """BC_CONS changes the boundary velocity a coupled transport sees, so existing decks keep the pointwise trace
     unless they ask for it."""
-    from proteus.richards import Richards
+    from proteus.kernels import Richards
     import inspect
     assert inspect.signature(Richards.Coefficients.__init__).parameters['BC_CONS'].default is False

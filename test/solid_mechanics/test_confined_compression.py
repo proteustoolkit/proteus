@@ -1,9 +1,9 @@
-"""Verification of the constitutive model selection and of load stepping in proteus.elastoplastic: confined compression
+"""Verification of the constitutive model selection and of load stepping in proteus.kernels: confined compression
 of a block past yield, unloading and reverse yield, against a radial-return reference."""
 import os
 import numpy as np
 import pytest
-from proteus.elastoplastic import ElastoPlastic
+from proteus.kernels import ElastoPlastic
 from . import confined_compression as cc
 from . import solid_deck
 

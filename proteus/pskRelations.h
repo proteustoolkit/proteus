@@ -783,7 +783,7 @@ public:
 
 /** \file
     \brief Richards free-function PSK closures (moved here from
-           proteus/richards/psk_models.h).
+           proteus/kernels/psk_models.h).
 
     The class hierarchy above (VGM/VGB/BCM/BCB/...) exposes the same
     constitutive models through a stateful calc(Sw) interface.  The routines

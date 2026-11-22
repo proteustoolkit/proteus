@@ -8,7 +8,7 @@ from proteus.Transport import OneLevelTransport, sqrt, TC_base
 from proteus.Transport import NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
 from proteus.Transport import DOFBoundaryConditions, Quadrature
-from proteus.mprans import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.Transport
 import proteus.TransportCoefficients
 

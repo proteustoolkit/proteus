@@ -17,7 +17,7 @@ from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
 from . import cPresInc
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.Transport
 
@@ -46,7 +46,7 @@ class Coefficients(TC_base):
        q^t = (1-\theta_s) v_f + \theta_s v_s
     """
     #: a closed domain fixes this pressure only up to a constant: NumericalSolution.postStep shifts it to zero
-    #: integral mean when no Dirichlet condition fixes it (proteus.mprans.PressureNormalization)
+    #: integral mean when no Dirichlet condition fixes it (proteus.kernels.PressureNormalization)
     zeroMean = True
 
     def __init__(self,
@@ -798,7 +798,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         partial row back. Collective."""
         if not self.coefficients.fixNullSpace:
             return
-        from proteus.mprans.PressureNormalization import _hasDirichlet
+        from proteus.kernels.PressureNormalization import _hasDirichlet
         if _hasDirichlet(self):
             log("PresInc: fixNullSpace ignored, a Dirichlet condition fixes the constant", level=1)
             self.coefficients.fixNullSpace = False

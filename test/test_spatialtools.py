@@ -24,7 +24,7 @@ from proteus.SpatialTools import (Rectangle as RectangleRANS,
                                          Tank2D,
                                          Tank3D,
                                          ShapeSTL)
-from proteus.mprans.BodyDynamics import RigidBody
+from proteus.mbd.BodyDynamics import RigidBody
 import pytest
 
 comm = Comm.init()

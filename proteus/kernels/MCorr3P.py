@@ -19,7 +19,7 @@ from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
 from . import cMCorr3P
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NonlinearSolvers
 import proteus.StepControl
 import proteus.Transport

@@ -1472,9 +1472,9 @@ def gauges_from_ymf(spec, fields=None, tags=None):
 
 
 def _flow_model_with_boundary_integrals(p):
-    # the module a class reports is its package (proteus.mprans until C49 R1, proteus.kernels after) and its file
+    # the module a class reports is its package and its file (proteus.kernels.RANS2P)
     package, _, name = type(p.coefficients).__module__.rpartition(".")
-    return package in ("proteus.mprans", "proteus.kernels") and name in ("RANS2P", "RANS3PF")
+    return package == "proteus.kernels" and name in ("RANS2P", "RANS3PF")
 
 
 def _variable_names(p):

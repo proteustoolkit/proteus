@@ -1,6 +1,6 @@
 import proteus
 from proteus import TimeIntegration
-from proteus.mprans.cRDLS import *
+from proteus.kernels.cRDLS import *
 from proteus.Comm import globalMax
 import numpy as np
 from proteus import cmeshTools
@@ -8,7 +8,7 @@ from proteus.Transport import OneLevelTransport, memory
 from proteus.Transport import TC_base, NonlinearEquation, Quadrature, logEvent
 from proteus.Transport import cfemIntegrals
 from proteus.LinearAlgebraTools import ParVec_petsc4py
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.FemTools
 import proteus.NonlinearSolvers
 import proteus.ShockCapturing

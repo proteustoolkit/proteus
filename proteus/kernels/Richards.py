@@ -10,7 +10,7 @@ from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
 from proteus.Transport import DOFBoundaryConditions, Quadrature
-from proteus.mprans import cArgumentsDict
+from proteus import cArgumentsDict
 from proteus.LinearAlgebraTools import SparseMat
 from proteus import TimeIntegration
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrixForRichards
@@ -583,7 +583,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         # quadrature rule.  The copy would raise a bare numpy broadcast error on
         # a size mismatch and say nothing at all if the two rules merely order
         # their points differently, so check the rules themselves here.
-        from proteus.mprans.TADR import checkCoupledQuadrature
+        from proteus.kernels.TADR import checkCoupledQuadrature
         checkCoupledQuadrature(self.model, 'Richards',
                                self.densityModel, 'density (transport) model')
 

@@ -4,7 +4,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import NCLS3P
+from proteus.kernels import NCLS3P
 
 LevelModelType = NCLS3P.LevelModel
 coefficients = NCLS3P.Coefficients(V_model=V_model,

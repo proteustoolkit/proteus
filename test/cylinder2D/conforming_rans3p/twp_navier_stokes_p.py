@@ -4,7 +4,7 @@ try:
     from .cylinder3p import *
 except:
     from cylinder3p import *
-from proteus.mprans import RANS3PF
+from proteus.kernels import RANS3PF
 
 LevelModelType = RANS3PF.LevelModel
 if useOnlyVF:

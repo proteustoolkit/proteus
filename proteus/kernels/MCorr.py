@@ -1,13 +1,13 @@
 import proteus
 from proteus import cfemIntegrals, Norms, Quadrature
 from proteus.Comm import globalSum
-from proteus.mprans.cMCorr import *
+from proteus.kernels.cMCorr import *
 import numpy as np
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport, logEvent, memory, fabs
 from proteus.Transport import TC_base, l2Norm, NonlinearEquation
 from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NonlinearSolvers
 import proteus.StepControl
 import proteus.TransportCoefficients

@@ -1,12 +1,12 @@
 import proteus
-from proteus.mprans.cKappa import *
-from proteus.mprans.cKappa2D import *
+from proteus.kernels.cKappa import *
+from proteus.kernels.cKappa2D import *
 from proteus import Profiling as prof
 import numpy as np
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus import cfemIntegrals
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.Comm
 import proteus.FemTools
 import proteus.NonlinearSolvers

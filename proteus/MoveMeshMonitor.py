@@ -2,8 +2,8 @@ import numpy as np
 import copy
 from proteus.Profiling import logEvent
 from proteus import TransportCoefficients
-from proteus.mprans import MeshSmoothing as ms
-from proteus.mprans import cMoveMeshMonitor as cmm
+from proteus import MeshSmoothing as ms
+from proteus import cMoveMeshMonitor as cmm
 
 class Coefficients(TransportCoefficients.PoissonEquationCoefficients):
     """

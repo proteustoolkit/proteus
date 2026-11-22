@@ -36,7 +36,7 @@ a tight one is a partition test. The pressure constant was a real serial/paralle
 closed tank the pressure is fixed only up to a constant, and serial and parallel fixed it differently (PresInc pinned
 dof 0 in serial and used the constant null space in parallel; PressureInitial took whatever its solver returned), so
 pressure gauges depended on the rank count. Since round 4 PresInc, Pres and PresInit are shifted to zero integral mean
-when no Dirichlet condition fixes them (proteus.mprans.PressureNormalization), and the pressures agree as they are.
+when no Dirichlet condition fixes them (proteus.kernels.PressureNormalization), and the pressures agree as they are.
 
 Retries: forcing one CLSVOF failure at the same call in serial and on 2 ranks gives the same answer on both (2.4e-7),
 so recovery is partition-correct; but the retried serial run differs from the unforced one by 16% in velocity at

@@ -14,7 +14,8 @@ else:
     parallel=False
 
 # models
-from proteus.mprans import (RANS2P,
+from proteus import MoveMeshMonitor
+from proteus.kernels import (RANS2P,
                             RANS3PF,
                             VOF,
                             RDLS,
@@ -23,7 +24,6 @@ from proteus.mprans import (RANS2P,
                             CLSVOF,
                             AddedMass,
                             MoveMesh,
-                            MoveMeshMonitor,
                             Pres,
                             PresInit,
                             PresInc,

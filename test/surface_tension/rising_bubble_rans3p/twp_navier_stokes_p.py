@@ -4,7 +4,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import RANS3PF
+from proteus.kernels import RANS3PF
 
 if useOnlyVF:
     LS_model = None

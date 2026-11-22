@@ -8,7 +8,7 @@ from proteus import (StepControl,
                      NumericalFlux)
 import ls_consrv_p as physics
 from proteus import Context
-from proteus.mprans.MCorr3P import DummyNewton
+from proteus.kernels.MCorr3P import DummyNewton
 
 ct = Context.get()
 domain = ct.domain

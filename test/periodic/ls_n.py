@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      NonlinearSolvers,
                      LinearSolvers,
                      LinearAlgebraTools)
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 from proteus import Context
 
 ct = Context.get()

@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
-from proteus.mprans import RANS2P, RANS2P_IB
+from proteus.kernels import RANS2P, RANS2P_IB
 
 
 def test_epsFact_solid_warns_in_rans2p():

@@ -21,7 +21,7 @@ Rest and conservation cases, 0.1 m x 1 m column, FCT off:
   open_top        STAB 0, hydrostatic brine with a pressure-Dirichlet top
   open_top_stab2  STAB 2, the same through the EV boundary path
 
-Per-rock nodal closure (proteus/m_comp_co2/Z_ACROSS_ROCK_INTERFACES.md):
+Per-rock nodal closure (proteus/kernels/Z_ACROSS_ROCK_INTERFACES.md):
 
   rock_column     0.02 m x 0.2 m strip, C sand / ESF / C sand, closed, free
                   gas starting 0.02 m below the ESF.  The pooled gas column
@@ -34,7 +34,7 @@ Per-rock nodal closure (proteus/m_comp_co2/Z_ACROSS_ROCK_INTERFACES.md):
 """
 from proteus import Context, Domain
 from proteus.default_p import *
-from proteus.m_comp_co2 import m_comp_co2
+from proteus.kernels import m_comp_co2
 
 import numpy as np
 

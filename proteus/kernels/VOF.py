@@ -21,13 +21,13 @@ from proteus.ShockCapturing import ShockCapturing_base
 from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF,TwoStageNewton
 from proteus import TimeIntegration
-from proteus.mprans.cVOF import *
+from proteus.kernels.cVOF import *
 from proteus import *
 from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
 #from . import cVOF3P
-from . import cArgumentsDict
-from proteus.mprans import EntropyViscosity
+from proteus import cArgumentsDict
+from proteus.kernels import EntropyViscosity
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError

@@ -1,6 +1,6 @@
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
-from proteus.mprans import VOF3P
+from proteus.kernels import VOF3P
 from proteus import Context
 
 ct = Context.get()

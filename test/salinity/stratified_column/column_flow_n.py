@@ -1,5 +1,5 @@
 from proteus.default_n import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 
 try:
     from .column_flow_p import *

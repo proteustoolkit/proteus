@@ -1,13 +1,13 @@
 import proteus
 import proteus.MeshTools
-from proteus.mprans.cCLSVOF import *
+from proteus.kernels.cCLSVOF import *
 import numpy as np
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, Quadrature
 from proteus.Transport import logEvent, memory, FluxBoundaryConditions, Comm
 from proteus.Transport import cfemIntegrals
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.LinearAlgebraTools
 import proteus.NonlinearSolvers
 import proteus.NumericalFlux

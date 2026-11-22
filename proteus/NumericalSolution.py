@@ -19,7 +19,7 @@ from . import Archiver
 from . import Viewers
 from . import Gauges
 from . import WallLimit
-from .mprans import PressureNormalization
+from .kernels import PressureNormalization
 from .Archiver import ArchiveFlags
 from . import Domain
 from .MeshAdaptPUMI import Checkpoint,AdaptHelper
@@ -191,7 +191,7 @@ _MOVED_MODULES = (("proteus.mprans.SpatialTools", "proteus.SpatialTools"),
 
 
 def _current_module_path(text):
-    """``text`` (a class path such as 'proteus.mprans.NCLS.RKEV lag=True') with a leading old module path replaced by
+    """``text`` (a class path such as 'proteus.kernels.NCLS.RKEV lag=True') with a leading old module path replaced by
     the current one; anything else comes back unchanged."""
     for old, new in _MOVED_MODULES:
         if text == old or text.startswith(old + ".") or text.startswith(old + " "):
@@ -1537,8 +1537,8 @@ class NS_base(object):  # (HasTraits):
 
     @staticmethod
     def _normalize_archived_policy(policy):
-        """An archived step policy with the module paths a state written before C49 R1 carries (proteus.mprans.NCLS.RKEV,
-        proteus.richards.Richards...) read as the current ones (proteus.kernels.NCLS.RKEV, ...). Read side only: the
+        """An archived step policy with the module paths a state written before C49 R1 carries (proteus.kernels.NCLS.RKEV,
+        proteus.kernels.Richards...) read as the current ones (proteus.kernels.NCLS.RKEV, ...). Read side only: the
         policy written now carries the current paths."""
         return {k: _current_module_path(v) if isinstance(v, str) else v for k, v in policy.items()}
 

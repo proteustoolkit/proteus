@@ -1,4 +1,4 @@
-"""Every proteus.mprans module imports in a fresh interpreter, on its own.
+"""Every proteus.kernels module imports in a fresh interpreter, on its own.
 
 A module that does ``import proteus`` and then names proteus.StepControl,
 proteus.SubgridError, ... as attributes works only if something else imported
@@ -31,7 +31,7 @@ def test_mprans_module_imports_alone(module):
         [_root] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p])
     env.setdefault("FI_PROVIDER", "tcp")
     r = subprocess.run(
-        [sys.executable, "-c", "import proteus.mprans.%s" % module],
+        [sys.executable, "-c", "import proteus.kernels.%s" % module],
         capture_output=True, text=True, env=env, timeout=300)
     if r.returncode == 0:
         return
@@ -40,5 +40,5 @@ def test_mprans_module_imports_alone(module):
     if m and not m.group(1).startswith("proteus"):
         # an optional third-party dependency (e.g. pychrono), not ours
         pytest.skip("optional dependency missing: " + m.group(1))
-    pytest.fail("import proteus.mprans.%s in a fresh interpreter failed: %s\n%s"
+    pytest.fail("import proteus.kernels.%s in a fresh interpreter failed: %s\n%s"
                 % (module, last, r.stderr[-2000:]))

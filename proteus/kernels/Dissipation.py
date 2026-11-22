@@ -1,11 +1,11 @@
 import proteus
-from proteus.mprans.cDissipation import *
-from proteus.mprans.cDissipation2D import *
+from proteus.kernels.cDissipation import *
+from proteus.kernels.cDissipation2D import *
 import numpy as np
 from proteus import cmeshTools
 from proteus import Profiling as prof
 from proteus import cfemIntegrals
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.Comm
 import proteus.FemTools
 import proteus.NonlinearSolvers

@@ -12,12 +12,12 @@ skip in a source tree that hasn't been built.
 import numpy as np
 import pytest
 
-pytest.importorskip("proteus.mprans.SW2DCV", reason="needs built extensions")
+pytest.importorskip("proteus.kernels.SW2DCV", reason="needs built extensions")
 
 from proteus.ArchiveFields import (ArchiveField, ArchiveFieldError,  # noqa: E402
                                    archive_fields_for)
 from proteus.TransportCoefficients import TC_base  # noqa: E402
-from proteus.mprans import CLSVOF, GN_SW2DCV, RANS2P, RANS3PF, SW2DCV  # noqa: E402
+from proteus.kernels import CLSVOF, GN_SW2DCV, RANS2P, RANS3PF, SW2DCV  # noqa: E402
 
 N_DOF = 5
 

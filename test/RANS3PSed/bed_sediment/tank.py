@@ -7,7 +7,7 @@ from proteus.Profiling import logEvent
 from proteus import SpatialTools as st
 from proteus import Gauges as ga
 from proteus import WaveTools as wt
-from proteus.mprans.SedClosure import  HsuSedStress
+from proteus.kernels.SedClosure import  HsuSedStress
 
 
 opts=Context.Options([

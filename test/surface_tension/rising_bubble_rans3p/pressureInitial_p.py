@@ -5,7 +5,7 @@ try:
     from .risingBubble import *
 except:
     from risingBubble import *
-from proteus.mprans import PresInit
+from proteus.kernels import PresInit
 
 name = "pressureInitial"
 #LevelModelType = PresInit.LevelModel

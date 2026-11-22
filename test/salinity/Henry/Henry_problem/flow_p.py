@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 import numpy as np
 try:
     from .domain_henry import *

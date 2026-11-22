@@ -11,7 +11,7 @@ from proteus.Transport import OneLevelTransport
 from proteus.Transport import TC_base, NonlinearEquation, logEvent, memory
 from proteus.Transport import FluxBoundaryConditions, Comm, cfemIntegrals
 from proteus.Transport import DOFBoundaryConditions, Quadrature
-from proteus.mprans import cArgumentsDict
+from proteus import cArgumentsDict
 from proteus.LinearAlgebraTools import SparseMat
 from proteus import TimeIntegration
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrixForRichards
@@ -880,7 +880,7 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         recovers the instantaneous local-equilibrium flash (dissolves in place),
         finite k_d lets the free-gas plume rise before it dissolves over a
         slower timescale.  X_sat is the physical solubility mass fraction.  See
-        the kernel comment in proteus/m_comp_co2/m_comp_co2.h.
+        the kernel comment in proteus/kernels/m_comp_co2.h.
         """
         if self.dissolution_mode != 'flash' or self.X_sat <= 0.0:
             return

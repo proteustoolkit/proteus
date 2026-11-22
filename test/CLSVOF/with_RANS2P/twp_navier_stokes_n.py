@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      LinearAlgebraTools)
 from proteus.default_n import *
 from . import twp_navier_stokes_p as physics
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 from .multiphase import *
 
 #time stepping

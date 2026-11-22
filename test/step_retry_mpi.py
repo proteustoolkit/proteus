@@ -41,7 +41,7 @@ def boundary_integral_gauges(pList, nList):
     the first, attached to the RANS2P/RANS3PF model; it writes boundary_integrals.csv."""
     from proteus.Gauges import BoundaryIntegralGauges
     for p, n in zip(pList, nList):
-        if type(p.coefficients).__module__ in ("proteus.mprans.RANS2P", "proteus.mprans.RANS3PF"):
+        if type(p.coefficients).__module__ in ("proteus.kernels.RANS2P", "proteus.kernels.RANS3PF"):
             flags = [int(f) for f in os.environ["BIGAUGES"].split(",")]
             gauge = BoundaryIntegralGauges(tags=flags, moment_points={str(flags[0]): (0.1, 0.2, 0.0)},
                                            fileName="boundary_integrals.csv")

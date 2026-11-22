@@ -1,10 +1,10 @@
 import proteus
-from proteus.mprans.cSW2D import *
+from proteus.kernels.cSW2D import *
 from proteus.Comm import globalMax
 import numpy as np
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError

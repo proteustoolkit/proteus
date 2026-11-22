@@ -1,6 +1,6 @@
 import proteus
 import proteus.MeshTools
-from proteus.mprans.cNCLS import *
+from proteus.kernels.cNCLS import *
 import numpy as np
 from proteus import cmeshTools
 from proteus.Transport import OneLevelTransport, cfemIntegrals, SparseMat
@@ -10,7 +10,7 @@ from proteus.Transport import memory, FluxBoundaryConditions, ExplicitLumpedMass
 from proteus.Transport import globalMax, SSP, ExplicitConsistentMassMatrixWithRedistancing
 from proteus.Comm import globalSum
 from proteus import Norms
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError

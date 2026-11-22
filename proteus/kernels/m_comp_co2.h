@@ -9,7 +9,7 @@
 #include <valarray>
 #include "CompKernel.h"
 #include "ModelFactory.h"
-#include "../mprans/ArgumentsDict.h"
+#include "ArgumentsDict.h"
 #include "pyarray.h"
 #include "../pskRelations.h"
 // Compositional CO2-brine EOS + analytic (p,z) flash (P3).  Standalone headers

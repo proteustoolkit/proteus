@@ -1,13 +1,13 @@
 import proteus
-from proteus.mprans.cMoveMesh2D import cMoveMesh2D_base
-from proteus.mprans.cMoveMesh import cMoveMesh_base
+from proteus.kernels.cMoveMesh2D import cMoveMesh2D_base
+from proteus.kernels.cMoveMesh import cMoveMesh_base
 import numpy as np
 from math import sqrt
 from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus import Quadrature, FemTools, Comm, Archiver, cfemIntegrals
 from proteus.Profiling import logEvent, memory
 from proteus import cmeshTools
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.Transport
 import proteus.TransportCoefficients
 

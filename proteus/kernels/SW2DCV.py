@@ -1,7 +1,7 @@
 import proteus
 from proteus import FemTools
 from proteus import LinearAlgebraTools as LAT
-from proteus.mprans.cSW2DCV import *
+from proteus.kernels.cSW2DCV import *
 import numpy as np
 from proteus import cmeshTools
 from proteus.csparsity import CSR_INDEX_DTYPE
@@ -9,7 +9,7 @@ from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
 from proteus.Transport import Quadrature, logEvent, memory, BackwardEuler
 from proteus.Transport import FluxBoundaryConditions, Comm, DOFBoundaryConditions
 from proteus.Transport import cfemIntegrals, globalMax, SparseMat
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.TimeIntegration
 import proteus.Transport

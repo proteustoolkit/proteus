@@ -24,7 +24,7 @@ The base `SpatialTools` module can be imported as follows:
 
    from proteus import SpatialTools as st
 
-The two-phase flow part of `SpatialTools` (formerly `proteus.mprans.SpatialTools`, merged into `proteus.SpatialTools`; the old import path still works and warns), adding functionality specific to
+The two-phase flow part of `SpatialTools` (formerly `proteus.kernels.SpatialTools`, merged into `proteus.SpatialTools`; the old import path still works and warns), adding functionality specific to
 multi-phase flows, can be imported as follows:
 
 .. code-block:: python
@@ -294,7 +294,7 @@ Base classes
 ------------
 
 The following classes are accessible with an import from `proteus.SpatialTools`
-(the former `proteus.mprans.SpatialTools` is the same module). Importing it makes every shape a two-phase flow shape, which
+(the former `proteus.kernels.SpatialTools` is the same module). Importing it makes every shape a two-phase flow shape, which
 adds functionality such as the possibility to set multi-phase flow boundary
 conditions and relaxation zones.
 

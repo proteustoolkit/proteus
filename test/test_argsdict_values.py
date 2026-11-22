@@ -74,7 +74,7 @@ def _proteus_sources():
 
 def test_scanner_catches_trailing_comma():
     source = textwrap.dedent("""
-        from proteus.mprans import cArgumentsDict
+        from proteus import cArgumentsDict
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["ok_array"] = a
         argsDict["ok_scalar"] = 1.0

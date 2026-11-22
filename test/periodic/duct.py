@@ -14,7 +14,7 @@ from proteus import (Domain,
                      Context,
                      AnalyticalSolutions)
 from proteus.default_so import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 import os
 
 opts = Context.Options([

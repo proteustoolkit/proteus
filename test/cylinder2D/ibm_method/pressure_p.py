@@ -5,7 +5,7 @@ try:
     from .cylinder import *
 except:
     from cylinder import *
-from proteus.mprans import Pres
+from proteus.kernels import Pres
 
 name = "pressure"
 

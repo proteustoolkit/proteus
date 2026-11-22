@@ -1,6 +1,6 @@
 from proteus import Domain
 from proteus import Context
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 import numpy as np
 
 ct=Context.Options([

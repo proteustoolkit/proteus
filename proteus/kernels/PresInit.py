@@ -16,7 +16,7 @@ from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
 from proteus.ShockCapturing import ShockCapturing_base
 from . import cPresInit
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.Transport
 
 
@@ -31,7 +31,7 @@ class Coefficients(TC_base):
        p^{k+1} - p^{k} - phi^{k+1} + \nabla\cdot(\mu \mathbf{u}^{k+1}) = 0
     """
     #: a closed domain fixes this pressure only up to a constant: NumericalSolution.postStep shifts it to zero
-    #: integral mean when no Dirichlet condition fixes it (proteus.mprans.PressureNormalization)
+    #: integral mean when no Dirichlet condition fixes it (proteus.kernels.PressureNormalization)
     zeroMean = True
 
     def __init__(self,

@@ -6,8 +6,8 @@ import warnings
 import proteus
 from proteus.Gauges import open_history_file, on_hot_start, keep_steps_up_to
 import sys
-from proteus.mprans.cRANS2P import *
-from proteus.mprans.cRANS2P2D import *
+from proteus.kernels.cRANS2P import *
+from proteus.kernels.cRANS2P2D import *
 from proteus import Profiling
 from proteus import LinearAlgebraTools as LAT
 from proteus.Comm import (globalSum,
@@ -17,7 +17,7 @@ from proteus import cmeshTools
 from proteus import *
 from proteus.Transport import *
 from proteus.Transport import OneLevelTransport
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 from proteus.csparsity import CSR_INDEX_DTYPE
 import proteus.NumericalFlux
 import proteus.Profiling

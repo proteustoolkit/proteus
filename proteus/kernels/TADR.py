@@ -19,10 +19,10 @@ from proteus.ShockCapturing import ShockCapturing_base
 from proteus.NumericalFlux import Advection_DiagonalUpwind_Diffusion_IIPG_exterior
 from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF,TwoStageNewton
-from proteus.mprans.cTADR import cTADR_base
+from proteus.kernels.cTADR import cTADR_base
 
-from . import cArgumentsDict
-from proteus.mprans import EntropyViscosity
+from proteus import cArgumentsDict
+from proteus.kernels import EntropyViscosity
 
 #: Coefficients(diagnostics=...): the run-time diagnostics a TADR model can log, each off by default since it
 #: costs MPI reductions every step or call.

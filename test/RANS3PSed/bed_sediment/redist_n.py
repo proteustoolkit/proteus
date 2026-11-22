@@ -6,7 +6,7 @@ from proteus import (StepControl,
                      LinearSolvers,
                      LinearAlgebraTools,
                      NumericalFlux)
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 import redist_p as physics
 from proteus import Context
 

@@ -22,7 +22,7 @@ from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF
 from proteus import TimeIntegration
 from . import cVOS3P
-from . import cArgumentsDict
+from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.ShockCapturing
 import proteus.SubgridError

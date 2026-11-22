@@ -2,7 +2,7 @@ from math import *
 from proteus import *
 from proteus.default_p import *
 from NS_hotstart import *
-from proteus.mprans import Pres
+from proteus.kernels import Pres
 
 name = "pressure"
 
