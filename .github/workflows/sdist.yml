@@ -230,7 +230,7 @@ jobs:
           # installs it with default build isolation, through pip run from this env, which finds the bundle.
           python -m build --sdist --no-isolation
 
-      # The coverage leg builds BoundaryConditions, mprans.BoundaryConditions and WaveTools (compiled by Cython from
+      # The coverage leg builds BoundaryConditions and WaveTools (compiled by Cython from
       # .py files, so coverage.py saw their lines never run: 0%) with line tracing; setup.py reads this variable.
       # Every other leg builds as before: tracing slows those modules down and nothing else needs it.
       - name: Install sdist with default build isolation
@@ -241,7 +241,7 @@ jobs:
 
       # The Cython.Coverage plugin finds a traced module's executable lines in the C++ file Cython generated, which it
       # looks for next to the installed .so. pip builds in a temporary directory and keeps no generated source, so make
-      # the three files again here (the lines they map are the same ones) and put them there; the coverage job reads
+      # the two files again here (the lines they map are the same ones) and put them there; the coverage job reads
       # the same files from the artifact below.
       - name: Generate the Cython sources the coverage plugin reads (coverage leg)
         if: matrix.leg.coverage == 'yes'
@@ -249,12 +249,12 @@ jobs:
         run: |
           PKG="$(cd "$(mktemp -d)" && python -c 'import os, proteus; print(os.path.dirname(proteus.__file__))')"
           echo "installed package: $PKG; cython $(cython --version 2>&1)"
-          for mod in BoundaryConditions mprans/BoundaryConditions WaveTools; do
+          for mod in BoundaryConditions WaveTools; do
             cython --cplus -3 -X linetrace=True -I . "proteus/$mod.py" -o "proteus/$mod.cpp"
             cp "proteus/$mod.cpp" "$PKG/$mod.cpp"
           done
-          ls "$PKG"/BoundaryConditions.* "$PKG"/mprans/BoundaryConditions.* "$PKG"/WaveTools.*
-          tar czf linetrace-sources.tgz proteus/BoundaryConditions.cpp proteus/mprans/BoundaryConditions.cpp proteus/WaveTools.cpp
+          ls "$PKG"/BoundaryConditions.* "$PKG"/WaveTools.*
+          tar czf linetrace-sources.tgz proteus/BoundaryConditions.cpp proteus/WaveTools.cpp
 
       - name: Smoke test
         shell: bash -l {0}
@@ -580,7 +580,7 @@ jobs:
       - name: Combine and check against the floors
         shell: bash
         run: |
-          # Cython: the plugin that reads the line-traced modules' data (BoundaryConditions, mprans.BoundaryConditions,
+          # Cython: the plugin that reads the line-traced modules' data (BoundaryConditions,
           # WaveTools) has to be there to combine and report them
           pip install -q "coverage>=7.10" "cython>=3.0,<4"
           # the plugin looks for each module's generated C++ next to its .py

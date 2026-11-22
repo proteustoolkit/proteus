@@ -86,7 +86,7 @@ addopts = "--import-mode=importlib"
 # and scripts directories are not measured -- a test that is never run is
 # a different problem from code that is never run -- and neither are the
 # decks under proteus/tests. Cython extensions are not measured either, except
-# the three compiled from .py files (BoundaryConditions, mprans.BoundaryConditions,
+# the two compiled from .py files (BoundaryConditions,
 # WaveTools), which the CI coverage leg builds with PROTEUS_CYTHON_LINETRACE=1
 # (setup.py) and measures with the Cython.Coverage plugin; its steps in
 # .github/workflows/sdist.yml add that plugin to a copy of this configuration.

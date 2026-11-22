@@ -390,7 +390,7 @@ class SystemPhysics(Parameters.FreezableClass):
         self.initialConditions = None
         self.boundaryConditions=None
 
-        # to use proteus.mprans.BoundaryConditions
+        # to use proteus.BoundaryConditions
         # but only if SpatialTools was used to make the domain
         self.useBoundaryConditionsModule = True
 

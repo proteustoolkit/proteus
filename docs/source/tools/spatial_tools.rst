@@ -69,7 +69,7 @@ Usage
 ^^^^^
 
 The mprans version of SpatialTools also associate geometry boundaries with
-`BoundaryCondition` instances from mprans.BoundaryConditions. These
+`BoundaryCondition` instances from BoundaryConditions. These
 `BoundaryCondition` instances are easily accessible through a dictionary with
 predefined names, e.g. for a `Rectangle` shape instance named `my_rectangle`,
 ``my_rectangle.BC['x-']`` is for accessing the boundary conditions of the left

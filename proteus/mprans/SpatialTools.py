@@ -29,7 +29,7 @@ import os
 import numpy as np
 from proteus import AuxiliaryVariables, Archiver, Comm, Profiling, Gauges
 from proteus.Profiling import logEvent
-from proteus.mprans import BoundaryConditions as bc
+from proteus import BoundaryConditions as bc
 from proteus.mprans import BodyDynamics as bd
 from proteus.SpatialTools import (Shape,
                                   Cuboid,
@@ -47,7 +47,7 @@ from proteus.SpatialTools import (Shape,
 class ShapeRANS(Shape):
     """
     Base/super class of all shapes. Sets the boundary condition class to
-    proteus.mprans.BoundaryConditions.BC_RANS.
+    proteus.BoundaryConditions.BC_RANS.
 
     Parameters
     ----------

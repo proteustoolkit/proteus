@@ -334,8 +334,8 @@ print("proteus build: PUMI partitioners (%s): %s" % (
 # (or references into fixed-size element arrays) and compile-time element
 # shape. Keep -O2 the default; do not tune the legacy passes for flags.
 
-# Line tracing for the coverage leg only (PROTEUS_CYTHON_LINETRACE=1 in the environment of the build). BoundaryConditions,
-# mprans.BoundaryConditions and WaveTools are compiled by Cython from .py files, so coverage.py never sees their lines
+# Line tracing for the coverage leg only (PROTEUS_CYTHON_LINETRACE=1 in the environment of the build). BoundaryConditions
+# and WaveTools are compiled by Cython from .py files, so coverage.py never sees their lines
 # execute and reports them at 0%. Built with linetrace and CYTHON_TRACE, and measured with the Cython.Coverage plugin
 # (pyproject.toml's coverage config is unchanged; the CI coverage leg adds the plugin), their lines count. Slower at run
 # time, so every other build -- and every other leg of CI -- leaves it off.
@@ -541,13 +541,6 @@ EXTENSIONS_TO_BUILD = [
     Extension("BoundaryConditions",
               sources=['proteus/BoundaryConditions.py'],
               depends=['proteus/BoundaryConditions.pxd'],
-              language='c++',
-              extra_compile_args=PROTEUS_OPT+['-std=c++14'],
-              include_dirs=[numpy.get_include(),'proteus'],
-              **PROTEUS_LINETRACE),
-    Extension("mprans.BoundaryConditions",
-              sources=['proteus/mprans/BoundaryConditions.py'],
-              depends=['proteus/mprans/BoundaryConditions.pxd'],
               language='c++',
               extra_compile_args=PROTEUS_OPT+['-std=c++14'],
               include_dirs=[numpy.get_include(),'proteus'],
