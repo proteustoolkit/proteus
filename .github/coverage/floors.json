@@ -137,7 +137,6 @@
   "proteus/mprans/__init__.py": 100.0,
   "proteus/mprans/beamFEM.py": 9.2,
   "proteus/petsc_optional.py": 91.6,
-  "proteus/richards/ADR.py": 0.0,
   "proteus/richards/Richards.py": 78.9,
   "proteus/richards/__init__.py": 100.0,
   "proteus/runtime.py": 100.0
