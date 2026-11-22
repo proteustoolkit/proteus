@@ -12,7 +12,7 @@ Grey trident with no container; organization-agnostic.
 - `proteus-mark-auto.svg`: `#5f6164` in light mode and `#898b8e` in dark mode (`prefers-color-scheme`; works through `<img>`).
 - `proteus-lockup-{h,v}-{light-background,dark-background,auto}.svg`: trident + PROTEUS, horizontal and stacked
   (stacked: the stem sits over the T). The suffix names the background the file is meant for.
-- `proteus-favicon.svg`, `proteus-favicon.ico` (16/32/48): square, trident alone, transparent.
+- `proteus-favicon.svg`, `proteus-favicon.ico` (16/32/48): square, trident alone, transparent; heavier than the mark (3-unit round stroke, `#767a7e`, fills the square) so it stays legible at 16 px in a browser tab.
 - `png/`: transparent PNG renders (mark 512/1024, lockups 1200 and 800 wide, favicon 16 to 512).
 
 ## lsu/ (secondary: LSU-affiliated uses)
