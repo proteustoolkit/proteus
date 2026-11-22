@@ -133,6 +133,12 @@ the code it needs: run-time switches as `Coefficients` options (`EDGE_VELOCITY`,
 
 - **Flags.** Every deck with Richards `FCT=True` passes `FCT_BND_DIFF=True, FCT_BND_KRW=True`; without them the runs
   differ from the manuscript's.
+- **`BC_CONS=True`.** Every flow deck also passes `BC_CONS=True`. The authors' builds had the boundary-conservative
+  velocity ON by default (`RICHARDS_BC_CONS` unset meant on); proteus makes it opt-in (`Coefficients(BC_CONS=False)`), and it
+  changes the boundary velocity that the velocity-based transport coupling sees. Without it the UHD coupling rows of
+  `tab:uhd_coupling` (velocity-based, eos, Co 0.5: total 4.30 % instead of 1.81 %) and the bioswale step count on 2 ranks
+  (442 instead of 443) differ from the manuscript's. Henry and the MMS N = 40 case are not sensitive to it (identical to every printed digit);
+  the compatible (edge-flux) coupling is not affected.
 - **Parallel.** `main` is partition independent (C0 rounds 2-3). 1.9.x is not: TADR's FCT limiter ratios are not
   ghost-exchanged there, so a run on N ranks differs from the serial one by the partition effect Barua measured on
   Zalesak's disk (0.077 at 4 ranks; Henry on 2 ranks differed from serial by 2.4e-9 on 1.9.x). Pin the partition (`PETSC_OPTIONS="-mat_partitioning_type current"`) when comparing rank counts,
