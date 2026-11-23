@@ -222,7 +222,7 @@ def test_curved_option_needs_p2(tmp_path, monkeypatch):
 
 
 def test_kernel_refuses_the_curved_option_on_p1(tmp_path, monkeypatch):
-    from proteus import ADR
+    from proteus.kernels import ADR
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda *a: None)
     so, p, n, o = _setup("plane_curved", "pOrder=1")
@@ -454,7 +454,7 @@ def test_p2_immersed_stops_at_setup_in_3d(tmp_path, monkeypatch):
 
 
 def test_kernel_refuses_p2_immersed_in_3d(tmp_path, monkeypatch):
-    from proteus import ADR
+    from proteus.kernels import ADR
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda *a: None)
     so, p, n, opts = _setup("ifem_plane", "pOrder=2")
@@ -466,7 +466,7 @@ def test_kernel_refuses_p2_immersed_in_3d(tmp_path, monkeypatch):
 @pytest.mark.parametrize("cut", sorted(CUT_PHASE))
 def test_kernel_refuses_cut_cell_features_in_3d(cut, tmp_path, monkeypatch):
     """The C++ kernel makes the same check, for a caller that skips the Python one."""
-    from proteus import ADR
+    from proteus.kernels import ADR
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(ADR, "_requireSupportedDimension", lambda *a: None)
     so, p, n, opts = _setup(cut)

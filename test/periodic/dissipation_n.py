@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      NonlinearSolvers,
                      LinearSolvers,
                      LinearAlgebraTools)
-from proteus.mprans import Dissipation
+from proteus.kernels import Dissipation
 from proteus import Context
 ct = Context.get()
 nd = ct.domain.nd

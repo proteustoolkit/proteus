@@ -16,7 +16,7 @@ try:
 except:
     from step2d import *
 
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 
 from proteus import Context
 ct = Context.get()

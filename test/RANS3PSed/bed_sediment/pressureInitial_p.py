@@ -1,7 +1,7 @@
 from math import *
 from proteus import *
 from proteus.default_p import *
-from proteus.mprans import PresInit
+from proteus.kernels import PresInit
 from proteus import Context
 from tank import *
 

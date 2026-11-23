@@ -38,7 +38,7 @@ PROJECT_NAME           = proteus
 # could be handy for archiving the generated documentation or if some version
 # control system is used.
 
-PROJECT_NUMBER         = 2.0.0rc1
+PROJECT_NUMBER         = 2.0.0rc2
 
 # Using the PROJECT_BRIEF tag one can provide an optional one line description
 # for a project that appears at the top of each page and should give viewer a
@@ -51,7 +51,7 @@ PROJECT_BRIEF          = "C/C++/Fortran libraries"
 # pixels and the maximum width should not exceed 200 pixels. Doxygen will copy
 # the logo to the output directory.
 
-#PROJECT_LOGO           = ./source/_static/corps_logo_cross_24.svg
+#PROJECT_LOGO           = ./source/_static/logo/primary/png/proteus-favicon-64.png
 
 # The OUTPUT_DIRECTORY tag is used to specify the (relative or absolute) path
 # into which the generated documentation will be written. If a relative path is

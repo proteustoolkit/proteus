@@ -7,7 +7,7 @@ from proteus import (StepControl,
                      LinearAlgebraTools)
 import vof_p as physics
 from proteus import Context
-from proteus.mprans import VOS3P
+from proteus.kernels import VOS3P
 
 ct = Context.get()
 domain = ct.domain

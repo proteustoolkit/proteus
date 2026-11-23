@@ -9,7 +9,7 @@ import os
 
 from proteus import *
 from proteus.default_n import *
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 
 # Domain first: domain_mms re-exports default_p's `coefficients = None`.
 try:

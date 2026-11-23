@@ -1,6 +1,6 @@
 from proteus import Domain, Context, MeshTools as mt
-from proteus.mprans import (SW2DCV, GN_SW2DCV)
-from proteus.mprans import SpatialTools as st
+from proteus.kernels import (SW2DCV, GN_SW2DCV)
+from proteus import SpatialTools as st
 from proteus.Domain import RectangularDomain, PlanarStraightLineGraphDomain
 from proteus.Profiling import logEvent
 import proteus.SWFlow.SWFlowProblem as SWFlowProblem

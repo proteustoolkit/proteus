@@ -1,4 +1,4 @@
-from proteus.mprans import (SW2DCV, GN_SW2DCV)
+from proteus.kernels import (SW2DCV, GN_SW2DCV)
 from proteus.Domain import RectangularDomain
 import numpy as np
 from proteus import (Domain, Context,

@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from math import *
 from .vortex2D import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 
 from . import ncls_p
 name = soname+"_rdls"

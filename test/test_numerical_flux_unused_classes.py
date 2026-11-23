@@ -40,7 +40,7 @@ def test_a_class_in_use_is_not_refused(monkeypatch):
 def test_the_mprans_ncls_flux_subclass_is_not_refused(monkeypatch):
     """It subclasses HamiltonJacobi_DiagonalLesaintRaviart, which is refused, but by
     exact name: NCLS computes its exterior flux in its own kernel and runs in parallel."""
-    from proteus.mprans import NCLS
+    from proteus.kernels import NCLS
     assert issubclass(NCLS.NumericalFlux, NumericalFlux.HamiltonJacobi_DiagonalLesaintRaviart)
     assert "NumericalFlux" not in NumericalFlux.UNUSED_FLUX_CLASSES_REFUSED_IN_PARALLEL
     monkeypatch.setattr(Comm, "get", lambda: _Comm(2))

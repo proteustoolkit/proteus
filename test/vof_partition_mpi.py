@@ -27,7 +27,7 @@ from proteus import (Domain, MeshTools, NumericalSolution, StepControl, TimeInte
 from proteus.FemTools import C0_AffineLinearOnSimplexWithNodalBasis
 from proteus.iproteus import opts
 import importlib
-VOF = importlib.import_module("proteus.mprans." + os.environ.get("MODEL", "VOF"))
+VOF = importlib.import_module("proteus.kernels." + os.environ.get("MODEL", "VOF"))
 from proteus.NonlinearSolvers import Newton
 from proteus.LinearAlgebraTools import SparseMatrix
 from proteus.LinearSolvers import KSP_petsc4py

@@ -4,7 +4,7 @@ import numpy
 from proteus import *
 from proteus.default_p import *
 from math import *
-from proteus.mprans import VOF, NCLS, VOS3P
+from proteus.kernels import VOF, NCLS, VOS3P
 """
 Linear advection of a guassian with periodic bcs
 """

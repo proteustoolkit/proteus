@@ -41,7 +41,7 @@ if _sys.platform == "darwin":
 from . import _threads
 _threads.apply_defaults(_threads.launched_size())
 
-__version__ = '2.0.0rc1'
+__version__ = '2.0.0rc2'
 
 #: What ``from proteus import *`` binds. It is that surface, not an
 #: inventory of submodules: several exist that are deliberately absent,
@@ -95,7 +95,6 @@ __all__ = ["Archiver",
            "cmeshTools",
            "cnumericalFlux",
            "cTwophaseDarcyCoefficients",
-           "cADR",
            "WaveTools",
            "Context",
            "BoundaryConditions",

@@ -120,7 +120,7 @@ def test_level_set_five_is_damBreakLevelSet(dambreak):
     found = dispatch(dambreak, "level_set_five")
     assert found.family == "two_phase_level_set"
     assert found.formulation == "nonconservative_inertia"
-    assert [m.module for m in found] == ["proteus.mprans.%s" % m for m in ("RANS2P", "VOF", "NCLS", "RDLS", "MCorr")]
+    assert [m.module for m in found] == ["proteus.kernels.%s" % m for m in ("RANS2P", "VOF", "NCLS", "RDLS", "MCorr")]
     assert [m.role for m in found] == ["velocity_pressure", "volume_fraction", "level_set", "redistancing",
                                        "mass_correction"]
     flow = found["flow"]
@@ -165,7 +165,7 @@ def test_shallow_water_is_SWFlow(lake):
     found = dispatch(lake, "convex_limited")
     assert found.family == "shallow_water"
     (model,) = found.models
-    assert model.module == "proteus.mprans.SW2DCV"
+    assert model.module == "proteus.kernels.SW2DCV"
     assert {k: model.sources[k] for k in ("cE", "LUMPED_MASS_MATRIX", "BOUNDS_RELAXATION")} == \
         dict.fromkeys(("cE", "LUMPED_MASS_MATRIX", "BOUNDS_RELAXATION"), "spec")
     p, n = _swflow("dam3Bumps", "sw_p", "sw_n")
@@ -191,7 +191,7 @@ def test_dispersive_shallow_water_is_SWFlow_GN(lake):
     found = dispatch(_dispersive(lake), "convex_limited")
     assert found.family == "dispersive_shallow_water"
     (model,) = found.models
-    assert model.module == "proteus.mprans.GN_SW2DCV"
+    assert model.module == "proteus.kernels.GN_SW2DCV"
     p, n = _swflow("dSWEs_steady_state", "GN_sw_p", "GN_sw_n")
     _compare_model(model, p, n, 2)
 

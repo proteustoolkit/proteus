@@ -53,7 +53,7 @@ def test_ghost_penalty_through_jumpPenalty(case, opts, monkeypatch):
     before = set(os.listdir(deckdir))
     monkeypatch.chdir(deckdir)
     monkeypatch.syspath_prepend(deckdir)
-    from proteus.mprans import RANS2P
+    from proteus.kernels import RANS2P
     LevelModel = RANS2P.LevelModel
     getResidual, getJacobian = LevelModel.getResidual, LevelModel.getJacobian
     seen = {}

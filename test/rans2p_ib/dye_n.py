@@ -1,5 +1,5 @@
 from proteus.default_n import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 import dye_p as physics
 from beam_channel_n import nnx, nny, nnz, nLevels, DT, nDTout, femSpaces as _flow_spaces
 

@@ -1,17 +1,17 @@
 from proteus import *
 from proteus.default_n import *
-from proteus.gwvd import GwvdCoefficients, Gwvd_consolidated_classes
+from proteus import TransportCoefficients, StepControl, TimeIntegration, SplitOperator
 from gwvd_2dbox_cg import *
 from gwvd_2dbox_flow_p_cg import *
 
 # Time Integration and Stepcontrol
 if (transient):
-    timeIntegration =Gwvd_consolidated_classes.NonConservativeBackwardEuler
+    timeIntegration =TimeIntegration.NonConservativeBackwardEuler
     DT=DT
 else:
     timeIntegration=None
 
-stepController = Gwvd_consolidated_classes.Fixed_dt_controller_systemit# Min_dt_cfl_controller
+stepController = StepControl.Fixed_dt_controller_systemit# Min_dt_cfl_controller
 
 
 # FEM Spaces and Quadrature Rules

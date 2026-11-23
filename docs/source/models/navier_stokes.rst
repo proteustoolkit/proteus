@@ -17,14 +17,14 @@ Two-Phase
 =========
 
 The two-phase implementation of Navier-Stokes, with source documentation
-available here: :py:mod:`proteus.mprans.RANS2P`.
+available here: :py:mod:`proteus.kernels.RANS2P`.
 
 
 Three-Phase
 ===========
 
 The three-phase implementation of Navier-Stokes, with source documentation
-available here: :py:mod:`proteus.mprans.RANS3P`.
+available here: :py:mod:`proteus.kernels.RANS3P`.
 
 
 Dealing with Moving Domains
@@ -39,7 +39,7 @@ Moving (ALE) Mesh
 -----------------
 
 In the current implementation, if a model for moving the mesh is used such as
-:py:mod:`proteus.mprans.MoveMesh`, it should be the first model to be solved,
+:py:mod:`proteus.kernels.MoveMesh`, it should be the first model to be solved,
 as the mesh velocity is calculated from the previous time step.
 
 
@@ -47,5 +47,5 @@ Immersed Boundaries
 -------------------
 
 The two-phase implementation of Navier-Stokes with immersed solid boundaries, with
-source documentation available here: :py:mod:`proteus.mprans.RANS2P_IB`. This is a different
+source documentation available here: :py:mod:`proteus.kernels.RANS2P_IB`. This is a different
 method from the immersed finite elements of the ADR model (:ref:`adr`).

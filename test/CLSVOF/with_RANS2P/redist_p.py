@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 from .multiphase import *
 
 LevelModelType = RDLS.LevelModel

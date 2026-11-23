@@ -13,7 +13,8 @@ import os
 import numpy as np
 import pytest
 
-from proteus import ADR, Comm, Context, NumericalSolution, Profiling, default_s, defaults
+from proteus.kernels import ADR
+from proteus import Comm, Context, NumericalSolution, Profiling, default_s, defaults
 
 comm = Comm.get()
 Profiling.logLevel = 2

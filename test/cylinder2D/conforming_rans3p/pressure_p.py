@@ -6,7 +6,7 @@ try:
 except:
     from cylinder3p import *
     
-from proteus.mprans import Pres
+from proteus.kernels import Pres
 
 name = "pressure"
 

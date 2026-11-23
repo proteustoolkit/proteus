@@ -21,7 +21,7 @@ import numpy as np
 from proteus import (Domain, MeshTools, NumericalSolution, StepControl, TimeIntegration, default_s, defaults)
 from proteus.FemTools import C0_AffineLinearOnSimplexWithNodalBasis
 from proteus.iproteus import opts
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 from proteus.NonlinearSolvers import Newton
 from proteus.LinearAlgebraTools import SparseMatrix
 from proteus.LinearSolvers import KSP_petsc4py

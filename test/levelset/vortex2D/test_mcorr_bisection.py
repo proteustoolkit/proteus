@@ -49,7 +49,7 @@ def _run_two_steps(opts):
 
 
 def test_the_bisection_shift_conserves_the_vof_mass(opts, tmp_path, monkeypatch, bisect_decks):
-    from proteus.mprans import MCorr
+    from proteus.kernels import MCorr
     monkeypatch.chdir(tmp_path)
     ns = _run_two_steps(opts)
     m = [m for m in ns.modelList if type(m.levelModelList[-1]).__module__.endswith("MCorr")][0]

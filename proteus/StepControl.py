@@ -1355,3 +1355,37 @@ class GustafssonFullNewton_dt_controller(SC_base):
             self.set_dt_allLevels()
             #self.substeps = [self.t_model]
             self.setSubsteps([self.t_model])
+
+
+# From the 2012 gwvd decks (erdc/proteus-gwvd@14961d2 src/Gwvd_consolidated_classes.py), moved here from proteus/gwvd.
+
+class Fixed_dt_controller_systemit(Min_dt_controller):
+    """Fixed model step dt = nOptions.DT, for the iterated (ISO) coupling of flow and transport."""
+
+    def __init__(self, model, nOptions):
+        Min_dt_controller.__init__(self, model, nOptions)
+        self.dt = nOptions.DT
+        self.dt_model_last = None
+        model.levelModelList[-1].timeIntegration.isAdaptive = True  # needed by the ISO controller
+
+    def initialize_dt_model(self, t0, tOut):
+        self.saveSolution()
+        self.dt_model = self.dt
+        if self.dt_model_last is None:
+            self.dt_model_last = self.dt_model
+        self.set_dt_allLevels()
+        self.substeps = [self.t_model]
+        logEvent("Initializing time step on model %s to dt = %12.5e" % (self.model.name, self.dt_model), level=1)
+
+    def choose_dt_model(self):
+        self.solverFailures = 0
+        self.errorFailures = 0
+        self.saveSolution()
+        self.dt_model = self.dt
+        if self.dt_model_last is None:
+            self.dt_model_last = self.dt_model
+        self.set_dt_allLevels()
+        self.setSubsteps([self.t_model])
+
+    def stepExact_model(self, tOut):
+        pass

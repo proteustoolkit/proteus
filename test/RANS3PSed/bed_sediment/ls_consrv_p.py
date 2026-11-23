@@ -1,7 +1,7 @@
 from proteus import StepControl
 from proteus import *
 from proteus.default_p import *
-from proteus.mprans import MCorr3P
+from proteus.kernels import MCorr3P
 from proteus import Context
 
 ct = Context.get()

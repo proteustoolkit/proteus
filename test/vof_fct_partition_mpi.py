@@ -20,7 +20,7 @@ from proteus import (Domain, MeshTools, NumericalSolution, StepControl, TimeInte
 from proteus.FemTools import C0_AffineLinearOnSimplexWithNodalBasis
 from proteus.iproteus import opts
 import importlib
-VOF = importlib.import_module("proteus.mprans." + os.environ.get("MODEL", "VOF"))
+VOF = importlib.import_module("proteus.kernels." + os.environ.get("MODEL", "VOF"))
 from proteus.NonlinearSolvers import Newton, ExplicitLumpedMassMatrix, TwoStageNewton
 from proteus.LinearAlgebraTools import SparseMatrix
 from proteus.LinearSolvers import KSP_petsc4py
@@ -123,7 +123,7 @@ if os.environ.get("GHOSTCFL"):
     VOF.LevelModel.getResidual = getResidual
 if os.environ.get("NOREDUCE"):
     # each rank normalizes the Taylor-Galerkin entropy viscosity by its own subdomain (a control)
-    from proteus.mprans import EntropyViscosity
+    from proteus.kernels import EntropyViscosity
     EntropyViscosity.reduce_numDiff = lambda *args: None
 if os.environ.get("OLDMAX"):
     VOF.RKEV.ownedMaxCFL = lambda self: self.cfl.max()

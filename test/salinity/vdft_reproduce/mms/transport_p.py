@@ -21,7 +21,7 @@ import numpy as np
 from proteus import *
 from proteus.default_p import *
 from proteus.Comm import globalMax, globalSum
-from proteus.mprans import TADR
+from proteus.kernels import TADR
 from proteus.Profiling import logEvent
 
 try:

@@ -1,7 +1,7 @@
 """A dye in the beam channel (VOF with no level set, carried by RANS2P_IB's velocity): dye 1 enters at x = 0 over
 the lower half of the inflow, the channel starts clean."""
 from proteus.default_p import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 from beam_channel_p import nd, L, T, eps, _inflow, _outflow
 
 name = "dye"

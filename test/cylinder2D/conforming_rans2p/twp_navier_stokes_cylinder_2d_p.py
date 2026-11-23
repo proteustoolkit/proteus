@@ -8,7 +8,7 @@ try:
     from .cylinder2d import *
 except:
     from cylinder2d import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 name="rans2p"
 bcsTimeDependent = True
 LevelModelType = RANS2P.LevelModel

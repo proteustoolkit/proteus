@@ -17,7 +17,7 @@ name = "pressureincrement"
 #                               nd = nd,
 #                               modelIndex=PINC_model,
 #                               fluidModelIndex=V_model)
-from proteus.mprans import PresInc
+from proteus.kernels import PresInc
 coefficients=PresInc.Coefficients(rho_f_min = (1.0-1.0e-8)*rho_1,
                                  rho_s_min = (1.0-1.0e-8)*rho_s,
                                  nd = nd,

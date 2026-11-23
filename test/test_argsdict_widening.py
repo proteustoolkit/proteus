@@ -12,7 +12,7 @@ float32 is a double, never an int (the int64 overload used to truncate it).
 import numpy as np
 import pytest
 
-from proteus.mprans import cArgumentsDict
+from proteus import cArgumentsDict
 
 
 def make(**kw):

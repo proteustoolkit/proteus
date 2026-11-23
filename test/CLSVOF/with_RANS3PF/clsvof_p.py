@@ -6,7 +6,7 @@ try:
     from .multiphase import *
 except:
     from multiphase import *
-from proteus.mprans import CLSVOF
+from proteus.kernels import CLSVOF
 
 LevelModelType = CLSVOF.LevelModel
 coefficients = CLSVOF.Coefficients(V_model=V_model,

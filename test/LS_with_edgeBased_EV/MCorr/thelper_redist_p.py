@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from math import *
 from .thelper_cons_ls import *
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 from . import thelper_ncls_p
 
 LevelModelType = RDLS.LevelModel

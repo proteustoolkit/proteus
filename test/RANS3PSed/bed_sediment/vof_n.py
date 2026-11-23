@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      LinearSolvers,
                      LinearAlgebraTools)
 import vof_p as physics
-from proteus.mprans import VOF3P
+from proteus.kernels import VOF3P
 from proteus import Context
 
 ct = Context.get()

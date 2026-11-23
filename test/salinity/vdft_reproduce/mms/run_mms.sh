@@ -27,6 +27,6 @@ echo "repo HEAD: $(git -C "$DECK" rev-parse HEAD)" > provenance.txt
 # uncommitted source edits at run time; the installed build may still differ
 git -C "$(git -C "$DECK" rev-parse --show-toplevel)" diff HEAD -- proteus > source.diff
 
-python -c "import proteus.mprans.cTADR as c; print('cTADR from', c.__file__)" > run.out
+python -c "import proteus.kernels.cTADR as c; print('cTADR from', c.__file__)" > run.out
 mpiexec -np "${MMS_NP:-1}" parun mms_so.py -l3 -O petsc.options.superlu >> run.out 2>&1
 echo "exit $?" >> run.out

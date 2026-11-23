@@ -10,7 +10,7 @@ MMS_FLOW_ONLY=1, in which case it is the constant MMS_RHO_REF.
 import numpy as np
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 
 try:
     from .domain_mms import *

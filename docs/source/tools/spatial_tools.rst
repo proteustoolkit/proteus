@@ -3,8 +3,7 @@
 SpatialTools
 ************
 
-source: :py:mod:`proteus.SpatialTools` and
-:py:mod:`proteus.mprans.SpatialTools`
+source: :py:mod:`proteus.SpatialTools`
 
 Usage
 =====
@@ -13,8 +12,8 @@ Using spatial tools
 
 #. Create a domain from :py:mod:`proteus.Domain`.
 #. Create geometries that will be part of this domain from
-   :py:mod:`proteus.SpatialTools` or :py:mod:`proteus.mprans.SpatialTools`.
-#. Assemble domain with :py:meth:`proteus.SpatialTools.assembleDomain` or :py:meth:`proteus.mprans.SpatialTools.assembleDomain`.
+   :py:mod:`proteus.SpatialTools`.
+#. Assemble domain with :py:meth:`proteus.SpatialTools.assembleDomain` (two-phase flow boundary conditions when any shape is a ``ShapeRANS``).
 
 Import
 ------
@@ -25,12 +24,12 @@ The base `SpatialTools` module can be imported as follows:
 
    from proteus import SpatialTools as st
 
-The `mprans` version of `SpatialTools`, adding functionality specific to
+The two-phase flow part of `SpatialTools` (formerly `proteus.kernels.SpatialTools`, merged into `proteus.SpatialTools`; the old import path still works and warns), adding functionality specific to
 multi-phase flows, can be imported as follows:
 
 .. code-block:: python
 
-   from proteus.mprans import SpatialTools as st
+   from proteus import SpatialTools as st
 
 Choosing the domain
 -------------------
@@ -68,8 +67,8 @@ BoundaryConditions with SpatialTools
 Usage
 ^^^^^
 
-The mprans version of SpatialTools also associate geometry boundaries with
-`BoundaryCondition` instances from mprans.BoundaryConditions. These
+SpatialTools also associates geometry boundaries with
+`BoundaryCondition` instances from BoundaryConditions. These
 `BoundaryCondition` instances are easily accessible through a dictionary with
 predefined names, e.g. for a `Rectangle` shape instance named `my_rectangle`,
 ``my_rectangle.BC['x-']`` is for accessing the boundary conditions of the left
@@ -124,7 +123,7 @@ Complete Examples
 .. code-block:: python
 
    from proteus import Domain
-   from proteus.mprans import SpatialTools as st
+   from proteus import SpatialTools as st
 
    domain = Domain.PlanarStraightLineGraphDomain()
 
@@ -159,7 +158,7 @@ Complete Examples
 .. code-block:: python
 
    from proteus import Domain
-   from proteus.mprans import SpatialTools as st
+   from proteus import SpatialTools as st
 
    domain = Domain.PiecewiseLinearComplexDomain()
 
@@ -200,7 +199,7 @@ Complete Examples
 
    #See complete case in  https://github.com/erdc/air-water-vv/tree/master/3d/STLShape
    from proteus import Domain
-   from proteus.mprans import SpatialTools as st
+   from proteus import SpatialTools as st
    from proteus.Profiling import logEvent as log
 
    domain = Domain.PiecewiseLinearComplexDomain()
@@ -225,7 +224,7 @@ Complete Examples
 
    #See complete case in  https://github.com/erdc/air-water-vv/tree/master/3d/STLShape_Zones
    from proteus import Domain
-   from proteus.mprans import SpatialTools as st
+   from proteus import SpatialTools as st
    from proteus.Profiling import logEvent as log
 
    domain = Domain.PiecewiseLinearComplexDomain()
@@ -295,7 +294,7 @@ Base classes
 ------------
 
 The following classes are accessible with an import from `proteus.SpatialTools`
-and/or `proteus.mprans.SpatialTools`. Importing them from the mprans module
+(the former `proteus.kernels.SpatialTools` is the same module). Importing it makes every shape a two-phase flow shape, which
 adds functionality such as the possibility to set multi-phase flow boundary
 conditions and relaxation zones.
 
@@ -455,7 +454,7 @@ mprans specific
 ---------------
 
 The following classes are for use with multi-phase flow and can only be
-imported from `proteus.mprans.SpatialTools`.
+imported from `proteus.SpatialTools`.
 
 
 Tank2D

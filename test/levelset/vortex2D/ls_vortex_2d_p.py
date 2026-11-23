@@ -7,7 +7,7 @@ try:
 except:
     from vortex2D import *
     
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 #import Profiling
 
 LevelModelType = NCLS.LevelModel

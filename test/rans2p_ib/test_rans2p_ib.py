@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from proteus.mprans import RANS2P_IB
+from proteus.kernels import RANS2P_IB
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, "beam_channel_mpi.py")

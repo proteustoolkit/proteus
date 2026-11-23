@@ -1,7 +1,7 @@
 from proteus import StepControl
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
-from proteus.mprans import VOS3P
+from proteus.kernels import VOS3P
 from proteus import Context
 from proteus import *
 

@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      LinearAlgebraTools)
 from proteus.default_n import *
 import twp_navier_stokes_p as physics
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 from proteus import Context
 
 ct = Context.get()

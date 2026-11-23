@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.mprans import Dissipation
+from proteus.kernels import Dissipation
 from proteus import Context
 ct = Context.get()
 domain = ct.domain

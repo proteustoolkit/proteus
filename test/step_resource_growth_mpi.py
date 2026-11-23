@@ -76,7 +76,7 @@ POOLS = _mpich_pools()
 
 if os.environ.get("LEAKY") == "1":
     def scatterDOFArray(self, a):
-        """main f392a159 (proteus/mprans/VOF.py:980 there): one ghosted vector per id(a), over a itself."""
+        """main f392a159 (proteus/kernels/VOF.py:980 there): one ghosted vector per id(a), over a itself."""
         if self.comm.size() == 1:
             return
         cache = self.__dict__.setdefault("_dofVecsById", {})

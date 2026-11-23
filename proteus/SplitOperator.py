@@ -6,6 +6,7 @@ A class hierarchy for split operator methods.
 """
 import numpy
 from .Profiling import logEvent
+from .Comm import globalMax
 
 class System(object):
     def __init__(self):
@@ -1016,3 +1017,53 @@ class SequentialNotInOrder_MinAdaptiveModelStep(Sequential_MinAdaptiveModelStep)
             (self.system.name,
              self.stepSequence),
             level=1)
+
+
+# From the 2012 gwvd decks (erdc/proteus-gwvd@14961d2 src/Gwvd_consolidated_classes.py), moved here from proteus/gwvd.
+
+class ISO_fixed_MinModelStep(ISO_fixed_MinAdaptiveModelStep):
+    """
+    Iterate flow and transport within a step (Povich 2013, Sec. 4.5) until the max norm of the owned
+    residuals of both models is below atol_iso, then advance.
+    """
+
+    def __init__(self, modelList, system=defaultSystem, stepExact=False, atol_iso=1.e-8):
+        ISO_fixed_MinAdaptiveModelStep.__init__(self, modelList, system, stepExact)
+        self.atol_iso = atol_iso
+        self.convergence_flag = False
+        self.velocity_Postprocess = False
+
+    def setFromOptions(self, soOptions):
+        self.velocity_Postprocess = False
+        if 'atol_iso' in dir(soOptions):
+            self.atol_iso = soOptions.atol_iso
+        if 'velocity_Postprocess' in dir(soOptions):
+            self.velocity_Postprocess = soOptions.velocity_Postprocess
+
+    def converged(self):
+        if self.convergence_flag and self.its != 0:
+            self.its = 0
+            self.convergence_flag = False
+            return True
+        return False
+
+    def SysNorm(self, rSys):
+        # The 2012 code takes the signed maximum of each residual (not max |r|), so negative
+        # residuals never block convergence. Kept for fidelity with the published runs.
+        return max(globalMax(float(r.max())) for r in rSys)
+
+    def sequenceTaken(self):
+        self.its += 1
+        rSys = []
+        for model in self.modelList:
+            lm = model.levelModelList[-1]
+            lm.getResidual(model.uList[-1], model.rList[-1])
+            rSys.append(model.rList[-1][:lm.mesh.subdomainMesh.nNodes_owned])
+        rNorm = self.SysNorm(rSys)
+        logEvent("ISO iteration %d: max residual %12.5e (atol_iso %12.5e)" % (self.its, rNorm, self.atol_iso), level=1)
+        if rNorm < self.atol_iso and self.its != 0:
+            self.convergence_flag = True
+        if self.convergence_flag:
+            for model in self.modelList:
+                model.stepController.updateTimeHistory()
+                model.stepController.choose_dt_model()

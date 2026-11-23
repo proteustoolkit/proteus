@@ -1,7 +1,7 @@
 from proteus import *
 from proteus.default_p import *
 from cylinder import *
-from proteus.mprans import RANS2P
+from proteus.kernels import RANS2P
 
 name = "momentum"
 LevelModelType = RANS2P.LevelModel

@@ -139,7 +139,7 @@ class TwoPhaseFlowProblem(Parameters.FreezableClass):
                 # check diffusive flux BCs
                 assert 'pressure_increment_DFBC' in boundaryConditions,"Provide pressure_increment_DFBC"
         else:
-            assert self.domain.useSpatialTools is True, 'Either define boundaryConditions dict or use proteus.mprans.SpatialTools to set Boundary Conditions and run function assembleDomain'
+            assert self.domain.useSpatialTools is True, 'Either define boundaryConditions dict or use proteus.SpatialTools to set Boundary Conditions and run function assembleDomain'
 
     def initializeAll(self):
 
@@ -231,7 +231,7 @@ _AUXVAR_MODEL_HINT = {'twp': 'flow', 'thp': 'flow', 'vof': 'vof', 'ls': 'ncls', 
 def unattachedAuxiliaryVariables(domain_auxvars, model_list):
     """
     The entries of domain.auxiliaryVariables (a dict of lists, as filled by
-    proteus.mprans.SpatialTools.assembleDomain) that none of the models in
+    proteus.SpatialTools.assembleDomain) that none of the models in
     model_list has in its auxiliaryVariables, as {key: [objects]}.
     """
     if not isinstance(domain_auxvars, dict):
@@ -390,7 +390,7 @@ class SystemPhysics(Parameters.FreezableClass):
         self.initialConditions = None
         self.boundaryConditions=None
 
-        # to use proteus.mprans.BoundaryConditions
+        # to use proteus.BoundaryConditions
         # but only if SpatialTools was used to make the domain
         self.useBoundaryConditionsModule = True
 

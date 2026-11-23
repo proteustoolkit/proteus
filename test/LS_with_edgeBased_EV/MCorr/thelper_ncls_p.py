@@ -3,7 +3,7 @@ from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from math import *
 from .thelper_cons_ls import *
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 #import Profiling
 
 LevelModelType = NCLS.LevelModel

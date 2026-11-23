@@ -9198,6 +9198,58 @@ def writeMeshFiles(domain, meshOptions):
     else:
         raise TypeError("writeMeshFiles: no mesh generator for a " + type(domain).__name__)
 
+def _tetgenFileProblems(fileprefix):
+    """What stops ``fileprefix`` from being partitioned from its tetgen files (``parun -F``), as strings.
+
+    ``partitionNodesFromTetgenFiles`` reads ``.node`` and ``.ele`` and, for the faces and edges the
+    subdomains need, ``.face`` and ``.edge`` (``tetgen -Vfeen``). A missing file is a problem. Their
+    markers are optional to the reader (a file whose header announces none gives flag 0), so a header
+    with no marker column is only a warning (:func:`_tetgenMarkerWarnings`). What a header cannot tell
+    is whether the files belong together (a stale ``.edge``).
+    """
+    problems = []
+    for ext in ("node", "ele", "face", "edge"):
+        name = "{0:s}.{1:s}".format(fileprefix, ext)
+        if not os.path.isfile(name):
+            problems.append("missing " + name)
+    return problems
+
+
+def _tetgenMarkerWarnings(fileprefix):
+    """A header without the boundary marker column leaves every face or edge unflagged: say so."""
+    warnings = []
+    for ext in ("face", "edge"):
+        name = "{0:s}.{1:s}".format(fileprefix, ext)
+        try:
+            with open(name) as f:
+                header = f.readline().split()
+        except OSError:
+            continue
+        if len(header) < 2 or header[1] != "1":
+            warnings.append("{0:s} has no boundary marker column in its header, so every {1:s} gets flag 0 "
+                            "(tetgen without -B writes it)".format(name, ext))
+    return warnings
+
+
+def _requireTetgenFilesToPartition(comm, fileprefix):
+    """Exit, on every rank and naming the files, unless the tetgen files of ``fileprefix`` can be partitioned.
+
+    Rank 0 looks (it is where the files are written, and the other ranks must agree with it); the
+    ranks read them collectively afterwards.
+    """
+    import sys
+    result = None
+    if comm.isMaster():
+        result = (_tetgenFileProblems(fileprefix), _tetgenMarkerWarnings(fileprefix))
+    problems, warnings = comm.comm.tompi4py().bcast(result, root=0)
+    for warning in warnings:
+        logEvent("Warning: " + warning, level=1)
+    if problems:
+        sys.exit("ERROR: parun -F partitions the mesh from its tetgen files and cannot: %s. "
+                 "Make them with `tetgen -Vfeen %s.poly` (the f flag writes .face, ee writes .edge), "
+                 "or set genMesh so that this run does." % ("; ".join(problems), fileprefix))
+
+
 def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,numerics=None):
     # convenience function to generate a mesh using triangle/tetgen/gmsh
     comm = Comm.get()
@@ -9577,8 +9629,9 @@ def _generateMesh(domain,meshOptions,generatePartitionedMeshFromFiles=False,nume
                                                   parallelPartitioningType=meshOptions.parallelPartitioningType)
         elif generatePartitionedMeshFromFiles:
             logEvent("Generating partitioned mesh from Tetgen files")
-            if("f" not in meshOptions.triangleOptions or "ee" not in meshOptions.triangleOptions):
-                sys.exit("ERROR: Remake the mesh with the `f` flag and `ee` flags in triangleOptions.")
+            # the files on disk decide, not the options string that may have made them: a deck that
+            # reads a stored mesh (genMesh False) has no triangleOptions to say how it was made
+            _requireTetgenFilesToPartition(comm, fileprefix)
             mlMesh.generatePartitionedMeshFromTetgenFiles(fileprefix, nbase,mesh,meshOptions.nLevels,
                                                           nLayersOfOverlap=meshOptions.nLayersOfOverlapForParallel,
                                                           parallelPartitioningType=meshOptions.parallelPartitioningType)

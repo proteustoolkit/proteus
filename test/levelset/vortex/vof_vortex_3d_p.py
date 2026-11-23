@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from proteus.ctransportCoefficients import smoothedHeaviside
 from .vortex import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 name=soname+"_vof"
 
 """

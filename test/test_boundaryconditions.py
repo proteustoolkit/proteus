@@ -16,7 +16,7 @@ import numpy as np
 from proteus import Comm, Profiling
 from proteus.Profiling import logEvent as log
 from proteus.BoundaryConditions import BC_Base, BoundaryCondition
-from proteus.mprans.BoundaryConditions import BC_RANS
+from proteus.BoundaryConditions import BC_RANS
 
 
 comm = Comm.init()
@@ -851,7 +851,7 @@ class TestBC(unittest.TestCase):
 
     def test_wall_functions(self):
         from proteus import BoundaryConditions as bc
-        from proteus.mprans import BoundaryConditions as mbc
+        mbc = bc  # the two-phase classes were merged into proteus.BoundaryConditions (C49 R1)
         # input 
         ct = get_context() 
         b_or = np.array([[0., -1., 0.]])

@@ -1,6 +1,6 @@
 from proteus import *
 from proteus.default_p import *
-from proteus.richards import Richards
+from proteus.kernels import Richards
 from proteus import Context
 
 # Scheme selection.  The defaults are the FCT scheme; the other two are

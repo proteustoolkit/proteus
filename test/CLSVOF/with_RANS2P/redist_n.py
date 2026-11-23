@@ -5,7 +5,7 @@ from proteus import (StepControl,
                      LinearSolvers,
                      LinearAlgebraTools,
                      NumericalFlux)
-from proteus.mprans import RDLS
+from proteus.kernels import RDLS
 from . import redist_p as physics
 from .multiphase import *
 

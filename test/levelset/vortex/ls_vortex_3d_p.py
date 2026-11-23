@@ -2,7 +2,7 @@ from proteus import *
 from proteus.default_p import *
 from math import *
 from .vortex import *
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 #import Profiling
 
 LevelModelType = NCLS.LevelModel

@@ -1,5 +1,5 @@
 from proteus.default_p import *
-from proteus.mprans import MoveMeshMonitor
+from proteus import MoveMeshMonitor
 import numpy as np
 from proteus import Context
 

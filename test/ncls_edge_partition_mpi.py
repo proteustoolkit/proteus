@@ -36,7 +36,7 @@ def partitionMesh(self, nLayersOfOverlap=1, parallelPartitioningType=MT.MeshPara
                       nodeOwners=nodeOwners, elementOwners=elementOwners, nodeWeights=nodeWeights)
 MT.Mesh.partitionMesh = partitionMesh
 
-from proteus.mprans import NCLS
+from proteus.kernels import NCLS
 if os.environ.get("NOPSISCAT"):
     # control: the redistancing residual reads ghost psi from truncated rows again
     _scatter = NCLS.LevelModel.scatterDOFArray

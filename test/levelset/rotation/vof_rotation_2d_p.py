@@ -5,7 +5,7 @@ try:
     from .rotation2D import *
 except:
     from rotation2D import *
-from proteus.mprans import VOF
+from proteus.kernels import VOF
 name=soname+"_vof"
 
 """
