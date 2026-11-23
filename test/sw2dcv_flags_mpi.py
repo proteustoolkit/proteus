@@ -3,7 +3,7 @@
 
 VARIANT names the switch (VARIANTS below): the numerical flags LOW_ORDER_ONLY, NO_STAR_STATES, WALL_RIEMANN, NODAL_H_BOUNDS,
 BOUNDS_RELAXATION=0 with BOUNDS_EXCLUDE_SELF=1, LINEAR_FRICTION, a tailwater stage on the right edge, a walls function that leaves
-the right edge open, a porosity with a Darcy-Forchheimer drag law. Unstructured mesh (he = 0.6) with the slanted pinned cut of
+the right edge open, a porosity with a Darcy-Forchheimer drag law, the consistent mass matrix, the dispersive model (gn, gn_consistent: sw_model=1). Unstructured mesh (he = 0.6) with the slanted pinned cut of
 sw2dcv_partition_mpi.py. Run in an empty directory, serially or under mpiexec; rank 0 leaves u.csv (the owned nodes, sorted by x, y:
 x, y, h, hu, hv, ML) and total.txt (the water volume at the start and at the end).
 """
@@ -27,6 +27,9 @@ VARIANTS = {
     "tailwater": "boundaryConditions['tailwater'] = {'where': lambda X: X[0] > 19.99,\n"
                  "                                   'stage': lambda x, y, t: 0.9 + 0.0 * x}",
     "walls_function": "boundaryConditions['walls'] = lambda X: X[0] < 19.99",
+    "consistent": "mySWFlowProblem.swe_parameters['LUMPED_MASS_MATRIX'] = 0",
+    "gn": "mySWFlowProblem.GN_swe_parameters['LUMPED_MASS_MATRIX'] = 1",
+    "gn_consistent": "mySWFlowProblem.GN_swe_parameters['LUMPED_MASS_MATRIX'] = 0",
     "drag_law": "mySWFlowProblem.physical_parameters['porosity'] = 0.8\n"
                 "mySWFlowProblem.physical_parameters['drag_alpha'] = 0.5\n"
                 "mySWFlowProblem.physical_parameters['drag_beta'] = 0.2\n"
@@ -88,8 +91,20 @@ def calc(self, *a, **k):
         np.savetxt("u.csv", a[np.lexsort((a[:, 1], a[:, 0]))], delimiter=",", header="x,y,h,hu,hv,ML")
         with open("total.txt", "w") as f:
             f.write("%.17g %.17g\n" % (v0, v1))
+    if comm.size == 1:
+        # serial: the Newton Jacobian the explicit SSP scheme never asks for (an implicit time integration would): the
+        # model's own getJacobian, whose rows are the (consistent) mass matrix of every unknown
+        import json
+        m.getJacobian(m.jacobian)
+        rowptr, colind, nz = m.jacobian.getCSRrepresentation()
+        rows = np.repeat(np.arange(len(rowptr) - 1), np.diff(rowptr))
+        J = dict(zip(zip(rows.tolist(), colind.tolist()), nz.tolist()))
+        asym = max(abs(v - J.get((j, i), 0.0)) for (i, j), v in J.items())
+        with open("jacobian.json", "w") as f:
+            json.dump(dict(n=len(rowptr) - 1, nnz=int(len(nz)), total=float(nz.sum()), area=float(m.ML.sum()),
+                           nc=int(m.nc), asymmetry=float(asym), finite=bool(np.isfinite(nz).all())), f)
     return r
 NS.NS_base.calculateSolution = calc
 
-sys.argv = ['parun', '--SWEs', 'circular_damBreak.py', '-l1', '-C', 'sw_model=0 final_time=0.3 dt_output=0.3 structured=False he=0.6']
+sys.argv = ['parun', '--SWEs', 'circular_damBreak.py', '-l1', '-C', 'sw_model=%d final_time=0.3 dt_output=0.3 structured=False he=0.6' % (1 if VARIANT.startswith('gn') else 0)]
 runpy.run_path(shutil.which('parun'), run_name='__main__')

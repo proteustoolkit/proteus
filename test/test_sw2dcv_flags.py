@@ -1,5 +1,5 @@
 """SW2DCV switches no deck sets: LOW_ORDER_ONLY, NO_STAR_STATES, WALL_RIEMANN, NODAL_H_BOUNDS, no bounds relaxation, linear friction,
-a tailwater, a walls function, a porosity with a drag law.
+a tailwater, a walls function, a porosity with a drag law, the consistent mass matrix (KSP/LU solves, a getJacobian), and the dispersive model GN_SW2DCV with the lumped and the consistent mass matrix.
 
 sw2dcv_flags_mpi.py runs the circular_damBreak deck (SWEs, lumped mass matrix, unstructured mesh he = 0.6, t = 0.3) with one
 of them on, serially and on two ranks (partition pinned to a slanted cut). Checked, per variant:
@@ -8,10 +8,11 @@ of them on, serially and on two ranks (partition pinned to a slanted cut). Check
 - on a closed domain the water volume (sum of ML h, ML carrying the porosity) is conserved to 1e-11 relative; with a tailwater (open
   edge, stage 0.9 below the still depth 1.0) it is not: the volume falls;
 - the answer differs from the default's by more than 1e-8 where the switch changes the scheme (LOW_ORDER_ONLY,
-  BOUNDS_RELAXATION 0, LINEAR_FRICTION, tailwater, drag law), so the branch ran; NO_STAR_STATES, WALL_RIEMANN, NODAL_H_BOUNDS and the
+  BOUNDS_RELAXATION 0, LINEAR_FRICTION, tailwater, drag law, consistent mass matrix, GN against SWEs), so the branch ran; NO_STAR_STATES, WALL_RIEMANN, NODAL_H_BOUNDS and the
   walls function give the default's answer here to the last bit (the dam does not reach a wall in 0.3 s and the states stay smooth), so
   for them the run, the conservation and the two-rank comparison are what is checked;
-- two ranks give the serial answer to 1e-9.
+- two ranks give the serial answer to 1e-9;
+- (serial, SWEs and GN) ``getJacobian`` is the mass matrix of every unknown: symmetric, total nc times the area.
 """
 import importlib.util
 import os
@@ -28,8 +29,8 @@ _spec.loader.exec_module(launch_output)
 HELPER = os.path.join(HERE, "sw2dcv_flags_mpi.py")
 
 CLOSED = ["default", "low_order_only", "no_star_states", "wall_riemann", "nodal_h_bounds", "no_relaxation",
-          "linear_friction", "walls_function", "drag_law"]
-DIFFERS = ["low_order_only", "no_relaxation", "linear_friction", "tailwater", "drag_law"]
+          "linear_friction", "walls_function", "drag_law", "consistent", "gn", "gn_consistent"]
+DIFFERS = ["low_order_only", "no_relaxation", "linear_friction", "tailwater", "drag_law", "consistent", "gn"]
 VARIANTS = CLOSED + ["tailwater"]
 
 
@@ -59,12 +60,22 @@ def _run(ranks, cwd, variant):
     return u, v0, v1
 
 
+def _jacobian(cwd):
+    import json
+    return json.load(open(os.path.join(str(cwd), "jacobian.json")))
+
+
+JACOBIANS = {}
+
+
 @pytest.fixture(scope="module")
 def serial(tmp_path_factory):
     out = {}
     for variant in VARIANTS:
         d = tmp_path_factory.mktemp("serial_" + variant)
         out[variant] = _run(1, d, variant)
+        if variant in ("default", "gn"):
+            JACOBIANS[variant] = _jacobian(d)
     return out
 
 
@@ -91,3 +102,14 @@ def test_two_ranks_give_the_serial_answer(serial, tmp_path, variant):
     one = serial[variant][0]
     assert one.shape == two.shape and numpy.abs(one[:, :2] - two[:, :2]).max() == 0
     assert numpy.abs(one[:, 2:5] - two[:, 2:5]).max() < 1e-9
+
+
+@pytest.mark.parametrize("variant, nc", [("default", 3), ("gn", 6)])
+def test_the_newton_jacobian_is_the_mass_matrix_of_every_unknown(serial, variant, nc):
+    """getJacobian (the explicit scheme never calls it; an implicit time integration would): a symmetric matrix whose entries add up to
+    nc times the water-plane area (the mass matrix of each of the nc unknowns, whose entries add up to the area)."""
+    j = JACOBIANS[variant]
+    assert j["nc"] == nc and j["finite"]
+    assert j["total"] == pytest.approx(nc * j["area"], rel=1e-10)
+    assert j["asymmetry"] < 1e-12
+    assert j["nnz"] > j["n"]
