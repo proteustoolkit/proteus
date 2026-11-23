@@ -20,6 +20,7 @@ from proteus.Transport import OneLevelTransport
 from proteus import cArgumentsDict
 from proteus.csparsity import CSR_INDEX_DTYPE
 import proteus.NumericalFlux
+from proteus import BoundaryKinds
 import proteus.Profiling
 import proteus.ShockCapturing
 import proteus.SubgridError
@@ -1125,6 +1126,11 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
 
 class LevelModel(proteus.Transport.OneLevelTransport):
     nCalls = 0
+    # per-face boundary kinds (BoundaryKinds): a face that says 'strong' has the rows of its dofs replaced and no weak
+    # term from the flux class, a face that says 'none' is open. The kernels need no flag of their own: they read
+    # isDOFBoundary per component, which kernelIsDOFBoundary() gives them as the weak faces and the strong ones
+    # (a strong face keeps imposing its datum in the flux, as forceStrongDirichlet always did).
+    implementsBoundaryKinds = True
 
     def __init__(self,
                  uDict,
@@ -1702,8 +1708,29 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # cek/ido todo replace python loops in modules with optimized code if possible/necessary
         logEvent("dirichlet conditions")
         self.forceStrongConditions = coefficients.forceStrongDirichlet
+        # forceStrongDirichlet of the coefficients makes EVERY Dirichlet face strong; the kernels' isDOFBoundary then
+        # carries all of them. A declared setter says per face instead (BoundaryKinds).
+        self.forceStrongAllFaces = bool(self.forceStrongConditions)
         self.dirichletConditionsForceDOF = {}
-        if self.forceStrongConditions:
+        self.declaredBoundaryKinds = [BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(cj)) for cj in range(self.nc)]
+        if any(self.declaredBoundaryKinds):
+            if self.forceStrongAllFaces:
+                raise ValueError("RANS2P: forceStrongDirichlet makes every Dirichlet face strong; a setter that declares "
+                                 "per-face kinds (BoundaryKinds.declare) says which faces are strong itself: drop "
+                                 "forceStrongDirichlet")
+            # the faces that say 'strong' have the rows of their dofs replaced (the dofs stay unknowns: the layout of a
+            # weak class, which is also the parallel one); a bare function stays weak, as it always was. Decided by
+            # the declaration, not by what this rank holds (the parallel authority of a shared dof is collective).
+            self.forceStrongConditions = True
+            for cj in range(self.nc):
+                if self.declaredBoundaryKinds[cj]:
+                    self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(
+                        self.u[cj].femSpace, dofBoundaryConditionsSetterDict[cj], weakDirichletConditions=False,
+                        strongFacesOnly=True)
+                else:
+                    self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(
+                        self.u[cj].femSpace, None, weakDirichletConditions=True)
+        elif self.forceStrongConditions:
             for cj in range(self.nc):
                 self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(
                     self.u[cj].femSpace, dofBoundaryConditionsSetterDict[cj], weakDirichletConditions=False)
@@ -1735,6 +1762,8 @@ class LevelModel(proteus.Transport.OneLevelTransport):
             self.offset.append(self.offset[2])
             self.stride.append(self.stride[2])
             self.numericalFlux.isDOFBoundary[3] = self.numericalFlux.isDOFBoundary[2].copy()
+            self.numericalFlux.isStrongBoundary[3] = self.numericalFlux.isStrongBoundary[2].copy()
+            self.numericalFlux.isOpenBoundary[3] = self.numericalFlux.isOpenBoundary[2].copy()
             self.numericalFlux.ebqe[('u', 3)] = self.numericalFlux.ebqe[('u', 2)].copy()
             logEvent("calling cRANS2P2D_base ctor")
             self.rans2p = cRANS2P2D_base(self.nSpace_global,
@@ -1801,6 +1830,21 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                      "weights (equivalent polynomials of order 3) are not exact for the degree-4 velocity x velocity "
                      "surface integrals (error 8e-2..2e-1 of the block's largest entry, any quadrature degree); "
                      "see test/test_gf_surface_degree.py", level=0)
+
+    def kernelIsDOFBoundary(self, ci):
+        """isDOFBoundary of component ci for the kernels: the weak faces AND the strong ones. A strong face has
+        isDOFBoundary 0 in the flux class (it must not get the weak term in the flux's own arrays) but the kernel
+        keeps imposing its datum there, as forceStrongDirichlet always did (the rows of its dofs are replaced, so
+        the weak terms of the face only reach rows that are replaced); a face that declared itself open has neither."""
+        nf = self.numericalFlux
+        strong = nf.isStrongBoundary.get(ci)
+        if strong is None or not strong.any():
+            return nf.isDOFBoundary[ci]
+        cache = self.__dict__.setdefault('_kernelIsDOFBoundary', {})
+        if ci not in cache or cache[ci].shape != strong.shape:
+            cache[ci] = numpy.zeros(strong.shape, 'i')
+        numpy.maximum(nf.isDOFBoundary[ci], strong, out=cache[ci])
+        return cache[ci]
 
     def getResidual(self, u, r):
         """
@@ -2046,10 +2090,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_porosity_ext"] = self.coefficients.ebqe_porosity
         argsDict["ebqe_turb_var_0"] = self.coefficients.ebqe_turb_var[0]
         argsDict["ebqe_turb_var_1"] = self.coefficients.ebqe_turb_var[1]
-        argsDict["isDOFBoundary_p"] = self.numericalFlux.isDOFBoundary[0]
-        argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[1]
-        argsDict["isDOFBoundary_v"] = self.numericalFlux.isDOFBoundary[2]
-        argsDict["isDOFBoundary_w"] = self.numericalFlux.isDOFBoundary[3]
+        argsDict["isDOFBoundary_p"] = self.kernelIsDOFBoundary(0)
+        argsDict["isDOFBoundary_u"] = self.kernelIsDOFBoundary(1)
+        argsDict["isDOFBoundary_v"] = self.kernelIsDOFBoundary(2)
+        argsDict["isDOFBoundary_w"] = self.kernelIsDOFBoundary(3)
         argsDict["isAdvectiveFluxBoundary_p"] = self.ebqe[('advectiveFlux_bc_flag', 0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag', 1)]
         argsDict["isAdvectiveFluxBoundary_v"] = self.ebqe[('advectiveFlux_bc_flag', 2)]
@@ -2422,10 +2466,10 @@ velocity_I.append({:21.16e})
         argsDict["ebqe_porosity_ext"] = self.coefficients.ebqe_porosity
         argsDict["ebqe_turb_var_0"] = self.coefficients.ebqe_turb_var[0]
         argsDict["ebqe_turb_var_1"] = self.coefficients.ebqe_turb_var[1]
-        argsDict["isDOFBoundary_p"] = self.numericalFlux.isDOFBoundary[0]
-        argsDict["isDOFBoundary_u"] = self.numericalFlux.isDOFBoundary[1]
-        argsDict["isDOFBoundary_v"] = self.numericalFlux.isDOFBoundary[2]
-        argsDict["isDOFBoundary_w"] = self.numericalFlux.isDOFBoundary[3]
+        argsDict["isDOFBoundary_p"] = self.kernelIsDOFBoundary(0)
+        argsDict["isDOFBoundary_u"] = self.kernelIsDOFBoundary(1)
+        argsDict["isDOFBoundary_v"] = self.kernelIsDOFBoundary(2)
+        argsDict["isDOFBoundary_w"] = self.kernelIsDOFBoundary(3)
         argsDict["isAdvectiveFluxBoundary_p"] = self.ebqe[('advectiveFlux_bc_flag', 0)]
         argsDict["isAdvectiveFluxBoundary_u"] = self.ebqe[('advectiveFlux_bc_flag', 1)]
         argsDict["isAdvectiveFluxBoundary_v"] = self.ebqe[('advectiveFlux_bc_flag', 2)]
@@ -2496,7 +2540,7 @@ velocity_I.append({:21.16e})
         argsDict["isActiveElement_last"] = self.isActiveElement_last
         self.rans2p.calculateJacobian(argsDict)
         assert(np.all(np.isfinite(jacobian.getCSRrepresentation()[2])))
-        if not self.forceStrongConditions and max(numpy.linalg.norm(self.u[1].dof, numpy.inf), numpy.linalg.norm(self.u[2].dof, numpy.inf), numpy.linalg.norm(self.u[3].dof, numpy.inf)) < 1.0e-8:
+        if not self.forceStrongAllFaces and max(numpy.linalg.norm(self.u[1].dof, numpy.inf), numpy.linalg.norm(self.u[2].dof, numpy.inf), numpy.linalg.norm(self.u[3].dof, numpy.inf)) < 1.0e-8:
             self.pp_hasConstantNullSpace = True
         else:
             self.pp_hasConstantNullSpace = False
