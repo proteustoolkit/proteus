@@ -1711,6 +1711,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         # forceStrongDirichlet of the coefficients makes EVERY Dirichlet face strong; the kernels' isDOFBoundary then
         # carries all of them. A declared setter says per face instead (BoundaryKinds).
         self.forceStrongAllFaces = bool(self.forceStrongConditions)
+        self.hasStrongPressureDatum = False
         self.dirichletConditionsForceDOF = {}
         self.declaredBoundaryKinds = [BoundaryKinds.declaresKinds(dofBoundaryConditionsSetterDict.get(cj)) for cj in range(self.nc)]
         if any(self.declaredBoundaryKinds):
@@ -1730,6 +1731,16 @@ class LevelModel(proteus.Transport.OneLevelTransport):
                 else:
                     self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(
                         self.u[cj].femSpace, None, weakDirichletConditions=True)
+                # A DOF of a periodic pair is one unknown shared with its partner, and periodicity wins over a
+                # Dirichlet value there, as it does in OneLevelTransport (Transport.py) and where Dirichlet DOFs are
+                # eliminated.
+                for nodeSet in self.dirichletConditions[cj].periodicDOFDict.values():
+                    for dofN in nodeSet:
+                        self.dirichletConditionsForceDOF[cj].DOFBoundaryConditionsDict.pop(dofN, None)
+                        self.dirichletConditionsForceDOF[cj].DOFBoundaryPointDict.pop(dofN, None)
+            # Whether the pressure is strongly imposed anywhere (collective: a rank may hold none of its dofs): the
+            # constant-pressure null space check in getJacobian reads it.
+            self.hasStrongPressureDatum = bool(globalMax(int(len(self.dirichletConditionsForceDOF[0].DOFBoundaryConditionsDict) > 0)))
         elif self.forceStrongConditions:
             for cj in range(self.nc):
                 self.dirichletConditionsForceDOF[cj] = DOFBoundaryConditions(
@@ -2540,7 +2551,11 @@ velocity_I.append({:21.16e})
         argsDict["isActiveElement_last"] = self.isActiveElement_last
         self.rans2p.calculateJacobian(argsDict)
         assert(np.all(np.isfinite(jacobian.getCSRrepresentation()[2])))
-        if not self.forceStrongAllFaces and max(numpy.linalg.norm(self.u[1].dof, numpy.inf), numpy.linalg.norm(self.u[2].dof, numpy.inf), numpy.linalg.norm(self.u[3].dof, numpy.inf)) < 1.0e-8:
+        # Constant pressure is a null space of a problem whose velocity is zero and whose pressure is not imposed. Legacy:
+        # forceStrongDirichlet never declares it; otherwise (weak or no pressure datum: the old weak behaviour, kept) it
+        # is declared while the velocity is zero. A declared setter says per face: a strongly imposed pressure datum
+        # anywhere is what forceStrongDirichlet's False stood for, so it gives False too.
+        if not self.forceStrongAllFaces and not self.hasStrongPressureDatum and max(numpy.linalg.norm(self.u[1].dof, numpy.inf), numpy.linalg.norm(self.u[2].dof, numpy.inf), numpy.linalg.norm(self.u[3].dof, numpy.inf)) < 1.0e-8:
             self.pp_hasConstantNullSpace = True
         else:
             self.pp_hasConstantNullSpace = False

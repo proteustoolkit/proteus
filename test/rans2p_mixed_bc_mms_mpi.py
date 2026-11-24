@@ -16,7 +16,7 @@ value, no datum, the natural condition) is consistent with the exact solution; t
 wall carries the exact solution as its data.
 
 Environment: ND (2|3), NN (nodes per direction), NU, KINDS (velocity: ``left=strong,bottom=weak,...``; a wall that is not
-named has no condition), PKINDS (pressure: the same), DECLARE (0: plain setters, the kinds are not read: every named wall is
+named has no condition), PKINDS (pressure: the same), PDECLARE (0: the pressure setter is not declared while the velocity ones are), DECLARE (0: plain setters, the kinds are not read: every named wall is
 then weak, the baseline every existing problem is), ALL (strong: coefficients.forceStrongDirichlet, the legacy all-strong
 model), SPACE (p1p1: equal order with the model's stabilization, the decks' choice; p1p2: P2 velocity, which crashes
 RANS2P2D::calculateResidual on some meshes, not used by the tests), SGE (1: the subgrid error terms, 0: off), PART_TYPE, NLAYERS.
@@ -89,7 +89,8 @@ tag = {v: k for k, v in domain.boundaryTags.items()}
 _kind = {"strong": bk.strong, "weak": bk.weak}
 
 
-def make_setter(table, fun):
+def make_setter(table, fun, declared=None):
+    declared = declare if declared is None else declared
     data = lambda x, t: float(fun(*_xyz(x)))
 
     def setter(x, flag):
@@ -102,7 +103,7 @@ def make_setter(table, fun):
         if k == "bare":
             return data
         return _kind[k](data) if declare else data
-    return bk.declare(setter) if declare else setter
+    return bk.declare(setter) if declared else setter
 
 
 o = domain.MeshOptions
@@ -124,7 +125,7 @@ p.coefficients = RANS2P.Coefficients(epsFact=0.0, rho_0=1.0, nu_0=NU, rho_1=1.0,
                                      force_y=lambda x: float(force_f[1](*_xyz(x))),
                                      force_z=(lambda x: float(force_f[2](*_xyz(x)))) if nd == 3 else None)
 p.initialConditions = {i: type("Zero", (), {"uOfXT": lambda self, x, t: 0.0})() for i in range(nd + 1)}
-p.dirichletConditions = {0: make_setter(pkinds, p_f)}
+p.dirichletConditions = {0: make_setter(pkinds, p_f, declared=declare and os.environ.get("PDECLARE", "1") == "1")}
 for i, fn in enumerate(vel_f):
     p.dirichletConditions[i + 1] = make_setter(kinds, fn)
 p.advectiveFluxBoundaryConditions = {}
@@ -169,6 +170,20 @@ n.nLayersOfOverlapForParallel = layers
 so = defaults.System_base(name="rans2p_mixed_bc", pnList=[(p, n)], sList=[default_s])
 so.tnList = [0.0, 1.0]
 ns = NumericalSolution.NS_base(so, [p], [n], so.sList, runtime.RunOptions())
+# the constant-pressure null space flag at the FIRST Jacobian (zero velocity: where it can be True); later ones see the solution
+_model = ns.modelList[0].levelModelList[-1]
+_firstNullSpace = []
+_getJacobian = _model.getJacobian
+
+
+def _recordingGetJacobian(jacobian):
+    out = _getJacobian(jacobian)
+    if not _firstNullSpace:
+        _firstNullSpace.append(bool(_model.pp_hasConstantNullSpace))
+    return out
+
+
+_model.getJacobian = _recordingGetJacobian
 if os.environ.get("FAULT"):
     import faulthandler
     faulthandler.enable(all_threads=True)   # replaces the PUMI signal handler, which prints no Python frames
@@ -243,7 +258,8 @@ if comm.rank() == 0:
         h=1.0 / (nn - 1), nElements=nElements,
         L2={k: v[0] for k, v in tot.items()}, H1={k: v[1] for k, v in tot.items()},
         faces=faces, forcedDofs=nForcedAll, forcedValueErr=forcedErr,
-        forceStrongConditions=bool(model.forceStrongConditions))), flush=True)
+        forceStrongConditions=bool(model.forceStrongConditions),
+        nullSpaceAtFirstJacobian=_firstNullSpace[0])), flush=True)
 
 if os.environ.get("DIAG") and comm.rank() == 0:
     nodes = np.asarray(mesh.nodeArray)

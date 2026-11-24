@@ -163,3 +163,23 @@ def test_force_strong_dirichlet_with_a_declared_setter_is_refused(tmp_path_facto
     with pytest.raises(AssertionError) as e:
         _run(tmp_path_factory, ND=2, NN=5, KINDS=MIXED2, ALL="strong")
     assert "forceStrongDirichlet makes every Dirichlet face strong" in str(e.value)
+
+
+def test_a_declared_velocity_setter_with_a_bare_undeclared_pressure_setter_is_the_weak_pressure_2d(run):
+    undeclared_p = run(ND=2, NN=17, KINDS=MIXED2, PKINDS="right=bare", PDECLARE=0)
+    declared_weak_p = run(ND=2, NN=17, KINDS=MIXED2, PKINDS="right=weak")
+    assert undeclared_p["L2"] == declared_weak_p["L2"] and undeclared_p["H1"] == declared_weak_p["H1"], (undeclared_p, declared_weak_p)
+    assert undeclared_p["forcedDofs"] == declared_weak_p["forcedDofs"] > 0 and undeclared_p["faces"]["0"]["strong"] == 0
+
+
+def test_the_constant_pressure_null_space_flag_follows_a_strong_pressure_datum(run):
+    # read at the first Jacobian (zero velocity). Old behaviour, kept: forceStrongDirichlet never declares the null space; any
+    # other problem (a weak or absent pressure datum) declares it while the velocity is zero. A declared setter with a strongly
+    # imposed pressure datum is what forceStrongDirichlet's False stood for.
+    weak_vel = "left=weak,bottom=weak,top=weak,right=none"
+    assert run(ND=2, NN=9, KINDS=weak_vel, PKINDS="right=weak")["nullSpaceAtFirstJacobian"] is True
+    assert run(ND=2, NN=9, KINDS=weak_vel, PKINDS="right=weak", DECLARE=0)["nullSpaceAtFirstJacobian"] is True
+    assert run(ND=2, NN=9, KINDS=weak_vel, PKINDS="right=strong")["nullSpaceAtFirstJacobian"] is False
+    legacy = run(ND=2, NN=9, KINDS=ALLSTRONG2, PKINDS="right=strong", DECLARE=0, ALL="strong")
+    assert legacy["nullSpaceAtFirstJacobian"] is False
+    assert run(ranks=2, ND=2, NN=9, KINDS=weak_vel, PKINDS="right=strong")["nullSpaceAtFirstJacobian"] is False  # collective: both ranks
