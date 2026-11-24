@@ -40,7 +40,7 @@
   "proteus/SWFlow/utils/SWEs_so.py": 0.0,
   "proteus/ShockCapturing.py": 36.1,
   "proteus/SimTools.py": 11.9,
-  "proteus/SpatialTools.py": 56.0,
+  "proteus/SpatialTools.py": 57.0,
   "proteus/SplitOperator.py": 46.1,
   "proteus/StepControl.py": 36.0,
   "proteus/SubgridError.py": 19.6,
@@ -134,7 +134,7 @@
   "proteus/kernels/__init__.py": 100.0,
   "proteus/kernels/beamFEM.py": 9.2,
   "proteus/kernels/m_comp_co2.py": "test pending (deck from Arnob; not legacy, #1282)",
-  "proteus/mbd/BodyDynamics.py": 52.2,
+  "proteus/mbd/BodyDynamics.py": 58.9,
   "proteus/petsc_optional.py": 91.6,
   "proteus/runtime.py": 100.0
 }
