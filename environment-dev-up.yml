@@ -40,6 +40,10 @@ dependencies:
   - gmsh >=4.12.2
   - matplotlib >=3.9.2
   - mpi4py >=4.1.2
+  # conda-forge yaml 0.2.6 ships libyaml-0.1.dylib, but petsc4py is built against libyaml-0.2.dylib (yaml >=0.2.5,<0.3):
+  # on macOS a fresh solve gets 0.2.6 and `import petsc4py` fails with 'Library not loaded: @rpath/libyaml-0.2.dylib'.
+  # Written as a range so the off-lock legs' pin-to-floor rewrite leaves it alone.
+  - yaml >=0.2.5,<0.2.6
   - pytest >=9.1.1
   - pytest-cov >=5.0.0
   - pytest-xdist >=3.6.1
