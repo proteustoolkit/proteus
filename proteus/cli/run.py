@@ -134,15 +134,34 @@ def add_parser(subparsers):
     return p
 
 
+def _module_level_statements(body):
+    """Every statement that runs when the module is imported: the module's own, and those inside its ``if``,
+    ``try``, ``with`` and loop blocks, but not inside a function or class."""
+    for node in body:
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for field in ("body", "orelse", "finalbody"):
+            inner = getattr(node, field, None)
+            if isinstance(inner, list):
+                yield from _module_level_statements(inner)
+        for handler in getattr(node, "handlers", ()):
+            yield from _module_level_statements(handler.body)
+
+
 def model_kind(path):
-    """'so' if the file assigns ``pnList`` at module level, else 'case'.
+    """'so' if the file assigns ``pnList`` when it is imported, else 'case'.
+
+    ``pnList`` may be assigned in an ``if``/``else`` or ``try`` at module level, as the air-water-vv so
+    files do (``if tank3D.useOnlyVF: pnList = ... else: pnList = ...``); an assignment inside a function
+    or class does not count.
 
     Read from the source, so nothing is imported (an import would run the
     model before the context options are set).
     """
     with open(path) as f:
         tree = ast.parse(f.read(), path)
-    for node in tree.body:
+    for node in _module_level_statements(tree.body):
         targets = []
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -316,6 +335,9 @@ def _bring_mesh_up_to_date(args, comm, pList, nList, log):
     domain, meshOptions, plan = plan_for(pList, nList)
     if plan is None or not meshOptions.genMesh:
         return None
+    # Every rank has loaded the model, so none is still writing the generator's input: a model that rewrites its .poly on
+    # every rank at import (air-water-vv 45DEG_R1, 3072 ranks) had it hashed mid-rewrite, and a current mesh read as stale.
+    comm.barrier()
     error = None
     if comm.isMaster():
         state, reason = mesh.state(plan)

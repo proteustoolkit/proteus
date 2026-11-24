@@ -83,6 +83,25 @@ def test_model_kind(tmp_path):
     assert model_kind(str(case)) == "case"
 
 
+@pytest.mark.parametrize("source, kind", [
+    # the air-water-vv shape: pnList chosen by an option, assigned in an if/else
+    ("import tank3D\nif tank3D.useOnlyVF:\n    pnList = [('a_p', 'a_n')]\nelse:\n    pnList = [('a_p', 'a_n'), ('b_p', 'b_n')]\n", "so"),
+    ("try:\n    pnList = [('a_p', 'a_n')]\nexcept ImportError:\n    pnList = []\n", "so"),
+    ("import os\nwith open(os.devnull) as f:\n    pnList = [('a_p', 'a_n')]\n", "so"),
+    ("pnList = [('a_p', 'a_n')]\n", "so"),
+    ("pnList: list = [('a_p', 'a_n')]\n", "so"),
+    # not an so file: pnList only inside a function or a class, or never
+    ("def build():\n    pnList = [('a_p', 'a_n')]\n    return pnList\n", "case"),
+    ("class C:\n    pnList = [('a_p', 'a_n')]\n", "case"),
+    ("if True:\n    def f():\n        pnList = 1\n", "case"),
+    ("myTpFlowProblem = None\n", "case"),
+])
+def test_model_kind_sees_a_conditional_pnlist(tmp_path, source, kind):
+    f = tmp_path / "m.py"
+    f.write_text(source)
+    assert model_kind(str(f)) == kind
+
+
 def test_petsc_argv(tmp_path):
     f = tmp_path / "petsc.options"
     f.write_text(textwrap.dedent("""\
@@ -209,6 +228,18 @@ def test_mesh_files_plan():
     assert plan["command"] == "tetgen -VApq1.35q12feena0.01 plc.poly"
     assert plan["inputs"] == ["plc.poly"]
     assert plan["outputs"] == ["plc.ele", "plc.node", "plc.face"]
+
+
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_pro_msh_opens_its_log_at_the_default_log_level(tmp_path):
+    # every other pro msh test passes -l 0, which skips openLog; at the default level it asserted that
+    # Profiling.procID was unset (found running the air-water-vv decks on Carpenter, 2026-11-21)
+    work = tmp_path / "pro"
+    _copy_ci_models(work)
+    made = pro("msh", *TETGEN_MODEL, cwd=work)
+    assert made.returncode == 0, made.stderr[-2000:]
+    assert (work / "poisson_3d_tetgen_p_msh.log").exists()
+    assert (work / "meshNoVessel.mesh.ymf").exists()
 
 
 @pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
@@ -1154,6 +1185,31 @@ def pro_on(ranks, *args, cwd):
     return subprocess.run([MPIEXEC, "-n", str(ranks), sys.executable, "-m", "proteus.cli"]
                           + list(args), cwd=cwd, capture_output=True, text=True,
                           timeout=600, env=env)
+
+
+@needs_mpiexec
+@pytest.mark.skipif(shutil.which("tetgen") is None, reason="tetgen not on PATH")
+def test_pro_run_checks_the_mesh_after_every_rank_has_loaded_the_model(tmp_path):
+    # A model that rewrites its .poly on the ranks other than 0 after loading (air-water-vv 45DEG_R1 writes it on
+    # every rank): rank 0 hashed the file while it was being rewritten and found a current mesh stale (3072 ranks,
+    # Carpenter, 2026-11-21: "the generator's inputs or command changed" with --no-mesh).
+    work = tmp_path / "pro"
+    _copy_ci_models(work)
+    made = pro("msh", *TETGEN_MODEL, "-l", "0", cwd=work)
+    assert made.returncode == 0, made.stderr[-2000:]
+    p = work / "poisson_3d_tetgen_p.py"
+    source = p.read_text()
+    old = "    comm.barrier()\ndomain.MeshOptions.genMesh=genMesh"
+    assert old in source
+    p.write_text(source.replace(old, "    comm.barrier()\n"
+                                "    if not comm.isMaster():\n"
+                                "        import time\n"
+                                "        open(polyfile + '.poly', 'w').close()\n"
+                                "        time.sleep(3)\n"
+                                "        domain.writePoly(polyfile)\n"
+                                "domain.MeshOptions.genMesh=genMesh"))
+    ran = pro_on(2, "run", *TETGEN_MODEL, "--no-mesh", "-l", "0", cwd=work)
+    assert ran.returncode == 0, ran.stderr[-2000:]
 
 
 def _outputs(path):
