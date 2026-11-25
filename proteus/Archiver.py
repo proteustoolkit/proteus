@@ -1454,6 +1454,44 @@ class AR_base(object):
             return tCount, True
         return written[0], False
 
+    def frame_mesh_mismatch(self, tCount, mesh, name="Spatial_Domain"):
+        """Why the mesh of archived step ``tCount`` is not ``mesh``, or None when it is (or cannot be told).
+
+        For a hot start, before the fields of that step are read onto ``mesh`` (this rank's subdomain mesh):
+        the step's grid of ``Mesh <name>`` declares its element and node counts (this rank's grid, or the global
+        one with global_sync), and a mesh whose topology changed during the archived run (an adapted or a
+        redistributed mesh) has other counts than the mesh a restart builds. Reading the fields would then fail
+        on a shape or, with global arrays, read the wrong rows. Not collective (metadata only); None when the
+        archive does not say (no such collection, another number of ranks, which field_dataset reports, or
+        steps that do not line up with the archived times).
+        """
+        domain = self.load_archived_domain()
+        if domain is None:
+            return None
+        collections = [c for c in archive_collections(domain) if c.get("name") == "Mesh " + name]
+        if not collections:
+            return None
+        steps = collections[0]["data"]
+        if len(steps) != len(self.archived_times) or not 0 <= tCount < len(steps):
+            return None
+        grids = steps[tCount].get("spatial_collection", [steps[tCount]])
+        if self.global_sync:
+            g = getattr(mesh, "globalMesh", None)
+            if g is None or len(grids) != 1:
+                return None
+            grid, expected = grids[0], (g.nElements_global, g.nNodes_global)
+        else:
+            if len(grids) != self.size:
+                return None
+            grid, expected = grids[self.rank], (mesh.nElements_owned, mesh.nNodes_global)
+        archived = (int(grid["topology"]["data_item"]["dimensions"][0]),
+                    int(grid["geometry"]["data_item"]["dimensions"][0]))
+        if archived == tuple(int(n) for n in expected):
+            return None
+        return ("the archived mesh of step %d has %d elements and %d nodes%s (dataset %s), this run's has %d and %d"
+                % (tCount, archived[0], archived[1], "" if self.global_sync else " on rank %d" % self.rank,
+                   grid["topology"]["data_item"].get("data", "?"), expected[0], expected[1]))
+
     def mesh_step_of(self, key, tCount):
         """The step whose dataset holds ``key`` at ``tCount``, for a grid that names another writer's array
         (the spaces that reuse the spatial mesh's datasets) right after that writer's ``mesh_step``."""

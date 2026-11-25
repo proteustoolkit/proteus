@@ -214,3 +214,35 @@ def test_the_mesh_epoch_changes_when_its_arrays_do():
     other.partitionMesh(nLayersOfOverlap=1, nodeOwners=np.zeros(other.nNodes_global, dtype=np.intc))
     renewed = other.subdomainMesh.archiveEpoch(comm, kinds, 3)
     assert all(a != b for a, b in zip(renewed, retyped))
+
+
+def test_a_hot_start_after_a_topology_change_is_refused(tmp_path):
+    """Archiver.frame_mesh_mismatch: the steps before the adapted mesh are this mesh's, the steps after are not
+    (NumericalSolution._checkHotStartMesh raises on them instead of reading fields of another mesh)."""
+    _archive(CUBE, 1, "global", "mpio", "adapted", tmp_path)
+    Comm.init()
+    mesh = MeshTools.TetrahedralMesh()
+    mesh.generateFromYmfFile(CUBE)
+    mesh.partitionMesh(nLayersOfOverlap=1, nodeOwners=np.zeros(mesh.nNodes_global, dtype=np.intc))
+    ar = Archiver.XdmfArchive(str(tmp_path), "mesh", readOnly=True, global_sync=True)
+    try:
+        for k in range(FRAMES // 2):
+            assert ar.frame_mesh_mismatch(k, mesh.subdomainMesh) is None, k
+        for k in range(FRAMES // 2, FRAMES):
+            why = ar.frame_mesh_mismatch(k, mesh.subdomainMesh)
+            assert why is not None and "has 162 elements and 64 nodes" in why and "this run's has 48 and 27" in why, why
+    finally:
+        ar.close()
+
+
+def test_a_solver_state_of_another_connectivity_is_refused():
+    """NS_base._stateFingerprintMatches: the connectivity is the last entry of the fingerprint; a state written
+    before it was added is compared on the partition only, as it was."""
+    from proteus.NumericalSolution import NS_base
+    current = np.array([2, 48, 27, 11, 12, 13], dtype="int64")
+    assert NS_base._stateFingerprintMatches(current.copy(), current) == (True, None)
+    assert NS_base._stateFingerprintMatches(current[:5], current) == (True, None)          # an older archive
+    ok, why = NS_base._stateFingerprintMatches(np.array([2, 48, 27, 11, 12, 99]), current)
+    assert not ok and "another connectivity" in why
+    ok, why = NS_base._stateFingerprintMatches(np.array([2, 48, 27, 11, 77, 13]), current)
+    assert not ok and "different partition" in why
