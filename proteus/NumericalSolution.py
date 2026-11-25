@@ -2086,7 +2086,12 @@ class NS_base(object):  # (HasTraits):
             "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
 
     def _archiveSolution(self,model,index,t,withState):
-        """archiveSolution's writes; returns the seconds the solver state took, None when it was not written."""
+        """archiveSolution's writes; returns the seconds the solver state took, None when it was not written.
+
+        ``meshChanged=False``: the writers write a mesh array only when what it is made from changed since the
+        archive last wrote it (``Archiver.mesh_step``, ``MeshTools.Mesh.archiveEpoch``), so a static mesh is
+        in the file once and a moving mesh's nodes are written every frame. Passing True here, as this did
+        until 2026-11-24, rewrote the whole mesh every frame (>55% of a bathyduck frame's bytes on Mike)."""
         stateTime = None
         if True if self.fastArchive == False else 'clsvof' in model.name:
             if self.archiveFlag == ArchiveFlags.UNDEFINED:
@@ -2098,12 +2103,12 @@ class NS_base(object):  # (HasTraits):
                     self.femSpaceWritten={}
                 model.levelModelList[-1].archiveFiniteElementSolutions(self.ar[index],t,self.tCount,
                                                                        initialPhase=False,
-                                                                       writeVectors=True,meshChanged=True,femSpaceWritten=self.femSpaceWritten,
+                                                                       writeVectors=True,meshChanged=False,femSpaceWritten=self.femSpaceWritten,
                                                                        writeVelocityPostProcessor=self.opts.writeVPP)
             else:
                 model.levelModelList[-1].archiveFiniteElementSolutions(self.ar[index],t,self.tCount,
                                                                        initialPhase=False,
-                                                                       writeVectors=True,meshChanged=True,femSpaceWritten={},
+                                                                       writeVectors=True,meshChanged=False,femSpaceWritten={},
                                                                        writeVelocityPostProcessor=self.opts.writeVPP)
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 t,
@@ -2121,7 +2126,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorElementStorageKeys(model,t)
                 model.levelModelList[-1].archiveElementQuadratureValues(self.ar[index],t,self.tCount,
                                                                         scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                        initialPhase=False,meshChanged=True)
+                                                                        initialPhase=False,meshChanged=False)
             #ebq_global dictionary
             if self.archive_ebq_global[index] == True and self.fastArchive==False:
                 scalarKeys = model.simTools.getScalarElementBoundaryStorageKeys(model,t)
@@ -2129,7 +2134,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorElementBoundaryStorageKeys(model,t)
                 model.levelModelList[-1].archiveElementBoundaryQuadratureValues(self.ar[index],t,self.tCount,
                                                                                 scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                                initialPhase=False,meshChanged=True)
+                                                                                initialPhase=False,meshChanged=False)
             if self.archive_ebqe[index] == True and self.fastArchive==False:
                 #ebqe dictionary
                 scalarKeys = model.simTools.getScalarExteriorElementBoundaryStorageKeys(model,t)
@@ -2137,7 +2142,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorExteriorElementBoundaryStorageKeys(model,t)
                 model.levelModelList[-1].archiveExteriorElementBoundaryQuadratureValues(self.ar[index],t,self.tCount,
                                                                                         scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                                        initialPhase=False,meshChanged=True)
+                                                                                        initialPhase=False,meshChanged=False)
             #Fields the model's coefficients declare for themselves. Replaces
             #six hand-rolled try/except-pass blocks; see proteus.ArchiveFields.
             if self.fastArchive==False:

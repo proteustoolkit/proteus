@@ -6173,22 +6173,24 @@ class _C0_AffinePolynomialSpace(ParametricFiniteElementSpace):
         writer = self.XdmfWriter
         gridName = writer.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
         if writer._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             subcells = self._subcells()
             nSub = subcells.shape[0]
             Xdmf_ElementTopology = self._xdmfTopology()
             if ar.global_sync:
                 n_elements       = mesh.globalMesh.nElements_global*nSub
                 nodes_dims       = [dofMap.nDOF_all_processes,3]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
             else:
                 n_elements       = mesh.nElements_global*nSub
                 nodes_dims       = [dofMap.nDOF,3]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
             elements_dims = [n_elements,subcells.shape[1]]
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
             writer.arGrid = ar.write_grid(writer.arGridCollection,gridName,t,tCount)
             ar.write_topology(writer.arGrid,Xdmf_ElementTopology,n_elements,
                               elements_dims,elements_dataset,elements_stem,
@@ -6199,11 +6201,11 @@ class _C0_AffinePolynomialSpace(ParametricFiniteElementSpace):
                 return dofMap.l2g[:nElements][:,subcells].reshape(-1,subcells.shape[1])
             if not ar.writesDatasets:
                 assert not ar.global_sync, "global_sync is not implemented for text heavy data"
-                if init or meshChanged:
+                if writeMesh:
                     numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",subElements(mesh.nElements_global),fmt='%d')
                     numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",dofMap.lagrangeNodesArray)
                 return writer.arGrid
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     owned = dofMap.dof_offsets_subdomain_owned
                     ar.create_dataset_sync(elements_dataset,

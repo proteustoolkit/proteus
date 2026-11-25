@@ -274,6 +274,9 @@ class AR_base(object):
         #the document they are copied into, a step at a time
         self._inlineArrays = {}
         self._inlineDomain = None
+        #the step each mesh array was last written at, and the mesh epoch it
+        #was written for, by dataset name without the step (mesh_step)
+        self._meshSteps = {}
         comm_world = self.comm.comm.tompi4py()
         self.domain = ArchiveDomain()
         if self.inline and (hotStart or readOnly):
@@ -1421,16 +1424,53 @@ class AR_base(object):
         """
         return collection.new_grid(t, tCount, grid_name)
 
+    #: what each kind of mesh array is made from (MeshTools.Mesh.archiveEpoch)
+    MESH_TOPOLOGY = ("topology",)
+    MESH_GEOMETRY = ("geometry",)
+    MESH_MATERIALS = ("materials",)
+    #: an array made from both, such as a space's own vertex copies or quadrature points
+    MESH_ALL = ("topology", "geometry")
+
+    def mesh_step(self, key, tCount, mesh, force=False, kinds=MESH_ALL):
+        """The step whose dataset holds the mesh array ``key`` at step ``tCount``, and whether to write it now.
+
+        A mesh array is written only when what it is made from changed: ``kinds`` names the parts of the mesh
+        it depends on (topology: the connectivity, the local-to-global maps and the input numbering; geometry:
+        the node coordinates; materials: the material types), and ``mesh.archiveEpoch`` says whether they
+        changed since this archive last wrote ``key``. When they did not, the array is not written again and
+        the grid of step ``tCount`` names the dataset of the step it was written at: a static mesh is in the
+        file once, and every reader that follows the grid's references (ymf, ``readArchiveDomain``, the mesh
+        readers, ``gatherTimes``) gets it from there. ``force`` (the writers' ``init or meshChanged``) writes
+        it whatever the epoch says.
+
+        ``key`` is the dataset name without the step: the same on every pass, unique in this archive.
+        Collective (the epoch is), and the answer is the same on every rank: every rank writes, or none does.
+        A key this archive has not written yet (the first frame, or the first after a hot start) is written.
+        """
+        epoch = mesh.archiveEpoch(self.comm, kinds, tCount)
+        written = self._meshSteps.get(key)
+        if force or written is None or written[1] != epoch:
+            self._meshSteps[key] = (tCount, epoch)
+            return tCount, True
+        return written[0], False
+
+    def mesh_step_of(self, key, tCount):
+        """The step whose dataset holds ``key`` at ``tCount``, for a grid that names another writer's array
+        (the spaces that reuse the spatial mesh's datasets) right after that writer's ``mesh_step``."""
+        written = self._meshSteps.get(key)
+        return tCount if written is None else written[0]
+
     def write_topology(self, grid, topology_type, n_elements, dimensions,
                        dataset, text_stem, nodes_per_element=None, *, dtype):
         """Set the grid's topology, naming its array. Returns the data item.
 
         The array reference is filled in here, but the array itself is
-        **not** written: mesh datasets are only created when ``init or
-        meshChanged``, while the reference is written on every pass. The
-        caller keeps that decision, and the data preparation that goes with
-        it, because it differs at every call site (element-to-node maps,
-        DG node duplication, particle index ranges).
+        **not** written: mesh datasets are only created when the mesh changed
+        (:meth:`mesh_step`), while the reference -- to the dataset of the step
+        the array was written at -- is written on every pass. The caller
+        keeps that decision, and the data preparation that goes with it,
+        because it differs at every call site (element-to-node maps, DG node
+        duplication, particle index ranges).
 
         ``dtype`` is the type of the array the reference names: the array
         itself, its dtype, or a tuple of what it is computed from (see
@@ -1561,7 +1601,8 @@ class XdmfWriter(object):
     Each ``writeMeshXdmf_*`` method describes one space's mesh as a ymf
     grid dict through the archive's builders (``write_grid``,
     ``write_topology``, ``write_geometry``) and writes the arrays behind it
-    when ``init or meshChanged``; the ``write*Xdmf_*`` methods attach fields
+    when the mesh changed (``AR_base.mesh_step``; ``init`` or ``meshChanged``
+    force it); the ``write*Xdmf_*`` methods attach fields
     to the current grid through ``write_field``. The names survive from
     when these methods built XDMF elements; what they build now is the
     archive's own representation, which ``ymf2xmf`` turns into XDMF.
@@ -1676,19 +1717,21 @@ class XdmfWriter(object):
         assert len(x.shape) == 3 #make sure have right type of dictionary
         self.mesh = mesh
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             Xdmf_NodesPerElement = x.shape[1]
             if ar.global_sync:
                 assert ar.writesDatasets, "global_sync not supported with text  heavy data"
                 Xdmf_NumberOfElements= mesh.globalMesh.nElements_global
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
             else:
                 Xdmf_NumberOfElements= x.shape[0]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
             Xdmf_NodesGlobal     = Xdmf_NumberOfElements*Xdmf_NodesPerElement
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, "Polyvertex", Xdmf_NumberOfElements,
@@ -1698,7 +1741,7 @@ class XdmfWriter(object):
                               dtype=GENERATED_INDEX_DTYPE)
             ar.write_geometry(self.arGrid, [Xdmf_NodesGlobal, 3],
                               nodes_dataset, nodes_stem, dtype=x)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     q_l2g = numpy.arange(mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank]*Xdmf_NodesPerElement,
                                          mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank+1]*Xdmf_NodesPerElement,
@@ -1813,6 +1856,8 @@ class XdmfWriter(object):
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
 
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             if spaceDim == 1:
                 Xdmf_ElementTopology = "Polyline"
             elif spaceDim == 2:
@@ -1824,18 +1869,18 @@ class XdmfWriter(object):
                 n_elements       = mesh.globalMesh.nElements_global
                 elements_dims    = [n_elements, mesh.nNodes_element]
                 nodes_dims       = [dofMap.nDOF_all_processes, 3]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
                 elements_dtype   = (dofMap.dof_offsets_subdomain_owned, dofMap.l2g)
             else:
                 n_elements       = mesh.nElements_global
                 elements_dims    = [n_elements, mesh.nNodes_element]
                 nodes_dims       = [dofMap.nDOF, 3]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
                 elements_dtype   = dofMap.l2g
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -1843,7 +1888,7 @@ class XdmfWriter(object):
                               dtype=elements_dtype)
             ar.write_geometry(self.arGrid, nodes_dims, nodes_dataset, nodes_stem,
                               dtype=mesh.nodeArray)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     nElements_owned = (mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank+1]
                                        -mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank])
@@ -1882,6 +1927,8 @@ class XdmfWriter(object):
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
 
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             if spaceDim == 1:
                 Xdmf_ElementTopology = "Edge_3"
             elif spaceDim == 2:
@@ -1893,18 +1940,18 @@ class XdmfWriter(object):
                 n_elements       = mesh.globalMesh.nElements_global
                 elements_dims    = [n_elements, dofMap.l2g.shape[-1]]
                 nodes_dims       = [dofMap.nDOF_all_processes, 3]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
                 elements_dtype   = (dofMap.dof_offsets_subdomain_owned, dofMap.l2g)
             else:
                 n_elements       = mesh.nElements_global
                 elements_dims    = list(dofMap.l2g.shape)
                 nodes_dims       = [dofMap.nDOF, 3]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
                 elements_dtype   = dofMap.l2g
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -1912,7 +1959,7 @@ class XdmfWriter(object):
                               dtype=elements_dtype)
             ar.write_geometry(self.arGrid, nodes_dims, nodes_dataset, nodes_stem,
                               dtype=CGDOFMap.lagrangeNodesArray)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     nElements_owned = (mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank+1]
                                        -mesh.globalMesh.elementOffsets_subdomain_owned[ar.rank])
@@ -1950,6 +1997,8 @@ class XdmfWriter(object):
         spaceSuffix = "_c0p2_Lagrange"
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             if spaceDim == 1:
                 Xdmf_ElementTopology = "Edge_3"
             elif spaceDim == 2:
@@ -1966,16 +2015,16 @@ class XdmfWriter(object):
                 n_elements       = mesh.globalMesh.nElements_global
                 elements_dims    = [n_elements, dofMap.l2g.shape[-1]]
                 nodes_dims       = [dofMap.nDOF_all_processes, 3]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
             else:
                 n_elements       = mesh.nElements_global
                 elements_dims    = list(dofMap.l2g.shape)
                 nodes_dims       = [dofMap.nDOF, 3]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -1989,7 +2038,7 @@ class XdmfWriter(object):
             if not ar.writesDatasets:
                 assert not ar.global_sync, \
                     "global_sync is not implemented for text heavy data"
-                if init or meshChanged:
+                if writeMesh:
                     numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",
                                   dofMap.l2g,fmt='%d')
                     numpy.savetxt(ar.textDataDir+"/"+nodes_stem+".txt",
@@ -2012,7 +2061,7 @@ class XdmfWriter(object):
 
             #references were written above on every pass; the arrays only when
             #the mesh actually changed
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     owned = dofMap.dof_offsets_subdomain_owned
                     ar.create_dataset_sync(elements_dataset,
@@ -2035,6 +2084,8 @@ class XdmfWriter(object):
         spaceSuffix = "_c0q2_Lagrange"
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             if spaceDim == 1:
                 print("No writeMeshXdmf_C0Q2Lagrange for 1D")
                 return 0
@@ -2068,18 +2119,18 @@ class XdmfWriter(object):
                 n_elements       = mesh.globalMesh.nElements_global*nsubelements
                 elements_dims    = [n_elements, l2g.shape[-1]]
                 nodes_dims       = [dofMap.nDOF_all_processes, lagrangeNodesArray.shape[-1]]
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
                 elements_dtype   = dofMap.subdomain2global
             else:
                 n_elements       = l2g.shape[0]
                 elements_dims    = list(l2g.shape)
                 nodes_dims       = list(lagrangeNodesArray.shape)
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
                 elements_dtype   = l2g
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -2087,7 +2138,7 @@ class XdmfWriter(object):
                               dtype=elements_dtype)
             ar.write_geometry(self.arGrid, nodes_dims, nodes_dataset, nodes_stem,
                               dtype=lagrangeNodesArray)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     ar.create_dataset_sync(elements_dataset,
                                            offsets = [x*nsubelements for x in mesh.globalMesh.elementOffsets_subdomain_owned],
@@ -2105,7 +2156,7 @@ class XdmfWriter(object):
 
     def _writeDiscontinuousVertexMesh(self,ar,gridName,mesh,spaceDim,t,tCount,
                                       spaceSuffix,init,meshChanged,
-                                      nodes_every_pass=False):
+                                      nodes_every_pass=None):
         """The element-by-element vertex mesh several spaces display on.
 
         Each element gets its own copy of its vertices, numbered
@@ -2113,8 +2164,13 @@ class XdmfWriter(object):
         non-conforming P1 function written as discontinuous P1, an RT0
         velocity) can be shown. Shared by the Crouzeix-Raviart and
         lowest-order mixed writers, which differed only in dataset naming
-        and in whether the nodes were rewritten on every pass.
+        and in whether the nodes were rewritten on every pass. Both now
+        write the arrays when the mesh changed (``Archiver.mesh_step``: the
+        vertex copies follow the nodes of a moving mesh); ``nodes_every_pass``
+        is accepted and ignored.
         """
+        #the arrays: written when the mesh changed, else the step they were written at
+        meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
         if spaceDim == 1:
             Xdmf_ElementTopology = "Polyline"
         elif spaceDim == 2:
@@ -2125,14 +2181,14 @@ class XdmfWriter(object):
         if ar.global_sync:
             assert ar.writesDatasets, "global_sync not implemented for text heavy data"
             Xdmf_NumberOfElements= mesh.globalMesh.nElements_global
-            elements_dataset = 'elements'+spaceSuffix+str(tCount)
-            nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+            elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+            nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
         else:
             Xdmf_NumberOfElements= mesh.nElements_global
-            elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-            nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
-        elements_stem = 'elements'+spaceSuffix+str(tCount)
-        nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+            nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
+        elements_stem = 'elements'+spaceSuffix+str(meshStep)
+        nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
         self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
         ar.write_topology(self.arGrid, Xdmf_ElementTopology, Xdmf_NumberOfElements,
@@ -2142,26 +2198,26 @@ class XdmfWriter(object):
         ar.write_geometry(self.arGrid, [Xdmf_NumberOfElements*Xdmf_NodesPerElement, 3],
                           nodes_dataset, nodes_stem, dtype=mesh.nodeArray)
         if ar.global_sync:
-            if init or meshChanged:
+            if writeMesh:
                 #simple dg l2g mapping
                 dg_l2g = numpy.arange(mesh.nElements_owned*Xdmf_NodesPerElement,dtype=GENERATED_INDEX_DTYPE).reshape((mesh.nElements_owned,Xdmf_NodesPerElement))
                 ar.create_dataset_sync(elements_dataset,
                                        offsets = mesh.globalMesh.elementOffsets_subdomain_owned,
                                        data = dg_l2g)
-            if init or meshChanged or nodes_every_pass:
+            if writeMesh:
                 dgnodes = numpy.reshape(mesh.nodeArray[mesh.elementNodesArray[:mesh.nElements_owned]],
                                         (mesh.nElements_owned*Xdmf_NodesPerElement,3))
                 ar.create_dataset_sync(nodes_dataset,
                                        offsets = mesh.globalMesh.elementOffsets_subdomain_owned*Xdmf_NodesPerElement,
                                        data = dgnodes)
         elif ar.writesDatasets:
-            if init or meshChanged:
+            if writeMesh:
                 dg_l2g = numpy.arange(Xdmf_NumberOfElements*Xdmf_NodesPerElement,dtype=GENERATED_INDEX_DTYPE).reshape((Xdmf_NumberOfElements,Xdmf_NodesPerElement))
                 ar.create_dataset_async(elements_dataset, data = dg_l2g)
-            if init or meshChanged or nodes_every_pass:
+            if writeMesh:
                 dgnodes = numpy.reshape(mesh.nodeArray[mesh.elementNodesArray],(Xdmf_NumberOfElements*Xdmf_NodesPerElement,3))
                 ar.create_dataset_async(nodes_dataset, data = dgnodes)
-        elif init or meshChanged:
+        elif writeMesh:
             dg_l2g = numpy.arange(Xdmf_NumberOfElements*Xdmf_NodesPerElement,dtype=GENERATED_INDEX_DTYPE).reshape((Xdmf_NumberOfElements,Xdmf_NodesPerElement))
             numpy.savetxt(ar.textDataDir+"/"+elements_stem+".txt",dg_l2g,fmt='%d')
             dgnodes = numpy.reshape(mesh.nodeArray[mesh.elementNodesArray],(Xdmf_NumberOfElements*Xdmf_NodesPerElement,3))
@@ -2336,19 +2392,21 @@ class XdmfWriter(object):
         assert len(interpolationPoints.shape) == 3 #make sure have right type of dictionary
         self.mesh = mesh
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             Xdmf_NodesPerElement = interpolationPoints.shape[1]
             if ar.global_sync:
                 assert ar.writesDatasets, "global_sync not implementedf or text heavy data"
                 Xdmf_NumberOfElements= mesh.globalMesh.nElements_global
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
             else:
                 Xdmf_NumberOfElements= interpolationPoints.shape[0]
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
             Xdmf_NodesGlobal     = Xdmf_NumberOfElements*Xdmf_NodesPerElement
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, "Polyvertex", Xdmf_NumberOfElements,
@@ -2358,7 +2416,7 @@ class XdmfWriter(object):
                               dtype=GENERATED_INDEX_DTYPE)
             ar.write_geometry(self.arGrid, [Xdmf_NodesGlobal, 3],
                               nodes_dataset, nodes_stem, dtype=interpolationPoints)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     q_l2g = numpy.arange(mesh.nElements_owned*Xdmf_NodesPerElement,dtype=GENERATED_INDEX_DTYPE).reshape((mesh.nElements_owned,Xdmf_NodesPerElement))
                     ar.create_dataset_sync(elements_dataset,
@@ -2448,15 +2506,19 @@ class XdmfWriter(object):
                     Xdmf_ElementTopology = "Triangle"
                 elif spaceDim == 3:
                     Xdmf_ElementTopology = "Tetrahedron"
-            #the spatial mesh's own datasets are reused; nothing is written here
+            #the spatial mesh's own datasets are reused, at the steps writeMeshXdmf wrote them; nothing is
+            #written here
+            onRank = '' if ar.global_sync else str(ar.rank)
+            elementsStep = ar.mesh_step_of('elements'+onRank+meshSpaceSuffix, tCount)
+            nodesStep = ar.mesh_step_of('nodes'+onRank+meshSpaceSuffix, tCount)
             if ar.global_sync:
                 assert ar.writesDatasets, "global_sync not implemented  for text heavy data"
-                elements_dataset = 'elements'+meshSpaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+meshSpaceSuffix+str(tCount)
+                elements_dataset = 'elements'+meshSpaceSuffix+str(elementsStep)
+                nodes_dataset    = 'nodes'+meshSpaceSuffix+str(nodesStep)
                 elements_dtype   = mesh.globalMesh.nodeNumbering_subdomain2global
             else:
-                elements_dataset = 'elements'+str(ar.rank)+meshSpaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+meshSpaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+meshSpaceSuffix+str(elementsStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+meshSpaceSuffix+str(nodesStep)
                 elements_dtype   = mesh.elementNodesArray
             #mwf hack, allow for a mixed element mesh
             if mesh.nNodes_element is None:
@@ -2517,6 +2579,8 @@ class XdmfWriter(object):
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
 
         if self._needsGrid(t):
+            #the space's mesh arrays: written when the mesh changed, else the step they were written at
+            meshStep, writeMesh = ar.mesh_step('mesh'+spaceSuffix, tCount, mesh, init or meshChanged)
             if spaceDim == 1:
                 Xdmf_ElementTopology = "Polyline"
             elif spaceDim == 2:
@@ -2528,14 +2592,14 @@ class XdmfWriter(object):
             if  ar.global_sync:
                 assert ar.writesDatasets, "global_sync not implemented for text heavy data"
                 Xdmf_NumberOfElements= mesh.globalMesh.nElements_global
-                elements_dataset = 'elements'+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+spaceSuffix+str(meshStep)
             else:
                 Xdmf_NumberOfElements= mesh.nElements_global
-                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(tCount)
-                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(tCount)
-            elements_stem = 'elements'+spaceSuffix+str(tCount)
-            nodes_stem    = 'nodes'+spaceSuffix+str(tCount)
+                elements_dataset = 'elements'+str(ar.rank)+spaceSuffix+str(meshStep)
+                nodes_dataset    = 'nodes'+str(ar.rank)+spaceSuffix+str(meshStep)
+            elements_stem = 'elements'+spaceSuffix+str(meshStep)
+            nodes_stem    = 'nodes'+spaceSuffix+str(meshStep)
 
             self.arGrid = ar.write_grid(self.arGridCollection, gridName, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, Xdmf_NumberOfElements,
@@ -2544,7 +2608,7 @@ class XdmfWriter(object):
                               dtype=mesh.elementNodesArray)
             ar.write_geometry(self.arGrid, [Xdmf_NumberOfNodes, 3],
                               nodes_dataset, nodes_stem, dtype=mesh.nodeArray)
-            if init or meshChanged:
+            if writeMesh:
                 if ar.global_sync:
                     #c0p1 mapping for now
                     ar.create_dataset_sync(elements_dataset,
@@ -2676,10 +2740,8 @@ class XdmfWriter(object):
         gridName = self.setGridCollectionAndGridElements(init,ar,arGrid,t,spaceSuffix)
         self.mesh = mesh
         if self._needsGrid(t):
-            #this writer rewrote the nodes on every pass of the HDF5 path
             self._writeDiscontinuousVertexMesh(ar,gridName,mesh,spaceDim,t,tCount,
-                                               spaceSuffix,init,meshChanged,
-                                               nodes_every_pass=True)
+                                               spaceSuffix,init,meshChanged)
         return self.arGrid
     #def
     def writeVectorFunctionXdmf_LowestOrderMixed(self,ar,u,tCount=0,init=True,spaceSuffix="_RT0",name="velocity"):
