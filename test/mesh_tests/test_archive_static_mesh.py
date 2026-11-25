@@ -75,21 +75,47 @@ def _files(outdir):
     return sorted(f for f in os.listdir(outdir) if f.endswith(".h5"))
 
 
+def _family(m):
+    if m.group(1):
+        return m.group(1) + m.group(2), int(m.group(3))
+    return m.group(4) + (m.group(5) or ""), int(m.group(6))
+
+
 def _mesh_datasets(outdir):
-    """{family: sorted steps} over every .h5 of the archive (a family: the dataset name without its step)."""
+    """{family: sorted steps} of the mesh arrays written, over every .h5 of the archive (a family: the dataset name
+    without its step); the soft links a step that reuses an array gets (Archiver._writeAliases) are not counted."""
     found = {}
     for name in _files(outdir):
         with h5py.File(os.path.join(outdir, name), "r") as f:
             for key in f.keys():
                 m = MESH_FAMILY.match(key)
-                if m is None:
+                if m is None or isinstance(f.get(key, getlink=True), h5py.SoftLink):
                     continue
-                if m.group(1):
-                    family, step = m.group(1) + m.group(2), int(m.group(3))
-                else:
-                    family, step = m.group(4) + (m.group(5) or ""), int(m.group(6))
+                family, step = _family(m)
                 found.setdefault(family, set()).add(step)
     return {k: sorted(v) for k, v in found.items()}
+
+
+def _step_names_resolve(outdir):
+    """Every mesh array can be opened by its per-step name at every step (a dataset, or a link to the step it was
+    written at): what the readers that build ``nodesSpatial_Domain%d`` themselves rely on. Returns the links,
+    {name: target}."""
+    links = {}
+    for name in _files(outdir):
+        with h5py.File(os.path.join(outdir, name), "r") as f:
+            families = {}
+            for key in f.keys():
+                m = MESH_FAMILY.match(key)
+                if m is None:
+                    continue
+                link = f.get(key, getlink=True)
+                if isinstance(link, h5py.SoftLink):
+                    links[key] = link.path
+                    assert f[key].shape == f[link.path].shape          # resolves
+                families.setdefault(_family(m)[0], set()).add(_family(m)[1])
+            for family, steps in families.items():
+                assert steps == set(range(FRAMES)), (name, family, sorted(steps))
+    return links
 
 
 def _mesh_bytes(outdir):
@@ -97,7 +123,7 @@ def _mesh_bytes(outdir):
     for name in _files(outdir):
         with h5py.File(os.path.join(outdir, name), "r") as f:
             for key in f.keys():
-                if MESH_FAMILY.match(key):
+                if MESH_FAMILY.match(key) and not isinstance(f.get(key, getlink=True), h5py.SoftLink):
                     total += f[key].size * f[key].dtype.itemsize
     return total
 
@@ -136,6 +162,8 @@ def test_a_static_mesh_is_archived_once(prefix, sync, driver, n_ranks, tmp_path)
     assert datasets and all(steps == [0] for steps in datasets.values()), datasets
     # every frame names the arrays of frame 0, and they are there
     assert _check_references(tmp_path) == [[0]] * FRAMES
+    links = _step_names_resolve(tmp_path)
+    assert links and all(re.search(r"\D0$", target) for target in links.values()), links
     # the last frame's mesh is the mesh, in the input order whatever the rank count
     info = MeshTools.readMeshYmf(prefix)
     canonical = MeshTools.readMeshFromArchive(str(tmp_path / "mesh"), inputOrder=True) if driver != "per-rank" else None
@@ -166,6 +194,7 @@ def test_a_moving_mesh_writes_its_nodes_every_frame_and_its_topology_once(prefix
         assert steps == (list(range(FRAMES)) if family.startswith("nodes") and "Map" not in family else [0]), \
             (family, steps)
     _check_references(tmp_path)
+    _step_names_resolve(tmp_path)
     # frame k's geometry is the mesh moved k times: y += 0.01 x per frame
     frames = _frames(tmp_path)
     from ymf.archive import load_array
@@ -186,6 +215,7 @@ def test_an_adapted_mesh_writes_its_topology_again(prefix, n_ranks, tmp_path):
     for family, steps in _mesh_datasets(tmp_path).items():
         assert steps == [0, change], (family, steps)
     assert _check_references(tmp_path) == [[0]] * change + [[change]] * (FRAMES - change)
+    _step_names_resolve(tmp_path)
     for k, grids in enumerate(_frames(tmp_path)):
         (grid,) = grids
         assert grid["geometry"]["data_item"]["dimensions"][0] == nodes[k]

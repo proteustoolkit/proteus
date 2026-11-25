@@ -42,7 +42,8 @@ def _parun(cwd, ranks, deck, options, *extra, final=FINAL):
     if mpiexec is None:
         pytest.skip("needs mpiexec")
     cmd = [mpiexec, "-n", str(ranks)] + cmd
-    env = dict(os.environ, OMP_NUM_THREADS="1")
+    # the partition pinned (the stop, hot and uninterrupted runs must partition alike for the state to be read)
+    env = dict(os.environ, OMP_NUM_THREADS="1", PETSC_OPTIONS="-mat_partitioning_type current")
     env.setdefault("OMPI_MCA_rmaps_base_oversubscribe", "1")
     env.setdefault("PRTE_MCA_rmaps_default_mapping_policy", ":oversubscribe")
     ran = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=900)
@@ -61,7 +62,10 @@ def _spatial_mesh_steps(h5):
     with h5py.File(h5, "r") as f:
         for k in f:
             m = re.match(r"^(elements|nodes)(\d*)Spatial_Domain(\d+)$", k)
-            if m:
+            if m and isinstance(f.get(k, getlink=True), h5py.SoftLink):
+                # a step that reuses an earlier step's array has a link by its own name, to that array
+                assert f[k].shape == f[f.get(k, getlink=True).path].shape, k
+            elif m:
                 found.setdefault(m.group(1) + m.group(2), []).append(int(m.group(3)))
     return {k: sorted(v) for k, v in found.items()}
 
@@ -104,6 +108,9 @@ def test_a_run_stopped_at_frame_2_of_a_static_mesh_and_hot_started_reproduces_th
     # the first frame after the hot start (3) writes the mesh again; frames 0-2 still name frame 0's
     assert all(steps == [0, 3] for steps in _spatial_mesh_steps(hot / h5).values()), _spatial_mesh_steps(hot / h5)
     _check_references(hot, name)
+    with h5py.File(hot / h5, "r") as f:                  # the per-step names readers build themselves resolve
+        for k in range(len(times)):
+            assert "nodesSpatial_Domain%d" % k in f and "elementsSpatial_Domain%d" % k in f, k
     with h5py.File(full / h5, "r") as a, h5py.File(hot / h5, "r") as b:
         fields = [k for k in a if k.endswith("_t%d" % last) and k in b and a[k].dtype.kind == "f"
                   and not k.startswith(("nodeMaterial", "elementMaterial"))]

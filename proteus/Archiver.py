@@ -277,6 +277,10 @@ class AR_base(object):
         #the step each mesh array was last written at, and the mesh epoch it
         #was written for, by dataset name without the step (mesh_step)
         self._meshSteps = {}
+        #(name at this step, name of the dataset it refers to) for the mesh arrays a step reuses
+        #(_aliasEarlierStep); made soft links in the file at sync (_writeAliases)
+        self._meshAliases = []
+        self._gridStep = None
         comm_world = self.comm.comm.tompi4py()
         self.domain = ArchiveDomain()
         if self.inline and (hotStart or readOnly):
@@ -895,6 +899,8 @@ class AR_base(object):
 
     def close(self):
         logEvent("Closing Archive")
+        if not self.readOnly:
+            self._writeAliases()
         if self.writesDocument and not self.readOnly:
             self.gatherAndWriteTimes()
         if self.hdfFile is not None:
@@ -1025,6 +1031,7 @@ class AR_base(object):
     def sync(self):
         logEvent("Syncing Archive",level=3)
         memory()
+        self._writeAliases()
         self.allGatherIncremental()
         #the step is stored; drop its grids so the domain stays one step deep
         self.domain.clear_step()
@@ -1249,6 +1256,10 @@ class AR_base(object):
         mpio driver, and every rank calls this with the same arguments.
         """
         dtype = numpy.dtype(dtype)
+        if isinstance(self.hdfFile.get(name, getlink=True), h5py.SoftLink):
+            #a mesh array's alias (_writeAliases) from the run being continued: the step writes its own now,
+            #which must not go into the array the link names
+            del self.hdfFile[name]
         if name in self.hdfFile:
             existing = self.hdfFile[name]
             if existing.shape == tuple(shape) and existing.dtype == dtype:
@@ -1399,6 +1410,7 @@ class AR_base(object):
             attribute(name, item, center=center, attribute_type=rank))
 
         if not write_data:
+            self._aliasEarlierStep(dataset_name, tCount)
             return item
         if self.writesDatasets:
             if self.global_sync:
@@ -1422,7 +1434,40 @@ class AR_base(object):
         it with :meth:`write_topology`, :meth:`write_geometry` and
         :meth:`write_field`.
         """
+        self._gridStep = tCount
         return collection.new_grid(t, tCount, grid_name)
+
+    def _aliasEarlierStep(self, dataset, step):
+        """Record that the grid of ``step`` names ``dataset``, a mesh array of an earlier step (mesh_step), so that
+        the name it would have had at ``step`` is made a soft link to it: a reader that opens the mesh arrays by
+        their per-step names (``nodesSpatial_Domain%d % step``, post-processing scripts, several tests) still finds
+        them, at no cost in array bytes. A dataset name ends with the step it was written at."""
+        import re
+        if step is None or not self.writesDatasets:
+            return
+        m = re.match(r"^(.*\D)(\d+)$", dataset)
+        if m is not None and int(m.group(2)) < step:
+            self.__dict__.setdefault("_meshAliases", []).append((m.group(1) + str(step), dataset))
+
+    def _writeAliases(self):
+        """Make the recorded aliases soft links in the file (collective: every rank calls it, at sync and close).
+
+        Under the mpio driver link creation is collective, so the ranks' aliases are gathered and every rank
+        creates every link, as create_dataset_async creates every dataset; with the serial driver master
+        creates them all; with per-rank files each rank its own. A name that is already there (a later step of a
+        run being continued after a hot start) is replaced."""
+        aliases, self._meshAliases = self.__dict__.get("_meshAliases", []), []
+        if self.inline or not self.writesDatasets:
+            return
+        if self.driver != "per-rank" and self.size > 1:
+            aliases = [a for rank in self.comm.comm.tompi4py().allgather(aliases) for a in rank]
+        aliases = sorted(set(aliases))
+        if self.hdfFile is None or not aliases:
+            return
+        for name, target in aliases:
+            if name in self.hdfFile or self.hdfFile.get(name, getlink=True) is not None:
+                del self.hdfFile[name]
+            self.hdfFile[name] = h5py.SoftLink("/" + target)
 
     #: what each kind of mesh array is made from (MeshTools.Mesh.archiveEpoch)
     MESH_TOPOLOGY = ("topology",)
@@ -1448,9 +1493,10 @@ class AR_base(object):
         A key this archive has not written yet (the first frame, or the first after a hot start) is written.
         """
         epoch = mesh.archiveEpoch(self.comm, kinds, tCount)
-        written = self._meshSteps.get(key)
+        steps = self.__dict__.setdefault("_meshSteps", {})
+        written = steps.get(key)
         if force or written is None or written[1] != epoch:
-            self._meshSteps[key] = (tCount, epoch)
+            steps[key] = (tCount, epoch)
             return tCount, True
         return written[0], False
 
@@ -1495,7 +1541,7 @@ class AR_base(object):
     def mesh_step_of(self, key, tCount):
         """The step whose dataset holds ``key`` at ``tCount``, for a grid that names another writer's array
         (the spaces that reuse the spatial mesh's datasets) right after that writer's ``mesh_step``."""
-        written = self._meshSteps.get(key)
+        written = self.__dict__.get("_meshSteps", {}).get(key)
         return tCount if written is None else written[0]
 
     def write_topology(self, grid, topology_type, n_elements, dimensions,
@@ -1545,6 +1591,7 @@ class AR_base(object):
         dtypes = dtype if isinstance(dtype, tuple) else (dtype,)
         kind = xdmf_number_type(*dtypes)
         if self.writesDatasets:
+            self._aliasEarlierStep(dataset, self.__dict__.get("_gridStep"))
             reference = {"data": "{0:s}:/{1:s}".format(self.hdfFilename, dataset)}
         else:
             reference = {"include": "./{0:s}/{1:s}.txt".format(self.textDataDir,

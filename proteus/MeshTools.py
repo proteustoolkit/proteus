@@ -1289,7 +1289,7 @@ class Mesh(object):
             # when it is not the identity): what puts an archive back in the input order, whatever the
             # rank count (inInputOrder, meshFingerprint).
             if self.globalMesh is not None:
-                self._writeInputNumbering(ar, name, topologyStep, writeTopology)
+                self._writeInputNumbering(ar, name, tCount, topologyStep, writeTopology)
                 self._writeFingerprint(ar, init, writeNodes and not init)
                 if init and getattr(ar, "driver", None) == "per-rank" and ar.hdfFile is not None:
                     _writeSubdomainView(self, ar, name)
@@ -1342,7 +1342,7 @@ class Mesh(object):
                                    write_data=writeMaterials)
             #done with material types
 
-    def _writeInputNumbering(self, ar, name, step, write_data):
+    def _writeInputNumbering(self, ar, name, tCount, step, write_data):
         """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering):
         the datasets of archive step ``step``, the one the mesh's topology was last written at."""
         g = self.globalMesh
@@ -1356,11 +1356,11 @@ class Mesh(object):
                 continue
             data = local_input
             if ar.global_sync:
-                ar.write_field(self.arGrid, attribute, data, step, center=center, dimensions=[n_global],
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[n_global],
                                sync_offsets=offsets, sync_data=data[:offsets[rank+1] - offsets[rank]],
                                dataset=attribute+name+str(step), write_data=write_data)
             else:
-                ar.write_field(self.arGrid, attribute, data, step, center=center, dimensions=[len(data)],
+                ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[len(data)],
                                dataset=attribute+str(rank)+name+str(step), text_stem=attribute+name,
                                write_data=write_data)
 
