@@ -19,12 +19,18 @@ raised to today's value only when that is at least a point (RISE_PP) above it
 -- the modules in the "at least a point above the floor" table -- so a floor
 never chases the tenths a run's MPI timing can move. Every other floor stays.
 
+A floor can also name a part of the package instead of one module, for the code a decision measures on its own:
+a key ending in "/" is an aggregate (``"proteus/kernels/"``: every module under it counted together, one number for
+the kernel package), a key ``<module>::<Class>`` is one class of a module (``"proteus/StepControl.py::Fixed_dt_controller_systemit"``:
+the statements between the class's first and last line). They are checked and raised like a module's floor.
+
 A floor may instead be a string: the module is measured and listed with that
 reason, but not checked (a module waiting for its first test, or one excluded
 until a campaign decides its fate). --write-floors leaves those entries as
 they are; turning one into a number is a reviewed edit.
 """
 import argparse
+import ast
 import json
 import math
 import os
@@ -51,18 +57,62 @@ def module_name(filename, source=''):
     return path
 
 
-def measure(report):
-    """{module: (statements, covered)} from a Cobertura report."""
-    modules = {}
+def read_report(report):
+    """({module: (statements, covered)}, {module: {line number: hits}}, source directory) from a Cobertura report."""
+    modules, lines_of = {}, {}
     root = ET.parse(report).getroot()
     sources = [s.text or '' for s in root.iter('source')]
     source = sources[0] if len(sources) == 1 else ''
     for cls in root.iter('class'):
-        lines = [int(line.get('hits')) for line in cls.iter('line')]
         name = module_name(cls.get('filename'), source)
+        lines = {int(line.get('number')): int(line.get('hits')) for line in cls.iter('line')}
         statements, covered = modules.get(name, (0, 0))
-        modules[name] = (statements + len(lines), covered + sum(1 for hits in lines if hits > 0))
-    return modules
+        modules[name] = (statements + len(lines), covered + sum(1 for hits in lines.values() if hits > 0))
+        lines_of.setdefault(name, {}).update(lines)
+    return modules, lines_of, source
+
+
+def measure(report):
+    """{module: (statements, covered)} from a Cobertura report."""
+    return read_report(report)[0]
+
+
+def class_span(path, class_name):
+    """(first, last) line of a top-level class in a Python file, or None."""
+    try:
+        with open(path) as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return node.lineno, node.end_lineno
+    return None
+
+
+def parts(floors, modules, lines_of, source):
+    """{floor key: (statements, covered)} for the floors that name a part of the package (see the docstring):
+    an aggregate ("proteus/kernels/") or one class ("proteus/StepControl.py::Fixed_dt_controller_systemit").
+    A part that cannot be found is left out, so it is reported as a floor for something no longer measured."""
+    found = {}
+    for key in floors:
+        if key.endswith('/'):
+            members = [v for name, v in modules.items() if name.startswith(key)]
+            if members:
+                found[key] = (sum(s for s, _ in members), sum(c for _, c in members))
+        elif '::' in key:
+            module, _, class_name = key.partition('::')
+            if module not in lines_of:
+                continue
+            # the report's file names are relative to its <source> (a combined report) or absolute (one run's)
+            path = os.path.join(source, module[len('proteus/'):]) if source else module
+            span = class_span(path, class_name)
+            if span is None:
+                continue
+            lines = [h for n, h in lines_of[module].items() if span[0] <= n <= span[1]]
+            if lines:
+                found[key] = (len(lines), sum(1 for h in lines if h > 0))
+    return found
 
 
 def percent(statements, covered):
@@ -160,21 +210,25 @@ def main(argv=None):
     parser.add_argument('--partial', action='store_true')
     parser.add_argument('--write-floors', action='store_true')
     args = parser.parse_args(argv)
-    modules = measure(args.report)
+    modules, lines_of, source = read_report(args.report)
     floors = {}
     if os.path.exists(args.floors):
         with open(args.floors) as f:
             floors = json.load(f)
-    drops, rises, new, unchecked, gone = compare(modules, floors)
+    # the floors of parts (aggregates, classes) are checked beside the modules'; the tables list modules only
+    named = parts(floors, modules, lines_of, source)
+    drops, rises, new, unchecked, gone = compare({**modules, **named}, floors)
+    new = [n for n in new if n[0] in modules]
     sys.stdout.write(tables(modules, drops, rises, new, unchecked, gone, args.partial))
     # a report whose module names do not match the floors' checks nothing, and would pass
-    if floors and not args.write_floors and len(set(floors) & set(modules)) < len(floors) // 2:
+    module_floors = [k for k in floors if not (k.endswith('/') or '::' in k)]
+    if module_floors and not args.write_floors and len(set(module_floors) & set(modules)) < len(module_floors) // 2:
         sys.stderr.write('only %d of %d floors name a module in this report (first module: %s): '
                          'the report and the floors disagree about module names\n'
-                         % (len(set(floors) & set(modules)), len(floors), min(modules) if modules else 'none'))
+                         % (len(set(module_floors) & set(modules)), len(module_floors), min(modules) if modules else 'none'))
         return 1
     if args.write_floors:
-        write_floors(args.floors, modules, floors)
+        write_floors(args.floors, {**modules, **named}, floors)
         return 0
     if drops:
         sys.stderr.write('%d module(s) below their coverage floor: %s\n'

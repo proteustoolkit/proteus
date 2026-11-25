@@ -74,6 +74,8 @@ def run(args):
         return 2
 
     from proteus import Context, Profiling
+    # Comm.init() starts PETSc without setting it, and openLog asserts on it (pro run sets it the same way)
+    Profiling.procID = comm.rank()
     if args.verbose:
         Profiling.verbose = True
     if args.log_level > 0:

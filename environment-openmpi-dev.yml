@@ -81,6 +81,10 @@ dependencies:
   # errors without it, because the pure-Python dumper is ~3.2x slower and the
   # archive is written every timestep. conda-forge's pyyaml is built with it.
   - pyyaml =6.0.2
+  # conda-forge yaml 0.2.6 ships libyaml-0.1.dylib, but pyyaml 6.0.3 and petsc4py are built against libyaml-0.2.dylib
+  # (yaml >=0.2.5,<0.3): on macOS a fresh solve gets 0.2.6 and `import petsc4py` fails with 'Library not loaded:
+  # @rpath/libyaml-0.2.dylib'. Written as a range so the off-lock legs' pin-to-floor rewrite leaves it alone.
+  - yaml >=0.2.5,<0.2.6
   # ymf itself has no conda-forge feedstock yet, so it is installed from PyPI
   # with pip, at a floor (not a moving git branch): ymf 0.3.0 at @main broke
   # main's test/dispatch for half a day on 2026-11-17/18 and every run that
