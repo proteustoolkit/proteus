@@ -172,6 +172,9 @@ TI TimeIntegration SSPRKPIintegration unmeasured
 TI TimeIntegration VBDF state
 TI kernels.GN_SW2DCV RKEV state
 TI kernels.NCLS RKEV state
+# SW2DCV RKEV: also carries transport.hEps (eps * max h of the INITIAL condition, built once in initDataStructures; a
+# hot start would build it from the archive's depth: 2e-7 relative, 1e-4 in the dofs one output interval on, circular
+# dam break). dtLast is overwritten by updateTimeHistory before choose_dt reads it: measured not needed
 TI kernels.SW2DCV RKEV state
 # CompatibleBackwardEuler: the compatible transport's carried storage M lives on TADR.LevelModel
 # (carriedStorage); a hot start reseeds it with the flow's m^n
