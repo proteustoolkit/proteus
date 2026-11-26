@@ -1061,10 +1061,21 @@ class AR_base(object):
                 if i == self.rank:
                     dataset[:] = data
             return
-        pieces = comm_world.gather((name, data))
+        data = numpy.asarray(data)
+        meta = comm_world.gather((name, data.shape, data.dtype.str))
+        targets = []
         if self.comm.isMaster():
-            for piece_name, piece in pieces:
-                self._store(piece_name, numpy.asarray(piece))
+            for piece_name, shape, dtype in meta:
+                targets.append(numpy.empty(shape, dtype) if self.inline else self._dataset(piece_name, shape, dtype))
+        def write(r, lo, rows):
+            if len(targets[r].shape) == 0:
+                targets[r][()] = rows.reshape(())
+            else:
+                targets[r][lo:lo + rows.shape[0]] = rows
+        self._rows_to_master(data, [(shape, dtype) for _, shape, dtype in meta or []], write)
+        if self.comm.isMaster() and self.inline:
+            for (piece_name, _, _), target in zip(meta, targets):
+                self._inlineArrays[piece_name] = target
     def create_dataset_sync(self,name,offsets,data):
         """Write one global array, each rank contributing the slice it owns.
 
@@ -1085,12 +1096,64 @@ class AR_base(object):
             dataset[offsets[self.rank]:offsets[self.rank+1]] = data
             return
         comm_world = self.comm.comm.tompi4py()
-        pieces = comm_world.gather(data)
+        data = numpy.asarray(data)
+        meta = comm_world.gather((data.shape, data.dtype.str))
+        full = None
         if self.comm.isMaster():
-            full = numpy.empty(tuple([int(offsets[-1])]+list(data.shape[1:])), data.dtype)
-            for r, piece in enumerate(pieces):
-                full[int(offsets[r]):int(offsets[r+1])] = piece
-            self._store(name, full)
+            shape = tuple([int(offsets[-1])]+list(data.shape[1:]))
+            full = numpy.empty(shape, data.dtype) if self.inline else self._dataset(name, shape, data.dtype)
+        def write(r, lo, rows):
+            first = int(offsets[r]) + lo
+            full[first:first + rows.shape[0]] = rows
+        self._rows_to_master(data, meta, write)
+        if self.comm.isMaster() and self.inline:
+            self._inlineArrays[name] = full
+
+    #: the most bytes one message carries when the serial driver (or an inline document) brings a rank's
+    #: array to master. MPI counts are 32-bit ints in Intel MPI 2021 and others: a pickled gather of more
+    #: than 2 GiB raises "Invalid argument" there (Mike 954316, QB 1202709), and a gather puts every rank's
+    #: array on master at once, twice over with the copy it assembles (318 of 335 GB on a Carpenter node).
+    TRANSFER_CHUNK_BYTES = 1 << 28
+    #: the tag of those messages (point to point on the world communicator, received in rank order)
+    TRANSFER_TAG = 7213
+
+    def _rows_to_master(self, data, meta, write):
+        """Bring every rank's array to master one rank and one piece at a time.
+
+        ``data`` is this rank's array; on master ``meta`` lists every rank's ``(shape, dtype)`` (it is
+        ignored elsewhere). Master calls ``write(rank, first_row, rows)`` for each non-empty piece, in rank order,
+        rank 0's own array in one call; the other ranks send theirs in pieces of whole rows of at most
+        :attr:`TRANSFER_CHUNK_BYTES` (one row when a row is larger), received into one reused buffer. So
+        master never holds another rank's array whole, and no message reaches MPI's 32-bit count limit.
+        A 0-d array travels as one row of one item. Collective over the world communicator.
+        """
+        from mpi4py import MPI
+        comm_world = self.comm.comm.tompi4py()
+        def pieces(shape, dtype):
+            rows = int(shape[0]) if len(shape) else 1
+            rowbytes = int(numpy.prod(shape[1:], dtype='int64')) * numpy.dtype(dtype).itemsize
+            return rows, max(1, self.TRANSFER_CHUNK_BYTES // max(1, rowbytes))
+        data = numpy.ascontiguousarray(data)
+        if not self.comm.isMaster():
+            rows, step = pieces(data.shape, data.dtype)
+            flat = data.reshape((rows,) + data.shape[1:])
+            for lo in range(0, rows, step):
+                piece = flat[lo:lo + step]
+                if piece.size:
+                    comm_world.Send([piece, piece.nbytes, MPI.BYTE], dest=0, tag=self.TRANSFER_TAG)
+            return
+        if data.size:
+            write(0, 0, data.reshape((pieces(data.shape, data.dtype)[0],) + data.shape[1:]))
+        for r in range(1, self.size):
+            shape, dtype = meta[r]
+            shape = tuple(int(n) for n in shape)
+            rows, step = pieces(shape, dtype)
+            buffer = numpy.empty((min(step, rows),) + shape[1:], dtype)
+            for lo in range(0, rows, step):
+                piece = buffer[:min(step, rows - lo)]
+                if piece.size:
+                    comm_world.Recv([piece, piece.nbytes, MPI.BYTE], source=r, tag=self.TRANSFER_TAG)
+                    write(r, lo, piece)
     #: the companions of a records dataset ``<name>`` (:meth:`create_rank_records`)
     RECORDS_INDEX_SUFFIX = ".index"
     RECORDS_KEYS_SUFFIX = ".keys"
@@ -1162,8 +1225,12 @@ class AR_base(object):
         index = numpy.zeros((self.size, width), dtype='int64') if self.rank == 0 else None
         if self.driver != "per-rank":
             comm_world.Gather(row, index, root=0)
-        mine = b"".join(a.astype(d, copy=False).tobytes() for a, d in zip(arrays, dtypes))
-        mine = numpy.frombuffer(mine, dtype='uint8')
+        #the rank's bytes, filled in place (a join of tobytes() held them twice over)
+        mine = numpy.empty((offset,), dtype='uint8')
+        for j, (a, d) in enumerate(zip(arrays, dtypes)):
+            first = int(row[0, 3 + j * (2 + maxndim)])
+            if a.size:
+                mine[first:first + a.size * d.itemsize] = numpy.ascontiguousarray(a, dtype=d).reshape(-1).view('uint8')
         meta = numpy.frombuffer(json.dumps({"keys": keys, "dtypes": [d.str for d in dtypes]}).encode(),
                                 dtype='uint8')
         index_name = name + self.RECORDS_INDEX_SUFFIX
@@ -1186,9 +1253,17 @@ class AR_base(object):
             if self.rank == 0 and meta.size:
                 dataset[...] = meta
             return True
-        pieces = comm_world.gather(mine)
+        #the serial driver: master writes the ranks' bytes one rank and one piece at a time (_rows_to_master)
+        target = None
         if self.comm.isMaster():
-            self._store(name, numpy.concatenate(pieces) if pieces else mine)
+            target = numpy.empty((total,), 'uint8') if self.inline else self._dataset(name, (total,), 'uint8')
+        def write(r, lo, piece):
+            first = int(index[r, 1]) + lo
+            target[first:first + piece.shape[0]] = piece
+        self._rows_to_master(mine, None if index is None else [((int(n),), 'uint8') for n in index[:, 2]], write)
+        if self.comm.isMaster():
+            if self.inline:
+                self._inlineArrays[name] = target
             self._store(index_name, index)
             self._store(keys_name, meta)
         return True
