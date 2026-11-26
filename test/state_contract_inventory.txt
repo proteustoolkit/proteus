@@ -18,6 +18,11 @@
 #               ShockCapturing.ResGradQuad_SC (and ResGrad_SC, HamiltonJacobi_SC: LaggedNumDiffState, the array the residual
 #               reads, written back in place) is measured by test_state_oracle.py on test/ci/ladr_2d (lag=True): dofs
 #               0.07-0.12 off one interval after a hot start before, bitwise after; the other two are the same code, no deck.
+#               SubgridError.AdvectionDiffusionReaction_ASGS, HamiltonJacobi_ASGS and HamiltonJacobiDiffusionReaction_ASGS with
+#               lag=True (LaggedSGEState: tau_last and the lagged *_sge arrays, written back in place; HamiltonJacobi_ASGS_opt
+#               has its own): the first is measured by test_state_oracle.py on test/ci/ladr_2d_sglag (dofs 3e-2 off one interval
+#               after a hot start before, bitwise after); the other two are the same code, tested by test_lagged_sge_state.py.
+#               The TransientSubscales variant tracks subscales too and stays `unmeasured`.
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
@@ -72,13 +77,13 @@ SC kernels.VOS3P ShockCapturing state
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionTransientSubscales_ASGS unmeasured
-SG SubgridError AdvectionDiffusionReaction_ASGS unmeasured
+SG SubgridError AdvectionDiffusionReaction_ASGS state
 SG SubgridError AdvectionLag_ASGS unmeasured
 SG SubgridError Advection_ASGS unmeasured
 SG SubgridError DarcyFC_ASGS unmeasured
 SG SubgridError FFDarcyFC_ASGS unmeasured
-SG SubgridError HamiltonJacobiDiffusionReaction_ASGS unmeasured
-SG SubgridError HamiltonJacobi_ASGS unmeasured
+SG SubgridError HamiltonJacobiDiffusionReaction_ASGS state
+SG SubgridError HamiltonJacobi_ASGS state
 SG SubgridError HamiltonJacobi_ASGS_opt state
 SG SubgridError NavierStokesASGS_velocity_pressure unmeasured
 SG SubgridError NavierStokesASGS_velocity_pressure_opt unmeasured

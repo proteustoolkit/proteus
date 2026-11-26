@@ -25,6 +25,7 @@ DECKS = {
     "damBreakLevelSet": ('DECK=damBreakLevelSet.py OPTS="he=0.1" FT=0.1 DTOUT=0.02', "0.04,0.06"),
     "damBreakLevelSet_turbulence": ('DECK=damBreakLevelSet.py OPTS="he=0.1 turbulence=1" FT=0.1 DTOUT=0.02', "0.04,0.06"),
     "ladr_2d": ('DIR=ci SO="ladr_2d_p.py ladr_2d_n.py"', "0.1,0.125"),
+    "ladr_2d_sglag": ('DIR=ci SO="ladr_2d_p.py ladr_2d_sglag_n.py"', "0.1,0.125"),
     "circular_damBreak_sw2dcv": ('DIR=SWFlow SO="--SWEs circular_damBreak.py" OPTS="sw_model=0 final_time=0.3 dt_output=0.1"',
                                  "0.1,0.2"),
 }
