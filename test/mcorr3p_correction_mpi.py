@@ -3,7 +3,7 @@
 
 CORRECTION = newton (the deck's own), dg (MCorr3P.ElementNewton), dgp0 (ElementConstantNewton), global (GlobalConstantNewton)
 or none (DummyNewton), the same names as the ``correctionType`` of the vortex2D deck. After the run rank 0 writes mcorr3p.json: the solver class the model
-used, the model's mass conservation error and the number of distinct values of its dofs.
+used, the model's mass conservation error, the number of distinct values of its dofs and the largest |q_u| (the correction at the quadrature points).
 """
 import json
 import os
@@ -49,7 +49,8 @@ def calc(self, *a, **k):
             json.dump(dict(solver=type(m.solver.solverList[-1]).__name__,
                            mass_error=float(mc.coefficients.massConservationError),
                            finite=bool(np.isfinite(mc.u[0].dof).all()),
-                           distinct=int(len(np.unique(mc.u[0].dof[:mc.mesh.nNodes_owned])))), f)
+                           distinct=int(len(np.unique(mc.u[0].dof[:mc.mesh.nNodes_owned]))),
+                           qu_max=float(np.abs(mc.q[("u", 0)]).max())), f)
     return r
 
 
