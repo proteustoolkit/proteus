@@ -29,6 +29,10 @@
 # as *_old_old fields nobody reads); the PUMI hot start reloads it from its checkpoint and is right. A kernel that
 # starts reading it must archive dof_last and skip the first shift on a continue hot start.
 #
+# The state oracle (state_oracle.py, test_state_oracle.py, state_oracle_allowlist.txt) measures a hot start on whole decks
+# without reading a class: every array and scalar the models hold, hot start vs the uninterrupted run, by attribute path.
+# Its `gap` rows are the decks where an owner is known not to be restored (C14 note, section 3).
+#
 # family  module  class  category
 SC ShockCapturing Eikonal_SC unmeasured
 SC ShockCapturing HamiltonJacobiJaffre_SC unmeasured
