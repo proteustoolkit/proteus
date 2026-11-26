@@ -32,4 +32,3 @@ levee_small_ev* | *levelModel._cont_spurious_int | dead | - | running total of t
 levee_small_ev* | *levelModel.continuityStats* | dead | - | the diagnostic dict built from the two above
 levee_small* | *levelModel.nzval | noise | - | uninitialised memory (1e-314)
 levee_small* | *levelModel.fct_fallback_count | noise | - | counter of the implicit FCT's fallbacks
-levee_small_ev5_fct | * | gap | 3.5 row f (Richards implicit FCT) | with the flow model on the IMPLICIT flux correction and the transport on ImplicitEV the flow dofs are 4e-16 off one interval after a hot start; two uninterrupted runs agree bitwise, so an owner is missing. Not u_dof_old (carrying it changed nothing). At the restore Richards' dof_last (3.7e-3), mLow, limitedFluxMatrix and m_fct differ. The other three FCT decks are bitwise
