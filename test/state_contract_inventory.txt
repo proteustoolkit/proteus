@@ -15,6 +15,9 @@
 #               after); kernels.TADR, VOS3P and RANS3PSed carry the same machine (DelayedLagState) and are tested only by
 #               test_delayed_lag_state.py: no deck of theirs has been hot started yet. kernels.SW2D's (the same machine, in
 #               kernels/SW2D.py, track B1's file until cekees/proteus#358 merges) is still `unmeasured`.
+#               ShockCapturing.ResGradQuad_SC (and ResGrad_SC, HamiltonJacobi_SC: LaggedNumDiffState, the array the residual
+#               reads, written back in place) is measured by test_state_oracle.py on test/ci/ladr_2d (lag=True): dofs
+#               0.07-0.12 off one interval after a hot start before, bitwise after; the other two are the same code, no deck.
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
@@ -41,7 +44,7 @@
 # family  module  class  category
 SC ShockCapturing Eikonal_SC unmeasured
 SC ShockCapturing HamiltonJacobiJaffre_SC unmeasured
-SC ShockCapturing HamiltonJacobi_SC unmeasured
+SC ShockCapturing HamiltonJacobi_SC state
 SC ShockCapturing JaffreGradU_SC unmeasured
 SC ShockCapturing NavierStokes_SC unmeasured
 SC ShockCapturing NavierStokes_SC_opt unmeasured
@@ -50,8 +53,8 @@ SC ShockCapturing ResGradFFDarcyDelayLag_SC unmeasured
 SC ShockCapturing ResGradFFDarcy_SC unmeasured
 SC ShockCapturing ResGradJuanes_SC unmeasured
 SC ShockCapturing ResGradQuadDelayLag_SC unmeasured
-SC ShockCapturing ResGradQuad_SC unmeasured
-SC ShockCapturing ResGrad_SC unmeasured
+SC ShockCapturing ResGradQuad_SC state
+SC ShockCapturing ResGrad_SC state
 SC ShockCapturing ScalarAdvection_SC unmeasured
 SC kernels.Dissipation ShockCapturing state
 SC kernels.Kappa ShockCapturing state
