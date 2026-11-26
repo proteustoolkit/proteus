@@ -8,6 +8,8 @@ unrun, the ones that depend on options or state the deck does not set. The insta
 - ``ISO_fixed_MinModelStep.setFromOptions`` reads ``atol_iso`` and ``velocity_Postprocess`` from the options object when it has them and
   resets ``velocity_Postprocess`` otherwise; ``SysNorm`` is the signed maximum of the residuals (the 2012 code's choice, kept for fidelity),
   so a large negative residual does not block convergence;
+- ``ISO_fixed_MinModelStep.sequenceTaken`` resets ``stepFailures`` when the iteration has converged and the sequence is accepted, like
+  every other system step controller (it kept the count for the whole run: C14 note 3.2 row 17);
 - ``Fixed_dt_controller_systemit.choose_dt_model`` sets the model step to ``DT`` (and keeps the first one as ``dt_model_last``),
   ``stepExact_model`` leaves the step alone;
 - ``NonConservativeBackwardEuler.calculateGeneralizedInterpolationCoefficients`` does nothing without ``integrateInterpolationPoints``, and
@@ -104,3 +106,43 @@ def test_interpolation_point_coefficients_are_the_non_conservative_time_derivati
     assert numpy.allclose(cip[('dmt', 0, 0)], 2.0 / 0.5) and numpy.allclose(cip[('dmt', 1, 0)], 3.0 / 0.5)
     assert numpy.allclose(cip[('dmt_sge', 0, 1)], 6.0 / 0.5)
     assert numpy.array_equal(t.m_ip_tmp[0], cip[('u', 0)]) and numpy.array_equal(t.m_ip_tmp[1], cip[('u', 1)])
+
+
+class _Steps(object):
+    def __init__(self):
+        self.calls = []
+
+    def updateTimeHistory(self):
+        self.calls.append("history")
+
+    def choose_dt_model(self):
+        self.calls.append("dt")
+
+
+class _Model(object):
+    def __init__(self, residual):
+        self.stepController = _Steps()
+        self.uList, self.rList = [numpy.zeros(3)], [numpy.array(residual, dtype=float)]
+        model = self
+
+        class _Level(object):
+            mesh = type("M", (), {"subdomainMesh": type("S", (), {"nNodes_owned": 3})()})()
+
+            def getResidual(self, u, r):
+                pass
+        self.levelModelList = [_Level()]
+
+
+def test_iso_resets_the_step_failures_when_the_sequence_is_accepted(opts):
+    iso = _iso()
+    iso.its, iso.convergence_flag, iso.stepFailures = 0, False, 2
+    iso.modelList = [_Model([1.0e-12, -1.0, 0.0])]
+    iso.sequenceTaken()  # first iteration: its == 1, converged residual: accepted
+    assert iso.convergence_flag and iso.stepFailures == 0
+    assert iso.modelList[0].stepController.calls == ["history", "dt"]
+    # not converged: the iteration goes on and the failure count stays
+    iso = _iso()
+    iso.its, iso.convergence_flag, iso.stepFailures = 0, False, 2
+    iso.modelList = [_Model([1.0, 0.0, 0.0])]
+    iso.sequenceTaken()
+    assert not iso.convergence_flag and iso.stepFailures == 2

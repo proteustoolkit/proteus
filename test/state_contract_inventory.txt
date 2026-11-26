@@ -23,6 +23,12 @@
 #               has its own): the first is measured by test_state_oracle.py on test/ci/ladr_2d_sglag (dofs 3e-2 off one interval
 #               after a hot start before, bitwise after); the other two are the same code, tested by test_lagged_sge_state.py.
 #               The TransientSubscales variant tracks subscales too and stays `unmeasured`.
+#               TimeIntegration LinearSSPRKintegration, LinearSSPRKPIintegration and SSPRKPIintegration (ExplicitRK_base) stay
+#               `unmeasured` and no hot start can measure them today: the decks that select them are the vortex/rotation ones, whose
+#               NCLS/VOF kernels fail to construct the integrator (no elementResidual yet, TimeIntegration.py:1833), and the DG decks
+#               (test/dg, dambreak_1d dgpk), whose space has no readFunctionXdmf, so `-H` stops before the first step.
+#               SplitOperator.ISO_fixed_MinModelStep's stepFailures is reset when the sequence is accepted (it kept the count for
+#               the whole run); it carries nothing else and stays `unmeasured` until a gwvd deck is hot started.
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;

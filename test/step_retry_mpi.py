@@ -55,6 +55,9 @@ def init(self, so, pList, nList, *args, **kwargs):
         delattr(args[1], "hotStartMode")
     if os.environ.get("STOPAT"):
         # STOPAT=t: the run ends at output time t (the stop run of a hot start, for any deck)
+        if so.tnList is None:  # a p/n pair without an so file: the output times NumericalSolution builds from nDTout
+            nout = nList[0].nDTout or 1
+            so.tnList = [float(i) * nList[0].T / float(nout) for i in range(nout + 1)]
         so.tnList = [t for t in so.tnList if t <= float(os.environ["STOPAT"]) + 1.0e-12]
     if os.environ.get("SYSTEMCONTROLLER"):
         # SYSTEMCONTROLLER=<class in proteus.SplitOperator>: run the deck under that system step controller
@@ -256,6 +259,9 @@ def calc(self, *a, **k):
         lm = mod.levelModelList[-1]
         for ci in range(lm.nc):
             x = getattr(lm.u[ci].femSpace.dofMap, "lagrangeNodesArray", lm.mesh.nodeArray)[:, :3]
+            if x.shape[0] != lm.u[ci].dof.shape[0]:  # a space without Lagrange nodes (DG): number the dofs
+                x = np.zeros((lm.u[ci].dof.shape[0], 3))
+                x[:, 0] = np.arange(x.shape[0])
             rows.append(np.hstack([np.full((x.shape[0], 1), 100 * mi + ci), x, lm.u[ci].dof[:, None]]))
     a = np.vstack(rows)
     # in parallel each rank writes its own dofs (owned and ghost), u<rank>.csv
