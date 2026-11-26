@@ -35,6 +35,11 @@
 #               rho_nodal of the edge-flux modes, and the Compatible scheme's carriedStorage. All measured on
 #               test/salinity/levee_small (density-coupled TADR on Richards; test_state_oracle.py levee_small, _ev4, _ev5):
 #               each removed in turn fails its deck, with the owners in, the dofs are bitwise one interval after a hot start.
+#               kernels.RANS2P.Coefficients also carries q/ebqe eddy_viscosity_last when a turbulence closure is on (the kernel
+#               lags it, LAG_LES; test_state_oracle.py damBreakLevelSet_smagorinsky: 4e-3 off at the restore, the velocity
+#               dofs 4.6e-4 off one interval later, bitwise with it). Richards' u_dof_old needs no state (the four levee decks
+#               with the flow on FCT are bitwise without it; the implicit-FCT + ImplicitEV one is 4e-16 off for another reason:
+#               a `gap` row of the allowlist).
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;

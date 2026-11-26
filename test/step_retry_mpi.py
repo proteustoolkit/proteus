@@ -36,6 +36,16 @@ for f in (glob.glob(os.path.join(SRC, "*")) if SO else [os.path.join(SRC, DECK)]
 from proteus import NonlinearSolvers, SplitOperator
 from proteus import NumericalSolution as NS
 
+if os.environ.get("CLOSURE"):
+    # CLOSURE=n: RANS2P's turbulenceClosureModel (1 Smagorinsky; the TwoPhaseFlow decks leave it at 0), so that a deck
+    # can measure the eddy viscosity the kernel lags (LAG_LES)
+    from proteus.kernels import RANS2P as _RANS2P
+    _coefficients_init = _RANS2P.Coefficients.__init__
+    def _closure_init(self, *args, **kwargs):
+        _coefficients_init(self, *args, **kwargs)
+        self.turbulenceClosureModel = int(os.environ["CLOSURE"])
+    _RANS2P.Coefficients.__init__ = _closure_init
+
 def boundary_integral_gauges(pList, nList):
     """BIGAUGES=flags (comma list): a BoundaryIntegralGauges of every quantity on those flags, with a moment point on
     the first, attached to the RANS2P/RANS3PF model; it writes boundary_integrals.csv."""

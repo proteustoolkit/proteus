@@ -1008,6 +1008,12 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         for name, v in vars(self).items():
             if name.startswith("ball_") and isinstance(v, np.ndarray) and v.dtype.kind == "f":
                 st["coef_" + name] = v.copy()
+        if self.turbulenceClosureModel:
+            # the eddy viscosity of the last step, which the kernel lags (RANS2P.h: nu += LAG_LES*eddy_viscosity_last);
+            # postStep moves it, and a hot start rebuilds it from the spin-up step (Smagorinsky: 4e-3 off at the restore,
+            # the velocity dofs 4.6e-4 off one interval later). Zero when there is no closure: not carried then.
+            st["q_eddy_viscosity_last"] = m.q['eddy_viscosity_last'].copy()
+            st["ebqe_eddy_viscosity_last"] = m.ebqe['eddy_viscosity_last'].copy()
         return st
 
     def set_state(self, state):
@@ -1019,6 +1025,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         for name, v in state.items():
             if name.startswith("coef_ball_"):
                 getattr(self, name[len("coef_"):])[:] = v
+        if "q_eddy_viscosity_last" in state:
+            m.q['eddy_viscosity_last'][:] = state["q_eddy_viscosity_last"]
+            m.ebqe['eddy_viscosity_last'][:] = state["ebqe_eddy_viscosity_last"]
 
     def postStep(self, t, firstStep=False):
         self.model.dt_last = self.model.timeIntegration.dt

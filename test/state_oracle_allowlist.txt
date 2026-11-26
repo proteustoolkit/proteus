@@ -26,7 +26,10 @@ damBreakLevelSet* | rdls.timeIntegration.tLast | derived | - | same
 damBreakLevelSet_turbulence | *coefficients.velocity_dof_w | dead | - | 2D: a copy of the flow's v taken at attach, whose only use is commented out (Dissipation2D.h:760, Kappa2D.h)
 circular_damBreak_sw2dcv | * | gap | 3.5 letters j, m (SW2D h/u/v_dof_sge; boundaryIndex built only when firstStep) | the hot start differs by ~1e-4 one interval on; to be attributed (reflectingBoundaryIndex is missing after the restore)
 levee_small | tranport_p.levelModel.compatibleBudget* | dead | - | output-only history of the budgets (one record per step): a hot start starts a new list, nothing reads it back
+levee_small_fct | tranport_p.levelModel.compatibleBudget* | dead | - | output-only history of the budgets (one record per step): a hot start starts a new list, nothing reads it back
 levee_small_ev* | *levelModel._solute_mass_0 | dead | - | the reference of the solute-mass drift in the log line: the first report of the run, which a hot start makes its own
 levee_small_ev* | *levelModel._cont_spurious_int | dead | - | running total of the continuity diagnostic (reported, nothing reads it back)
 levee_small_ev* | *levelModel.continuityStats* | dead | - | the diagnostic dict built from the two above
 levee_small* | *levelModel.nzval | noise | - | uninitialised memory (1e-314)
+levee_small* | *levelModel.fct_fallback_count | noise | - | counter of the implicit FCT's fallbacks
+levee_small_ev5_fct | * | gap | 3.5 row f (Richards implicit FCT) | with the flow model on the IMPLICIT flux correction and the transport on ImplicitEV the flow dofs are 4e-16 off one interval after a hot start; two uninterrupted runs agree bitwise, so an owner is missing. Not u_dof_old (carrying it changed nothing). At the restore Richards' dof_last (3.7e-3), mLow, limitedFluxMatrix and m_fct differ. The other three FCT decks are bitwise

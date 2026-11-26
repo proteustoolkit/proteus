@@ -109,3 +109,10 @@ diffusiveFluxBoundaryConditions = {0: {}}
 # the mesh is stored (levee_case_d.node/.ele/.edge, triangle output of the 41x16 deck): a test downstream of the meshing
 # does not depend on the triangle of the machine it runs on
 genMesh = False
+
+# LEVEE_FLOW_FCT=semi-implicit|implicit: the flow model's flux correction (as test_vdft_compatible.py sets it), whose limited
+# dofs differ from the Newton vector that updateTimeHistory copies into u_dof_old (C14 note 3.5 row f)
+import os as _os
+if _os.environ.get("LEVEE_FLOW_FCT"):
+    coefficients.FCT = True
+    coefficients.FCT_TYPE = _os.environ["LEVEE_FLOW_FCT"]
