@@ -91,7 +91,7 @@ class NumericalFlux(
         self.hasInterior = False
 
 
-class ShockCapturing(proteus.ShockCapturing.ShockCapturing_base):
+class ShockCapturing(proteus.ShockCapturing.DelayedLagState, proteus.ShockCapturing.ShockCapturing_base):
 
     def __init__(
             self,

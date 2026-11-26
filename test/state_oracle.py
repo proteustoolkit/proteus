@@ -83,7 +83,7 @@ def owner(path):
 
 def read_allowlist(path=None):
     """[(deck, fnmatch pattern over attribute paths, owner row, reason)]: differences accepted for a deck, each tied to
-    the inventory row or section-3.5 owner it belongs to. ``*`` as a deck matches every deck."""
+    the inventory row or section-3.5 owner it belongs to. The deck field is an fnmatch pattern over deck names (``*`` matches every deck, ``damBreakLevelSet*`` the family)."""
     path = path or os.path.join(here, "state_oracle_allowlist.txt")
     rows = []
     if os.path.exists(path):
@@ -98,7 +98,7 @@ def read_allowlist(path=None):
 def unaccounted(deck, differences, allowlist):
     """(paths that differ and no allowlist row of this deck covers, allowlist rows of this deck that matched nothing; a
     ``noise`` row may match nothing: uninitialised memory differs from run to run)."""
-    mine = [r for r in allowlist if r[0] in (deck, "*")]
+    mine = [r for r in allowlist if fnmatch.fnmatchcase(deck, r[0])]
     hit = set()
     left = []
     for path in differences:
@@ -106,7 +106,7 @@ def unaccounted(deck, differences, allowlist):
         hit.update(rows)
         if not rows:
             left.append(path)
-    stale = [r for i, r in enumerate(mine) if i not in hit and r[0] == deck and r[2] != "noise"]
+    stale = [r for i, r in enumerate(mine) if i not in hit and r[0] != "*" and r[2] not in ("noise", "decided")]
     return left, stale
 
 

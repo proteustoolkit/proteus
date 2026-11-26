@@ -10,6 +10,11 @@
 #               subgrid error lag machines and NumericalSolution's own owners: the coupled fields, the solver's
 #               unknowns and the next system step; and with CLSVOF, and on rising_bubble_rans3p with the
 #               kernels.VOF3P and NCLS3P shock capturing lag machines)
+#               The delayed-lag shock capturing of kernels.Dissipation and Kappa is measured end to end by test_state_oracle.py
+#               (damBreakLevelSet turbulence=1: dofs 7.5e-10 / 2.5e-10 off one interval after a hot start before, bitwise
+#               after); kernels.TADR, VOS3P and RANS3PSed carry the same machine (DelayedLagState) and are tested only by
+#               test_delayed_lag_state.py: no deck of theirs has been hot started yet. kernels.SW2D's (the same machine, in
+#               kernels/SW2D.py, track B1's file until cekees/proteus#358 merges) is still `unmeasured`.
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
@@ -48,19 +53,19 @@ SC ShockCapturing ResGradQuadDelayLag_SC unmeasured
 SC ShockCapturing ResGradQuad_SC unmeasured
 SC ShockCapturing ResGrad_SC unmeasured
 SC ShockCapturing ScalarAdvection_SC unmeasured
-SC kernels.Dissipation ShockCapturing unmeasured
-SC kernels.Kappa ShockCapturing unmeasured
+SC kernels.Dissipation ShockCapturing state
+SC kernels.Kappa ShockCapturing state
 SC kernels.NCLS ShockCapturing state
 SC kernels.NCLS3P ShockCapturing state
 SC kernels.RANS2P ShockCapturing state
 SC kernels.RANS3PF ShockCapturing state
-SC kernels.RANS3PSed ShockCapturing unmeasured
+SC kernels.RANS3PSed ShockCapturing state
 SC kernels.RDLS ShockCapturing rebuilt
 SC kernels.SW2D ShockCapturing unmeasured
-SC kernels.TADR ShockCapturing unmeasured
+SC kernels.TADR ShockCapturing state
 SC kernels.VOF ShockCapturing state
 SC kernels.VOF3P ShockCapturing state
-SC kernels.VOS3P ShockCapturing unmeasured
+SC kernels.VOS3P ShockCapturing state
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionTransientSubscales_ASGS unmeasured
