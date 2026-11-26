@@ -113,7 +113,8 @@ def add_parser(subparsers):
                         "it, so those settings may change")
     g.add_argument("--state-every", type=int, default=0, metavar="N",
                    help="write the solver state a continue hot start needs with every N-th "
-                        "archived frame; 0 (the default): at the final step and at a checkpoint "
+                        "archived frame after the initial one (frames N, 2N, ...); 0 (the "
+                        "default): at the final step and at a checkpoint "
                         "only, the other frames carry the solution alone")
     g.add_argument("--wall-limit", default=None, metavar="HH:MM:SS",
                    help="stop at a step boundary with room for a checkpoint before this much wall "

@@ -1445,12 +1445,18 @@ class NS_base(object):  # (HasTraits):
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 self.tnList[0],
                                                                 self.tCount)
+            stateTime = None
             if self._solverStateDue(self.tCount):
                 import time
                 started = time.time()
                 self.archiveSolverState(model,index,self.tCount)
-                self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), time.time() - started)
+                stateTime = time.time() - started
+                self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), stateTime)
                 self._stateFrame[model.name] = self.tCount
+            #the line archiveSolution logs for the other frames
+            logEvent("Archive: frame %d of model %s at t=%g (initial)%s" % (
+                self.tCount, model.name, self.tnList[0],
+                "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
             #could just pull the code and flags out from SimTools rathter than asking it to parse them
             #uses values in simFlags['storeQuantities']
             #q dictionary
@@ -2102,9 +2108,10 @@ class NS_base(object):  # (HasTraits):
 
     def _solverStateDue(self, tCount, final=False, checkpoint=False):
         """Whether frame ``tCount`` carries the solver state: the final one, a checkpoint, and with
-        ``--state-every N`` every N-th (the initial frame, 0, among them). The state is some 20 times the solution
-        in size, and a hot start needs it only from the frame the run stopped at."""
-        return bool(final or checkpoint or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
+        ``--state-every N`` every N-th after the initial one (N, 2N, ...). The state is some 20 times the solution
+        in size, and a hot start needs it only from the frame the run stopped at; at frame 0 it holds nothing a
+        hot start from t0 needs (that is a fresh run), and it cost ~140 GB at t = 0 for 45DEG_R1 at 1,008 ranks."""
+        return bool(final or checkpoint or (self.stateEvery > 0 and tCount > 0 and tCount % self.stateEvery == 0))
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None,checkpoint=False):
