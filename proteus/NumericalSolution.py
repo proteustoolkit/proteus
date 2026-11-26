@@ -678,6 +678,7 @@ class NS_base(object):  # (HasTraits):
                 # the latest step at or before the requested time (up to the archive's rounding)
                 tCount = hot_start_step(archiveTimes, self.opts.hotStartTime)
                 time = archiveTimes[tCount]
+                self._checkHotStartMesh(index, m, tCount)
                 self.ar[index].continue_from(tCount)
                 if tCount > 0:
                     dt = time - archiveTimes[tCount - 1]
@@ -1444,12 +1445,18 @@ class NS_base(object):  # (HasTraits):
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 self.tnList[0],
                                                                 self.tCount)
+            stateTime = None
             if self._solverStateDue(self.tCount):
                 import time
                 started = time.time()
                 self.archiveSolverState(model,index,self.tCount)
-                self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), time.time() - started)
+                stateTime = time.time() - started
+                self._stateTimes[model.name] = max(self._stateTimes.get(model.name, 0.0), stateTime)
                 self._stateFrame[model.name] = self.tCount
+            #the line archiveSolution logs for the other frames
+            logEvent("Archive: frame %d of model %s at t=%g (initial)%s" % (
+                self.tCount, model.name, self.tnList[0],
+                "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
             #could just pull the code and flags out from SimTools rathter than asking it to parse them
             #uses values in simFlags['storeQuantities']
             #q dictionary
@@ -1526,14 +1533,56 @@ class NS_base(object):  # (HasTraits):
         """What the rank-local lag arrays are tied to: the number of ranks and this rank's
         piece of the mesh. The arrays live at the quadrature points of the rank's elements
         (ghosts included), which have no global numbering, so they can only be read back by
-        the same partition."""
+        the same partition. The last entry is the rank's connectivity: a mesh whose topology changed
+        (an adapted mesh, which can keep its counts and numbering through edge swaps) has quadrature
+        points that are not the archived ones, and its state is refused (_stateFingerprintMatches)."""
         import hashlib
         mesh = model.levelModelList[-1].mesh
         def digest(a):
             return int.from_bytes(hashlib.sha256(numpy.ascontiguousarray(a).tobytes()).digest()[:7], "big")
         return numpy.array([self.ar[index].size, mesh.nElements_global, mesh.nNodes_global,
                             digest(mesh.elementNumbering_subdomain2global),
-                            digest(mesh.nodeNumbering_subdomain2global)], dtype='int64')
+                            digest(mesh.nodeNumbering_subdomain2global),
+                            digest(mesh.elementNodesArray)], dtype='int64')
+
+    def _checkHotStartMesh(self, index, model, tCount):
+        """Refuse a hot start from step ``tCount`` whose archived mesh is not this run's (collective).
+
+        A static mesh is archived once and every later step names those arrays; a mesh whose topology changed
+        during the archived run (an adapted or redistributed mesh) has its arrays written again at the change,
+        and a restart, which builds the initial mesh, cannot read the fields or the solver state of a step after
+        it. Raises on every rank, naming the counts, rather than letting the read fail on a shape (per-rank
+        arrays) or read the wrong rows (global arrays). PUMI runs restart through their own Checkpointer and
+        are not checked."""
+        if isinstance(self.pList[0].domain, Domain.PUMIDomain) or hasattr(self.pList[0].domain, "AdaptManager"):
+            return
+        ar = self.ar[index]
+        if not ar.writesDatasets:
+            return
+        why = ar.frame_mesh_mismatch(tCount, model.levelModelList[-1].mesh)
+        reasons = [r for r in ar.comm.comm.tompi4py().allgather(why) if r]
+        if reasons:
+            raise RuntimeError("Hot start of model %s from step %d: %s. The mesh's topology changed during the "
+                               "archived run (an adapted or redistributed mesh), so the fields and the solver state "
+                               "of this step are not this mesh's; hot start from a step before the change"
+                               % (model.name, tCount, reasons[0]))
+
+    #: the entries of a solver state fingerprint written before the connectivity was added (2026-11-24)
+    _FINGERPRINT_PARTITION = 5
+
+    @classmethod
+    def _stateFingerprintMatches(cls, archived, current):
+        """Whether an archived solver state fingerprint is this partition's and this mesh's: ``(True, None)``, or
+        ``(False, why)``. A fingerprint written before the connectivity was part of it is compared on what it
+        holds (the rank count and the partition)."""
+        archived = numpy.asarray(archived).reshape(-1)
+        n = cls._FINGERPRINT_PARTITION
+        if not numpy.array_equal(archived[:n], current[:n]):
+            return False, "it was written by a different partition"
+        if len(archived) > n and not numpy.array_equal(archived, current):
+            return False, ("it was written on a mesh with another connectivity (the mesh's topology changed in the "
+                           "archived run, as an adapted mesh's does): its quadrature-point arrays are not this mesh's")
+        return True, None
 
     @staticmethod
     def _normalize_archived_policy(policy):
@@ -1920,15 +1969,19 @@ class NS_base(object):  # (HasTraits):
                                "run's (%s); use hotStartMode='restart' (--hot-start-mode restart) to continue "
                                "the solution with a new policy and rebuild the history from it"
                                % (model.name, "; ".join(everyone[0])))
-        mine, ranks = 0, 1
+        mine, ranks, mismatch = 0, 1, None
         if found is not None:
             archived = state["fingerprint"]
             fingerprint = self._solver_state_fingerprint(model, index)
-            mine = int(found == tCount and numpy.array_equal(archived, fingerprint))
+            matches, mismatch = self._stateFingerprintMatches(archived, fingerprint)
+            mine = int(found == tCount and matches)
             ranks = int(archived[0] == fingerprint[0])
         #collective on every rank, whatever this rank found
         ranks = comm.allreduce(int(found is not None and ranks), op=MPI.MIN)
         if not comm.allreduce(mine, op=MPI.MIN):
+            # the first reason any rank found (the partition, or the connectivity of an adapted mesh); collective,
+            # so taken before the branches, which need not agree from rank to rank
+            reasons = [r for r in comm.allgather(mismatch) if r]
             if found is not None and found != tCount:
                 why = ("frame %d carries the solution only: the archive holds the solver state of step %d only "
                        "(it is written at the final step, at a checkpoint and every --state-every N frames)"
@@ -1938,7 +1991,7 @@ class NS_base(object):  # (HasTraits):
                        "final step, at a checkpoint and every --state-every N frames), or it was written by a "
                        "different number of ranks or partition")
             else:
-                why = "it was written by a different partition"
+                why = reasons[0] if reasons else "it was written by a different partition"
             logEvent("Hot start: no solver state to restore at step %d for model %s (%s); "
                      "restarting its history from the restart state" % (tCount, model.name, why), level=0)
             self._solverStateRefused.append((model.name, why))
@@ -2055,9 +2108,10 @@ class NS_base(object):  # (HasTraits):
 
     def _solverStateDue(self, tCount, final=False, checkpoint=False):
         """Whether frame ``tCount`` carries the solver state: the final one, a checkpoint, and with
-        ``--state-every N`` every N-th (the initial frame, 0, among them). The state is some 20 times the solution
-        in size, and a hot start needs it only from the frame the run stopped at."""
-        return bool(final or checkpoint or (self.stateEvery > 0 and tCount % self.stateEvery == 0))
+        ``--state-every N`` every N-th after the initial one (N, 2N, ...). The state is some 20 times the solution
+        in size, and a hot start needs it only from the frame the run stopped at; at frame 0 it holds nothing a
+        hot start from t0 needs (that is a fresh run), and it cost ~140 GB at t = 0 for 45DEG_R1 at 1,008 ranks."""
+        return bool(final or checkpoint or (self.stateEvery > 0 and tCount > 0 and tCount % self.stateEvery == 0))
 
     ##save model's solution values to archive
     def archiveSolution(self,model,index,t=None,checkpoint=False):
@@ -2086,7 +2140,12 @@ class NS_base(object):  # (HasTraits):
             "" if stateTime is None else ", solver state in %.3g s" % stateTime), level=1)
 
     def _archiveSolution(self,model,index,t,withState):
-        """archiveSolution's writes; returns the seconds the solver state took, None when it was not written."""
+        """archiveSolution's writes; returns the seconds the solver state took, None when it was not written.
+
+        ``meshChanged=False``: the writers write a mesh array only when what it is made from changed since the
+        archive last wrote it (``Archiver.mesh_step``, ``MeshTools.Mesh.archiveEpoch``), so a static mesh is
+        in the file once and a moving mesh's nodes are written every frame. Passing True here, as this did
+        until 2026-11-24, rewrote the whole mesh every frame (>55% of a bathyduck frame's bytes on Mike)."""
         stateTime = None
         if True if self.fastArchive == False else 'clsvof' in model.name:
             if self.archiveFlag == ArchiveFlags.UNDEFINED:
@@ -2098,12 +2157,12 @@ class NS_base(object):  # (HasTraits):
                     self.femSpaceWritten={}
                 model.levelModelList[-1].archiveFiniteElementSolutions(self.ar[index],t,self.tCount,
                                                                        initialPhase=False,
-                                                                       writeVectors=True,meshChanged=True,femSpaceWritten=self.femSpaceWritten,
+                                                                       writeVectors=True,meshChanged=False,femSpaceWritten=self.femSpaceWritten,
                                                                        writeVelocityPostProcessor=self.opts.writeVPP)
             else:
                 model.levelModelList[-1].archiveFiniteElementSolutions(self.ar[index],t,self.tCount,
                                                                        initialPhase=False,
-                                                                       writeVectors=True,meshChanged=True,femSpaceWritten={},
+                                                                       writeVectors=True,meshChanged=False,femSpaceWritten={},
                                                                        writeVelocityPostProcessor=self.opts.writeVPP)
             model.levelModelList[-1].archiveAnalyticalSolutions(self.ar[index],self.pList[index].analyticalSolution,
                                                                 t,
@@ -2121,7 +2180,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorElementStorageKeys(model,t)
                 model.levelModelList[-1].archiveElementQuadratureValues(self.ar[index],t,self.tCount,
                                                                         scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                        initialPhase=False,meshChanged=True)
+                                                                        initialPhase=False,meshChanged=False)
             #ebq_global dictionary
             if self.archive_ebq_global[index] == True and self.fastArchive==False:
                 scalarKeys = model.simTools.getScalarElementBoundaryStorageKeys(model,t)
@@ -2129,7 +2188,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorElementBoundaryStorageKeys(model,t)
                 model.levelModelList[-1].archiveElementBoundaryQuadratureValues(self.ar[index],t,self.tCount,
                                                                                 scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                                initialPhase=False,meshChanged=True)
+                                                                                initialPhase=False,meshChanged=False)
             if self.archive_ebqe[index] == True and self.fastArchive==False:
                 #ebqe dictionary
                 scalarKeys = model.simTools.getScalarExteriorElementBoundaryStorageKeys(model,t)
@@ -2137,7 +2196,7 @@ class NS_base(object):  # (HasTraits):
                 tensorKeys = model.simTools.getTensorExteriorElementBoundaryStorageKeys(model,t)
                 model.levelModelList[-1].archiveExteriorElementBoundaryQuadratureValues(self.ar[index],t,self.tCount,
                                                                                         scalarKeys=scalarKeys,vectorKeys=vectorKeys,tensorKeys=tensorKeys,
-                                                                                        initialPhase=False,meshChanged=True)
+                                                                                        initialPhase=False,meshChanged=False)
             #Fields the model's coefficients declare for themselves. Replaces
             #six hand-rolled try/except-pass blocks; see proteus.ArchiveFields.
             if self.fastArchive==False:

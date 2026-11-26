@@ -82,10 +82,13 @@ def test_state_every_n_writes_the_state_with_every_nth_frame_and_the_final_one(t
     out = _run(tmp_path / "every", FT=0.04, DTOUT=0.01, STATEEVERY=2)
     assert out.returncode == 0, out.stderr[-2000:]
     frames = _frames(tmp_path / "every")
-    assert _frames_with_state(tmp_path / "every") == sorted({f for f in frames if f % 2 == 0} | {frames[-1]})
-    # every frame: the state before the run's end (this is the behaviour before --state-every)
+    # frames 2, 4, ... and the final one; not the initial frame 0 (~140 GB of state at t = 0 for 45DEG_R1 at
+    # 1,008 ranks, which a hot start from t0, a fresh run, does not need)
+    assert frames[0] == 0
+    assert _frames_with_state(tmp_path / "every") == sorted({f for f in frames if f % 2 == 0 and f > 0} | {frames[-1]})
+    # every frame after the initial one
     _run(tmp_path / "all", FT=0.04, DTOUT=0.01, STATEEVERY=1)
-    assert _frames_with_state(tmp_path / "all") == frames
+    assert _frames_with_state(tmp_path / "all") == frames[1:]
 
 
 def test_a_hot_start_from_a_frame_without_the_state_restarts_from_its_solution(tmp_path):
