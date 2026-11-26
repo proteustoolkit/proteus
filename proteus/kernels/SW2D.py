@@ -3,7 +3,9 @@ from proteus.kernels.cSW2D import *
 from proteus.Comm import globalMax
 import numpy as np
 from proteus import cmeshTools
-from proteus.Transport import OneLevelTransport
+from proteus.Transport import OneLevelTransport, TC_base, NonlinearEquation
+from proteus.Transport import Quadrature, logEvent, memory, cfemIntegrals
+from proteus.Transport import FluxBoundaryConditions, Comm, DOFBoundaryConditions
 from proteus import cArgumentsDict
 import proteus.NumericalFlux
 import proteus.ShockCapturing

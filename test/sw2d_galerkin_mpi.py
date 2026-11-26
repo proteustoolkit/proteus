@@ -2,7 +2,7 @@
 """SW2D (the Galerkin shallow water kernel, nothing else in the tree builds it) on a small dam break, for test_sw2d_galerkin.py.
 
 Flat bottom (the coefficients leave the bathymetry at zero), a 1.0 / 0.5 depth step across x = 0.5 of the unit
-square, no flow initially, no flow through the walls (u = v = 0 on the whole boundary), BackwardEuler with Newton,
+square, no flow initially, no flow through the walls (u = v = 0 on the boundary nodes only), BackwardEuler with Newton,
 a few fixed steps. SUPG=1 sets ``options.try_supg_stabilization`` (calculateResidual_supg / calculateJacobian_supg),
 otherwise the plain Galerkin residual and Jacobian. Run in an empty directory (serially or under mpiexec); rank 0 leaves
 sw2d.npz: the depth h, hu, hv (the three dofs of the owned nodes, sorted by x, y), the nodes' x, y, and the names of the residual and Jacobian entry points the model bound.
@@ -21,15 +21,6 @@ from proteus.LinearAlgebraTools import SparseMatrix
 from proteus.LinearSolvers import LU, KSP_petsc4py
 from proteus.Quadrature import SimplexGaussQuadrature
 
-import proteus.Transport
-# SW2D.py uses the bare names below and imports none of them (the star import of cSW2D does not provide them), so
-# neither its Coefficients nor its LevelModel can be built as written; the other kernels take them from
-# proteus.Transport. They are put in the kernel's namespace here; the report is in HANDOFF_2026-11-23_c49-r3-done.md.
-# Drop this loop when SW2D.py imports them.
-for _name in ("TC_base", "NonlinearEquation", "Quadrature", "logEvent", "cfemIntegrals", "memory", "Comm",
-              "DOFBoundaryConditions", "FluxBoundaryConditions"):
-    if _name not in SW2D.__dict__:
-        setattr(SW2D, _name, getattr(proteus.Transport, _name))
 SUPG = bool(int(os.environ.get("SUPG", "0")))
 NN = int(os.environ.get("NN", "11"))
 NSTEPS = int(os.environ.get("NSTEPS", "3"))
@@ -56,7 +47,13 @@ p.domain = domain
 p.LevelModelType = SW2D.LevelModel
 p.coefficients = SW2D.Coefficients(g=9.81, nu=1.0e-3, nd=2)
 p.initialConditions = {0: Init(0), 1: Init(1), 2: Init(2)}
-p.dirichletConditions = {0: lambda x, flag: None, 1: lambda x, flag: lambda x, t: 0.0, 2: lambda x, flag: lambda x, t: 0.0}
+def _wall(x, flag):
+    # flag 0 is the interior: returning a condition there pins the velocity at every node and nothing moves
+    if flag != 0:
+        return lambda x, t: 0.0
+
+
+p.dirichletConditions = {0: lambda x, flag: None, 1: _wall, 2: _wall}
 p.advectiveFluxBoundaryConditions = {}
 p.diffusiveFluxBoundaryConditions = {0: {}, 1: {}, 2: {}}
 p.fluxBoundaryConditions = {0: 'outFlow', 1: 'outFlow', 2: 'outFlow'}
