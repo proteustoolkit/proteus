@@ -18,8 +18,8 @@ wall carries the exact solution as its data.
 Environment: ND (2|3), NN (nodes per direction), NU, KINDS (velocity: ``left=strong,bottom=weak,...``; a wall that is not
 named has no condition), PKINDS (pressure: the same), PDECLARE (0: the pressure setter is not declared while the velocity ones are), DECLARE (0: plain setters, the kinds are not read: every named wall is
 then weak, the baseline every existing problem is), ALL (strong: coefficients.forceStrongDirichlet, the legacy all-strong
-model), SPACE (p1p1: equal order with the model's stabilization, the decks' choice; p1p2: P2 velocity, which crashes
-RANS2P2D::calculateResidual on some meshes, not used by the tests), SGE (1: the subgrid error terms, 0: off), PART_TYPE, NLAYERS.
+model), SPACE (p1p1: equal order with the model's stabilization, the decks' choice; p1p2: P2 velocity (it crashed
+RANS2P2D::calculateResidual on some meshes until the C0 kernel-bugs round: test_rans2p_p2_velocity.py), SGE (1: the subgrid error terms, 0: off), PART_TYPE, NLAYERS.
 Rank 0 prints one line ``RESULT {json}``.
 """
 import json
