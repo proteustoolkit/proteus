@@ -320,3 +320,28 @@ def test_tank_with_two_obstacles_joins_the_corners_between_them():
     assert _shoelace(t.vertices) == pytest.approx(30. - 1. - 2.)
     assert t.boundaryTags['obstacle2'] == 7
     assert _inside(t.vertices.tolist(), t.regions[0])
+
+
+@pytest.mark.xfail(strict=True, raises=KeyError,
+                   reason="TankWithObstacles2D: an obstacle that starts at a corner of the tank (documented as "
+                          "allowed) looks its tag up as boundaryTags['x-y-'], which does not exist (found by C49 "
+                          "R4; kernel territory: C0)")
+def test_tank_with_an_obstacle_that_starts_in_a_corner():
+    t = _obstacle_tank([[[0., 0.], [0., 1.]]])
+    assert _shoelace(t.vertices) == pytest.approx(30.)
+
+
+def test_tank_with_obstacles_on_all_four_walls_joins_them_in_order():
+    # floor (y-), x+ wall, ceiling (y+), x- wall, counterclockwise
+    obstacles = [[[2., 0.], [3., 0.5], [4., 0.]],
+                 [[10., 1.], [9., 1.5], [10., 2.]],
+                 [[8., 3.], [7., 2.5], [6., 3.]],
+                 [[0., 2.], [1., 1.5], [0., 1.]]]
+    t = _obstacle_tank(obstacles)
+    area = 30. - 0.5 * 2. * 0.5 - 0.5 * 1. * 1. - 0.5 * 2. * 0.5 - 0.5 * 1. * 1.
+    assert _shoelace(t.vertices) == pytest.approx(area)
+    assert _inside(t.vertices.tolist(), t.regions[0])
+    # the corners between the obstacles are vertices of the loop: (10, 0) after the floor obstacle, ...
+    for corner in ([10., 0.], [10., 3.], [0., 3.], [0., 0.]):
+        assert corner in t.vertices.tolist()
+    assert set(t.segmentFlags) <= set(t.boundaryTags.values())
