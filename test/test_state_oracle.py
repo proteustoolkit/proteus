@@ -26,6 +26,12 @@ DECKS = {
     "damBreakLevelSet_turbulence": ('DECK=damBreakLevelSet.py OPTS="he=0.1 turbulence=1" FT=0.1 DTOUT=0.02', "0.04,0.06"),
     "ladr_2d": ('DIR=ci SO="ladr_2d_p.py ladr_2d_n.py"', "0.1,0.125"),
     "ladr_2d_sglag": ('DIR=ci SO="ladr_2d_p.py ladr_2d_sglag_n.py"', "0.1,0.125"),
+    # density-coupled Compatible TADR on Richards (C14 note 3.5 rows a-d): 41x16 stored mesh, 10 s output intervals
+    "levee_small": ('DIR=salinity/levee_small SO="ls_CCS_so.py"', "20.0,30.0"),
+    # the same deck with the transport on an edge-based scheme (rows a, b, d, and Richards' rho_nodal_old): 4 = explicit
+    # entropy viscosity with FCT (SSP order 1), 5 = ImplicitEV
+    "levee_small_ev4": ('DIR=salinity/levee_small SO="ls_CCS_ev_so.py" LEVEE_STAB=4', "20.0,30.0"),
+    "levee_small_ev5": ('DIR=salinity/levee_small SO="ls_CCS_ev_so.py" LEVEE_STAB=5', "20.0,30.0"),
     "circular_damBreak_sw2dcv": ('DIR=SWFlow SO="--SWEs circular_damBreak.py" OPTS="sw_model=0 final_time=0.3 dt_output=0.1"',
                                  "0.1,0.2"),
 }
