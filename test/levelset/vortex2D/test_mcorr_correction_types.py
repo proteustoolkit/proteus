@@ -6,10 +6,16 @@ ls_consrv_vortex_2d_n.py picks the level solver of the mass corrector from ``cor
 (test_mcorr_bisection.py) are the other two. Run in-process (as test_mcorr_bisection.py) so the corrector's Python is measured by the
 coverage job; two steps of the deck each.
 
-Only 'none' runs. MCorr.elementSolve, elementConstantSolve and globalConstantRJ (so 'dg', 'dgp0' and 'global') do not put
-``r_l2g`` in the arguments of the C++ call (residual and Jacobian do, MCorr.py:703 and :854), which the C++ side reads: all three raise
-"RuntimeError: key r_l2g not found". The tests are strict xfails: they run the Python up to the call, and when the kernel is fixed
-they pass and the marks have to go. The report for the kernel's owner is in HANDOFF_2026-11-23_c49-r3-done.md.
+Until the C0 kernel-bugs round only 'none' ran: MCorr.elementSolve, elementConstantSolve and globalConstantRJ did not pass
+``r_l2g`` and the cut-cell masks (``isActiveR``, ``isActiveDOF``, ``isActiveElement``, ``phi_solid``, and for elementSolve
+``phi_solid_nodes``, ``useExact_s``, ``ebqe_phi_s``, ``elementBoundariesArray``) that the C++ reads ("RuntimeError: key r_l2g
+not found"), and globalConstantRJ shifted four arguments by one (``stride_u`` = the residual, ``globalResidual`` = the
+porosity). Now:
+
+- 'global' conserves the mass as Newton ('cg') does: measured 9.4e-11 serial, 4.4e-11 on 2 ranks (Newton 8.0e-11);
+- 'dg' and 'dgp0' run but their element Newton diverges in elements the interface does not cross (there H(phi + u) does
+  not depend on u, so no local root exists and du = -R/J with J ~ 0): |q_u| reaches ~1e12 ('dg') and ~1e5 ('dgp0').
+  Pinned below so that a fix is noticed; the variants are on the dead-code list (HANDOFF_2026-11-23_c49-r3-done.md).
 """
 from importlib import reload
 
@@ -51,13 +57,8 @@ def _run_two_steps(opts, name):
     return ns
 
 
-_R_L2G = pytest.mark.xfail(strict=True, raises=RuntimeError, reason="MCorr does not pass r_l2g to elementSolve, elementConstantSolve, globalConstantRJ")
-
-
-@pytest.mark.parametrize("correction_decks, solver", [pytest.param("dg", "ElementNewton", marks=_R_L2G),
-                                                      pytest.param("dgp0", "ElementConstantNewton", marks=_R_L2G),
-                                                      pytest.param("global", "GlobalConstantNewton", marks=_R_L2G),
-                                                      ("none", "DummyNewton")],
+@pytest.mark.parametrize("correction_decks, solver", [("dg", "ElementNewton"), ("dgp0", "ElementConstantNewton"),
+                                                      ("global", "GlobalConstantNewton"), ("none", "DummyNewton")],
                          indirect=["correction_decks"])
 def test_the_level_solver_the_deck_names_runs(opts, tmp_path, monkeypatch, correction_decks, solver):
     from proteus.kernels import MCorr
@@ -73,3 +74,9 @@ def test_the_level_solver_the_deck_names_runs(opts, tmp_path, monkeypatch, corre
         assert np.all(mc.q[('u', 0)] == 0.0) and np.all(mc.q[('r', 0)] == 0.0)
     if correction_decks == "global":
         assert np.all(u == u[0]), "the global correction is one constant for every dof"
+        assert mc.coefficients.massConservationError < 1e-8, "the global constant does not conserve the mass"
+    if correction_decks in ("dg", "dgp0"):
+        # the element solves keep the correction in q_u (the dofs stay 0) and diverge where the interface is absent;
+        # when this fails they no longer do: replace it with a test that each element conserves its mass
+        assert np.all(u == 0.0)
+        assert np.abs(mc.q[('u', 0)]).max() > 1e3

@@ -671,6 +671,30 @@ namespace proteus
           ny = 0.0;
         }
     }
+    // Physical position of the nodal (Lagrange) point of local velocity dof i of element eN. The mesh is affine (P1), so
+    // dofs below nDOF_mesh_trial_element are its vertices and the others are edge midpoints, in the order of
+    // RefUtils.p2refNodes (2D: (0,1) (1,2) (0,2); 3D: (0,1) (1,2) (2,3) (0,2) (1,3) (0,3)). The velocity dof index runs to
+    // nDOF_v_test_element: it must NOT index mesh_l2g (nDOF_mesh_trial_element per element) -- doing that read past the end
+    // of mesh_l2g for P2 velocity (the C0 r18 segfault).
+    inline void velocityDOFLocation(const proteus::pyarray<proteus_index_t>& mesh_l2g,
+                                    const proteus::pyarray<double>& mesh_dof,
+                                    proteus_index_t eN, int i, double& x, double& y, double& z)
+    {
+      static const int edgeNodes[6][2] = {{0,1},{1,2},{2,3},{0,2},{1,3},{0,3}};
+      static const int edgeNodes2D[3][2] = {{0,1},{1,2},{0,2}};
+      proteus_index_t n0, n1;
+      if (i < nDOF_mesh_trial_element)
+        n0 = n1 = mesh_l2g.data()[eN*nDOF_mesh_trial_element + i];
+      else
+        {
+          const int e = i - nDOF_mesh_trial_element;
+          n0 = mesh_l2g.data()[eN*nDOF_mesh_trial_element + (nSpace == 2 ? edgeNodes2D[e][0] : edgeNodes[e][0])];
+          n1 = mesh_l2g.data()[eN*nDOF_mesh_trial_element + (nSpace == 2 ? edgeNodes2D[e][1] : edgeNodes[e][1])];
+        }
+      x = 0.5*(mesh_dof.data()[3*n0+0] + mesh_dof.data()[3*n1+0]);
+      y = 0.5*(mesh_dof.data()[3*n0+1] + mesh_dof.data()[3*n1+1]);
+      z = 0.5*(mesh_dof.data()[3*n0+2] + mesh_dof.data()[3*n1+2]);
+    }
     void get_velocity_to_ith_ball(int n_balls,const double* ball_center, const double* ball_radius,
                                   const double* ball_velocity, const double* ball_angular_velocity,
                                   int I,
@@ -3179,9 +3203,8 @@ namespace proteus
                   isActiveR.data()[offset_v+stride_v*rvel_l2g.data()[eN_i]] = 1.0;
                   isActiveDOF_vel.data()[vel_l2g.data()[eN_i]] = 1.0;
                 }
-	      double x = mesh_dof.data()[3*mesh_l2g.data()[eN_i]+0],
-		y = mesh_dof.data()[3*mesh_l2g.data()[eN_i]+1],
-		z = mesh_dof.data()[3*mesh_l2g.data()[eN_i]+2];//cek hack: need lagrange nodes for higher order
+	      double x, y, z;
+	      velocityDOFLocation(mesh_l2g, mesh_dof, eN, i, x, y, z);
 	    
 	      get_velocity_to_ith_ball(nParticles,ball_center.data(),ball_radius.data(),
 				       ball_velocity.data(),ball_angular_velocity.data(),

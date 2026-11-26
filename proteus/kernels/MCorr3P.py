@@ -974,8 +974,6 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.setUnknowns(u)
 
         # no flux boundary conditions
-        R = np.array(dtype=float)
-        J = np.array(dtype=float)
         argsDict = cArgumentsDict.ArgumentsDict()
         argsDict["mesh_trial_ref"] = self.u[0].femSpace.elementMaps.psi
         argsDict["mesh_grad_trial_ref"] = self.u[0].femSpace.elementMaps.grad_psi
@@ -1014,10 +1012,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_u"] = self.ebqe[('u', 0)]
         argsDict["ebqe_n"] = self.ebqe[('grad(u)', 0)]
         argsDict["q_r"] = self.q[('r', 0)]
-        argsDict["q_vos"] = self.offset[0]
-        argsDict["offset_u"] = self.stride[0]
-        argsDict["stride_u"] = r
-        argsDict["globalResidual"] = self.coefficients.q_vos
+        argsDict["q_vos"] = self.coefficients.q_vos
+        argsDict["offset_u"] = self.offset[0]
+        argsDict["stride_u"] = self.stride[0]
+        argsDict["globalResidual"] = r
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray

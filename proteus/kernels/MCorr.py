@@ -893,6 +893,28 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         self.nonlinear_function_jacobian_evaluations += 1
         return jacobian
 
+    def _activeArguments(self, argsDict, r):
+        """The arguments the element/constant/global solves share with calculateResidual: the residual's free-dof map and
+        the cut-cell (solid) masks that calculateElementResidual reads and marks. Before this they were missing and the
+        C++ call raised "key r_l2g not found" (correctionType 'dg', 'dgp0', 'global')."""
+        try:
+            self.isActiveR[:] = 0.0
+            self.isActiveDOF[:] = 0.0
+            self.isActiveElement[:] = 0
+        except AttributeError:
+            self.isActiveR = np.zeros_like(r)
+            self.isActiveDOF = np.zeros_like(self.u[0].dof)
+            self.isActiveElement = np.zeros((self.mesh.nElements_global,), 'i')
+        argsDict["r_l2g"] = self.l2g[0]['freeGlobal']
+        argsDict["elementBoundariesArray"] = self.mesh.elementBoundariesArray
+        argsDict["phi_solid_nodes"] = self.coefficients.flowCoefficients.phi_s
+        argsDict["useExact_s"] = int(self.coefficients.flowCoefficients.useExact)
+        argsDict["isActiveR"] = self.isActiveR
+        argsDict["isActiveDOF"] = self.isActiveDOF
+        argsDict["isActiveElement"] = self.isActiveElement
+        argsDict["ebqe_phi_s"] = self.coefficients.flowCoefficients.ebqe_phi_s
+        argsDict["phi_solid"] = self.coefficients.flowCoefficients.q_phi_solid
+
     def elementSolve(self, u, r):
         import pdb
         import copy
@@ -952,6 +974,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["elementBoundaryLocalElementBoundariesArray"] = self.mesh.elementBoundaryLocalElementBoundariesArray
         argsDict["maxIts"] = self.maxIts
         argsDict["atol"] = self.atol
+        self._activeArguments(argsDict, r)
         self.mcorr.elementSolve(argsDict)
 
     def elementConstantSolve(self, u, r):
@@ -1013,6 +1036,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["elementBoundaryLocalElementBoundariesArray"] = self.mesh.elementBoundaryLocalElementBoundariesArray
         argsDict["maxIts"] = self.maxIts
         argsDict["atol"] = self.atol
+        self._activeArguments(argsDict, r)
         self.mcorr.elementConstantSolve(argsDict)
 
     def globalConstantRJ(self, u, r, U):
@@ -1064,10 +1088,10 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["ebqe_u"] = self.ebqe[('u', 0)]
         argsDict["ebqe_n"] = self.ebqe[('grad(u)', 0)]
         argsDict["q_r"] = self.q[('r', 0)]
-        argsDict["q_porosity"] = self.offset[0]
-        argsDict["offset_u"] = self.stride[0]
-        argsDict["stride_u"] = r
-        argsDict["globalResidual"] = self.coefficients.q_porosity
+        argsDict["q_porosity"] = self.coefficients.q_porosity
+        argsDict["offset_u"] = self.offset[0]
+        argsDict["stride_u"] = self.stride[0]
+        argsDict["globalResidual"] = r
         argsDict["nExteriorElementBoundaries_global"] = self.mesh.nExteriorElementBoundaries_global
         argsDict["exteriorElementBoundariesArray"] = self.mesh.exteriorElementBoundariesArray
         argsDict["elementBoundaryElementsArray"] = self.mesh.elementBoundaryElementsArray
@@ -1075,6 +1099,7 @@ class LevelModel(proteus.Transport.OneLevelTransport):
         argsDict["maxIts"] = self.maxIts
         argsDict["atol"] = self.atol
         argsDict["constant_u"] = U
+        self._activeArguments(argsDict, r)
         (R, J) = self.mcorr.globalConstantRJ(argsDict)
         R = globalSum(R)
         J = globalSum(J)
