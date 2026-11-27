@@ -505,3 +505,31 @@ def test_a_two_phase_side_takes_no_part_exclusion_or_trace():
         changed["subproblems"][0]["boundary_conditions"][0][word] = entry
         with pytest.raises(RealizeError, match=word):
             tank_sides(changed)
+
+
+def test_a_level_sets_boundary_value_from_a_traces_is_dispatched_and_refused_by_the_tank():
+    """ymf round 7's `trace`: the level set's weak boundary value at the top is the redistancing's trace at the previous
+    step. Dispatch maps the discretization as it does without (the trace names a sub-problem, it is no model option);
+    the tank sets one BC_RANS setter per side and has nothing to take it, so the realizer refuses it by name: the
+    penalty form is the generator's (C19)."""
+    from proteus.Dispatch import dispatch
+    from proteus.DispatchRun import RealizeError, tank_sides
+    from ymf.closure import load, plain
+
+    def traced(doc):
+        strong = doc["model"]["strong_form"]
+        strong["boundary_sets"] = [b for b in strong["boundary_sets"] if b["region"] != "top"]
+        strong["boundary_conditions"] = [
+            {"region": "top", "variable": "p", "type": "dirichlet", "value": 0.0},
+            {"region": "top", "variable": "φ", "type": "dirichlet", "imposed": "weak",
+             "trace": {"of": "φ", "via": "rdls", "at": "previous_step"}}]
+    doc, _, _ = load(os.path.join(HERE, "dambreak_short.ymf"))
+    doc = plain(doc)
+    plain_found = dispatch(doc, "level_set_five")
+    traced(doc)
+    assert [m.module for m in dispatch(doc, "level_set_five").models] == [m.module for m in plain_found.models]
+    split = _split_of("dambreak_short.ymf", "level_set_five", traced)
+    assert [c["trace"] for c in split["subproblems"][2]["boundary_conditions"]] == \
+        [{"of": "φ", "via": "rdls", "at": "previous_step"}]            # on ncls, none on rdls itself
+    with pytest.raises(RealizeError, match="trace.*another sub-problem's trace"):
+        tank_sides(split)
