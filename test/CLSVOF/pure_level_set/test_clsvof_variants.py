@@ -150,9 +150,9 @@ def test_the_spin_up_system_is_the_l2_projection_of_the_initial_condition(opts, 
     np.testing.assert_allclose(M @ u, r, atol=1e-12)
 
 
-@pytest.mark.xfail(strict=True, reason="CLSVOFNewton.solve never calls spinUpStep (only solveOldMethod does, and nothing "
-                                       "calls that): doSpinUpStep=True changes nothing in a run (found by C49 R4; "
-                                       "kernel territory: C0)")
+@pytest.mark.xfail(strict=True, reason="CLSVOFNewton.solve never calls spinUpStep (the only caller, solveOldMethod, "
+                                       "was deleted by C49 closeout; nothing called it): doSpinUpStep=True changes "
+                                       "nothing in a run (found by C49 R4; kernel territory: C0)")
 def test_doSpinUpStep_takes_the_spin_up_step_in_a_run(opts, tmp_path):
     from proteus.kernels import CLSVOF
     calls = []
