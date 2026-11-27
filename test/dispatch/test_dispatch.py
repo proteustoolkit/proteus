@@ -233,6 +233,25 @@ def test_stabilization_is_read_through_ymf_and_its_older_spellings_fold(dambreak
     assert vof.coefficients["useMetrics"] == 0.0
 
 
+def test_the_reference_is_optional_when_beta_is_stated_as_one(dambreak):
+    """ymf 0.3.2: the shock capturing's ``reference`` is not asked for when ``beta`` is stated as 1 (the classical form
+    never reads it), so the RDLS line of C5's convention (SUPG, tau metric, not lagged, shock capturing at beta 1) is
+    complete without it. Dispatch reads what is stated and sets nothing for what is not; an
+    other or unstated beta still needs it, which ymf's ``missing`` says (the dispatch is no generator, it does not ask)."""
+    from ymf.stabilization import missing
+    block = {"method": "SUPG", "tau": "metric", "lagged": "false",
+             "shock_capturing": {"factor": "0.9", "beta": "1.0", "lagged": "false"}}
+    assert missing(block) == []
+    spec = copy.deepcopy(dambreak)
+    _sub(spec, "level_set_five", "rdls")["stabilization"] = block
+    (rdls,) = [m for m in dispatch(spec, "level_set_five") if m.subproblem == "rdls"]
+    assert "sc_uref" not in rdls.coefficients                # RDLS's shock capturing is the classical form, no reference
+    assert rdls.numerics["shockCapturing.shockCapturingFactor"] == 0.9 and rdls.numerics["shockCapturing.lag"] is False
+    for beta in ("1.25", None):
+        other = {**block, "shock_capturing": {"factor": "0.9", "lagged": "false", **({"beta": beta} if beta else {})}}
+        assert any(need.endswith("reference") for need in missing(other))
+
+
 def test_stabilization_without_a_method_or_with_a_key_the_method_does_not_read_is_refused(dambreak):
     """A block without a method: ymf 0.3.0 refuses it (say the method); ymf 0.3.1 reads it as ``method: none``, which no
     VOF cell offers (the cell has SUPG). Either way the dispatch is refused, naming the sub-problem."""
