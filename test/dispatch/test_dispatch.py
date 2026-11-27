@@ -852,9 +852,19 @@ def test_SWFlow_open_boundaries_are_reflectingBCs_off_and_a_mixed_boundary_is_re
     boundary = shallow_water_boundary(split)
     assert (boundary["name"], boundary["reflectingBCs"]) == ("outflow", False)
     precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)
-    # a state imposed on part of the boundary has no SWFlow realization yet
+    # a state imposed on a region of part of the boundary (a region's ``where``, as a ``part`` is) is realized: the
+    # depth at the nodes of x = 25, the outflow elsewhere
     strong["boundary_regions"] = [{"name": "all", "where": "∂Ω"}, {"name": "right", "where": "x = 25"}]
     strong["boundary_conditions"] = [{"region": "right", "variable": "h", "type": "dirichlet", "value": 0.5}]
+    split = split_problem(doc, "convex_limited")
+    boundary = shallow_water_boundary(split)
+    assert (boundary["name"], [(s["field"], s["value"]) for s in boundary["states"]]) == \
+        ("outflow", [("water_height", 0.5)])
+    assert boundary["states"][0]["holds"]((25.0, 3.0), None) and not boundary["states"][0]["holds"]((0.0, 3.0), None)
+    precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)
+    # a boundary treatment on part of the boundary (a wall or an outflow on a region that is not all of it) is not
+    strong["boundary_sets"] = [{"region": "right", "set": "outflow"}]
+    strong["boundary_conditions"] = []
     split = split_problem(doc, "convex_limited")
     with pytest.raises(RealizeError, match="none SWFlow imposes|one boundary treatment"):
         precheck(doc, dispatch(doc, "convex_limited"), split, ranks=1)

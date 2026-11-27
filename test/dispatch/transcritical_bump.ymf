@@ -1,0 +1,40 @@
+# test/SWFlow/transcritical_bump.py as a spec (ymf round 7: a state imposed on
+# part of a boundary): flow over a bump in a 25 m × 1 m channel, on the deck's
+# structured mesh (refinement 4: nnx = 81, nny = (nnx − 1)//10 + 1 = 9, so
+# 80 × 8 cells). The deck imposes, node by node, the depth hL at x = 25, the
+# discharge's x component q_in at x = 0, and its y component 0 on the whole
+# boundary; the rest is free. Each is a condition on a part of the one region
+# ∂Ω, on one Cartesian component where the deck gives one. The bump is the
+# deck's piecewise cubic, 0.2/64 (x − 8)³ (12 − x)³ on (8, 12] and 0 elsewhere:
+# the cubic is negative outside [8, 12], so max(0, ·) is the same function.
+extends: proteus_numerics.ymf
+
+model:
+  name: "Transcritical flow over a bump, 25 m × 1 m (transcritical_bump), structured 80 × 8"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 25] × [0, 1],  t ∈ (0, 0.5]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_conditions:
+      - {region: all, variable: q, type: dirichlet, component: y, value: 0.0}
+      - {region: all, part: "x = 0", variable: q, type: dirichlet, component: x, value: 0.18}
+      - {region: all, part: "x = 25", variable: h, type: dirichlet, value: 0.28205279813802181, units: m}
+    initial_conditions:
+      - {field: h, type: function, formula: "max(0.28205279813802181 − Z, 0)", units: m}
+      - {field: q, type: function, formula: "(0.18, 0)"}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.0}
+      θ: {value: 1.0}
+      Z: {formula: "max(0, 0.2/64 (x − 8)³ (12 − x)³)"}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: convex_limited
+      mesh: {cells: {x: 80, y: 8}}
+      step_control: {type: min_cfl, cfl: 0.25}
+      discretization: {outputs: 5}
