@@ -223,20 +223,44 @@ def _apply_petsc_options(options, prefixes):
             database.setValue(prefixes[name] + key, value)
 
 
+def _names(x, tol, dim):
+    ns = {"x": x[0], "tol": tol}
+    if dim > 1:
+        ns["y"] = x[1]
+    if dim > 2:
+        ns["z"] = x[2]
+    return ns
+
+
 def _where(condition, dim, tol):
     from proteus.ADRProblem import _GLOBALS, _compile
     if condition.get("where") is None:
         return lambda x: True
     code = _compile(condition["where"])
+    return lambda x: bool(eval(code, _GLOBALS, _names(x, tol, dim)))
 
-    def test(x):
-        ns = {"x": x[0], "tol": tol}
-        if dim > 1:
-            ns["y"] = x[1]
-        if dim > 2:
-            ns["z"] = x[2]
-        return bool(eval(code, _GLOBALS, ns))
-    return test
+
+def _holds(condition, dim, tol):
+    """``f(x, flag)``: does a boundary condition hold at the boundary point ``x`` (on the boundary piece of mesh tag
+    ``flag``)? As ymf states it (ymf round 7): where the region is (``where``, or ``flags``, the region's mesh
+    tags) AND on its ``part`` (if it has one) AND NOT on any of the parts it is ``excluding``. Each code is read as
+    ``where`` is, over x, y, z and ``tol``."""
+    from proteus.ADRProblem import _GLOBALS, _compile
+    region = _where(condition, dim, tol)
+    flags = None if condition.get("flags") is None else {int(f) for f in condition["flags"]}
+    part = None if condition.get("part") is None else _compile(condition["part"])
+    excluded = [_compile(code) for code in condition.get("excluding") or []]
+
+    def holds(x, flag=None):
+        if flags is not None and (flag is None or int(flag) not in flags):
+            return False
+        if not region(x):
+            return False
+        ns = _names(x, tol, dim)
+        if part is not None and not eval(part, _GLOBALS, ns):
+            return False
+        return not any(eval(code, _GLOBALS, ns) for code in excluded)
+    return holds
 
 
 def _number(value):
@@ -447,6 +471,13 @@ def tank_sides(split):
     dim = len(lower)
     tol = 1e-8 * max(size)
     conditions = [c for sub in split["subproblems"] for c in sub.get("boundary_conditions") or []]
+    for c in conditions:
+        for word, why in (("part", "a state on part of a side"), ("excluding", "a condition less a part"),
+                          ("trace", "a boundary value from another sub-problem's trace (the penalty form is the "
+                                    "generator's, C19)")):
+            if c.get(word) is not None:
+                raise RealizeError("%s of %s (%s: %r): the realizer sets one BC_RANS setter per side of the tank, "
+                                   "not %s" % (c["variable"], c["region"], word, c[word], why))
     # each side's points that tell which region it is in: its midpoint and quarter points (the corners belong to
     # two sides, so they are not asked)
     names = "xyz"[:dim]
@@ -879,26 +910,154 @@ def _shallow_water_value(doc, name, dim):
         return _OfPoint(code, dim)
 
 
+#: SWFlow's boundary data, by the variable of the problem the model's depth and discharge components fill
+SHALLOW_WATER_VARIABLES = ("water_height", "x_mom", "y_mom")
+
+
+def _is_state(condition, unknowns):
+    """A condition that states the unknown on the boundary (a Dirichlet condition on a depth or discharge component,
+    Cartesian or whole), as against a boundary treatment of the whole boundary (a wall, an outflow)."""
+    return (condition["type"] == "dirichlet" and condition["variable"] in unknowns
+            and condition.get("component") not in ("normal", "tangential"))
+
+
+def _state_fields(condition, unknowns):
+    """{SWFlow variable: number} a state gives: the components it acts on (``components``, the names ymf gives them;
+    else the Cartesian ``component``; else all of the variable's), each with its value."""
+    comps = unknowns[condition["variable"]]
+    if condition.get("components"):
+        where = list(condition["components"])
+    elif condition.get("component") in tuple("xyz"):
+        axis = "xyz".index(condition["component"])
+        if axis >= len(comps):
+            raise RealizeError("%s has no %s component (its components are %s)"
+                               % (condition["variable"], condition["component"], ", ".join(comps)))
+        where = [comps[axis]]
+    else:
+        where = list(comps)
+    value = condition.get("value")
+    if isinstance(value, dict):
+        values = {c: value[c] for c in where if c in value}
+    elif value is not None and len(where) == 1:
+        values = {where[0]: value}
+    else:
+        values = {}
+    if set(values) != set(where):
+        raise RealizeError("the state of %s on %s has value %r: the shallow-water realizer reads one number per "
+                           "component it acts on (%s)" % (condition["variable"], condition.get("part") or "its region",
+                                                        condition.get("value"), ", ".join(where)))
+    out = {}
+    for name, v in values.items():
+        try:
+            number = float(v)
+        except (TypeError, ValueError):
+            raise RealizeError("the state of %s on %s is %r, which is not a number (the shallow-water realizer "
+                               "imposes constants)" % (name, condition.get("part") or "its region", v)) from None
+        out[name] = number
+    return out
+
+
+def _state_function(variable, states):
+    """SWFlow's Dirichlet function ``(x, flag) -> None | (x, t) -> value`` of one variable: the number of the first
+    state of ``variable`` that holds at the boundary node, else None (no data there)."""
+    mine = [st for st in states if st["field"] == variable]
+
+    def dirichlet(x, flag):
+        for st in mine:
+            if st["holds"](x, flag):
+                value = st["value"]
+                return lambda x, t: value
+        return None
+    return dirichlet
+
+
+def auxiliary_states(states):
+    """The states of the dispersive family's auxiliary unknowns, from those of the depth and the discharge, by the rule
+    the decks state (obstacle_flow.py, santos_step.py): h eta and h w take the depth's boundary data (h eta = h^2,
+    h w = 0 where the depth is given), h beta the discharge's x component's. The spec states the model's own
+    unknowns; an auxiliary has no state of its own."""
+    out = []
+    for st in states:
+        if st["field"] == "water_height":
+            out.append(dict(st, field="h_times_eta", value=st["value"] ** 2, what="h eta = (%s)^2" % st["what"]))
+            out.append(dict(st, field="h_times_w", value=0.0, what="h w = 0 where %s" % st["what"]))
+        elif st["field"] == "x_mom":
+            out.append(dict(st, field="h_times_beta", what="h beta, as %s" % st["what"]))
+    return out
+
+
 def shallow_water_boundary(split):
-    """SWFlow's boundary treatment (an entry of the table's SHALLOW_WATER_BOUNDARY) for the closed conditions,
-    which must hold on the whole boundary; refused otherwise. Data only."""
+    """SWFlow's boundary data for the closed conditions. Data only: ``{"name", "reflectingBCs", "states"}``.
+
+    * The boundary treatment of the whole boundary (an entry of the table's SHALLOW_WATER_BOUNDARY: the walls, the
+      outflow), from the conditions that are not states; it may be ``excluding`` the parts the states hold on, and
+      holds nowhere else but on the whole boundary (refused otherwise). With states and no treatment the rest of the
+      boundary is free: the outflow's ``reflectingBCs`` off.
+    * Each state (a Dirichlet condition on the depth or on a discharge component) as the SWFlow variable it sets, its
+      number and where it holds (:func:`_holds`: its region, ``part`` and ``excluding``): ymf's round 7 words. Where
+      two states of one variable both hold, the first stated wins."""
     (sub,) = split["subproblems"]
     conditions = sub.get("boundary_conditions") or []
-    if any(c.get("where") is not None for c in conditions):
-        raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω)")
+    unknowns = sub["unknowns"]
     region = split["domain"].get("region")
-    if any(c.get("flags") is not None for c in conditions):
+    lower, upper = _box(split)
+    tol = 1e-8 * max(u - l for u, l in zip(upper, lower))
+    for c in conditions:
+        if c.get("trace") is not None:
+            raise RealizeError("the shallow-water realizer cannot take the boundary value of %s from the trace of "
+                               "another sub-problem (trace: %r): a shallow-water discretization has one sub-problem"
+                               % (c["variable"], c["trace"]))
+    states, treatment = [], []
+    for c in conditions:
+        (states if _is_state(c, unknowns) else treatment).append(c)
+    for c in states:
+        if c.get("kind", "strong") != "strong":
+            raise RealizeError("SWFlow imposes a state strongly (at the boundary nodes); the state of %s is %s"
+                               % (c["variable"], c["kind"]))
+    for c in treatment:
+        if c.get("where") is not None or c.get("part") is not None:
+            raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary (∂Ω): "
+                               "a wall or an outflow holds on the boundary less the parts a state is stated on "
+                               "(excluding), not on a part")
+    if any(c.get("flags") is not None for c in treatment):
         tags = {int(v) for v in (region or {}).get("boundary_tags", {}).values()}
-        if any(not tags <= {int(f) for f in c["flags"]} for c in conditions):
+        if any(not tags <= {int(f) for f in c["flags"]} for c in treatment if c.get("flags") is not None):
             raise RealizeError("the shallow-water realizer takes one boundary treatment on the whole boundary: "
                                "name every boundary tag of the mesh (%s) in each condition's region"
                                % ", ".join(sorted(map(str, tags))))
-    signature = _signature(conditions)
-    boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
-    if boundary is None:
-        raise RealizeError("the boundary conditions %s are none SWFlow imposes; the table knows %s"
-                           % (sorted(map(str, signature)),
-                              ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY)))
+    stated = {c["part"] for c in states if c.get("part") is not None}
+    for c in treatment:
+        loose = [code for code in c.get("excluding") or [] if code not in stated]
+        if loose:
+            raise RealizeError("a boundary treatment excludes %s, where no state is stated" % ", ".join(loose))
+    if treatment:
+        signature = _signature(treatment)
+        boundary = next((b for b in table.SHALLOW_WATER_BOUNDARY if _matches(b["signature"], signature)), None)
+        if boundary is None:
+            raise RealizeError("the boundary conditions %s are none SWFlow imposes; the table knows %s"
+                               % (sorted(map(str, signature)),
+                                  ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY)))
+        boundary = dict(boundary)
+    elif states:
+        boundary = {"name": "free (the states only)", "reflectingBCs": False}
+    else:
+        raise RealizeError("the boundary conditions are none SWFlow imposes; the table knows %s"
+                           % ", ".join(b["name"] for b in table.SHALLOW_WATER_BOUNDARY))
+    depth = [u for u, comps in unknowns.items() if len(comps) == 1]
+    discharge = [u for u, comps in unknowns.items() if len(comps) > 1]
+    if depth and discharge:
+        variable_of = dict(zip(unknowns[depth[0]] + unknowns[discharge[0]], SHALLOW_WATER_VARIABLES))
+    else:
+        variable_of = {}
+    boundary["states"] = []
+    for c in states:
+        for name, number in _state_fields(c, unknowns).items():
+            if name not in variable_of:
+                raise RealizeError("%s: SWFlow solves a depth and a discharge; the sub-problem's unknowns are %s"
+                                   % (sub.get("name", "?"), sorted(unknowns)))
+            boundary["states"].append({"field": variable_of[name], "value": number, "holds": _holds(c, 2, tol),
+                                       "what": "%s = %r%s" % (name, number, "" if c.get("part") is None else
+                                                              " on %s" % c["part"])})
     return boundary
 
 
@@ -956,6 +1115,9 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
 
     (sub,) = split["subproblems"]
     boundary = shallow_water_boundary(split)
+    states = boundary["states"]
+    if found.family == "dispersive_shallow_water":
+        states = states + auxiliary_states(states)
 
     # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
     lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
@@ -1018,7 +1180,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         sw_model=models["sw_model"], cfl=found.system["runCFL"],
         outputStepping=SWF.OutputStepping(final_time, dt_output=final_time / outputs),
         structured=structured, he=he, nnx=nnx, nny=nny, domain=domain, initialConditions=initial,
-        boundaryConditions={v: (lambda x, flag: None) for v in variables},
+        boundaryConditions={v: _state_function(v, states) for v in variables},
         reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry, genMesh=stored is None)
     # copies: SWFlowProblem hands out its module's default dicts, which a deck then edits in place
     problem.physical_parameters = physical
@@ -1054,7 +1216,8 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
     if not issubclass(so.systemStepControllerType, resolve(found.system["systemStepControllerType"])):
         raise RealizeError("the system step controller is %s, the dispatch says %s"
                            % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
-    record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"]},
+    record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"],
+                           **({"states": [st["what"] for st in states]} if states else {})},
               "initial": {**dict(zip(variables, components)), **auxiliary_record},
               "system": {"final_time": final_time, "outputs": outputs, "mesh": ("stored %s, h = %g" % (stored, he) if stored is not None else
                        "structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (
