@@ -19,7 +19,7 @@ system step controller (Sequential_MinAdaptiveModelStep_SS has no deck of its ow
 RAISERANK=r raises a ValueError on rank r only, at its first archive write (NS_base.archiveInitialSolution), as one
 rank's Archiver did in a 4096-rank run whose other ranks then waited in a collective until the wall time ran out.
 FT and OPTS set the final time and the deck's other options, DTOUT the archive interval (default FT);
-SLOWARCHIVE=s makes every archive write s seconds slower; WALLLIMIT=hh:mm:ss passes --wall-limit; STATEEVERY=n passes --state-every n; WALLSTEPS=n (WALLCOST=s: a checkpoint is taken to cost s of those seconds, default 0) stops the run at the step boundary after its n-th accepted system step, for its wall limit; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); DIR and SO run another deck under DIR instead: SO is
+SLOWARCHIVE=s makes every archive write s seconds slower; WALLLIMIT=hh:mm:ss passes --wall-limit; STATEEVERY=n passes --state-every n; WALLSTEPS=n (WALLCOST=s: a checkpoint is taken to cost s of those seconds, default 0) stops the run at the step boundary after its n-th accepted system step, for its wall limit; HOTSTART=t hot-starts from the archive the directory holds (-H -t t, HOTSTARTMODE continue or restart); STOPAT=t ends the run at output time t (any deck); DIR and SO run another deck under DIR instead: SO is
 parun's file arguments ("x_so.py", "x_p.py x_n.py" or "--SWEs x.py") and OPTS the whole -C string.
 """
 import glob, os, runpy, shutil, sys
@@ -35,6 +35,16 @@ for f in (glob.glob(os.path.join(SRC, "*")) if SO else [os.path.join(SRC, DECK)]
 
 from proteus import NonlinearSolvers, SplitOperator
 from proteus import NumericalSolution as NS
+
+if os.environ.get("CLOSURE"):
+    # CLOSURE=n: RANS2P's turbulenceClosureModel (1 Smagorinsky; the TwoPhaseFlow decks leave it at 0), so that a deck
+    # can measure the eddy viscosity the kernel lags (LAG_LES)
+    from proteus.kernels import RANS2P as _RANS2P
+    _coefficients_init = _RANS2P.Coefficients.__init__
+    def _closure_init(self, *args, **kwargs):
+        _coefficients_init(self, *args, **kwargs)
+        self.turbulenceClosureModel = int(os.environ["CLOSURE"])
+    _RANS2P.Coefficients.__init__ = _closure_init
 
 def boundary_integral_gauges(pList, nList):
     """BIGAUGES=flags (comma list): a BoundaryIntegralGauges of every quantity on those flags, with a moment point on
@@ -53,6 +63,12 @@ def init(self, so, pList, nList, *args, **kwargs):
     if os.environ.get("NOHOTSTARTMODE"):
         # options from a driver older than --hotStartMode (sList, opts follow nList)
         delattr(args[1], "hotStartMode")
+    if os.environ.get("STOPAT"):
+        # STOPAT=t: the run ends at output time t (the stop run of a hot start, for any deck)
+        if so.tnList is None:  # a p/n pair without an so file: the output times NumericalSolution builds from nDTout
+            nout = nList[0].nDTout or 1
+            so.tnList = [float(i) * nList[0].T / float(nout) for i in range(nout + 1)]
+        so.tnList = [t for t in so.tnList if t <= float(os.environ["STOPAT"]) + 1.0e-12]
     if os.environ.get("SYSTEMCONTROLLER"):
         # SYSTEMCONTROLLER=<class in proteus.SplitOperator>: run the deck under that system step controller
         so.systemStepControllerType = getattr(SplitOperator, os.environ["SYSTEMCONTROLLER"])
@@ -68,8 +84,33 @@ def init(self, so, pList, nList, *args, **kwargs):
     if os.environ.get("MAXITS"):
         for n in nList:
             n.maxNonlinearIts = max(getattr(n, "maxNonlinearIts", 0), int(os.environ["MAXITS"]))
-    return _init(self, so, pList, nList, *args, **kwargs)
+    result = _init(self, so, pList, nList, *args, **kwargs)
+    if os.environ.get("STATEDUMP"):
+        install_state_dump(self)
+    return result
 NS.NS_base.__init__ = init
+
+
+def install_state_dump(ns):
+    """STATEDUMP=<prefix> STATEDUMPT=<t0>[,<t1>...]: pickle every numerical state value of the run (test/state_oracle.py: the
+    state an uninterrupted run holds, or a hot start has restored, at the start of the output interval beginning at t) to
+    <prefix>_<k>_p<rank>.pkl for the k-th time, at the first call of the system step controller's stepExact_system with
+    t_system_last = that time. The same call in a full run and in a run hot started at t0 is the same instant of the
+    numerical state; the later times show which differences at t0 were values recomputed before they are read."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import state_oracle
+    controller = ns.systemStepController
+    original = controller.stepExact_system
+    times = [float(t) for t in os.environ["STATEDUMPT"].split(",")]
+    pending = list(enumerate(times))
+    def stepExact_system(tExact):
+        for k, t in list(pending):
+            if abs(controller.t_system_last - t) <= 1.0e-9 * max(1.0, abs(t)):
+                pending.remove((k, t))
+                from proteus import Comm
+                state_oracle.dump(ns, "%s_%d_p%d.pkl" % (os.environ["STATEDUMP"], k, Comm.get().rank()))
+        return original(tExact)
+    controller.stepExact_system = stepExact_system
 
 if os.environ.get("OTHERPARTITION"):
     # the archived solver state looks as if another partition wrote it (its fingerprint differs)
@@ -228,6 +269,9 @@ def calc(self, *a, **k):
         lm = mod.levelModelList[-1]
         for ci in range(lm.nc):
             x = getattr(lm.u[ci].femSpace.dofMap, "lagrangeNodesArray", lm.mesh.nodeArray)[:, :3]
+            if x.shape[0] != lm.u[ci].dof.shape[0]:  # a space without Lagrange nodes (DG): number the dofs
+                x = np.zeros((lm.u[ci].dof.shape[0], 3))
+                x[:, 0] = np.arange(x.shape[0])
             rows.append(np.hstack([np.full((x.shape[0], 1), 100 * mi + ci), x, lm.u[ci].dof[:, None]]))
     a = np.vstack(rows)
     # in parallel each rank writes its own dofs (owned and ghost), u<rank>.csv

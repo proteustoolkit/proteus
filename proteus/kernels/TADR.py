@@ -15,7 +15,7 @@ from proteus.Profiling import (memory, logEvent)
 from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
-from proteus.ShockCapturing import ShockCapturing_base
+from proteus.ShockCapturing import DelayedLagState, ShockCapturing_base
 from proteus.NumericalFlux import Advection_DiagonalUpwind_Diffusion_IIPG_exterior
 from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF,TwoStageNewton
@@ -71,7 +71,7 @@ class SubgridError(SGE_base):
     def calculateSubgridError(self, q):
         pass
 
-class ShockCapturing(ShockCapturing_base):
+class ShockCapturing(DelayedLagState, ShockCapturing_base):
     def __init__(self,
                  coefficients,
                  nd,
@@ -821,6 +821,51 @@ class Coefficients(TC_base):
                                                       l2g.shape[1]))
         self.ebqe_rho[:] = self.rho_f * (1.0 + eps * np.einsum('ej,ekj->ek', c[l2g[eN]], psi_trace[ebN_local]))
         
+
+    #: what the next step reads before it refreshes it: preStep copies q_v to q_v_old before it refreshes q_v from the
+    #: flow model (the low-order flux of STABILIZATION_TYPE 2-4 lags against q_v_old). A hot start rebuilds it at attach
+    #: time from a flow model that has not stepped, and firstStep is False, so nothing re-seeds it. (q_rho, nodal_rho and
+    #: q_porosity_old, the other lagged-looking arrays of the coupling, were measured not to matter: the levee decks'
+    #: hot starts are bitwise without them, test_state_oracle.py levee_small*.)
+    _state_arrays = ("q_v",)
+
+    def state(self):
+        """The coupling lag of this transport model: the arrays above, and on the level model the carried fluid
+        mass of the edge-flux mode (M_dof) with the nodal density the flow model's next preStep takes (rho_nodal), and
+        the Compatible scheme's carriedStorage (M^{n+1} keyed by t^{n+1}). A restart reseeds the masses from the flow
+        model's mn, which is not what was carried (the flow's FCT inversion loss), and leaves rho_nodal at zero, so the
+        flow model's first step takes the projected density and use_rho_nodal stays 0."""
+        m = getattr(self, "model", None)
+        if m is None or not hasattr(self, "q_v_old"):
+            return None
+        out = {k: np.array(getattr(self, k), copy=True) for k in self._state_arrays if hasattr(self, k)}
+        if getattr(m, '_use_edge_flux', 0):
+            out["M_dof"] = np.array(m.M_dof, copy=True)
+            out["M_carried"] = 1 if getattr(m, '_M_carried', False) else 0
+            # the nodal density the flow model's next preStep reads (it takes it only once every node is positive)
+            out["rho_nodal"] = np.array(m.rho_nodal, copy=True)
+        carried = getattr(m, 'carriedStorage', None)
+        if carried is not None:
+            times = sorted(carried)
+            out["carried_n"] = len(times)
+            if times:
+                out["carried_t"] = np.array(times, dtype='d')
+                out["carried_M"] = np.array([carried[t] for t in times], dtype='d')
+        return out
+
+    def set_state(self, state):
+        m = self.model
+        for k in self._state_arrays:
+            if k in state and hasattr(self, k):
+                getattr(self, k)[...] = state[k]
+        if "M_dof" in state:
+            m.M_dof[:] = state["M_dof"]
+            m._M_carried = bool(state["M_carried"])
+            m.rho_nodal[:] = state["rho_nodal"]
+        if "carried_n" in state and hasattr(m, 'carriedStorage'):
+            n = int(state["carried_n"])
+            m.carriedStorage = ({float(t): np.array(M, copy=True) for t, M in zip(state["carried_t"], state["carried_M"])}
+                                if n else {})
 
     def preStep(self, t, firstStep=False):
         # SAVE OLD SOLUTION #

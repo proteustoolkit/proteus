@@ -59,6 +59,23 @@ class ThetaScheme(TimeIntegration.BackwardEuler):
         if 'timeIntegrationTheta' in dir(nOptions):
             self.theta = float(nOptions.timeIntegrationTheta)
         assert 0.0 <= self.theta <= 1.0, "timeIntegrationTheta must be in [0,1]"
+    def state(self):
+        """BackwardEuler's m_last and the nodal density the last accepted step solved with (updateTimeHistory moves it
+        to rho_nodal_old): the next step's old-time mass is theta(psi^n) rho^{n-1}. A hot start rebuilds both
+        as zeros (use_rho_nodal_old = 0), and Coefficients.preStep, with firstStep False, does not refresh them."""
+        st = TimeIntegration.BackwardEuler.state(self)
+        t = self.transport
+        st["rho_nodal_old"] = np.array(t.rho_nodal_old, copy=True)
+        st["use_rho_nodal_old"] = int(t.use_rho_nodal_old)
+        return st
+
+    def set_state(self, state):
+        TimeIntegration.BackwardEuler.set_state(self, state)
+        t = self.transport
+        if "rho_nodal_old" in state:
+            t.rho_nodal_old[:] = state["rho_nodal_old"]
+            t.use_rho_nodal_old = int(state["use_rho_nodal_old"])
+
     def updateTimeHistory(self,resetFromDOF=False):
         TimeIntegration.BackwardEuler.updateTimeHistory(self,resetFromDOF)
         self.transport.u_dof_old[:] = self.u

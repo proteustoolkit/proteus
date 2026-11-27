@@ -1064,6 +1064,7 @@ class ISO_fixed_MinModelStep(ISO_fixed_MinAdaptiveModelStep):
         if rNorm < self.atol_iso and self.its != 0:
             self.convergence_flag = True
         if self.convergence_flag:
+            self.stepFailures = 0  # the sequence is accepted: the next system step has its own maxFailures retries
             for model in self.modelList:
                 model.stepController.updateTimeHistory()
                 model.stepController.choose_dt_model()

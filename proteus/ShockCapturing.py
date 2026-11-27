@@ -42,6 +42,25 @@ class DelayedLagState(object):
             last = [numpy.array(state['numDiff_last_%d' % ci], copy=True) for ci in comps]
         self.numDiff_last = dict(zip(comps, last)) if isinstance(self.numDiff_last, dict) else last
 
+class LaggedNumDiffState(object):
+    """state()/set_state() for a shock capturing that lags from the first step (``lag=True``): ``numDiff_last`` is
+    ``cq[('numDiff', ci, ci)]``, the array the residual reads, and ``numDiff`` is a separate array the residual fills;
+    ``updateShockCapturingHistory`` copies ``numDiff`` into it at the end of a step. A restart's spin-up evaluates the
+    residual with the time term off and copies that numDiff into ``numDiff_last`` (which the uninterrupted run holds from
+    the last residual of the previous step, mt included), so the step after a restart is not the uninterrupted one's.
+    The state is that array; ``set_state`` writes it in place (the array is also a ``q`` entry). Nothing when not lagged
+    (``numDiff_last`` is then ``numDiff`` itself, recomputed in every residual).
+    """
+    def state(self):
+        if not self.lag:
+            return None
+        return {'numDiff_last_%d' % ci: numpy.array(a, copy=True) for ci, a in enumerate(self.numDiff_last)}
+
+    def set_state(self, state):
+        for ci, a in enumerate(self.numDiff_last):
+            if 'numDiff_last_%d' % ci in state:
+                a[:] = state['numDiff_last_%d' % ci]
+
 class ShockCapturing_base(object):
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True):
         self.nc = coefficients.nc
@@ -99,7 +118,7 @@ class ShockCapturing_base(object):
 
 ConstantDiffusion_SC = ShockCapturing_base
 
-class ResGrad_SC(ShockCapturing_base):
+class ResGrad_SC(LaggedNumDiffState, ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True):
         ShockCapturing_base.__init__(self,coefficients,nd,shockCapturingFactor,lag)
     def calculateNumericalDiffusion(self,q):
@@ -119,7 +138,7 @@ class ResGradFFDarcy_SC(ShockCapturing_base):
                                                            q[('grad(u)',0)],
                                                            self.numDiff[0])
 
-class ResGradQuad_SC(ShockCapturing_base):
+class ResGradQuad_SC(LaggedNumDiffState, ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True,gradLag=True):
         ShockCapturing_base.__init__(self,coefficients,nd,shockCapturingFactor,lag)
         self.debug=False
@@ -165,7 +184,7 @@ class ScalarAdvection_SC(ShockCapturing_base):
                                                             q[('df',ci,ci)],
                                                             self.numDiff[ci])
 
-class HamiltonJacobi_SC(ShockCapturing_base):
+class HamiltonJacobi_SC(LaggedNumDiffState, ShockCapturing_base):
     def __init__(self,coefficients,nd,shockCapturingFlag='1',shockCapturingFactor=0.5,lag=True):
         #the cshockCapturing HJ kernels take a C char; Python 3 must pass its code (as SubgridError does)
         self.shockCapturingFlag=_c_char_flag(shockCapturingFlag)
@@ -223,6 +242,9 @@ class ResGradJuanes_SC(ShockCapturing_base):
 
 #examples of shock capturing with lagging allowed after certain number of steps
 class ResGradDelayLag_SC(ResGrad_SC):
+    # its own delay machine (dead: no deck names it): not LaggedNumDiffState's simple lag; carries nothing here
+    state = ShockCapturing_base.state
+    set_state = ShockCapturing_base.set_state
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True,nStepsToDelay=None):
         ResGrad_SC.__init__(self,coefficients,nd,shockCapturingFactor,lag)
         self.nStepsToDelay = nStepsToDelay
@@ -272,6 +294,9 @@ class ResGradDelayLag_SC(ResGrad_SC):
                 self.numDiff.append(numpy.zeros(self.cq_numDiff[ci].shape,'d'))
 
 class ResGradQuadDelayLag_SC(ResGradQuad_SC):
+    # its own delay machine (dead: no deck names it): not LaggedNumDiffState's simple lag; carries nothing here
+    state = ShockCapturing_base.state
+    set_state = ShockCapturing_base.set_state
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True,nStepsToDelay=None,isotropic=False):
         ResGradQuad_SC.__init__(self,coefficients,nd,shockCapturingFactor,lag)
         self.nStepsToDelay = nStepsToDelay
@@ -309,6 +334,9 @@ class ResGradQuadDelayLag_SC(ResGradQuad_SC):
                 self.numDiff.append(self.numDiff_last[ci].copy())
 
 class NavierStokes_SC(ResGradQuad_SC):
+    # its own delay machine (dead: no deck names it): not LaggedNumDiffState's simple lag; carries nothing here
+    state = ShockCapturing_base.state
+    set_state = ShockCapturing_base.set_state
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True,nStepsToDelay=None):
         ResGradQuad_SC.__init__(self,coefficients,nd,shockCapturingFactor,lag)
         self.nStepsToDelay = nStepsToDelay
@@ -349,6 +377,9 @@ class NavierStokes_SC(ResGradQuad_SC):
                 self.numDiff[ci]=numpy.zeros(self.cq_numDiff[ci].shape,'d')
 
 class NavierStokes_SC_opt(ResGradQuad_SC):
+    # its own delay machine (dead: no deck names it): not LaggedNumDiffState's simple lag; carries nothing here
+    state = ShockCapturing_base.state
+    set_state = ShockCapturing_base.set_state
     def __init__(self,coefficients,nd,shockCapturingFactor=0.25,lag=True,nStepsToDelay=None):
         ResGradQuad_SC.__init__(self,coefficients,nd,shockCapturingFactor,lag)
         self.nStepsToDelay = nStepsToDelay

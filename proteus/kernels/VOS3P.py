@@ -17,7 +17,7 @@ from proteus.Profiling import logEvent
 from proteus.Transport import OneLevelTransport
 from proteus.TransportCoefficients import TC_base
 from proteus.SubgridError import SGE_base
-from proteus.ShockCapturing import ShockCapturing_base
+from proteus.ShockCapturing import DelayedLagState, ShockCapturing_base
 from proteus.LinearAlgebraTools import SparseMat, ParVec_petsc4py
 from proteus.NonlinearSolvers import ExplicitLumpedMassMatrix,ExplicitConsistentMassMatrixForVOF
 from proteus import TimeIntegration
@@ -47,7 +47,7 @@ class SubgridError(SGE_base):
         pass
 
 
-class ShockCapturing(ShockCapturing_base):
+class ShockCapturing(DelayedLagState, ShockCapturing_base):
 
     def __init__(
             self,

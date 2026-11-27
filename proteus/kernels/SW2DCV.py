@@ -222,6 +222,11 @@ class RKEV(proteus.TimeIntegration.SSP):
         for name, v in vars(self.transport).items():
             if (name.endswith("_dof_old") or name == "dLow") and isinstance(v, np.ndarray):
                 st["transport_" + name] = v.copy()
+        if getattr(self.transport, "hEps", None) is not None:
+            # the dry-state tolerance is eps times the largest depth of the INITIAL condition (initDataStructures):
+            # a hot start builds it from the archive's depth, which is a different number (measured 2e-7 relative on
+            # the circular dam break) and moves every dry-state decision of the limiter
+            st["transport_hEps"] = float(self.transport.hEps)
         return st
 
     def set_state(self, state):
@@ -229,6 +234,8 @@ class RKEV(proteus.TimeIntegration.SSP):
         for ci in range(self.nc):
             self.u_dof_last[ci][:] = state["u_dof_last_%d" % ci]
             self.u_dof_lstage[ci][:] = state["u_dof_lstage_%d" % ci]
+        if "transport_hEps" in state:
+            self.transport.hEps = float(state["transport_hEps"])
         for key, v in state.items():
             if key.startswith("transport_"):
                 a = getattr(self.transport, key[len("transport_"):], None)
@@ -521,7 +528,9 @@ class Coefficients(proteus.TransportCoefficients.TC_base):
         pass
 
     def preStep(self, t, firstStep=False):
-        if firstStep:
+        # boundaryIndex and reflectingBoundaryIndex are derived from the mesh (normals, node materials), not state: a
+        # hot start never takes a first step, so build them whenever they are missing, not only when firstStep
+        if firstStep or self.model.boundaryIndex is None:
             # Init boundaryIndex
             assert self.model.boundaryIndex is None and self.model.normalx is not None, "Check boundaryIndex, normalx and normaly"
             self.model.boundaryIndex = []

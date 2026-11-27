@@ -85,6 +85,38 @@ class SGE_base(object):
         \\delta m^{n}/\\delta t^{n+1}
         """
         pass
+class LaggedSGEState(object):
+    """state()/set_state() for the subgrid errors that lag: ``tau_last`` (where the class has it) and every ``*_sge``
+    quadrature array that is its own copy of the live coefficient (initializeElementQuadrature deep-copies them when
+    ``lag`` and updateSubgridErrorHistory refreshes them once per step). A hot start spins up with the history
+    taken from the restart solution, so the first step after it would stabilise with a different tau than the run it
+    continues (C14 note, section 3.2 rows 10-11). None when not lagging: the ``_sge`` arrays are then the live ones.
+    List ``tau_last`` and the arrays are written back in place, other holders keep seeing them."""
+
+    def _lagged_arrays(self):
+        out = {}
+        cq = getattr(self, "cq", None) or {}
+        for key in sorted(cq, key=repr):
+            if isinstance(key, tuple) and isinstance(key[0], str) and key[0].endswith("_sge") \
+               and not numpy.shares_memory(cq[key], cq.get((key[0][:-4],) + key[1:], ())):
+                out["sge_%r" % (key,)] = cq[key]
+        for ci, tau in enumerate(getattr(self, "tau_last", None) or []):
+            out["tau_last_%d" % ci] = tau
+        return out
+
+    def state(self):
+        if not self.lag:
+            return None
+        return {name: numpy.array(a, copy=True) for name, a in self._lagged_arrays().items()}
+
+    def set_state(self, state):
+        if not self.lag or not state:
+            return
+        arrays = self._lagged_arrays()
+        for name, a in arrays.items():
+            a[...] = state[name]
+
+
 class Advection_ASGS(SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
@@ -177,7 +209,7 @@ class AdvectionLag_ASGS(SGE_base):
                                                                q[('subgridError',ci)],
                                                                q[('dsubgridError',ci,cj)])
 
-class AdvectionDiffusionReaction_ASGS(SGE_base):
+class AdvectionDiffusionReaction_ASGS(LaggedSGEState, SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
         self.stabilizationFlag = _c_char_flag(stabFlag)
@@ -624,7 +656,7 @@ class DarcyFC_ASGS(SGE_base):
 #             print "dpdeResidual",q[('dpdeResidual',ci,ci)]
 #             print "subgrid error",q[('subgridError',ci)]
 #             print "dsubgrid error",q[('dsubgridError',ci,ci)]
-class HamiltonJacobi_ASGS(SGE_base):
+class HamiltonJacobi_ASGS(LaggedSGEState, SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
         self.stabilizationFlag = _c_char_flag(stabFlag)
@@ -657,7 +689,7 @@ class HamiltonJacobi_ASGS(SGE_base):
             for ci in range(self.nc):
                 self.cq[('dH_sge',ci,ci)][:]= self.cq[('dH',ci,ci)]
 
-class HamiltonJacobiDiffusionReaction_ASGS(SGE_base):
+class HamiltonJacobiDiffusionReaction_ASGS(LaggedSGEState, SGE_base):
     def __init__(self,coefficients,nd,stabFlag='1',lag=False):
         SGE_base.__init__(self,coefficients,nd,lag)
         self.stabilizationFlag = _c_char_flag(stabFlag)
@@ -1736,6 +1768,9 @@ class AdvectionDiffusionReactionTransientSubscales_ASGS(AdvectionDiffusionReacti
 
       FLCBDF seems less happy with tracking subgrid scales than without tracking
     """
+    # tracks subscales too (tau_t, the subscale history): what LaggedSGEState carries is not all of it
+    state = SGE_base.state
+    set_state = SGE_base.set_state
     def __init__(self,coefficients,nd,stabFlag='1',lag=False,trackSubScales=False,useHarariDirectly=False,
                  limit_tau_t=False,tau_t_limit_min=0.0,tau_t_limit_max=1.0):
         AdvectionDiffusionReaction_ASGS.__init__(self,coefficients,nd,stabFlag=stabFlag,lag=lag)
