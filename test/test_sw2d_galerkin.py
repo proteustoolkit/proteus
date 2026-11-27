@@ -7,14 +7,13 @@ residual and Jacobian (``calculateResidual_supg``, ``calculateJacobian_supg``) o
 coefficients give (no bathymetry), u = v = 0 on the walls, and the tests check:
 
 - the entry points the model bound are the ones the option names (a mutation that swaps them fails here);
-- the answer is finite, the depth stays inside its initial range for the plain scheme (it overshoots by < 2% with SUPG)
-  and the two variants differ, so the SUPG branch ran;
-- two ranks give the serial answer (to 1e-9; measured 6e-13 SUPG, 6e-17 plain).
+- the answer is finite, the depth stays within 2% of its initial range, water flows from the deep to the shallow
+  side, and the two variants differ, so the SUPG branch ran;
+- two ranks give the serial answer (to 1e-9 SUPG, measured 2e-13; 1e-8 plain, measured 5e-10).
 
-The module as it stands cannot be built: it uses ``TC_base``, ``NonlinearEquation``, ``Quadrature``, ``logEvent``,
-``cfemIntegrals``, ``memory``, ``Comm``, ``DOFBoundaryConditions`` and ``FluxBoundaryConditions`` without importing
-them. The helper puts them in the module's namespace (the other kernels import them from proteus.Transport); the
-report for the kernel's owner is in HANDOFF_2026-11-23_c49-r3-done.md.
+Until the C0 kernel-bugs round the module could not be built (nine names used and never imported) and the helper put the
+names in its namespace; it also gave u = v = 0 at every node, interior included, so the plain run did not move. Both
+are fixed: the helper pins the velocity on the walls only and the tests check that the dam breaks.
 """
 import importlib.util
 import os
@@ -78,8 +77,13 @@ def test_both_variants_step_and_differ(serial):
     for r in (plain, supg):
         for k in ("h", "hu", "hv"):
             assert numpy.isfinite(r[k]).all(), k
-    assert plain["h"].min() >= 0.5 - 1e-12 and plain["h"].max() <= 1.0 + 1e-12
-    assert 0.48 < supg["h"].min() and supg["h"].max() < 1.02
+    for r in (plain, supg):
+        assert 0.48 < r["h"].min() and r["h"].max() < 1.02
+        # the dam breaks: water flows from the deep side (x < 0.5) to the shallow one; u (stored as "hu") is the
+        # x velocity, v (stored as "hv") stays small (the walls are y = 0, 1 and the step does not depend on y)
+        assert r["hu"].max() > 0.1 and r["hu"].min() > -0.05
+        assert numpy.abs(r["hv"]).max() < 0.1 * r["hu"].max()
+        assert r["h"][r["x"] < 0.4].min() < 1.0 - 1e-4, "the deep side did not drain"
     assert numpy.abs(plain["h"] - supg["h"]).max() > 1e-4, "the SUPG variant gave the plain answer"
 
 
@@ -91,4 +95,6 @@ def test_two_ranks_give_the_serial_answer(serial, tmp_path, supg):
     assert numpy.array_equal(one["x"], two["x"]) and numpy.array_equal(one["y"], two["y"])
     for k in ("h", "hu", "hv"):
         err = numpy.abs(one[k] - two[k]).max()
-        assert err < 1e-9, (k, "two ranks differ from serial by %.3e" % err)
+        # the plain Newton crawls (its residual recomputes the viscosity the Jacobian holds fixed): 5e-10 measured on u
+        tol = 1e-8 if supg == 0 else 1e-9
+        assert err < tol, (k, "two ranks differ from serial by %.3e" % err)

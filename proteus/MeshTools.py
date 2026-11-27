@@ -20,6 +20,21 @@ from .Profiling import logEvent,memory, memHardLimit
 from . import Domain
 from . import Comm
 from subprocess import run, check_output
+import itertools as _itertools
+
+#: the archive epochs of every mesh in this process (Mesh.archiveEpoch): one counter, so that a mesh object built
+#: to replace another (an adapted mesh) never repeats an epoch of the one it replaces
+_ARCHIVE_EPOCHS = _itertools.count(1)
+
+#: the arrays each kind of archived mesh data is made from (Mesh.archiveEpoch), read on the mesh and on its global
+#: mesh. Topology: the connectivity, the element and node counts and the partition (the local-to-global maps and the
+#: input numbering); geometry: the node coordinates; materials: the material types.
+_ARCHIVE_EPOCH_ARRAYS = {
+    "topology": ("elementNodesArray", "elementBoundaryNodesArray", "nodeNumbering_subdomain2global",
+                 "elementNumbering_subdomain2global", "nodeNumbering_input", "elementNumbering_input"),
+    "geometry": ("nodeArray",),
+    "materials": ("nodeMaterialTypes", "elementMaterialTypes", "elementBoundaryMaterialTypes"),
+}
 
 class Node(object):
     """A numbered point in 3D Euclidean space
@@ -1108,15 +1123,67 @@ class Mesh(object):
         # #cmeshTools.deleteMeshDataStructures(self.cmesh)
         # logEvent(memory("Without global mesh","Mesh"),level=1)
         # comm.endSequential()
+    def archiveEpoch(self, comm, kinds=("topology", "geometry"), tCount=None):
+        """This mesh's archive epoch for ``kinds``: a tuple of numbers, one per kind, that changes when the
+        arrays of that kind change (``_ARCHIVE_EPOCH_ARRAYS``) and only then.
+
+        The archive compares it with the epoch it wrote a mesh array for (``Archiver.mesh_step``) and writes
+        the array again only when it differs: a static mesh once, a moving mesh's nodes every frame and its
+        connectivity once, an adapted mesh (a new mesh object, or new arrays in this one) everything once
+        more. It is read from the arrays themselves (a digest of each kind, compared with the one of the
+        previous call), so no producer of a mesh change has to say so: the mesh mover, PUMI adaptivity, a
+        redistribution and any code that writes ``nodeArray`` in place are all seen. A new mesh object starts
+        from new numbers.
+
+        Collective: a kind changed when it changed on any rank, and every rank then takes a new number.
+        ``tCount`` caches the answer for the archive step (the mesh is not changed while a step is archived,
+        and every space's writer asks): the digests are taken once per step.
+        """
+        import hashlib
+        cache = self.__dict__.setdefault("_archiveEpochs", {})
+        if tCount is None or cache.get("step") != tCount:
+            owners = [self]
+            g = self.__dict__.get("globalMesh")
+            if g is not None and g is not self:
+                owners.append(g)
+            changed = []
+            digests = {}
+            for kind in sorted(_ARCHIVE_EPOCH_ARRAYS):
+                h = hashlib.sha1()
+                for owner in owners:
+                    for name in _ARCHIVE_EPOCH_ARRAYS[kind]:
+                        a = owner.__dict__.get(name)
+                        if a is None:
+                            h.update(b"-")
+                            continue
+                        a = np.ascontiguousarray(a)
+                        h.update(("%s%s%s" % (name, a.dtype.str, a.shape)).encode())
+                        h.update(a.reshape(-1).view(np.uint8))
+                digests[kind] = h.digest()
+                changed.append(cache.get(kind, (None, None))[1] != digests[kind])
+            flags = sum(1 << i for i, c in enumerate(changed) if c)
+            if comm.size() > 1:
+                from mpi4py import MPI
+                flags = comm.comm.tompi4py().allreduce(flags, op=MPI.BOR)
+            for i, kind in enumerate(sorted(_ARCHIVE_EPOCH_ARRAYS)):
+                if flags & (1 << i):
+                    cache[kind] = (next(_ARCHIVE_EPOCHS), digests[kind])
+            cache["step"] = tCount
+        return tuple(cache[kind][0] for kind in kinds)
+
     def writeMeshXdmf(self,ar,name='',t=0.0,init=False,meshChanged=False,Xdmf_ElementTopology="Triangle",tCount=0, EB=False):
         """Describe this mesh in the archive at time ``t``; with ``EB`` its element boundaries too.
 
         The grid -- a ymf grid dict in the collection ``Mesh <name>`` (and
         ``EBMesh <name>``) -- is built on every pass through the archive's
-        builders; the arrays behind it are written only when ``init or
-        meshChanged``. The material types are written on every pass, as
-        they were; the local-to-global maps, which ``collect.py`` and a
-        hot start from a global archive read, only with the arrays.
+        builders; each array behind it is written only when what it is made
+        from changed since the archive last wrote it (``Archiver.mesh_step``,
+        :meth:`archiveEpoch`), and otherwise the grid names the dataset of the
+        step it was written at. Topology (connectivity, the local-to-global
+        maps, the input numbering), nodes (geometry, and topology) and material
+        types are decided apart: a static mesh is written once, a moving
+        mesh's nodes on every pass. ``init`` and ``meshChanged`` write
+        everything.
         """
         if self.arGridCollection is not None:
             init = False
@@ -1131,6 +1198,15 @@ class Mesh(object):
                 self.arEBGridCollection = ar.domain.collection("EBMesh "+name)
         if not self.arGridCollection.is_current(t):
             rank = ar.comm.rank()
+            # Each array is written only when what it is made from changed since this archive last wrote it
+            # (Archiver.mesh_step): a static mesh once, a moving mesh's nodes every frame and its topology once.
+            # The grid of every step names the datasets of the step they were written at.
+            force = init or meshChanged
+            onRank = '' if ar.global_sync else str(rank)
+            topologyStep, writeTopology = ar.mesh_step('elements'+onRank+name, tCount, self, force, ar.MESH_TOPOLOGY)
+            nodesStep, writeNodes = ar.mesh_step('nodes'+onRank+name, tCount, self, force, ar.MESH_ALL)
+            materialsStep, writeMaterials = ar.mesh_step('materialTypes'+onRank+name, tCount, self, force,
+                                                         ar.MESH_TOPOLOGY + ar.MESH_MATERIALS)
             #
             #topology and geometry
             #
@@ -1138,14 +1214,14 @@ class Mesh(object):
                 assert ar.writesDatasets, "global_sync not  supported with text heavy data"
                 n_elements       = self.globalMesh.nElements_global
                 nodes_dims       = [self.globalMesh.nNodes_global, 3]
-                elements_dataset = 'elements'+name+str(tCount)
-                nodes_dataset    = 'nodes'+name+str(tCount)
+                elements_dataset = 'elements'+name+str(topologyStep)
+                nodes_dataset    = 'nodes'+name+str(nodesStep)
                 elements_dtype   = self.globalMesh.nodeNumbering_subdomain2global
             else:
                 n_elements       = self.nElements_owned
                 nodes_dims       = [self.nNodes_global, 3]
-                elements_dataset = 'elements'+str(rank)+name+str(tCount)
-                nodes_dataset    = 'nodes'+str(rank)+name+str(tCount)
+                elements_dataset = 'elements'+str(rank)+name+str(topologyStep)
+                nodes_dataset    = 'nodes'+str(rank)+name+str(nodesStep)
                 elements_dtype   = self.elementNodesArray
             self.arGrid = ar.write_grid(self.arGridCollection, None, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -1153,37 +1229,44 @@ class Mesh(object):
                               elements_dataset, 'elements'+name, dtype=elements_dtype)
             ar.write_geometry(self.arGrid, nodes_dims, nodes_dataset, 'nodes'+name,
                               dtype=self.nodeArray)
-            if init or meshChanged:
-                if ar.global_sync:
+            if ar.global_sync:
+                if writeTopology:
                     ar.create_dataset_sync(elements_dataset,
                                            offsets=self.globalMesh.elementOffsets_subdomain_owned,
                                            data=self.globalMesh.nodeNumbering_subdomain2global[self.elementNodesArray[:self.nElements_owned]])
+                if writeNodes:
                     ar.create_dataset_sync(nodes_dataset,
                                            offsets=self.globalMesh.nodeOffsets_subdomain_owned,
                                            data=self.nodeArray[:self.nNodes_owned])
-                elif ar.writesDatasets:
+            elif ar.writesDatasets:
+                if writeTopology:
                     ar.create_dataset_async(elements_dataset,data=self.elementNodesArray[:self.nElements_owned])
+                if writeNodes:
                     ar.create_dataset_async(nodes_dataset,data=self.nodeArray)
-                else:
+            else:
+                if writeTopology:
                     numpy.savetxt(ar.textDataDir+"/elements"+name+".txt",self.elementNodesArray[:self.nElements_owned],fmt='%d')
+                if writeNodes:
                     numpy.savetxt(ar.textDataDir+"/nodes"+name+".txt",self.nodeArray)
             #
             #element boundary topology and geometry
             #
             if EB:
+                boundariesStep, writeBoundaries = ar.mesh_step('elementBoundaries'+str(rank)+name, tCount, self,
+                                                               force, ar.MESH_TOPOLOGY)
                 Xdmf_ElementEBTopology = "Triangle" #cek hack
                 self.arEBGrid = ar.write_grid(self.arEBGridCollection, None, t, tCount)
                 #the boundary grid shares the mesh's nodes dataset
                 ar.write_topology(self.arEBGrid, Xdmf_ElementEBTopology, self.nElementBoundaries_global,
                                   [self.nElementBoundaries_global, self.nNodes_elementBoundary],
-                                  'elementBoundaries'+str(rank)+name+str(tCount),
+                                  'elementBoundaries'+str(rank)+name+str(boundariesStep),
                                   'elementBoundaries'+name, dtype=self.elementBoundaryNodesArray)
                 ar.write_geometry(self.arEBGrid, [self.nNodes_global, 3],
-                                  'nodes'+str(rank)+name+str(tCount), 'nodes'+name,
+                                  'nodes'+str(rank)+name+str(nodesStep), 'nodes'+name,
                                   dtype=self.nodeArray)
-                if init or meshChanged:
+                if writeBoundaries:
                     if ar.writesDatasets:
-                        ar.create_dataset_async('elementBoundaries'+str(rank)+name+str(tCount), data = self.elementBoundaryNodesArray)
+                        ar.create_dataset_async('elementBoundaries'+str(rank)+name+str(boundariesStep), data = self.elementBoundaryNodesArray)
                     else:
                         np.savetxt(ar.textDataDir+"/elementBoundaries"+name+".txt",self.elementBoundaryNodesArray,fmt='%d')
 
@@ -1193,63 +1276,75 @@ class Mesh(object):
                 ar.write_field(self.arGrid, "NodeMapL2G",
                                self.globalMesh.nodeNumbering_subdomain2global, tCount,
                                dimensions=[self.nNodes_global],
-                               dataset='nodeMapL2G'+str(rank)+name+str(tCount),
+                               dataset='nodeMapL2G'+str(rank)+name+str(topologyStep),
                                text_stem='nodeMapL2G'+name,
-                               write_data=init or meshChanged)
+                               write_data=writeTopology)
                 ar.write_field(self.arGrid, "CellMapL2G",
                                self.globalMesh.elementNumbering_subdomain2global[:self.nElements_owned], tCount,
                                center="Cell", dimensions=[self.nElements_owned],
-                               dataset='cellMapL2G'+str(rank)+name+str(tCount),
+                               dataset='cellMapL2G'+str(rank)+name+str(topologyStep),
                                text_stem='cellMapL2G'+name,
-                               write_data=init or meshChanged)
+                               write_data=writeTopology)
             # The partition's renumbering, as each archived row's index in the input mesh (written only
             # when it is not the identity): what puts an archive back in the input order, whatever the
             # rank count (inInputOrder, meshFingerprint).
             if self.globalMesh is not None:
-                self._writeInputNumbering(ar, name, tCount, init or meshChanged)
-                self._writeFingerprint(ar, init, meshChanged)
+                self._writeInputNumbering(ar, name, tCount, topologyStep, writeTopology)
+                self._writeFingerprint(ar, init, writeNodes and not init)
                 if init and getattr(ar, "driver", None) == "per-rank" and ar.hdfFile is not None:
                     _writeSubdomainView(self, ar, name)
             #
-            #material types
+            #material types: the datasets keep the names write_field gives them, at the step they were written
             #
             if ar.global_sync:
                 ar.write_field(self.arGrid, "nodeMaterialTypes", self.nodeMaterialTypes, tCount,
                                dimensions=[self.globalMesh.nNodes_global],
                                sync_offsets=self.globalMesh.nodeOffsets_subdomain_owned,
-                               sync_data=self.nodeMaterialTypes[:self.nNodes_owned])
+                               sync_data=self.nodeMaterialTypes[:self.nNodes_owned],
+                               dataset="nodeMaterialTypes_t%d" % materialsStep, write_data=writeMaterials)
                 ar.write_field(self.arGrid, "elementMaterialTypes", self.elementMaterialTypes, tCount,
                                center="Cell", dimensions=[self.globalMesh.nElements_global],
                                sync_offsets=self.globalMesh.elementOffsets_subdomain_owned,
-                               sync_data=self.elementMaterialTypes[:self.nElements_owned])
+                               sync_data=self.elementMaterialTypes[:self.nElements_owned],
+                               dataset="elementMaterialTypes_t%d" % materialsStep, write_data=writeMaterials)
                 if EB:
                     #the boundary grid's node types are the mesh's, just written
                     ar.write_field(self.arEBGrid, "ebnodeMaterialTypes", self.nodeMaterialTypes, tCount,
                                    dimensions=[self.globalMesh.nNodes_global],
-                                   dataset="nodeMaterialTypes_t"+str(tCount), write_data=False)
+                                   dataset="nodeMaterialTypes_t"+str(materialsStep), write_data=False)
                     ar.write_field(self.arEBGrid, "elementBoundaryMaterialTypes",
                                    self.elementBoundaryMaterialTypes, tCount,
                                    center="Cell", dimensions=[self.globalMesh.nElementBoundaries_global],
                                    sync_offsets=self.globalMesh.elementBoundaryOffsets_subdomain_owned,
-                                   sync_data=self.elementBoundaryMaterialTypes[:self.nElementBoundaries_owned])
+                                   sync_data=self.elementBoundaryMaterialTypes[:self.nElementBoundaries_owned],
+                                   dataset="elementBoundaryMaterialTypes_t%d" % materialsStep,
+                                   write_data=writeMaterials)
             else:
                 ar.write_field(self.arGrid, "nodeMaterialTypes", self.nodeMaterialTypes, tCount,
-                               dimensions=[self.nNodes_global])
+                               dimensions=[self.nNodes_global],
+                               dataset="nodeMaterialTypes_p%d_t%d" % (rank, materialsStep),
+                               text_stem="nodeMaterialTypes%d" % materialsStep, write_data=writeMaterials)
                 ar.write_field(self.arGrid, "elementMaterialTypes",
                                self.elementMaterialTypes[:self.nElements_owned], tCount,
-                               center="Cell", dimensions=[self.nElements_owned])
+                               center="Cell", dimensions=[self.nElements_owned],
+                               dataset="elementMaterialTypes_p%d_t%d" % (rank, materialsStep),
+                               text_stem="elementMaterialTypes%d" % materialsStep, write_data=writeMaterials)
                 if EB:
                     ar.write_field(self.arEBGrid, "ebnodeMaterialTypes", self.nodeMaterialTypes, tCount,
                                    dimensions=[self.nNodes_global],
-                                   dataset="nodeMaterialTypes_p"+str(rank)+"_t"+str(tCount),
+                                   dataset="nodeMaterialTypes_p"+str(rank)+"_t"+str(materialsStep),
                                    write_data=False)
                     ar.write_field(self.arEBGrid, "elementBoundaryMaterialTypes",
                                    self.elementBoundaryMaterialTypes, tCount,
-                                   center="Cell", dimensions=[self.nElementBoundaries_global])
+                                   center="Cell", dimensions=[self.nElementBoundaries_global],
+                                   dataset="elementBoundaryMaterialTypes_p%d_t%d" % (rank, materialsStep),
+                                   text_stem="elementBoundaryMaterialTypes%d" % materialsStep,
+                                   write_data=writeMaterials)
             #done with material types
 
-    def _writeInputNumbering(self, ar, name, tCount, write_data):
-        """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering)."""
+    def _writeInputNumbering(self, ar, name, tCount, step, write_data):
+        """The ``NodeMapInput`` and ``CellMapInput`` attributes of this subdomain's grid (see inputNumbering):
+        the datasets of archive step ``step``, the one the mesh's topology was last written at."""
         g = self.globalMesh
         nodes_input, elements_input = _localInputNumbering(g)
         rank = ar.comm.rank()
@@ -1263,10 +1358,10 @@ class Mesh(object):
             if ar.global_sync:
                 ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[n_global],
                                sync_offsets=offsets, sync_data=data[:offsets[rank+1] - offsets[rank]],
-                               dataset=attribute+name+str(tCount), write_data=write_data)
+                               dataset=attribute+name+str(step), write_data=write_data)
             else:
                 ar.write_field(self.arGrid, attribute, data, tCount, center=center, dimensions=[len(data)],
-                               dataset=attribute+str(rank)+name+str(tCount), text_stem=attribute+name,
+                               dataset=attribute+str(rank)+name+str(step), text_stem=attribute+name,
                                write_data=write_data)
 
     def _writeFingerprint(self, ar, init, meshChanged):
@@ -4430,6 +4525,10 @@ class Mesh2DM(Mesh):
             self.arGridCollection = ar.domain.collection("Mesh "+name)
         if not self.arGridCollection.is_current(t):
             rank = ar.comm.rank()
+            #the arrays are written when the mesh changed (Archiver.mesh_step), as in Mesh.writeMeshXdmf
+            onRank = '' if ar.global_sync else str(rank)
+            meshStep, writeMesh = ar.mesh_step('elements'+onRank+name, tCount, self, init or meshChanged,
+                                               ar.MESH_ALL + ar.MESH_MATERIALS)
             #
             #topology and geometry
             #
@@ -4437,14 +4536,14 @@ class Mesh2DM(Mesh):
                 assert ar.writesDatasets, "global_sync with text heavy data not supported"
                 n_elements       = self.globalMesh.nElements_global
                 nodes_dims       = [self.globalMesh.nNodes_global, 3]
-                elements_dataset = 'elements'+name+str(tCount)
-                nodes_dataset    = 'nodes'+name+str(tCount)
+                elements_dataset = 'elements'+name+str(meshStep)
+                nodes_dataset    = 'nodes'+name+str(meshStep)
                 elements_dtype   = self.globalMesh.nodeNumbering_subdomain2global
             else:
                 n_elements       = self.nElements_owned
                 nodes_dims       = [self.nNodes_global, 3]
-                elements_dataset = 'elements'+str(rank)+name+str(tCount)
-                nodes_dataset    = 'nodes'+str(rank)+name+str(tCount)
+                elements_dataset = 'elements'+str(rank)+name+str(meshStep)
+                nodes_dataset    = 'nodes'+str(rank)+name+str(meshStep)
                 elements_dtype   = self.elementNodesArray
             self.arGrid = ar.write_grid(self.arGridCollection, None, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -4458,13 +4557,14 @@ class Mesh2DM(Mesh):
                                center="Cell", dimensions=[self.globalMesh.nElements_global],
                                sync_offsets=self.globalMesh.elementOffsets_subdomain_owned,
                                sync_data=self.elementMaterialTypes[:self.nElements_owned],
-                               write_data=init or meshChanged)
+                               dataset="elementMaterialTypes_t%d" % meshStep, write_data=writeMesh)
             else:
                 ar.write_field(self.arGrid, "elementMaterialTypes",
                                self.elementMaterialTypes[:self.nElements_owned], tCount,
                                center="Cell", dimensions=[self.nElements_owned],
-                               write_data=init or meshChanged)
-            if init or meshChanged:
+                               dataset="elementMaterialTypes_p%d_t%d" % (rank, meshStep),
+                               text_stem="elementMaterialTypes%d" % meshStep, write_data=writeMesh)
+            if writeMesh:
                 if ar.global_sync:
                     ar.create_dataset_sync(elements_dataset,
                                            offsets = self.globalMesh.elementOffsets_subdomain_owned,
@@ -4748,6 +4848,10 @@ class Mesh3DM(Mesh):
             self.arGridCollection = ar.domain.collection("Mesh "+name)
         if not self.arGridCollection.is_current(t):
             rank = ar.comm.rank()
+            #the arrays are written when the mesh changed (Archiver.mesh_step), as in Mesh.writeMeshXdmf
+            onRank = '' if ar.global_sync else str(rank)
+            meshStep, writeMesh = ar.mesh_step('elements'+onRank+name, tCount, self, init or meshChanged,
+                                               ar.MESH_ALL + ar.MESH_MATERIALS)
             #
             #topology and geometry
             #
@@ -4755,14 +4859,14 @@ class Mesh3DM(Mesh):
                 assert ar.writesDatasets, "global_sync with text heavy data not supported"
                 n_elements       = self.globalMesh.nElements_global
                 nodes_dims       = [self.globalMesh.nNodes_global, 3]
-                elements_dataset = 'elements'+name+str(tCount)
-                nodes_dataset    = 'nodes'+name+str(tCount)
+                elements_dataset = 'elements'+name+str(meshStep)
+                nodes_dataset    = 'nodes'+name+str(meshStep)
                 elements_dtype   = self.globalMesh.nodeNumbering_subdomain2global
             else:
                 n_elements       = self.nElements_owned
                 nodes_dims       = [self.nNodes_global, 3]
-                elements_dataset = 'elements'+str(rank)+name+str(tCount)
-                nodes_dataset    = 'nodes'+str(rank)+name+str(tCount)
+                elements_dataset = 'elements'+str(rank)+name+str(meshStep)
+                nodes_dataset    = 'nodes'+str(rank)+name+str(meshStep)
                 elements_dtype   = self.elementNodesArray
             self.arGrid = ar.write_grid(self.arGridCollection, None, t, tCount)
             ar.write_topology(self.arGrid, Xdmf_ElementTopology, n_elements,
@@ -4776,13 +4880,14 @@ class Mesh3DM(Mesh):
                                center="Cell", dimensions=[self.globalMesh.nElements_global],
                                sync_offsets=self.globalMesh.elementOffsets_subdomain_owned,
                                sync_data=self.elementMaterialTypes[:self.nElements_owned],
-                               write_data=init or meshChanged)
+                               dataset="elementMaterialTypes_t%d" % meshStep, write_data=writeMesh)
             else:
                 ar.write_field(self.arGrid, "elementMaterialTypes",
                                self.elementMaterialTypes[:self.nElements_owned], tCount,
                                center="Cell", dimensions=[self.nElements_owned],
-                               write_data=init or meshChanged)
-            if init or meshChanged:
+                               dataset="elementMaterialTypes_p%d_t%d" % (rank, meshStep),
+                               text_stem="elementMaterialTypes%d" % meshStep, write_data=writeMesh)
+            if writeMesh:
                 if ar.global_sync:
                     ar.create_dataset_sync(elements_dataset,
                                            offsets = self.globalMesh.elementOffsets_subdomain_owned,
