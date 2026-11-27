@@ -10,6 +10,36 @@
 #               subgrid error lag machines and NumericalSolution's own owners: the coupled fields, the solver's
 #               unknowns and the next system step; and with CLSVOF, and on rising_bubble_rans3p with the
 #               kernels.VOF3P and NCLS3P shock capturing lag machines)
+#               The delayed-lag shock capturing of kernels.Dissipation and Kappa is measured end to end by test_state_oracle.py
+#               (damBreakLevelSet turbulence=1: dofs 7.5e-10 / 2.5e-10 off one interval after a hot start before, bitwise
+#               after); kernels.TADR, VOS3P and RANS3PSed carry the same machine (DelayedLagState) and are tested only by
+#               test_delayed_lag_state.py: no deck of theirs has been hot started yet. kernels.SW2D's (the same machine, in
+#               kernels/SW2D.py, track B1's file until cekees/proteus#358 merges) is still `unmeasured`.
+#               ShockCapturing.ResGradQuad_SC (and ResGrad_SC, HamiltonJacobi_SC: LaggedNumDiffState, the array the residual
+#               reads, written back in place) is measured by test_state_oracle.py on test/ci/ladr_2d (lag=True): dofs
+#               0.07-0.12 off one interval after a hot start before, bitwise after; the other two are the same code, no deck.
+#               SubgridError.AdvectionDiffusionReaction_ASGS, HamiltonJacobi_ASGS and HamiltonJacobiDiffusionReaction_ASGS with
+#               lag=True (LaggedSGEState: tau_last and the lagged *_sge arrays, written back in place; HamiltonJacobi_ASGS_opt
+#               has its own): the first is measured by test_state_oracle.py on test/ci/ladr_2d_sglag (dofs 3e-2 off one interval
+#               after a hot start before, bitwise after); the other two are the same code, tested by test_lagged_sge_state.py.
+#               The TransientSubscales variant tracks subscales too and stays `unmeasured`.
+#               TimeIntegration LinearSSPRKintegration, LinearSSPRKPIintegration and SSPRKPIintegration (ExplicitRK_base) stay
+#               `unmeasured` and no hot start can measure them today: the decks that select them are the vortex/rotation ones, whose
+#               NCLS/VOF kernels fail to construct the integrator (no elementResidual yet, TimeIntegration.py:1833), and the DG decks
+#               (test/dg, dambreak_1d dgpk), whose space has no readFunctionXdmf, so `-H` stops before the first step.
+#               SplitOperator.ISO_fixed_MinModelStep's stepFailures is reset when the sequence is accepted (it kept the count for
+#               the whole run); it carries nothing else and stays `unmeasured` until a gwvd deck is hot started.
+#               kernels.Richards.ThetaScheme carries rho_nodal_old and use_rho_nodal_old with m_last (the nodal density of the
+#               last accepted step, the next step's old-time mass); and kernels.TADR.Coefficients (an owner outside this
+#               inventory's five families, SOLVER_STATE_OWNERS) carries q_v, the carried mass M_dof and nodal density
+#               rho_nodal of the edge-flux modes, and the Compatible scheme's carriedStorage. All measured on
+#               test/salinity/levee_small (density-coupled TADR on Richards; test_state_oracle.py levee_small, _ev4, _ev5):
+#               each removed in turn fails its deck, with the owners in, the dofs are bitwise one interval after a hot start.
+#               kernels.RANS2P.Coefficients also carries q/ebqe eddy_viscosity_last when a turbulence closure is on (the kernel
+#               lags it, LAG_LES; test_state_oracle.py damBreakLevelSet_smagorinsky: 4e-3 off at the restore, the velocity
+#               dofs 4.6e-4 off one interval later, bitwise with it). Richards' u_dof_old needs no state (the four levee decks
+#               with the flow on FCT are bitwise without it; ImplicitEV + implicit FCT is bitwise on Linux CI and 4e-16 off on
+#               macOS arm64, last-bit platform noise: not gated).
 #   rebuilt     carries history that the spin-up rebuilds from the solution, and a hot start MEASURED to
 #               continue exactly without its own state, given the state of the other owners of the model
 #               (test/test_hotstart_state.py: backward Euler, and RKEV with its lagged shock capturing;
@@ -29,10 +59,14 @@
 # as *_old_old fields nobody reads); the PUMI hot start reloads it from its checkpoint and is right. A kernel that
 # starts reading it must archive dof_last and skip the first shift on a continue hot start.
 #
+# The state oracle (state_oracle.py, test_state_oracle.py, state_oracle_allowlist.txt) measures a hot start on whole decks
+# without reading a class: every array and scalar the models hold, hot start vs the uninterrupted run, by attribute path.
+# Its `gap` rows are the decks where an owner is known not to be restored (C14 note, section 3).
+#
 # family  module  class  category
 SC ShockCapturing Eikonal_SC unmeasured
 SC ShockCapturing HamiltonJacobiJaffre_SC unmeasured
-SC ShockCapturing HamiltonJacobi_SC unmeasured
+SC ShockCapturing HamiltonJacobi_SC state
 SC ShockCapturing JaffreGradU_SC unmeasured
 SC ShockCapturing NavierStokes_SC unmeasured
 SC ShockCapturing NavierStokes_SC_opt unmeasured
@@ -41,32 +75,32 @@ SC ShockCapturing ResGradFFDarcyDelayLag_SC unmeasured
 SC ShockCapturing ResGradFFDarcy_SC unmeasured
 SC ShockCapturing ResGradJuanes_SC unmeasured
 SC ShockCapturing ResGradQuadDelayLag_SC unmeasured
-SC ShockCapturing ResGradQuad_SC unmeasured
-SC ShockCapturing ResGrad_SC unmeasured
+SC ShockCapturing ResGradQuad_SC state
+SC ShockCapturing ResGrad_SC state
 SC ShockCapturing ScalarAdvection_SC unmeasured
-SC kernels.Dissipation ShockCapturing unmeasured
-SC kernels.Kappa ShockCapturing unmeasured
+SC kernels.Dissipation ShockCapturing state
+SC kernels.Kappa ShockCapturing state
 SC kernels.NCLS ShockCapturing state
 SC kernels.NCLS3P ShockCapturing state
 SC kernels.RANS2P ShockCapturing state
 SC kernels.RANS3PF ShockCapturing state
-SC kernels.RANS3PSed ShockCapturing unmeasured
+SC kernels.RANS3PSed ShockCapturing state
 SC kernels.RDLS ShockCapturing rebuilt
 SC kernels.SW2D ShockCapturing unmeasured
-SC kernels.TADR ShockCapturing unmeasured
+SC kernels.TADR ShockCapturing state
 SC kernels.VOF ShockCapturing state
 SC kernels.VOF3P ShockCapturing state
-SC kernels.VOS3P ShockCapturing unmeasured
+SC kernels.VOS3P ShockCapturing state
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolantWithTransientSubScales_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionHaukeSangalliInterpolant_ASGS unmeasured
 SG SubgridError AdvectionDiffusionReactionTransientSubscales_ASGS unmeasured
-SG SubgridError AdvectionDiffusionReaction_ASGS unmeasured
+SG SubgridError AdvectionDiffusionReaction_ASGS state
 SG SubgridError AdvectionLag_ASGS unmeasured
 SG SubgridError Advection_ASGS unmeasured
 SG SubgridError DarcyFC_ASGS unmeasured
 SG SubgridError FFDarcyFC_ASGS unmeasured
-SG SubgridError HamiltonJacobiDiffusionReaction_ASGS unmeasured
-SG SubgridError HamiltonJacobi_ASGS unmeasured
+SG SubgridError HamiltonJacobiDiffusionReaction_ASGS state
+SG SubgridError HamiltonJacobi_ASGS state
 SG SubgridError HamiltonJacobi_ASGS_opt state
 SG SubgridError NavierStokesASGS_velocity_pressure unmeasured
 SG SubgridError NavierStokesASGS_velocity_pressure_opt unmeasured
@@ -138,6 +172,9 @@ TI TimeIntegration SSPRKPIintegration unmeasured
 TI TimeIntegration VBDF state
 TI kernels.GN_SW2DCV RKEV state
 TI kernels.NCLS RKEV state
+# SW2DCV RKEV: also carries transport.hEps (eps * max h of the INITIAL condition, built once in initDataStructures; a
+# hot start would build it from the archive's depth: 2e-7 relative, 1e-4 in the dofs one output interval on, circular
+# dam break). dtLast is overwritten by updateTimeHistory before choose_dt reads it: measured not needed
 TI kernels.SW2DCV RKEV state
 # CompatibleBackwardEuler: the compatible transport's carried storage M lives on TADR.LevelModel
 # (carriedStorage); a hot start reseeds it with the flow's m^n

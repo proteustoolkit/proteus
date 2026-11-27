@@ -1,0 +1,37 @@
+# test/dispatch/box_inflow.py as a spec (ymf round 7: a state imposed on part of a boundary, and the outflow set
+# less that part): still water in a 40 m x 10 m box, the state h = 1, q = (1.5, 0) on the part x = 0 of the
+# boundary and SWFlow's outflow on the rest (the set's member for q, `excluding` the part). The structure of
+# ymf's tests/fixtures/shallow_water/obstacle_inflow.ymf, without the cylinder (a box domain has no hole), on the
+# unstructured mesh path at h = 4 for one second (five outputs).
+extends: proteus_numerics.ymf
+
+model:
+  name: "Inflow on part of the boundary, 40 m x 10 m (box_inflow.py)"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [0, 40] × [0, 10],  t ∈ (0, 1]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_sets:
+      - {region: all, set: outflow}
+    boundary_conditions:
+      - {region: all, part: "x = 0", variable: h, type: dirichlet, value: 1.0, units: m}
+      - {region: all, part: "x = 0", variable: q, type: dirichlet, formula: "(1.5, 0)"}
+    initial_conditions:
+      - {field: h, type: constant, value: 1.0, units: m}
+      - {field: q, type: constant, value: 0.0}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.02}
+      θ: {value: 1.0}
+      Z: {value: 0.0}
+      α: {value: 0.0}
+      β: {value: 0.0}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: convex_limited
+      mesh: {h: 4.0}
+      step_control: {type: min_cfl, cfl: 0.25}
+      discretization: {outputs: 5}

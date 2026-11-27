@@ -130,11 +130,35 @@ CASES = {
                        "final_time=5.0 dt_output=1.0 structured=False he=2.0 dam_x_location=16.05 "
                        "reflecting_BCs=False", "dam3bumps_open.ymf", "convex_limited -- split, dispatched to swe SW2DCV",
                        "h_u_t6"),
+    # a state on part of the boundary (ymf round 7). `part`: the discharge's x component on x = 0 and the depth on
+    # x = 25, `component`: its y component on the whole boundary (ymf's split then gives each entry `components` too) (y = 0 with nothing else imposed), the deck's
+    # transcritical bump on its structured mesh
+    "transcritical_bump_part": ("dispatch", "transcritical_bump.py", "--SWEs", "final_time=0.5 dt_output=0.1",
+                                "transcritical_bump.ymf", "convex_limited -- split, dispatched to swe SW2DCV",
+                                "h_u_t6"),
+    # the solitary wave over a step: `atan` in the bed, the normal discharge stated on the parts x = +-15 and
+    # y = 0, 2 (the deck's Dirichlet nodes), nothing else
+    "santos_step": ("SWFlow", "santos_step.py", "--SWEs", "sw_model=0 final_time=0.5 dt_output=0.1",
+                    "santos_step.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
+    # `excluding`: the outflow set holds on the boundary less the part x = 0 where the state is (a box_inflow.py deck:
+    # obstacle_flow's boundary without the cylinder); the rest of the boundary is SWFlow's outflow
+    "box_inflow_excluding": ("dispatch", "box_inflow.py", "--SWEs", "final_time=1.0 dt_output=0.2 he=4.0",
+                             "box_inflow.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
     # SWFlow's structured mesh (mesh: {cells: 49} is the deck's nnx = nny = 50) on a flat bed with walls
     "circular_dam_structured": ("SWFlow", "circular_damBreak.py", "--SWEs",
                                 "sw_model=0 final_time=2.0 dt_output=0.4", "circular_dam.ymf",
                                 "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
+
+
+#: how far the moving field must move, where the case's is a small wave (the solitary wave's discharge)
+MOVED = {"santos_step": 0.01}
+
+
+#: the cases whose spec and deck agree to rounding, not bitwise, and how closely (rtol, atol): ymf folds the spec's
+#: constants and simplifies it (a bed 0.1 (0.5 + atan(x/0.075)/pi) is evaluated as 0.1 atan(13.33 x)/pi + 0.05), so its
+#: values differ from the deck's expression in the last digit or two, which the solution carries
+TOLERANCE = {"santos_step": (1e-9, 1e-13)}
 
 
 def _params():
@@ -192,13 +216,24 @@ def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     expected = _arrays(deck / (script[:-3] + ".h5"), script[:-3])
     found = _arrays(spec / archive, archive[:-3])
     assert sorted(found) == sorted(expected)
-    assert float(numpy.abs(found[moving]).max()) > 0.1          # the water moved
+    assert float(numpy.abs(found[moving]).max()) > MOVED.get(case, 0.1)          # the water moved
     if case.endswith("_gauges"):
         # the gauge files, written by the same Gauges objects: equal as text, and not empty
         for gauge_file in ("height1.csv", "height2.csv", "pressure.csv"):
             theirs, ours = (deck / gauge_file).read_text(), (spec / gauge_file).read_text()
             assert theirs.count("\n") > 3, gauge_file
             assert ours == theirs, gauge_file
+    if case in TOLERANCE:
+        rtol, atol = TOLERANCE[case]
+        # (the solver state is a pickled record of the same floats: bytes, which a tolerance cannot compare)
+        different = [key for key in expected if not key.startswith("solver_state/") and not (
+                numpy.array_equal(found[key], expected[key]) or (
+            found[key].dtype.kind == "f" and numpy.allclose(found[key], expected[key], rtol=rtol, atol=atol)))]
+        assert not different, "%d of %d datasets differ by more than %s: %s" % (len(different), len(expected),
+                                                                                TOLERANCE[case], different[:10])
+        # and the bed itself, the one the atan reaches, to rounding
+        assert numpy.abs(found["bathymetry_t0"] - expected["bathymetry_t0"]).max() <= 4e-17
+        return
     different = [key for key in expected if not numpy.array_equal(found[key], expected[key])]
     assert not different, "%d of %d datasets differ: %s" % (len(different), len(expected), different[:10])
 
@@ -379,3 +414,152 @@ def test_a_shallow_water_gauge_samples_the_depth(tmp_path):
     rows = (tmp_path / "depth.csv").read_text().splitlines()
     assert "h [       10        10         0]" in rows[0] and len(rows) > 10
     assert abs(float(rows[1].split(",")[1]) - 1.8) < 1e-12
+
+
+# a state on part of the boundary (ymf round 7): what the realizer reads of ymf's split, node by node
+
+def _boundary_of(conditions, split=None):
+    """shallow_water_boundary of the transcritical bump's split with its boundary conditions replaced."""
+    import copy
+    from proteus.DispatchRun import shallow_water_boundary
+    split = copy.deepcopy(split or _split_of("transcritical_bump.ymf", "convex_limited"))
+    split["subproblems"][0]["boundary_conditions"] = conditions
+    return shallow_water_boundary(split)
+
+
+def _imposed(boundary, node, flag=1):
+    """{SWFlow variable: value} the boundary data give at the boundary node ``node``."""
+    from proteus.DispatchRun import SHALLOW_WATER_VARIABLES, _state_function
+    out = {}
+    for variable in SHALLOW_WATER_VARIABLES + ("h_times_eta", "h_times_w", "h_times_beta"):
+        given = _state_function(variable, boundary["states"])(node, flag)
+        if given is not None:
+            out[variable] = given(node, 0.0)
+    return out
+
+
+def test_parts_and_components_give_the_nodes_their_states():
+    split = _split_of("transcritical_bump.ymf", "convex_limited")
+    boundary = _boundary_of(split["subproblems"][0]["boundary_conditions"], split)
+    assert (boundary["name"], boundary["reflectingBCs"]) == ("free (the states only)", False)
+    # the discharge's y component on the whole boundary, its x component on x = 0, the depth on x = 25
+    assert _imposed(boundary, (0.0, 0.5, 0.0)) == {"x_mom": 0.18, "y_mom": 0.0}
+    assert _imposed(boundary, (12.5, 0.0, 0.0)) == {"y_mom": 0.0}
+    assert _imposed(boundary, (25.0, 1.0, 0.0)) == {"water_height": 0.28205279813802181, "y_mom": 0.0}
+    assert _imposed(boundary, (1e-12, 0.5, 0.0)) == {"x_mom": 0.18, "y_mom": 0.0}       # within tol of x = 0
+    assert _imposed(boundary, (1e-3, 0.5, 0.0)) == {"y_mom": 0.0}                      # not
+
+
+def test_components_name_what_a_state_acts_on_without_a_cartesian_component():
+    split = _split_of("transcritical_bump.ymf", "convex_limited")
+    conditions = split["subproblems"][0]["boundary_conditions"]
+    assert [c.get("component") for c in conditions] == ["y", "x", None]
+    assert [c["components"] for c in conditions] == [["q_1"], ["q_0"], ["h"]]
+    for c in conditions:
+        c.pop("component", None)
+    assert _imposed(_boundary_of(conditions, split), (0.0, 0.5, 0.0)) == {"x_mom": 0.18, "y_mom": 0.0}
+    # a whole vector (a value for each component) with a part: both of its components
+    both = [{"region": "all", "part": "(abs(x) <= tol)", "variable": "q", "type": "dirichlet", "kind": "strong",
+             "components": ["q_0", "q_1"], "value": {"q_0": "1.5", "q_1": "0"}, "where": None}]
+    assert _imposed(_boundary_of(both, split), (0.0, 0.5, 0.0)) == {"x_mom": 1.5, "y_mom": 0.0}
+
+
+def test_a_treatment_excluding_the_part_of_a_state_is_the_rest_of_the_boundary():
+    split = _split_of("box_inflow.ymf", "convex_limited")
+    conditions = split["subproblems"][0]["boundary_conditions"]
+    treatment = [c for c in conditions if c.get("excluding")]
+    assert [c["excluding"] for c in treatment] == [["(abs(x) <= tol)"]]       # what the outflow set expands to
+    boundary = _boundary_of(conditions, split)
+    assert (boundary["name"], boundary["reflectingBCs"]) == ("outflow", False)
+    assert _imposed(boundary, (0.0, 3.0, 0.0)) == {"water_height": 1.0, "x_mom": 1.5, "y_mom": 0.0}
+    assert _imposed(boundary, (40.0, 3.0, 0.0)) == {}
+    # an exclusion no state is stated on is refused, rather than dropped
+    stray = [dict(c, excluding=["(abs(x - 40) <= tol)"]) if c.get("excluding") else c for c in conditions]
+    with pytest.raises(Exception, match="excludes .*abs\\(x - 40\\).*no state is stated"):
+        _boundary_of(stray, split)
+
+
+def test_a_condition_holds_where_its_region_and_part_do_and_its_excluded_parts_do_not():
+    from proteus.DispatchRun import _holds
+    entry = {"where": "x >= 1 - tol", "flags": [2, 4], "part": "y <= 0.5 + tol", "excluding": ["abs(y) <= tol"]}
+    holds = _holds(entry, 2, 1e-8)
+    assert holds((2.0, 0.25), 2) and holds((1.0, 0.5), 4)
+    assert not holds((0.5, 0.25), 2)                       # outside the region
+    assert not holds((2.0, 0.25), 3)                       # another mesh tag
+    assert not holds((2.0, 0.75), 2)                       # off the part
+    assert not holds((2.0, 0.0), 2)                        # in an excluded part
+    assert _holds({}, 2, 1e-8)((3.0, 4.0))                 # nothing stated: the whole boundary
+
+
+def test_what_the_realizer_cannot_impose_on_a_shallow_water_boundary_is_refused():
+    import copy
+    from proteus.DispatchRun import RealizeError
+    split = _split_of("transcritical_bump.ymf", "convex_limited")
+    state = split["subproblems"][0]["boundary_conditions"][1]
+
+    def refused(entries, text):
+        with pytest.raises(RealizeError, match=text):
+            _boundary_of(entries, split)
+    refused([dict(state, value="sin(t)")], "not a number")
+    refused([dict(state, kind="weak")], "strongly")
+    refused([dict(state, value=None)], "one number per component")
+    refused([dict(state, trace={"of": "q", "via": "other", "at": "previous_step"})], "trace of another sub-problem")
+    refused([], "none SWFlow imposes")
+    wall = {"region": "all", "variable": "q", "type": "neumann", "components": ["q_0", "q_1"], "where": None,
+            "value": {"q_0": "0.0", "q_1": "0.0"}}
+    refused([state, dict(wall, part="(abs(x) <= tol)")], "one boundary treatment on the whole boundary")
+    refused([state, dict(wall, where="x > 1")], "one boundary treatment on the whole boundary")
+    refused([dict(state, component="z", components=None)], "no z component")
+
+
+def test_the_dispersive_familys_auxiliaries_take_the_states_of_the_depth_and_the_discharge():
+    from proteus.DispatchRun import auxiliary_states
+    split = _split_of("transcritical_bump.ymf", "convex_limited")
+    boundary = _boundary_of(split["subproblems"][0]["boundary_conditions"], split)
+    derived = auxiliary_states(boundary["states"])
+    both = dict(boundary, states=boundary["states"] + derived)
+    # h eta = h^2 and h w = 0 where the depth is given (x = 25), h beta the discharge's x component where it is (x = 0)
+    assert _imposed(both, (25.0, 0.5, 0.0)) == {"water_height": 0.28205279813802181, "y_mom": 0.0,
+                                                 "h_times_eta": 0.28205279813802181 ** 2, "h_times_w": 0.0}
+    assert _imposed(both, (0.0, 0.5, 0.0)) == {"x_mom": 0.18, "y_mom": 0.0, "h_times_beta": 0.18}
+
+
+def test_a_two_phase_side_takes_no_part_exclusion_or_trace():
+    import copy
+    from proteus.DispatchRun import RealizeError, tank_sides
+    split = _split_of("dambreak_short.ymf", "level_set_five")
+    tank_sides(split)
+    for word, entry in (("part", "x <= 0.1"), ("excluding", ["x <= 0.1"]),
+                        ("trace", {"of": "φ", "via": "rdls", "at": "previous_step"})):
+        changed = copy.deepcopy(split)
+        changed["subproblems"][0]["boundary_conditions"][0][word] = entry
+        with pytest.raises(RealizeError, match=word):
+            tank_sides(changed)
+
+
+def test_a_level_sets_boundary_value_from_a_traces_is_dispatched_and_refused_by_the_tank():
+    """ymf round 7's `trace`: the level set's weak boundary value at the top is the redistancing's trace at the previous
+    step. Dispatch maps the discretization as it does without (the trace names a sub-problem, it is no model option);
+    the tank sets one BC_RANS setter per side and has nothing to take it, so the realizer refuses it by name: the
+    penalty form is the generator's (C19)."""
+    from proteus.Dispatch import dispatch
+    from proteus.DispatchRun import RealizeError, tank_sides
+    from ymf.closure import load, plain
+
+    def traced(doc):
+        strong = doc["model"]["strong_form"]
+        strong["boundary_sets"] = [b for b in strong["boundary_sets"] if b["region"] != "top"]
+        strong["boundary_conditions"] = [
+            {"region": "top", "variable": "p", "type": "dirichlet", "value": 0.0},
+            {"region": "top", "variable": "φ", "type": "dirichlet", "imposed": "weak",
+             "trace": {"of": "φ", "via": "rdls", "at": "previous_step"}}]
+    doc, _, _ = load(os.path.join(HERE, "dambreak_short.ymf"))
+    doc = plain(doc)
+    plain_found = dispatch(doc, "level_set_five")
+    traced(doc)
+    assert [m.module for m in dispatch(doc, "level_set_five").models] == [m.module for m in plain_found.models]
+    split = _split_of("dambreak_short.ymf", "level_set_five", traced)
+    assert [c["trace"] for c in split["subproblems"][2]["boundary_conditions"]] == \
+        [{"of": "φ", "via": "rdls", "at": "previous_step"}]            # on ncls, none on rdls itself
+    with pytest.raises(RealizeError, match="trace.*another sub-problem's trace"):
+        tank_sides(split)

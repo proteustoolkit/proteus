@@ -1,0 +1,34 @@
+# Differences the state oracle (state_oracle.py) accepts, per deck. Gated: the values that still differ at the LAST dump
+# of a deck's run, one output interval after the hot start (the restore instant, dump 0, is reported, not gated: most of
+# what differs there is recomputed before it is read). Format, one row per line:
+#   deck | pattern | kind | owner row | reason
+# pattern: fnmatch over attribute paths; use `*` only (a `[` in a pattern is a character class, not a bracket).
+# kind:
+#   noise    not state: evaluation counters, memory nobody initialised
+#   derived  recomputed from the restored state before it is read (say what makes it exact)
+#   decided  a difference cekees decided to keep (the decision's date)
+#   dead     an owner nothing reads (C14 note section 3: the sweep's "dead" rows, confirmed here by the run)
+#   gap      the deck's hot start is NOT exact: an owner is not restored. A `gap` row with pattern `*` says the whole
+#            deck is a known gap; the test then asserts that a dof still differs, and FAILS when none does, i.e. when
+#            the gap is closed: remove the row. The owner row names the C14 note owner (3.2 row number or 3.5 letter).
+# A row of a deck that matched nothing at the last dump is stale and fails the test (a `noise` or `decided` row may match nothing).
+#
+* | *nonlinear_function_*evaluations | noise | - | counters
+* | *waterline_calls | noise | - | counter
+damBreakLevelSet* | *levelModel.ball_* | noise | - | uninitialised memory (1e-314)
+damBreakLevelSet* | *.dof_last_last | decided | - | 2026-11-06: nothing reads dof_last_last; an archive hot start collapses it to dof_last
+damBreakLevelSet* | rans2p.coefficients.p_old_dof | dead | 3.5 (RANS2P p/u/v/w_old_dof) | passed to the kernel, never read (RANS2P2D.h:353-358)
+damBreakLevelSet* | rans2p.coefficients.u_old_dof | dead | 3.5 (RANS2P p/u/v/w_old_dof) | same
+damBreakLevelSet* | rans2p.coefficients.v_old_dof | dead | 3.5 (RANS2P p/u/v/w_old_dof) | same
+damBreakLevelSet* | rdls.shockCapturing.nSteps | derived | - | counter of a lag that is a no-op for RDLS (inventory: rebuilt)
+damBreakLevelSet* | rdls.timeIntegration.t | derived | - | RDLS's pseudo time (PsiTC) restarts at the restart time; only its differences are used
+damBreakLevelSet* | rdls.timeIntegration.tLast | derived | - | same
+damBreakLevelSet_turbulence | *coefficients.velocity_dof_w | dead | - | 2D: a copy of the flow's v taken at attach, whose only use is commented out (Dissipation2D.h:760, Kappa2D.h)
+circular_damBreak_sw2dcv | *levelModel.hReg | dead | 3.5 letter j | the nodal depth regularization is built from max(h) of the initial condition and no kernel or Python reads it
+levee_small | tranport_p.levelModel.compatibleBudget* | dead | - | output-only history of the budgets (one record per step): a hot start starts a new list, nothing reads it back
+levee_small_fct | tranport_p.levelModel.compatibleBudget* | dead | - | output-only history of the budgets (one record per step): a hot start starts a new list, nothing reads it back
+levee_small_ev* | *levelModel._solute_mass_0 | dead | - | the reference of the solute-mass drift in the log line: the first report of the run, which a hot start makes its own
+levee_small_ev* | *levelModel._cont_spurious_int | dead | - | running total of the continuity diagnostic (reported, nothing reads it back)
+levee_small_ev* | *levelModel.continuityStats* | dead | - | the diagnostic dict built from the two above
+levee_small* | *levelModel.nzval | noise | - | uninitialised memory (1e-314)
+levee_small* | *levelModel.fct_fallback_count | noise | - | counter of the implicit FCT's fallbacks

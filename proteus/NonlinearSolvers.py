@@ -1687,45 +1687,6 @@ class CLSVOFNewton(Newton):
         # ******************************************** #
         self.F.par_vofDOFs.scatter_forward_insert()
 
-    def solveOldMethod(self,u,r=None,b=None,par_u=None,par_r=None):
-        # ******************************************** #
-        # *************** SPIN UP STEP *************** #
-        # ******************************************** #
-        if self.F.coefficients.doSpinUpStep==True and self.F.spinUpStepTaken==False:
-            logEvent("***** Spin up step for CLSVOF model *****",level=2)
-            self.F.spinUpStepTaken=True
-            self.spinUpStep(u,r,b,par_u,par_r)
-
-        # ******************************************* #
-        # *************** FIRST STAGE *************** #
-        # ******************************************* #
-        logEvent("+++++ First stage of nonlinear solver +++++",level=2)
-        # GET NORMAL RECONSTRUCTION #
-        self.getNormalReconstruction(u,r,b,par_u,par_r)
-        # SOLVE NON-LINEAR SYSTEM FOR FIRST STAGE #
-        Newton.solve(self,u,r,b,par_u,par_r)
-        # save number of newton iterations
-        self.F.newton_iterations_stage1 = self.its
-
-        # ******************************************** #
-        # *************** SECOND STAGE *************** #
-        # ******************************************** #
-        if self.F.coefficients.timeOrder==2:
-            logEvent("+++++ Second stage of nonlinear solver +++++",level=2)
-            self.F.timeStage=2
-            # GET NORMAL RECONSTRUCTION #
-            self.getNormalReconstruction(u,r,b,par_u,par_r)
-            # SOLVE NON-LINEAR SYSTEM FOR SECOND STAGE #
-            Newton.solve(self,u,r,b,par_u,par_r)
-            self.F.timeStage=1
-            # save number of newton iterations
-            self.F.newton_iterations_stage2 = self.its
-
-        # ******************************************** #
-        # ***** UPDATE VECTORS FOR VISUALIZATION ***** #
-        # ******************************************** #
-        self.F.par_H_dof.scatter_forward_insert()
-        self.F.quantDOFs[:] = self.F.H_dof
 
 from . import deim_utils
 class POD_Newton(Newton):
