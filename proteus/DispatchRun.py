@@ -971,14 +971,19 @@ def _state_function(variable, states):
     return dirichlet
 
 
-def _check_states(found, boundary):
-    """A state on the boundary is read for the hydrostatic family only: the dispersive family's auxiliary unknowns
-    (h eta, h w, h beta) take their boundary data from the depth and the discharge (the decks' heta_DBC, hw_DBC),
-    which the realizer does not derive."""
-    if boundary["states"] and found.family == "dispersive_shallow_water":
-        raise RealizeError("%s: a state on the boundary is refused for the dispersive family: its auxiliary unknowns "
-                           "(h eta, h w, h beta) take their boundary data from the depth and the discharge, which "
-                           "the realizer does not derive" % found.discretization)
+def auxiliary_states(states):
+    """The states of the dispersive family's auxiliary unknowns, from those of the depth and the discharge, by the rule
+    the decks state (obstacle_flow.py, santos_step.py): h eta and h w take the depth's boundary data (h eta = h^2,
+    h w = 0 where the depth is given), h beta the discharge's x component's. The spec states the model's own
+    unknowns; an auxiliary has no state of its own."""
+    out = []
+    for st in states:
+        if st["field"] == "water_height":
+            out.append(dict(st, field="h_times_eta", value=st["value"] ** 2, what="h eta = (%s)^2" % st["what"]))
+            out.append(dict(st, field="h_times_w", value=0.0, what="h w = 0 where %s" % st["what"]))
+        elif st["field"] == "x_mom":
+            out.append(dict(st, field="h_times_beta", what="h beta, as %s" % st["what"]))
+    return out
 
 
 def shallow_water_boundary(split):
@@ -1072,7 +1077,7 @@ def precheck(doc, found, split, ranks=None):
         _linear_solver(_entry(doc, found.discretization), ranks)
     elif found.family in SHALLOW_WATER_FAMILIES:
         _box(split)
-        _check_states(found, shallow_water_boundary(split))
+        shallow_water_boundary(split)
         for role in list(table.SHALLOW_WATER_COEFFICIENT_ROLES) + [table.SHALLOW_WATER_BED_ROLE]:
             _by_role(doc, role)
         _shallow_water_linear_solver(_entry(doc, found.discretization), ranks)
@@ -1110,7 +1115,9 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
 
     (sub,) = split["subproblems"]
     boundary = shallow_water_boundary(split)
-    _check_states(found, boundary)
+    states = boundary["states"]
+    if found.family == "dispersive_shallow_water":
+        states = states + auxiliary_states(states)
 
     # the domain: SWFlow's unstructured path, a RectangularDomain's PSLG meshed by triangle at h
     lower, upper = [float(v) for v in split["domain"]["lower"]], [float(v) for v in split["domain"]["upper"]]
@@ -1173,7 +1180,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         sw_model=models["sw_model"], cfl=found.system["runCFL"],
         outputStepping=SWF.OutputStepping(final_time, dt_output=final_time / outputs),
         structured=structured, he=he, nnx=nnx, nny=nny, domain=domain, initialConditions=initial,
-        boundaryConditions={v: _state_function(v, boundary["states"]) for v in variables},
+        boundaryConditions={v: _state_function(v, states) for v in variables},
         reflectingBCs=boundary["reflectingBCs"], bathymetry=bathymetry, genMesh=stored is None)
     # copies: SWFlowProblem hands out its module's default dicts, which a deck then edits in place
     problem.physical_parameters = physical
@@ -1210,7 +1217,7 @@ def shallow_water(doc, found, split, realization, name, outdir, ranks=1):
         raise RealizeError("the system step controller is %s, the dispatch says %s"
                            % (so.systemStepControllerType.__name__, found.system["systemStepControllerType"]))
     record = {"boundary": {"whole boundary": boundary["name"], "reflectingBCs": boundary["reflectingBCs"],
-                           **({"states": [st["what"] for st in boundary["states"]]} if boundary["states"] else {})},
+                           **({"states": [st["what"] for st in states]} if states else {})},
               "initial": {**dict(zip(variables, components)), **auxiliary_record},
               "system": {"final_time": final_time, "outputs": outputs, "mesh": ("stored %s, h = %g" % (stored, he) if stored is not None else
                        "structured, %d x %d nodes" % (nnx, nny) if structured else "triangle, %s" % (

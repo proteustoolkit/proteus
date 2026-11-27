@@ -136,6 +136,10 @@ CASES = {
     "transcritical_bump_part": ("dispatch", "transcritical_bump.py", "--SWEs", "final_time=0.5 dt_output=0.1",
                                 "transcritical_bump.ymf", "convex_limited -- split, dispatched to swe SW2DCV",
                                 "h_u_t6"),
+    # the solitary wave over a step: `atan` in the bed, the normal discharge stated on the parts x = +-15 and
+    # y = 0, 2 (the deck's Dirichlet nodes), nothing else
+    "santos_step": ("SWFlow", "santos_step.py", "--SWEs", "sw_model=0 final_time=0.5 dt_output=0.1",
+                    "santos_step.ymf", "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
     # `excluding`: the outflow set holds on the boundary less the part x = 0 where the state is (a box_inflow.py deck:
     # obstacle_flow's boundary without the cylinder); the rest of the boundary is SWFlow's outflow
     "box_inflow_excluding": ("dispatch", "box_inflow.py", "--SWEs", "final_time=1.0 dt_output=0.2 he=4.0",
@@ -145,6 +149,16 @@ CASES = {
                                 "sw_model=0 final_time=2.0 dt_output=0.4", "circular_dam.ymf",
                                 "convex_limited -- split, dispatched to swe SW2DCV", "h_u_t6"),
 }
+
+
+#: how far the moving field must move, where the case's is a small wave (the solitary wave's discharge)
+MOVED = {"santos_step": 0.01}
+
+
+#: the cases whose spec and deck agree to rounding, not bitwise, and how closely (rtol, atol): ymf folds the spec's
+#: constants and simplifies it (a bed 0.1 (0.5 + atan(x/0.075)/pi) is evaluated as 0.1 atan(13.33 x)/pi + 0.05), so its
+#: values differ from the deck's expression in the last digit or two, which the solution carries
+TOLERANCE = {"santos_step": (1e-9, 1e-13)}
 
 
 def _params():
@@ -202,13 +216,24 @@ def test_the_spec_runs_the_deck_bitwise(tmp_path, case, ranks):
     expected = _arrays(deck / (script[:-3] + ".h5"), script[:-3])
     found = _arrays(spec / archive, archive[:-3])
     assert sorted(found) == sorted(expected)
-    assert float(numpy.abs(found[moving]).max()) > 0.1          # the water moved
+    assert float(numpy.abs(found[moving]).max()) > MOVED.get(case, 0.1)          # the water moved
     if case.endswith("_gauges"):
         # the gauge files, written by the same Gauges objects: equal as text, and not empty
         for gauge_file in ("height1.csv", "height2.csv", "pressure.csv"):
             theirs, ours = (deck / gauge_file).read_text(), (spec / gauge_file).read_text()
             assert theirs.count("\n") > 3, gauge_file
             assert ours == theirs, gauge_file
+    if case in TOLERANCE:
+        rtol, atol = TOLERANCE[case]
+        # (the solver state is a pickled record of the same floats: bytes, which a tolerance cannot compare)
+        different = [key for key in expected if not key.startswith("solver_state/") and not (
+                numpy.array_equal(found[key], expected[key]) or (
+            found[key].dtype.kind == "f" and numpy.allclose(found[key], expected[key], rtol=rtol, atol=atol)))]
+        assert not different, "%d of %d datasets differ by more than %s: %s" % (len(different), len(expected),
+                                                                                TOLERANCE[case], different[:10])
+        # and the bed itself, the one the atan reaches, to rounding
+        assert numpy.abs(found["bathymetry_t0"] - expected["bathymetry_t0"]).max() <= 4e-17
+        return
     different = [key for key in expected if not numpy.array_equal(found[key], expected[key])]
     assert not different, "%d of %d datasets differ: %s" % (len(different), len(expected), different[:10])
 
@@ -406,7 +431,7 @@ def _imposed(boundary, node, flag=1):
     """{SWFlow variable: value} the boundary data give at the boundary node ``node``."""
     from proteus.DispatchRun import SHALLOW_WATER_VARIABLES, _state_function
     out = {}
-    for variable in SHALLOW_WATER_VARIABLES:
+    for variable in SHALLOW_WATER_VARIABLES + ("h_times_eta", "h_times_w", "h_times_beta"):
         given = _state_function(variable, boundary["states"])(node, flag)
         if given is not None:
             out[variable] = given(node, 0.0)
@@ -485,13 +510,18 @@ def test_what_the_realizer_cannot_impose_on_a_shallow_water_boundary_is_refused(
     refused([state, dict(wall, part="(abs(x) <= tol)")], "one boundary treatment on the whole boundary")
     refused([state, dict(wall, where="x > 1")], "one boundary treatment on the whole boundary")
     refused([dict(state, component="z", components=None)], "no z component")
-    # a state on the dispersive family's boundary is refused: its auxiliaries' data are not derived
-    from types import SimpleNamespace
-    from proteus.DispatchRun import _check_states
-    states = _boundary_of(split["subproblems"][0]["boundary_conditions"], split)
-    _check_states(SimpleNamespace(family="shallow_water", discretization="d"), states)
-    with pytest.raises(RealizeError, match="dispersive family"):
-        _check_states(SimpleNamespace(family="dispersive_shallow_water", discretization="d"), states)
+
+
+def test_the_dispersive_familys_auxiliaries_take_the_states_of_the_depth_and_the_discharge():
+    from proteus.DispatchRun import auxiliary_states
+    split = _split_of("transcritical_bump.ymf", "convex_limited")
+    boundary = _boundary_of(split["subproblems"][0]["boundary_conditions"], split)
+    derived = auxiliary_states(boundary["states"])
+    both = dict(boundary, states=boundary["states"] + derived)
+    # h eta = h^2 and h w = 0 where the depth is given (x = 25), h beta the discharge's x component where it is (x = 0)
+    assert _imposed(both, (25.0, 0.5, 0.0)) == {"water_height": 0.28205279813802181, "y_mom": 0.0,
+                                                 "h_times_eta": 0.28205279813802181 ** 2, "h_times_w": 0.0}
+    assert _imposed(both, (0.0, 0.5, 0.0)) == {"x_mom": 0.18, "y_mom": 0.0, "h_times_beta": 0.18}
 
 
 def test_a_two_phase_side_takes_no_part_exclusion_or_trace():

@@ -1,0 +1,41 @@
+# test/SWFlow/santos_step.py (sw_model 0, the hydrostatic model) as a spec (ymf round 7: `atan`, and states on parts of
+# the boundary): a solitary wave over a step, 30 m x 2 m on the deck's structured mesh (refinement 4: nnx = 81,
+# nny = (nnx - 1)//10 + 1 = 9, so 80 x 8 cells) for half a second. The step is the deck's 0.1 (0.5 + arctan(x/0.075)/pi);
+# the wave A sech^2(r (x - xs)) over still water d0, with the discharge of a progressive wave. The boundary is the deck's:
+# the normal discharge, x_mom = 0 on x = +-15 and y_mom = 0 on y = 0 and 2, and nothing else (reflecting_BCs False).
+extends: proteus_numerics.ymf
+
+model:
+  name: "Solitary wave over a step, 30 m × 2 m (santos_step, sw_model 0), structured 80 × 8"
+  physical_model: {provenance: human_specified}
+  strong_form:
+    domain: "Ω = [-15, 15] × [0, 2],  t ∈ (0, 0.5]"
+    boundary_regions:
+      - {name: all, where: "∂Ω"}
+    boundary_conditions:       # the deck's: x_mom on x = ±15, y_mom on y = 0 and 2, nothing else (reflecting_BCs False)
+      - {region: all, part: "x = -15 or x = 15", variable: q, type: dirichlet, component: x, value: 0.0}
+      - {region: all, part: "y = 0 or y = 2", variable: q, type: dirichlet, component: y, value: 0.0}
+    initial_conditions:
+      - {field: h, type: function, formula: "max(H − Z, 0)", units: m}
+      - {field: q, type: function, formula: "(max(H − Z, 0) c (H − d0)/H, 0)"}
+    coefficients:
+      g: {value: 9.81}
+      n: {value: 0.0}
+      θ: {value: 1.0}
+      Z: {formula: "0.1 (0.5 + atan(x/0.075)/π)"}
+      α: {value: 0.0}
+      β: {value: 0.0}
+      d0: {value: 0.2}
+      A: {value: 0.0365}
+      xs: {value: -3.0}
+      r: {formula: "sqrt(3 A/(4 d0² (d0 + A)))"}
+      c: {formula: "sqrt(g (d0 + A))"}
+      H: {formula: "d0 + A/cosh(r (x − xs))²"}
+
+solution_paths:
+  analytical: []
+  discretizations:
+    - name: convex_limited
+      mesh: {cells: {x: 80, y: 8}}
+      step_control: {type: min_cfl, cfl: 0.25}
+      discretization: {outputs: 5}
